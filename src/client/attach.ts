@@ -16,7 +16,7 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
   const stdin:Input=options.stdin??process.stdin,stdout:Output=options.stdout??process.stdout,signals:EventEmitter=options.signals??process;
   if(!isUUID(id)||!stdin.isTTY||!stdout.isTTY)throw new Error('Attach requires a session UUID and an interactive terminal');
   const originalRaw=stdin.isRaw??false;
-  const filter=new HomeKeyFilter();let active=false,ended=false,entered=false,exitCode:number|undefined,failure:Error|undefined;
+  const filter=new HomeKeyFilter();let active=false,ended=false,entered=false,exitCode:number|undefined,failure:Error|undefined;let sessionEnded=false;
   let escapeTimer:ReturnType<typeof setTimeout>|undefined;
   const buffered:Buffer[]=[];let bufferedBytes=0;
   let resolveDone:()=>void=()=>{};const done=new Promise<void>(resolve=>{resolveDone=resolve;});
@@ -46,7 +46,7 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
     if(event.kind==='session.detached'&&event.sessionId===id){end();return;}
     if(event.kind==='session.updated'&&event.session&&typeof event.session==='object'){
       const session=event.session as Record<string,unknown>;
-      if(session.id===id&&(session.status==='exited'||session.status==='error')){exitCode=typeof session.exitCode==='number'?session.exitCode:undefined;end();}
+      if(session.id===id&&(session.status==='exited'||session.status==='error')){sessionEnded=true;exitCode=typeof session.exitCode==='number'?session.exitCode:undefined;end();}
     }
   };
   const onDisconnect=()=>end(new Error('Daemon connection closed'));
@@ -60,11 +60,14 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
   signals.on('SIGWINCH',onResize);signals.on('SIGINT',onSignal);signals.on('SIGTERM',onSignal);signals.on('uncaughtException',onUncaught);signals.on('unhandledRejection',onUncaught);
   try{
     entered=true;stdout.write('\x1b[?1049h');stdin.setRawMode(true);stdin.resume();
-    const result=await connection.request({kind:'sessions.attach',sessionId:id,...size()});
-    if(!ended){
+    const startup=connection.request({kind:'sessions.attach',sessionId:id,...size()});
+    const result=await Promise.race([startup,done.then(()=>null)]);
+    const response=result??(sessionEnded?await startup:null);
+    if(response&&(!ended||sessionEnded)){
+      const result=response;
       if(typeof result.snapshot!=='string'||!isSize(result.cols,result.rows))throw new Error('Invalid attach snapshot');
       const modes=validateModes(result.modes);
-      active=true;writeOutput(result.snapshot);writeOutput(enterModes(modes));
+      active=!ended;writeOutput(result.snapshot);writeOutput(enterModes(modes));
       for(const data of buffered)writeOutput(data);buffered.length=0;
       if(result.session&&(result.session.status==='exited'||result.session.status==='error')){exitCode=result.session.exitCode??undefined;end();}
     }
