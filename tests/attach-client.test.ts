@@ -22,6 +22,12 @@ it('restores modes from a mirror and resets every session input mode on leaving'
  for(const code of [1000,1002,1003,1006,1015,2004,1004,1])expect(RESET_MODES).toContain(`\x1b[?${code}l`);expect(RESET_MODES).toContain('\x1b[<u');expect(RESET_MODES).toContain('\x1b[?25h');
  }finally{mirror.dispose();}
 });
+it('mode restore round trips every mouse tracking and encoding combination',async()=>{
+ for(const mouseTracking of ['none','x10','vt200','drag','any'] as const)for(const mouseEncoding of ['default','utf8','sgr','urxvt'] as const){
+  const modes={applicationCursorKeys:true,applicationKeypad:true,bracketedPaste:true,mouseTracking,mouseEncoding,focusEvents:true,cursorVisible:false};
+  const mirror=new Mirror(80,24,()=>{});try{await mirror.write(enterModes(modes));expect(mirror.modes()).toEqual(modes);}finally{mirror.dispose();}
+ }
+});
 it('writes snapshot first, streams only target output, sends input, and never forwards Ctrl+E',async()=>{
  const {tty,connection,options}=fixture();const done=attach(connection,id,options);await Promise.resolve();await Promise.resolve();
  connection.emit('output',randomUUID(),Buffer.from('OTHER_SESSION'));connection.emit('output',id,Buffer.from('live'));tty.emit('data',Buffer.from('echo hi\r'));tty.emit('data',Buffer.from([5]));connection.emit('output',id,Buffer.from('AFTER_HOME'));
