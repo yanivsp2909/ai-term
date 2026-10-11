@@ -127,6 +127,31 @@ describe('real PTY lifecycle and mirror', () => {
             await manager.shutdown();
         }
     });
+    it('records an unrequested signal death as failed, while a requested stop stays exited', async () => {
+        const paths = getPaths(await temp());
+        await preparePaths(paths);
+        const crashing = new SessionManager(paths, new Logger(paths.log), { executable: '/bin/sh', args: ['-c', 'printf up; kill -SEGV $$'], env: { PATH: '/usr/bin:/bin' } });
+        await crashing.load();
+        const crashed = await crashing.create({ cwd: paths.root });
+        try {
+            await expect.poll(() => crashing.get(crashed.id).status, { timeout: 5000 }).toBe('error');
+            expect(crashing.get(crashed.id)).toMatchObject({ statusDetail: 'signal 11', exitCode: null });
+        }
+        finally {
+            await crashing.shutdown();
+        }
+        const stopping = new SessionManager(paths, new Logger(paths.log), { executable: '/bin/sh', args: ['-c', 'printf up; read answer'], env: { PATH: '/usr/bin:/bin' } });
+        await stopping.load();
+        const stopped = await stopping.create({ cwd: paths.root });
+        try {
+            await expect.poll(() => stopping.get(stopped.id).status, { timeout: 5000 }).toBe('running');
+            await stopping.stop(stopped.id);
+            expect(stopping.get(stopped.id).status).toBe('exited');
+        }
+        finally {
+            await stopping.shutdown();
+        }
+    });
     it('marks old records exited on restart without killing saved PIDs', async () => {
         const paths = getPaths(await temp());
         await preparePaths(paths);
