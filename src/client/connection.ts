@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { open, lstat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { validateSuccess } from '../shared/validate.js';
 import type { Paths } from '../shared/paths.js';
 import { preparePaths, isFsError } from '../shared/paths.js';
 import { FrameDecoder, encodeControl, decodeControl, PROTOCOL_VERSION, type Request, type SuccessResponse } from '../shared/protocol.js';
@@ -34,12 +35,13 @@ export class Connection extends EventEmitter {
                     const v = value as Record<string, unknown>;
                     const pending = typeof v.id === 'string' ? this.pending.get(v.id) : undefined;
                     if (pending && typeof v.id === 'string') {
+                        if(v.ok===true)validateSuccess(value);
                         clearTimeout(pending.timer);
                         this.pending.delete(v.id);
                         if (v.kind === 'helloMismatch')
                             pending.reject(new Error('Daemon protocol mismatch; stop it explicitly before restarting'));
                         else if (v.ok === true)
-                            pending.resolve(value as SuccessResponse);
+                            pending.resolve(validateSuccess(value));
                         else
                             pending.reject(new Error('error' in v && v.error && typeof v.error === 'object' && 'message' in v.error ? String(v.error.message) : 'Daemon request failed'));
                     }
@@ -127,7 +129,7 @@ export class Connection extends EventEmitter {
         }
         const connection = new Connection(socket);
         try {
-            await connection.hello;
+            const hello=await connection.hello;if(hello.kind!=='hello')throw new Error('Expected daemon hello');
             return connection;
         }
         catch (error) {

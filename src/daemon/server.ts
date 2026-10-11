@@ -10,6 +10,7 @@ import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
     socket: Socket;
     hello: boolean;
+    closing:boolean;
     preview: string | null;
     refreshing: boolean;
     lagged: boolean;
@@ -94,7 +95,7 @@ export class DaemonServer {
         this.socketIdentity = { ino: stat.ino, dev: stat.dev };
     }
     private accept(socket: Socket): void {
-        const peer: Peer = { socket, hello: false, preview: null, refreshing: false, lagged: false, queue: Promise.resolve() };
+        const peer: Peer = { socket, closing:false, hello: false, preview: null, refreshing: false, lagged: false, queue: Promise.resolve() };
         this.peers.add(peer);
         const decoder = new FrameDecoder();
         let queued = 0;let queuedBytes=0;
@@ -113,13 +114,13 @@ export class DaemonServer {
                     queuedBytes+=frame.payload.length;
                     if (++queued > 128 || queuedBytes > 8*1024*1024)
                         throw new ProtocolError('TOO_MANY_REQUESTS', 'Request queue exceeded');
-                    peer.queue = peer.queue.then(async () => { if (!socket.destroyed)
+                    peer.queue = peer.queue.then(async () => { if (!socket.destroyed&&!peer.closing)
                         await this.handle(peer, value); }).catch(error => { this.log.error(`Request failed: ${error instanceof Error ? error.message : 'unknown'}`); this.control(peer, { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Request failed' } }); }).finally(() => { queued--;queuedBytes-=frame.payload.length; });
                 }
             }
             catch (error) {
                 this.control(peer, { ok: false, error: { code: error instanceof ProtocolError ? error.code : 'INVALID_FRAME', message: error instanceof ProtocolError ? error.message : 'Invalid frame' } });
-                socket.end();
+                peer.closing=true;socket.end();
             }
         });
     }
@@ -129,7 +130,7 @@ export class DaemonServer {
             return;
         peer.refreshing = true;
         try {
-            await this.manager.snapshot(id, snapshot => {
+            await this.manager.snapshot(id, (snapshot,size) => {
                 if (peer.preview !== id || peer.socket.destroyed)
                     return;
                 this.control(peer, { id: requestId ?? peer.snapshotId, ok: true, sessionId: id, snapshot, ...size });
@@ -154,7 +155,7 @@ export class DaemonServer {
         if (request.kind === 'hello') {
             if (request.protocol !== PROTOCOL_VERSION) {
                 this.control(peer, { id: request.id, kind: 'helloMismatch', protocol: PROTOCOL_VERSION });
-                peer.socket.end();
+                peer.closing=true;peer.socket.end();
                 return;
             }
             peer.hello = true;
@@ -184,7 +185,7 @@ export class DaemonServer {
                         try{await this.refresh(peer,request.id);}catch(error){peer.preview=null;throw error;}
                     }
                     else
-                        this.control(peer, { id: request.id, ok: true, snapshot: '' });
+                        this.control(peer, { id: request.id, ok: true, snapshot: '',...this.manager.previewDimensions() });
                     break;
                 case 'sessions.stop':
                     await this.manager.stop(request.sessionId);

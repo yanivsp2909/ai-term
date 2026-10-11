@@ -105,7 +105,7 @@ export class SessionManager extends EventEmitter {
         this.event({ kind: 'session.updated', session: { ...info } });
         return { ...info };
     }
-    async snapshot(id: string, publish?: (snapshot: string) => void): Promise<string> { const live = this.sessions.get(id); if (!live)
+    async snapshot(id: string, publish?: (snapshot: string, size:{cols:number;rows:number}) => void): Promise<string> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); return live.output.then(() => { const snapshot = live.mirror.snapshot(); publish?.(snapshot,{cols:live.mirror.terminal.cols,rows:live.mirror.terminal.rows}); return snapshot; }); }
     async stop(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }

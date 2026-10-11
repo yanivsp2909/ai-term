@@ -83,3 +83,10 @@ it('rejects queued request bytes while an earlier operation is blocked and keeps
  try{for(let i=0;i<4;i++)socket.write(encodeControl(body));await expect.poll(()=>messages.some(e=>typeof e==='object'&&e!==null&&'error' in e&&JSON.stringify(e).includes('TOO_MANY_REQUESTS')),{timeout:3000}).toBe(true);}finally{unblock();socket.destroy();}
  const other=await Connection.connect(paths,{entry:resolve('src/cli/index.ts'),autoStart:false});try{expect((await other.request({kind:'sessions.list'})).sessions).toEqual([]);}finally{other.close();}
 });
+it('never runs coalesced requests after a hello mismatch',async()=>{
+ const {paths,manager}=await setup();const socket=createConnection(paths.socket);cleanup.unshift(async()=>{socket.destroy();});
+ const decoder=new FrameDecoder();const replies:unknown[]=[];socket.on('data',d=>{for(const frame of decoder.push(d))replies.push(decodeControl(frame));});
+ const closed=new Promise<void>(r=>socket.on('close',()=>r()));
+ socket.write(Buffer.concat([encodeControl({id:randomUUID(),kind:'hello',protocol:99,version:'bad'}),encodeControl({id:randomUUID(),kind:'hello',protocol:1,version:'valid'}),encodeControl({id:randomUUID(),kind:'sessions.create',engine:'shell',cwd:paths.root})]));
+ await closed;expect(manager.list()).toEqual([]);expect(replies).toHaveLength(1);expect(replies[0]).toMatchObject({kind:'helloMismatch'});
+});

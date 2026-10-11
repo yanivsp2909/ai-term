@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { validateSuccess } from '../src/shared/validate.js';
 import { randomUUID } from 'node:crypto';
 it('rejects malformed success responses and hello protocol mismatches',()=>{
