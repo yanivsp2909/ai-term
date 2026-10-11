@@ -11,6 +11,7 @@ import { Logger, redact } from '../src/daemon/log.js';
 import { acquireLock } from '../src/daemon/lock.js';
 import { buildShellEnv } from '../src/daemon/env.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
+import { PtyHost } from '../src/daemon/pty-host.js';
 const roots: string[] = [];
 async function temp() { const root = await mkdtemp(join(tmpdir(), 'ai-term-core-')); roots.push(root); return root; }
 afterEach(async () => { for (const root of roots.splice(0))
@@ -182,6 +183,26 @@ describe('real PTY lifecycle and mirror', () => {
         }
         finally {
             await stopping.shutdown();
+        }
+    });
+    it('bounds detached query replies when a session floods queries and never reads them', async () => {
+        const paths = getPaths(await temp());
+        await preparePaths(paths);
+        // 20,000 cursor-position queries would otherwise queue ~120 KB of replies in node-pty's unbounded write queue.
+        const script = "stty raw -echo; /usr/bin/perl -e 'print qq(\\e[6n) x 20000; print qq(FLOOD-DONE)'; exec /bin/sleep 30";
+        const manager = new SessionManager(paths, new Logger(paths.log), { executable: '/bin/sh', args: ['-c', script], env: { PATH: '/usr/bin:/bin' } });
+        const write = vi.spyOn(PtyHost.prototype, 'write');
+        await manager.load();
+        const session = await manager.create({ cwd: paths.root });
+        try {
+            await expect.poll(async () => manager.snapshot(session.id), { timeout: 5000 }).toContain('FLOOD-DONE');
+            const written = write.mock.calls.reduce((total, [data]) => total + Buffer.byteLength(data), 0);
+            expect(written).toBeGreaterThan(0);
+            expect(written).toBeLessThan(32 * 1024);
+        }
+        finally {
+            write.mockRestore();
+            await manager.shutdown();
         }
     });
     it('marks old records exited on restart without killing saved PIDs', async () => {
