@@ -39,3 +39,6 @@ it('Ctrl+C cancels startup but belongs to the agent after attach completes',asyn
  const {tty,connection,options}=fixture();const done=attach(connection,id,options);tty.emit('data',Buffer.from([3]));await done;expect(connection.inputBytes).toHaveLength(0);expect(tty.isRaw).toBe(false);
  const next=fixture(),running=attach(next.connection,id,next.options);await Promise.resolve();await Promise.resolve();next.tty.emit('data',Buffer.from([3]));next.tty.emit('data',Buffer.from([5]));await running;expect(Buffer.concat(next.connection.inputBytes)).toEqual(Buffer.from([3]));
 });
+it('retains SGR mouse encoding when an unrelated encoding is reset',async()=>{
+ const mirror=new Mirror(80,24,()=>{});try{await mirror.write('\x1b[?1006h\x1b[?1015l');expect(mirror.modes().mouseEncoding).toBe('sgr');}finally{mirror.dispose();}
+});

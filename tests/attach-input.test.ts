@@ -19,3 +19,10 @@ it('forwards unrelated sequences, split UTF-8, and flushes a standalone Escape',
  for(const byte of text){const r=filter.push(Buffer.from([byte]));expect(r.home).toBe(false);output.push(r.data);}expect(Buffer.concat(output)).toEqual(text);
  expect(filter.push(Buffer.from([27])).data).toHaveLength(0);expect(filter.flush()).toEqual(Buffer.from([27]));
 });
+it('keeps recognition after a standalone Escape timeout and starts again at a repeated Escape',()=>{
+ for(const key of ['\x1b[101;5u','\x1b[27;5;101~']){
+  const filter=new HomeKeyFilter();filter.push(Buffer.from([27]));expect(filter.flush()).toEqual(Buffer.from([27]));const rest=filter.push(Buffer.from(key.slice(1)));expect(rest.home).toBe(true);expect(rest.data).toHaveLength(0);
+  const repeated=new HomeKeyFilter();const r=repeated.push(Buffer.from('\x1b'+key));expect(r.home).toBe(true);expect(r.data).toEqual(Buffer.from([27]));
+ }
+ const paste=new HomeKeyFilter();paste.push(Buffer.from([27]));const escaped=paste.flush();const body=Buffer.from('[200~\x05\x1b[201~');const r=paste.push(body);expect(r.home).toBe(false);expect(Buffer.concat([escaped,r.data])).toEqual(Buffer.concat([Buffer.from([27]),body]));
+});
