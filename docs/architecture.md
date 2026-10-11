@@ -208,10 +208,12 @@ When you enter a session, the client:
 
 AI Term draws nothing over the session in v0.1 (the frame bar comes in v0.2).
 
-**Home key.** The client watches stdin for the home key and never forwards it:
-- **Ctrl+]** (byte `0x1d`): works in every terminal and is the v0.1 key.
-- **⌘E** (macOS) and **Ctrl+Shift+E** (Linux and Windows): only arrive in terminals that speak the kitty keyboard protocol (Ghostty, kitty, WezTerm) or in the AI Term app (v0.5). The client enables that protocol only while on the homepage; it's not forwarded during passthrough.
-- All home keys are remappable in settings.
+**Home key: Ctrl+E** (D11). One key, no modes.
+- **Inside any session** (Claude Code, Codex, later AI Term's agent): Ctrl+E goes to the homepage, and the agent keeps running. The client watches stdin for byte `0x05` and never forwards it.
+- **On the homepage:** ⏎ goes back into the selected agent; `/exit` quits `ai`. The agents keep running in the daemon.
+- **Ctrl+Shift+E:** most terminals send the same byte, so it works too.
+- **⌘E:** can't be used. Terminal.app and iTerm2 keep ⌘ keys for themselves and never pass them to a program.
+- **Cost:** inside sessions, Ctrl+E no longer jumps to the end of the line. Use End (Fn+→) instead.
 
 On the home key the client sends `sessions.detach`, restores its own screen and redraws the homepage. The agent keeps running.
 
@@ -402,7 +404,7 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D8 | Homepage: agent list left, live preview right, Usage and This Mac under the preview, command bar at the bottom, status counts top right (docs/design.md). | Pinned |
 | D9 | `/model` on the homepage picks model and engine. Inside Claude Code / Codex, their own `/model`. Inside AI Term's agent, keyed models only. | Pinned |
 | D10 | `/cd` on the homepage sets the folder for the next agent; AI Term's agent supports `/cd` anytime. | Pinned |
-| D11 | Home key: ⌘E (macOS) / Ctrl+Shift+E (Linux, Windows) where the terminal supports it, Ctrl+] always; remappable. `/exit` chain: session → home → shell. | Pinned |
+| D11 | Home key: Ctrl+E from inside any session goes to the homepage. On the homepage, ⏎ enters the selected agent and `/exit` quits `ai`. No other home keys. | Pinned |
 | D12 | v0.1 sessions are full screen; v0.2 adds the frame bar; v0.3 splits. | Pinned |
 | D13 | Permissions: Ask / Don't ask. Ask is the default and the only saveable default; Don't ask is per session with a red marker; Codex stays sandboxed. | Pinned |
 | D14 | One instruction file, `AGENTS.md`; a one-line `CLAUDE.md` (`@AGENTS.md`) covers Claude Code. | Pinned |

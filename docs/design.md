@@ -181,10 +181,10 @@ A path field with completion. It sets the folder for the next agent only. A fold
 
 ## Inside a session
 
-- **v0.1, full screen:** AI Term draws nothing. The agent owns every cell. The home key (Ctrl+]; ⌘E / Ctrl+Shift+E where supported) goes home, and the agent keeps running.
+- **v0.1, full screen:** AI Term draws nothing; the agent owns every cell. **Ctrl+E** goes to the homepage and the agent keeps running.
 - **v0.2, frame bar:** one row on top, surface background.
   - **Left:** status glyph + name (bold) + `engine · model` + `· branch`.
-  - **Right:** `others ◐ 2  ✓ 1  ✗ 1` + `⌘E home`.
+  - **Right:** `others ◐ 2  ✓ 1  ✗ 1` + `^E home`.
   - The agent gets one row less.
 - **v0.3, splits:** panes side by side, each with a one-row header (glyph, name, model, branch); the focused pane's header is surface-2 with an accent underline. The bottom row shows `each pane is its own agent in its own worktree` and the pane keys.
 
