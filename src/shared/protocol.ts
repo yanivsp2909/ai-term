@@ -100,6 +100,8 @@ export interface TerminalModes {
     mouseEncoding:'default'|'utf8'|'sgr'|'urxvt'; focusEvents:boolean; cursorVisible:boolean;
 }
 export type SessionEvent = {
+    kind: 'session.previewResized'; sessionId: string; cols: number; rows: number;
+} | {
     kind:'session.detached'; sessionId:string; reason:'attached elsewhere';
 } | {
     kind: 'session.updated';

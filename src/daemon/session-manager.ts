@@ -136,6 +136,7 @@ export class SessionManager extends EventEmitter {
             const snapshot=live.mirror.snapshot();
             live.attached=true;live.mirror.setAttached(true);
             publish(snapshot,{cols,rows},live.mirror.modes());
+            this.event({kind:'session.previewResized',sessionId:id,cols,rows});
         });
         live.output=task.catch(error=>{this.log.error(`Attach failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
     }
@@ -145,12 +146,13 @@ export class SessionManager extends EventEmitter {
             if(!owned())return;
             live.attached=false;live.mirror.setAttached(false);live.clientPaused=false;this.updatePause(live);
             live.mirror.resize(this.size.cols,this.size.rows);live.host?.resize(this.size.cols,this.size.rows);
+            this.event({kind:'session.previewResized',sessionId:id,...this.size});
         });
         live.output=task.catch(error=>{this.log.error(`Attachment change failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
     }
     async resizeAttached(id:string,cols:number,rows:number,owned:()=>boolean):Promise<void> {
         const live=this.sessions.get(id);if(!live||!isSize(cols,rows))throw new Error('Invalid resize');
-        const task=live.output.then(()=>{if(!owned())throw new Error('Not attached');live.mirror.resize(cols,rows);live.host?.resize(cols,rows);});
+        const task=live.output.then(()=>{if(!owned())throw new Error('Not attached');live.mirror.resize(cols,rows);live.host?.resize(cols,rows);this.event({kind:'session.previewResized',sessionId:id,cols,rows});});
         live.output=task.catch(error=>{this.log.error(`Attachment change failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
     }
     async shutdown(): Promise<void> { this.closing = true; await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); await this.saving; for (const live of this.sessions.values())

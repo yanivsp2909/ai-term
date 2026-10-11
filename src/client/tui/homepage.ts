@@ -204,7 +204,7 @@ export class Homepage {
     const { cols, rows } = this.size(), layout = homepageLayout(cols, rows, this.visible);
     if (resize) {
       await this.connection.request({ kind: 'layout.previewSize', cols: layout.terminal.w, rows: layout.terminal.h });
-      for (const preview of this.previews.values()) preview.resize(layout.terminal.w, layout.terminal.h);
+      // Re-subscribe below: an attached session can have a different size from our layout.
     }
     const id = layout.preview ? this.selectedId : null;
     this.previewId = null; this.previewRequestId = null;
@@ -242,6 +242,9 @@ export class Homepage {
         const session = validateSession(v.session), index = this.sessions.findIndex(s => s.id === session.id);
         if (index >= 0) this.sessions[index] = session; else this.sessions.push(session);
         if (!this.selectedId) { this.selectedId = session.id; this.enqueue(() => this.updatePreview(false)); }
+      } else if (v.kind === 'session.previewResized') {
+        if (!isUUID(v.sessionId) || !isSize(v.cols, v.rows)) throw new Error('Invalid preview dimensions');
+        if (!this.attached && v.sessionId === this.selectedId) this.enqueue(() => this.updatePreview(false));
       } else if (v.kind === 'session.removed') {
         if (!isUUID(v.sessionId)) throw new Error('Invalid removed session');
         this.sessions = this.sessions.filter(s => s.id !== v.sessionId); this.previews.get(v.sessionId)?.dispose(); this.previews.delete(v.sessionId);
