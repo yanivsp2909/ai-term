@@ -2,7 +2,7 @@ import { createServer, createConnection, type Socket, type Server } from 'node:n
 import { lstat, unlink, chmod } from 'node:fs/promises';
 import type { Paths } from '../shared/paths.js';
 import { isFsError } from '../shared/paths.js';
-import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, type Request, type SessionEvent } from '../shared/protocol.js';
+import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, type Request, type SessionEvent } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings.js';
@@ -76,8 +76,9 @@ export class DaemonServer {
     private control(peer: Peer, value: unknown): void {
         if (peer.socket.destroyed)
             return;
-        // Control/event consumers cannot keep an unbounded queue either.
-        if (peer.socket.writableLength > 2 * 1024 * 1024) {
+        // Control/event consumers cannot keep an unbounded queue either. One snapshot response can
+        // fill a whole frame, so the bound leaves room for it plus 2 MiB of events behind it.
+        if (peer.socket.writableLength > MAX_FRAME_BYTES + 2 * 1024 * 1024) {
             peer.socket.destroy();
             return;
         }

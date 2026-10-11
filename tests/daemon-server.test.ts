@@ -100,9 +100,9 @@ it('keeps a client connected through a snapshot near the 4 MiB frame limit and t
  const session=(await client.request({kind:'sessions.create',engine:'shell',cwd:paths.root})).session;if(!session)throw new Error('Missing session');
  await expect.poll(async()=>Buffer.byteLength(JSON.stringify(await manager.snapshot(session.id))),{timeout:10000,interval:200}).toBeGreaterThan(2.1*1024*1024);
  const preview=client.request({kind:'sessions.preview',sessionId:session.id});await other.request({kind:'layout.previewSize',cols:86,rows:30});
- expect((await preview).snapshot?.length).toBeGreaterThan(2*1024*1024);
+ expect(Buffer.byteLength(JSON.stringify((await preview).snapshot))).toBeGreaterThan(2*1024*1024);
  await client.request({kind:'sessions.preview',sessionId:null});
  const attached=await client.request({kind:'sessions.attach',sessionId:session.id,cols:85,rows:30});
- expect(attached.snapshot?.length).toBeGreaterThan(2*1024*1024);
+ expect(Buffer.byteLength(JSON.stringify(attached.snapshot))).toBeGreaterThan(2*1024*1024);
  await new Promise(r=>setTimeout(r,100));expect(closed).toBe(false);
 },20000);
