@@ -4,7 +4,6 @@ import { mkdtemp, rm, lstat, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateRequest, validateSuccess } from '../src/shared/validate.js';
-import { SettingsStore } from '../src/daemon/settings.js';
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function temporary() { const root = await mkdtemp(join(tmpdir(), 'ai-term-settings-')); roots.push(root); return root; }
@@ -20,6 +19,7 @@ it('S2 accepts theme-only settings patches and rejects unknown keys and themes',
   expect(() => validateSuccess({ id: randomUUID(), ok: true, settings: { theme: 'bad' } })).toThrow();
 });
 it('persists the theme atomically at 0600 and loads it after reopening', async () => {
+  const { SettingsStore } = await import('../src/daemon/settings.js');
   const root = await temporary(), store = new SettingsStore(root);
   expect(await store.get()).toEqual({ theme: 'graphite' });
   expect(await store.set({ theme: 'slate' })).toEqual({ theme: 'slate' });
@@ -29,6 +29,7 @@ it('persists the theme atomically at 0600 and loads it after reopening', async (
   expect(await new SettingsStore(root).get()).toEqual({ theme: 'light' });
 });
 it('refuses symlinked or malformed settings instead of silently replacing them', async () => {
+  const { SettingsStore } = await import('../src/daemon/settings.js');
   const root = await temporary(), target = join(root, 'target');
   await writeFile(target, '{"theme":"slate"}');
   await symlink(target, join(root, 'settings.json'));
