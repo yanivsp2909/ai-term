@@ -38,7 +38,7 @@ This handover is the final commit; its own hash is in git log.
 - The exact requested history grep has documentation-only matches (12 before this handover); it is not empty. Credential-shaped scan finds none. Existing docs contain dummy canaries, placeholders and permission text.
 - Own prototype code reads no inherited env values or external files/network. Ink dependencies inspect env/runtime data internally, so a literal transitive no-env/no-external-file assertion is qualified in the report.
 - Restoration covers Ctrl+C/SIGTERM/caught crashes; SIGKILL cannot run cleanup.
-- Final 30-second runs were repeated after review fixes, including accurate startup timing and final PTY draining. Reviews found no remaining current material bug.
+- Final 30-second runs were repeated after review fixes, including accurate startup timing and final PTY draining. Code, TypeScript, React and Python reviews found no remaining current material bug; the report uses final code line counts.
 - Grid input width is approximate (emoji/ZWJ/full wcwidth not solved). Under 65×24, compact resize notice instead of five full cards.
 - npm audit: one low Windows esbuild dev-server advisory under tsup; no affected server runs. audit fix did not resolve its constrained dependency.
 - Coverage 100% applies to the validator only, not CLI/spikes. spikes is excluded from build/typecheck/lint as requested.
