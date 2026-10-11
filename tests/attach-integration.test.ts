@@ -21,5 +21,6 @@ it('real daemon shell: fake TTY echo, home, confirmed detach, reattach snapshot 
   await expect.poll(()=>tty.output).toContain('\x1b[?25h');tty.emit('data',Buffer.from('echo hi\r'));await expect.poll(()=>tty.output).toContain('hi');tty.emit('data',Buffer.from([5]));await home;expect(tty.isRaw).toBe(false);
   const detached=await client.request({kind:'sessions.preview',sessionId:id});expect(detached).toMatchObject({cols:85,rows:30});expect(detached.snapshot).toContain('hi');await client.request({kind:'sessions.preview',sessionId:null});
   const again=new TTY(),completed=attach(client,id,{stdin:again,stdout:again,signals});await expect.poll(()=>again.output).toContain('hi');again.emit('data',Buffer.from('exit\r'));await completed;expect(again.output).toContain('[session exited with code 0]');expect(again.isRaw).toBe(false);
+  const closed=new TTY();expect(await attach(client,id,{stdin:closed,stdout:closed,signals})).toBe('session exited');expect(closed.output).toContain('[session exited with code 0]');expect(closed.isRaw).toBe(false);
  }finally{client?.close();if(daemon.exitCode===null&&daemon.signalCode===null)daemon.kill('SIGTERM');await exited;await rm(root,{recursive:true,force:true});}
 },15000);
