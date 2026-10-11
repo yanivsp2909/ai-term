@@ -54,3 +54,7 @@ it('preserves final snapshot and output when exit arrives in the attach response
  };
  await attach(connection,id,options);expect(tty.output).toContain('SNAPSHOT');expect(tty.output).toContain('FINAL_OUTPUT');expect(tty.output).toContain('[session exited with code 0]');
 });
+it('rejects an untrusted exitCode before printing a post-attach status line',async()=>{
+ const {tty,connection,options}=fixture();const real=connection.request.bind(connection);connection.request=async body=>{const result=await real(body);if(body.kind!=='sessions.attach')return result;return {...result,session:{id,title:'shell',engine:'shell',cwd:'/tmp',status:'exited',exitCode:'\x1b]52;c;BAD\x07'}} as unknown as Awaited<ReturnType<FakeConnection['request']>>;};
+ await expect(attach(connection,id,options)).rejects.toThrow('Invalid session exit code');expect(tty.output).not.toContain('BAD');expect(tty.isRaw).toBe(false);
+});
