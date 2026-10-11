@@ -1,8 +1,8 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: 6da53b3 docs: record lock hardening commits in the checkpoint review
-Roadmap step: v0.1.5r done (review checkpoint before v0.1.6)
+Last commit: fdeb385 spike: v0.2 status facts
+Roadmap step: v0.1.5r done (review checkpoint before v0.1.6); v0.2 status spike done (facts only, no product code)
 Branch: `review/v0.1.5r-checkpoint`, pushed to origin. It starts at 609d23b and does not contain `fd79920` (see Gotchas). Local `main` was not changed by this session after that commit appeared.
 This handover is committed last; its own hash is in git log.
 
@@ -56,3 +56,13 @@ This handover is committed last; its own hash is in git log.
 - **Token bucket** (`src/daemon/reply-budget.ts`): a budget that refills at a fixed rate up to a cap (the burst). Each reply spends its byte count and is dropped when the bucket is empty. This bounds memory for something we can't observe directly: node-pty's private write queue.
 - **PID reuse** (`src/daemon/lock.ts`): process ids are recycled, so "a process with that pid is alive" doesn't prove it's our daemon. The lock file's mtime records when the daemon wrote it. A process that started after that moment can't be the writer, so the lock is stale.
 - **umask inheritance** (`src/daemon/pty-host.ts`): the umask is per process and copied into every child at fork. The daemon wants 077 for its private files but must hand children the user's own mask, so it sets the mask just around the synchronous spawn and restores it right after.
+
+## Spike: v0.2 status (2026-10-12)
+- `docs/spikes/v0.2-status.md` answers the nine questions with an evidence level each. Scripts and the proposed `StatusEvent` JSON Schema are in `spikes/status/`.
+- Live runs used: 2 of 5 Claude (`-p`) and 1 of 3 Codex (`exec`). No permission bypass and no hook-trust bypass. `~/.claude` and `~/.codex` were never read.
+- Key facts:
+  - Claude: `--settings` hooks merge with the user's hooks. `http` hooks reach 127.0.0.1 with an env-interpolated header, but not on SessionStart. Slow or failing hooks don't block past their timeout.
+  - Claude: a 2xx JSON response is a hook decision, so the endpoint must answer 204 with an empty body. Context % exists only in statusLine, which a `--settings` statusLine would replace for the user.
+  - Codex: `notify` covers turn-complete only, and fires in exec too. `-c` hooks need trust and were skipped. OSC 9 or BEL is sent on approval and turn-complete if forced (`osc9`, `always`). Context % comes from the OTel `conversation_starts.context_window` plus per-request token counts.
+- Changes to the v0.2 plan are listed at the end of the spike doc. The biggest: S12's 64 KB body cap would drop real Claude events; waiting should come from `PermissionRequest`, not `Notification`; Codex needs no hooks endpoint; and any Codex `-c` needs `--no-daemon`, which affects v0.1.6 Foundry too.
+- Manual: Tests A, B and C in the spike doc: needs Yaniv.
