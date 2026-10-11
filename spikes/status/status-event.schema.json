@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-term/status-event/v1",
+  "title": "StatusEvent (proposal, v0.2 spike — not authoritative until moved into src/shared/protocol.ts + validate.ts)",
+  "description": "What the daemon's status reducer consumes after an ingress adapter has normalised a CLI's native payload. Built by the daemon only; never accepted from a client or a CLI as-is.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "sessionId", "source", "event", "ts", "seq"],
+  "properties": {
+    "v": { "const": 1 },
+    "sessionId": {
+      "type": "string",
+      "description": "AI Term session UUID, resolved by the daemon from the per-session credential header. Never taken from the payload (Claude's session_id / Codex's thread-id are different ids).",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "source": {
+      "enum": ["claude-hook", "claude-statusline", "codex-notify", "codex-otel", "terminal"],
+      "description": "terminal = signals the daemon's own mirror parses from the PTY bytes (OSC 9, bare BEL, OSC 0/2 title)."
+    },
+    "event": {
+      "enum": ["turn-started", "tool-started", "tool-finished", "permission-requested", "input-requested", "turn-completed", "turn-failed", "session-ending", "context-updated"]
+    },
+    "ts": { "type": "string", "format": "date-time", "description": "Daemon receive time. CLI clocks are never trusted." },
+    "seq": { "type": "integer", "minimum": 0, "description": "Per-session monotonic counter assigned by the daemon; the reducer ignores anything older than the last applied seq." },
+    "detail": {
+      "type": ["string", "null"],
+      "maxLength": 80,
+      "description": "Short, sanitized label only: tool name, notification_type, StopFailure error enum, signal kind. Never prompt text, tool_input, last_assistant_message or file content."
+    },
+    "ctxPercent": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Context USED, 0–100. Present only on context-updated; null when the source can't say."
+    },
+    "native": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Source event name for debugging, e.g. 'Notification:permission_prompt', 'agent-turn-complete', 'osc9'. Not used for decisions."
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "event": { "const": "context-updated" } } }, "then": { "required": ["ctxPercent"] } },
+    { "if": { "properties": { "event": { "not": { "const": "context-updated" } } } }, "then": { "properties": { "ctxPercent": { "const": null } } } }
+  ]
+}
