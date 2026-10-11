@@ -89,9 +89,11 @@ export class SessionManager extends EventEmitter {
             });
             live.host.pty.onExit(event => {
                 live.output = live.output.then(async () => {
-                    info.exitCode = event.exitCode;
-                    info.status = event.exitCode === 0 ? 'exited' : 'error';
-                    info.statusDetail = `exit ${event.exitCode}`;
+                    // node-pty reports exitCode 0 for a killed child; only the signal tells a crash apart.
+                    const crashed = Boolean(event.signal) && !live.host?.stopRequested;
+                    info.exitCode = crashed ? null : event.exitCode;
+                    info.status = event.exitCode === 0 && !crashed ? 'exited' : 'error';
+                    info.statusDetail = crashed ? `signal ${event.signal}` : `exit ${event.exitCode}`;
                     info.statusSince = new Date().toISOString();
                     await this.persist();
                     this.event({ kind: 'session.updated', session: { ...info } });

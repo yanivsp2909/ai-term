@@ -8,6 +8,8 @@ export interface SpawnRecipe {
 export class PtyHost {
     readonly pty: pty.IPty;
     private exited = false;
+    // A signal death the user asked for is an exit; any other one is a crash.
+    stopRequested = false;
     private exitPromise: Promise<void>;
     constructor(recipe: SpawnRecipe, cwd: string, cols: number, rows: number) {
         this.pty = pty.spawn(recipe.executable, recipe.args, { name: 'xterm-256color', cwd, cols, rows, env: recipe.env });
@@ -22,6 +24,7 @@ export class PtyHost {
     async stop(): Promise<void> {
         if (this.exited)
             return;
+        this.stopRequested = true;
         const signal = (name: NodeJS.Signals) => {
             if (this.exited)
                 return;
