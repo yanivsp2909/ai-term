@@ -1,8 +1,8 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: e83b7ed docs: record attach diagnostics and unresolved Terminal.app check
-Roadmap step: v0.1.4 implementation done; B1 partial (original immediate return still needs a controlled Terminal.app check)
+Last commit: ea889b8 docs: record successful Terminal.app attach retest
+Roadmap step: v0.1.4 done; B1 current attach/home behavior confirmed working by Yaniv (historical immediate-return cause unconfirmed)
 Private remote: https://github.com/yanivsp2909/ai-term (main)
 This handover is committed last; its own hash is in git log.
 
@@ -10,6 +10,8 @@ This handover is committed last; its own hash is in git log.
 - B1 diagnostics: `ai debug attach` now prints a reason on every completion/failure. `AI_TERM_DEBUG=1` logs the fixed reason plus at most the first 64 stdin bytes as hex; it is off by default. Timeouts/malformed replies are errors, valid daemon rejection is distinct, and rejected directory paths cannot receive diagnostic writes.
 - Fixed a separately reproduced daemon startup race: the Unix socket is now 0600 at binding, before clients can observe it. Previously it briefly had mode 0700 before chmod, causing intermittent `Unsafe daemon socket` failures.
 - Real CLI outer-PTY regression passes terminal query replies/startup noise, vim text entry, resize, Ctrl+E, reattach with text intact and exit code 0. Already-exited sessions report `session exited`; an early exit cannot swallow a subsequent attach rejection.
+- Yaniv confirmed "now works good" after the fresh-session attached-vim instructions and supplied repeated attach/home/reattach commands. The `back in your shell (home key)` messages are expected detach results; this confirms current physical-terminal behavior, without proving the historical immediate-return cause.
+- Manual-confirmation handover verification passed again: typecheck (`tsc --noEmit`), lint (`eslint .`), 86 tests across 18 files, build success in 11ms. No product code changed; the created /tmp/ai-term-manual-confirm-cache.jb1S5w cache was removed.
 - v0.1.1 scaffold and v0.1.2 renderer spike remain working. Renderer is the pinned custom cell grid (D26); no product homepage exists.
 - Private Unix-socket daemon: protocol 1, 4 MiB bounded frames, per-client validators/queues, hello mismatch closes, single-instance lock, stale recovery, atomic state, redacted rotated logs.
 - Internal shell PTYs: argv spawn, always env hygiene, starting/running/exited/error lifecycle, preview sizing, detached query replies, TERM/KILL stop, restart records become exited.
@@ -24,15 +26,15 @@ This handover is committed last; its own hash is in git log.
 - B1 code/TypeScript reviews passed after fixing all real findings. The code review also checked S2/S8/S15; a fresh security-agent follow-up was rejected by the agent thread limit, so no new security-role review is claimed. B1 evidence, failing-first commits and corrections: docs/spikes/v0.1-attach-b1.md. No homepage or account CLI work was added.
 
 ## What's next
-- Finish B1's controlled physical-terminal check before calling its original reported symptom fixed. Yaniv's latest transcript runs `vim` after `back in your shell (home key)`, so that vim was outside AI Term. The corresponding diagnostic records successful attach and only raw byte 05. The original unexplained return remains unconfirmed; do not claim the socket race caused that home-key return.
-- Copy into one Mac shell: `cd ~/ai-term`, then `aiterm_session_id=$(ai debug shell ~)`, then `AI_TERM_DEBUG=1 ai debug attach "$aiterm_session_id"`. Run vim only while the session remains attached. After Control+E returns home, `ai debug attach "$aiterm_session_id"` should restore that same vim. If attach returns immediately, send the printed reason.
+- B1's fresh-session attach/home/reattach retest is accepted by Yaniv. If the original immediate return recurs, collect its explicit reason with opt-in diagnostics; do not claim the separate socket race caused the previously logged home-key return.
+- Normal use: `ai debug attach "$aiterm_session_id"`; opt-in AI_TERM_DEBUG is no longer needed for successful sessions. Run vim while attached; Ctrl+E returns to the Mac shell and leaves the session running.
 - v0.1.5: homepage, only with a new authorized prompt. Do not start it or Claude/Codex spawning v0.1.6 in this session.
 - Yaniv: run the six physical-terminal checks below. Automation checked protocol, terminal bytes and termios; it does not prove vim/top rendering or keyboard feel in Terminal.app/iTerm2.
 - Planning chat: apply the attach report's §4–6 additions for modes/lifecycle in the attach reply, takeover event, encoded home keys/paste, cleanup and combined flow control. The previously uncommitted v0.1.3 findings were committed alone at this session's start.
 - Prior renderer/key/telemetry manual checks remain in earlier reports. The v0.1.3 transcript showed the same session in a second list command; physical close/reopen remains unconfirmed.
 
 ## Manual checks
-- B1: real terminal reply/noise + clean vim/resize/home/reattach/exit test ran with a created temporary home; passes. Original instant-return symptom not reproduced. Yaniv says the diagnostic attach opened, but his subsequent transcript shows vim launched after return, so physical attached-vim behavior remains needs Yaniv.
+- B1: real terminal reply/noise + clean vim/resize/home/reattach/exit test ran with a created temporary home; passes. Yaniv's subsequent fresh-session retest: ran, reported "now works good" after the attached-vim instructions, with repeated home/reattach returns. Specific resize/text persistence, top and exit/shutdown details were not explicitly reported.
 - B1: use `ai ...` for all user checks, because Yaniv linked the command. The exact five checks and what they prove are in docs/spikes/v0.1-attach-b1.md. Do not run `vim` in the Mac shell after the return message and treat it as attached.
 - Built CLI home, exit, daemon death, actual uncaught error: ran in real outer PTYs with temp AI_TERM_HOME and literal minimal env; normal termios and mode-reset bytes confirmed.
 - Real daemon/fake TTY echo → Ctrl+E → detached dimensions → reattach snapshot → exit: ran. Real PTY size/query and attached versus preview flow tests: ran.
@@ -45,7 +47,7 @@ This handover is committed last; its own hash is in git log.
 - Prior v0.1.3 login-shell/list/peek/doctor/stop checks: ran by Yaniv; transcript details remain in docs/spikes/v0.1-daemon-core.md. Closing/reopening the physical window was not explicitly confirmed.
 
 ## Gotchas
-- B1 is partial even though diagnostics and a separately confirmed socket startup race are fixed. Need user evidence from an actually attached Terminal.app vim session; automated terminal emulation does not prove physical key behavior.
+- B1 current attach/home behavior is confirmed working by Yaniv. The historical immediate-return cause remains unconfirmed; earlier transcripts ran vim outside AI Term, after the return message. Keep that distinction if investigating a recurrence.
 - The existing user daemon and shell/vim/top processes were left running. Tests/drivers cleaned up only their own processes and created folders. Every B1 npm command used /tmp/ai-term-b1-cache.8Tr5Fw, removed afterward; no forbidden credential/config files were read, and no write-boundary exception occurred.
 - Debug hex is reversible input, so capture is explicit, bounded and off by default; do not leave AI_TERM_DEBUG enabled for sensitive session input. No env contents or input text are logged. Log setup must pass directory validation before diagnostics may write.
 - node-pty 1.1.0 still has a 0644 macOS arm64 spawn-helper even when its scripts run. No chmod used this step. Pin 1.2.0-beta.15 and its exact allowScripts approval: published helper is executable and a clean npm ci + real PTY passed. Beta dependency is deliberate and should be revisited when stable packaging is fixed.
