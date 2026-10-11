@@ -12,6 +12,7 @@ interface Peer {
     hello: boolean;
     closing:boolean;
     preview: string | null;
+    attached:string|null;
     refreshing: boolean;
     lagged: boolean;
     queue: Promise<void>;
@@ -40,6 +41,7 @@ export async function socketAnswers(path: string): Promise<boolean> {
 export class DaemonServer {
     private server: Server;
     private peers = new Set<Peer>();
+    private owners=new Map<string,Peer>();
     private socketIdentity: {
         ino: number;
         dev: number;
@@ -52,6 +54,11 @@ export class DaemonServer {
                 this.control(peer, event); });
         manager.on('output', (id: string, data: Buffer) => {
             for (const peer of this.peers) {
+                if(this.owners.get(id)===peer){
+                    peer.socket.write(encodeData(2,id,data));
+                    if(peer.socket.writableLength>1024*1024)this.manager.clientBackpressure(id,true);
+                    continue;
+                }
                 if (peer.preview !== id || peer.refreshing || peer.lagged)
                     continue;
                 if (peer.socket.writableLength > 1024 * 1024) {
@@ -95,27 +102,31 @@ export class DaemonServer {
         this.socketIdentity = { ino: stat.ino, dev: stat.dev };
     }
     private accept(socket: Socket): void {
-        const peer: Peer = { socket, closing:false, hello: false, preview: null, refreshing: false, lagged: false, queue: Promise.resolve() };
+        const peer: Peer = { socket, closing:false, hello: false, attached:null, preview: null, refreshing: false, lagged: false, queue: Promise.resolve() };
         this.peers.add(peer);
         const decoder = new FrameDecoder();
         let queued = 0;let queuedBytes=0;
         socket.setTimeout(5000, () => { if (!peer.hello)
             socket.destroy(); });
         socket.on('error', error => this.log.error(`Client socket failed: ${error.message}`));
-        socket.on('close', () => this.peers.delete(peer));
-        socket.on('drain', () => { if (peer.lagged && peer.preview && !peer.refreshing)
+        socket.on('close', () => {this.peers.delete(peer);void this.detach(peer).catch(error=>{this.log.error(`Disconnect detach failed: ${error instanceof Error?error.message:'unknown'}`);this.manager.emit('fatal',error);});});
+        socket.on('drain', () => { if(peer.attached&&this.owners.get(peer.attached)===peer&&socket.writableLength<256*1024)this.manager.clientBackpressure(peer.attached,false);
+            if (peer.lagged && peer.preview && !peer.refreshing)
             void this.refresh(peer).catch(error => { this.log.error(`Preview refresh failed: ${error instanceof Error ? error.message : 'unknown'}`); socket.destroy(); }); });
         socket.on('data', data => {
             try {
                 for (const frame of decoder.push(data)) {
-                    if (frame.type !== 1)
-                        throw new ProtocolError('UNSUPPORTED_FRAME', 'Input/attach is not implemented');
-                    const value = decodeControl(frame);
+                    if(frame.type===2)throw new ProtocolError('UNSUPPORTED_FRAME','Output frames are daemon-only');
+                    const value=frame.type===1?decodeControl(frame):null;
                     queuedBytes+=frame.payload.length;
                     if (++queued > 128 || queuedBytes > 8*1024*1024)
                         throw new ProtocolError('TOO_MANY_REQUESTS', 'Request queue exceeded');
                     peer.queue = peer.queue.then(async () => { if (!socket.destroyed&&!peer.closing)
-                        await this.handle(peer, value); }).catch(error => { this.log.error(`Request failed: ${error instanceof Error ? error.message : 'unknown'}`); this.control(peer, { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Request failed' } }); }).finally(() => { queued--;queuedBytes-=frame.payload.length; });
+                        if(frame.type===3){
+                            const id=frame.payload.subarray(0,36).toString('ascii');
+                            if(peer.hello&&this.owners.get(id)===peer)this.manager.input(id,frame.payload.subarray(36));
+                            else this.log.info('Dropped input from non-attached client');
+                        }else await this.handle(peer,value); }).catch(error => { this.log.error(`Request failed: ${error instanceof Error ? error.message : 'unknown'}`); this.control(peer, { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Request failed' } }); }).finally(() => { queued--;queuedBytes-=frame.payload.length; });
                 }
             }
             catch (error) {
@@ -160,7 +171,7 @@ export class DaemonServer {
             }
             peer.hello = true;
             peer.socket.setTimeout(0);
-            this.control(peer, { id: request.id, ok: true, kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version, pid: process.pid });
+            this.control(peer, { id: request.id, ok: true, kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version, daemonPid: process.pid });
             return;
         }
         if (!peer.hello) {
@@ -175,6 +186,23 @@ export class DaemonServer {
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
+                case 'sessions.attach':
+                    if(peer.attached&&peer.attached!==request.sessionId)await this.detach(peer);
+                    await this.manager.attach(request.sessionId,request.cols,request.rows,(snapshot,size,modes)=>{
+                        const old=this.owners.get(request.sessionId);
+                        if(old&&old!==peer){old.attached=null;this.control(old,{kind:'session.detached',sessionId:request.sessionId,reason:'attached elsewhere'});}
+                        this.manager.clientBackpressure(request.sessionId,false);
+                        this.owners.set(request.sessionId,peer);peer.attached=request.sessionId;peer.preview=null;
+                        this.control(peer,{id:request.id,ok:true,sessionId:request.sessionId,snapshot,...size,modes,session:this.manager.get(request.sessionId)});
+                    });
+                    if(peer.socket.destroyed||peer.closing)await this.detach(peer);
+                    break;
+                case 'sessions.detach':
+                    if(peer.attached===request.sessionId)await this.detach(peer);
+                    this.control(peer,{id:request.id,ok:true});break;
+                case 'sessions.resize':
+                    await this.manager.resizeAttached(request.sessionId,request.cols,request.rows,()=>this.owners.get(request.sessionId)===peer);
+                    this.control(peer,{id:request.id,ok:true});break;
                 case 'sessions.preview':
                     if (request.sessionId !== null)
                         this.manager.get(request.sessionId);
@@ -211,6 +239,13 @@ export class DaemonServer {
             this.log.error(`Operation failed: ${error instanceof Error ? error.message : 'unknown'}`);
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message: 'Session operation failed' } });
         }
+    }
+    private async detach(peer:Peer):Promise<void> {
+        const id=peer.attached;if(!id)return;
+        await this.manager.detach(id,()=>{
+            if(this.owners.get(id)!==peer)return false;
+            this.owners.delete(id);peer.attached=null;return true;
+        });
     }
     async close(): Promise<void> {
         for (const peer of this.peers)

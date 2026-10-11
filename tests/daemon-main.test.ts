@@ -11,7 +11,7 @@ async function root(){const path=await mkdtemp(join(tmpdir(),'ai-term-main-'));r
 async function exists(path:string){try{await lstat(path);return true;}catch(e){if(isFsError(e,'ENOENT'))return false;throw e;}}
 it('automatically starts its own detached daemon and shuts that process down cleanly',async()=>{
  const paths=getPaths(await root());vi.stubEnv('SHELL','/bin/sh');
- const client=await Connection.connect(paths,{entry:resolve('src/cli/index.ts')});const pid=(await client.hello).pid;if(!pid)throw new Error('No daemon PID');
+ const client=await Connection.connect(paths,{entry:resolve('src/cli/index.ts')});const pid=(await client.hello).daemonPid;if(!pid)throw new Error('No daemon PID');
  try{expect((await client.request({kind:'sessions.list'})).sessions).toEqual([]);}finally{client.close();process.kill(pid,'SIGTERM');await expect.poll(()=>exists(paths.pid),{timeout:5000}).toBe(false);}
 },10000);
 it('idles out after ten minutes with no live sessions or clients',async()=>{

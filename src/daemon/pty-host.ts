@@ -13,7 +13,7 @@ export class PtyHost {
         this.pty = pty.spawn(recipe.executable, recipe.args, { name: 'xterm-256color', cwd, cols, rows, env: recipe.env });
         this.exitPromise = new Promise(resolve => this.pty.onExit(() => { this.exited = true; resolve(); }));
     }
-    write(data: string): void { if (!this.exited)
+    write(data: string | Buffer): void { if (!this.exited)
         this.pty.write(data); }
     resize(cols: number, rows: number): void { if (!this.exited)
         this.pty.resize(cols, rows); }

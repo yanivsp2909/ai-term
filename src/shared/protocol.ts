@@ -47,6 +47,14 @@ export type Request = {
     sessionId: string;
     title: string;
 } | {
+    kind: 'sessions.attach' | 'sessions.resize';
+    sessionId: string;
+    cols: number;
+    rows: number;
+} | {
+    kind: 'sessions.detach';
+    sessionId:string;
+} | {
     kind: 'layout.previewSize';
     cols: number;
     rows: number;
@@ -57,13 +65,14 @@ export interface SuccessResponse {
     kind?: 'hello';
     protocol?: number;
     version?: string;
-    pid?: number;
+    daemonPid?: number;
     sessions?: SessionInfo[];
     session?: SessionInfo;
     snapshot?: string;
     sessionId?: string;
     cols?: number;
     rows?: number;
+    modes?: TerminalModes;
 }
 export type Response = SuccessResponse | {
     id?: string;
@@ -77,7 +86,14 @@ export type Response = SuccessResponse | {
     kind: 'helloMismatch';
     protocol: number;
 };
+export interface TerminalModes {
+    applicationCursorKeys:boolean; applicationKeypad:boolean; bracketedPaste:boolean;
+    mouseTracking:'none'|'x10'|'vt200'|'drag'|'any';
+    mouseEncoding:'default'|'utf8'|'sgr'|'urxvt'; focusEvents:boolean; cursorVisible:boolean;
+}
 export type SessionEvent = {
+    kind:'session.detached'; sessionId:string; reason:'attached elsewhere';
+} | {
     kind: 'session.updated';
     session: SessionInfo;
 } | {

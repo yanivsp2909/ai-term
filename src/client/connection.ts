@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { validateSuccess } from '../shared/validate.js';
 import type { Paths } from '../shared/paths.js';
 import { preparePaths, isFsError } from '../shared/paths.js';
-import { FrameDecoder, encodeControl, decodeControl, PROTOCOL_VERSION, type Request, type SuccessResponse } from '../shared/protocol.js';
+import { FrameDecoder, encodeControl, encodeData, decodeControl, PROTOCOL_VERSION, type Request, type SuccessResponse } from '../shared/protocol.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 export type RequestBody = Request extends infer R ? R extends Request ? Omit<R, 'id'> : never : never;
 export class Connection extends EventEmitter {
@@ -21,11 +21,12 @@ export class Connection extends EventEmitter {
         super();
         const decoder = new FrameDecoder();
         socket.on('error', error => this.fail(error));
-        socket.on('close', () => this.fail(new Error('Daemon connection closed')));
+        socket.on('close', () => {this.fail(new Error('Daemon connection closed'));this.emit('disconnected');});
         socket.on('data', data => {
             try {
                 for (const frame of decoder.push(data)) {
-                    if (frame.type !== 1) {
+                    if(frame.type===3)throw new Error('Unexpected daemon input frame');
+                    if (frame.type === 2) {
                         this.emit('output', frame.payload.subarray(0, 36).toString('ascii'), frame.payload.subarray(36));
                         continue;
                     }
@@ -72,6 +73,7 @@ export class Connection extends EventEmitter {
             } });
         });
     }
+    input(id:string,data:Buffer):void {this.socket.write(encodeData(3,id,data));}
     close(): void { this.socket.destroy(); }
     static async connect(paths: Paths, options: {
         entry: string;

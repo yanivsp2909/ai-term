@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
-import type { SessionInfo, SessionEvent } from '../shared/protocol.js';
+import type { SessionInfo, SessionEvent, TerminalModes } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd } from '../shared/validate.js';
 import { atomicWrite, readState } from './store.js';
 import { Logger } from './log.js';
@@ -15,6 +15,8 @@ interface Live {
     output: Promise<void>;
     queuedBytes:number;
     paused:boolean;
+    attached:boolean;
+    clientPaused:boolean;
 }
 export class SessionManager extends EventEmitter {
     private sessions = new Map<string, Live>();
@@ -34,7 +36,7 @@ export class SessionManager extends EventEmitter {
                 throw new Error('Invalid session record');
             const now = new Date().toISOString();
             const info: SessionInfo = { id: r.id, title: r.title, engine: 'shell', model: 'shell', auth: { kind: 'account' }, cwd: r.cwd, permission: 'ask', status: 'exited', statusDetail: 'background service restarted', statusSince: now, exitCode: null, createdAt: r.createdAt, lastOutputAt: null, ctxPercent: null };
-            this.sessions.set(info.id, { info, mirror: new Mirror(this.size.cols, this.size.rows, () => { }), queuedBytes:0, paused:false, output: Promise.resolve() });
+            this.sessions.set(info.id, { info, mirror: new Mirror(this.size.cols, this.size.rows, () => { }), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() });
         }
         await this.persist();
     }
@@ -62,13 +64,13 @@ export class SessionManager extends EventEmitter {
             throw new Error('Invalid session request');
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? 'shell', engine: 'shell', model: 'shell', auth: { kind: 'account' }, cwd: request.cwd, permission: 'ask', status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null };
-        const live: Live = { info, mirror: new Mirror(this.size.cols, this.size.rows, data => live.host?.write(data)), queuedBytes:0, paused:false, output: Promise.resolve() };
+        const live: Live = { info, mirror: new Mirror(this.size.cols, this.size.rows, data => live.host?.write(data)), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         this.sessions.set(info.id, live);
         try {
             live.host = new PtyHost(this.recipe, request.cwd, this.size.cols, this.size.rows);
             live.host.pty.onData(data => {
                 const bytes=Buffer.byteLength(data);live.queuedBytes+=bytes;
-                if(live.queuedBytes>=1024*1024&&!live.paused){live.host?.pause();live.paused=true;}
+                this.updatePause(live);
                 live.output = live.output.then(async () => {
                     await live.mirror.write(data);
                     info.lastOutputAt = new Date().toISOString();
@@ -82,7 +84,7 @@ export class SessionManager extends EventEmitter {
                     this.emit('output', info.id, Buffer.from(data));
                 }).catch(error => { this.log.error(`Mirror update failed: ${error instanceof Error ? error.message : 'unknown'}`); this.emit('fatal', error); }).finally(()=>{
                     live.queuedBytes-=bytes;
-                    if(live.paused&&live.queuedBytes<=256*1024){live.host?.resume();live.paused=false;}
+                    this.updatePause(live);
                 });
             });
             live.host.pty.onExit(event => {
@@ -117,9 +119,40 @@ export class SessionManager extends EventEmitter {
     async previewSize(cols: number, rows: number): Promise<void> { if (!isSize(cols, rows))
         throw new Error('Invalid preview size'); this.size = { cols, rows }; for (const live of this.sessions.values()) {
         await live.output;
-        live.mirror.resize(cols, rows);
-        live.host?.resize(cols, rows);
+        if(!live.attached){live.mirror.resize(cols, rows);live.host?.resize(cols, rows);}
     } }
+    private updatePause(live:Live):void {
+        const blocked=live.clientPaused||live.queuedBytes>=1024*1024;
+        if(blocked&&!live.paused){live.host?.pause();live.paused=true;}
+        else if(!live.clientPaused&&live.queuedBytes<=256*1024&&live.paused){live.host?.resume();live.paused=false;}
+    }
+    clientBackpressure(id:string,paused:boolean):void {const live=this.sessions.get(id);if(!live)return;live.clientPaused=paused;this.updatePause(live);}
+    input(id:string,data:Buffer):void {const live=this.sessions.get(id);if(live?.attached)live.host?.write(data);}
+    async attach(id:string,cols:number,rows:number,publish:(snapshot:string,size:{cols:number;rows:number},modes:TerminalModes)=>void):Promise<void> {
+        const live=this.sessions.get(id);if(!live||!isSize(cols,rows)||this.closing)throw new Error('Invalid attach');
+        const task=live.output.then(()=>{
+            if(this.closing||this.sessions.get(id)!==live)throw new Error('Session unavailable');
+            live.mirror.resize(cols,rows);live.host?.resize(cols,rows);
+            const snapshot=live.mirror.snapshot();
+            live.attached=true;live.mirror.setAttached(true);
+            publish(snapshot,{cols,rows},live.mirror.modes());
+        });
+        live.output=task.catch(error=>{this.log.error(`Attach failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
+    }
+    async detach(id:string,owned:()=>boolean):Promise<void> {
+        const live=this.sessions.get(id);if(!live)return;
+        const task=live.output.then(()=>{
+            if(!owned())return;
+            live.attached=false;live.mirror.setAttached(false);live.clientPaused=false;this.updatePause(live);
+            live.mirror.resize(this.size.cols,this.size.rows);live.host?.resize(this.size.cols,this.size.rows);
+        });
+        live.output=task.catch(error=>{this.log.error(`Attachment change failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
+    }
+    async resizeAttached(id:string,cols:number,rows:number,owned:()=>boolean):Promise<void> {
+        const live=this.sessions.get(id);if(!live||!isSize(cols,rows))throw new Error('Invalid resize');
+        const task=live.output.then(()=>{if(!owned())throw new Error('Not attached');live.mirror.resize(cols,rows);live.host?.resize(cols,rows);});
+        live.output=task.catch(error=>{this.log.error(`Attachment change failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
+    }
     async shutdown(): Promise<void> { this.closing = true; await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); await this.saving; for (const live of this.sessions.values())
         live.mirror.dispose(); }
 }

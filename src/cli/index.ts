@@ -62,19 +62,19 @@ async function main(): Promise<void> {
     try {
         if (stopDaemon) {
             const hello = await client.hello;
-            if (!hello.pid || !Number.isSafeInteger(hello.pid) || hello.pid < 2)
+            if (!hello.daemonPid || !Number.isSafeInteger(hello.daemonPid) || hello.daemonPid < 2)
                 throw new Error('Daemon returned invalid PID');
             const lock = await open(paths.pid, constants.O_RDONLY | constants.O_NOFOLLOW);
             try {
                 const stat = await lock.stat();
-                if (!stat.isFile() || stat.uid !== process.getuid?.() || stat.size > 32 || Number((await lock.readFile('utf8')).trim()) !== hello.pid)
+                if (!stat.isFile() || stat.uid !== process.getuid?.() || stat.size > 32 || Number((await lock.readFile('utf8')).trim()) !== hello.daemonPid)
                     throw new Error('Daemon PID does not match its private lock');
             }
             finally {
                 await lock.close();
             }
             client.close();
-            process.kill(hello.pid, 'SIGTERM');
+            process.kill(hello.daemonPid, 'SIGTERM');
             const end = Date.now() + 5000;
             while (Date.now() < end) {
                 try {
