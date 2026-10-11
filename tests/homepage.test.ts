@@ -1,0 +1,116 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import type { SessionInfo, SuccessResponse } from '../src/shared/protocol.js';
+import type { RequestBody } from '../src/client/connection.js';
+const session: SessionInfo = { id: randomUUID(), title: 'project shell', engine: 'shell', model: 'shell', auth: { kind: 'account' }, cwd: '/tmp', permission: 'ask', status: 'running', statusDetail: 'running', statusSince: '2026-10-11T10:00:00Z', createdAt: '2026-10-11T10:00:00Z', lastOutputAt: null, ctxPercent: null, exitCode: null };
+class TTY extends EventEmitter {
+  isTTY = true; isRaw = false; columns = 130; rows = 45; output = '';
+  setRawMode(raw: boolean) { this.isRaw = raw; } resume() {} pause() {}
+  write(value: string | Buffer) { this.output += value.toString(); return true; }
+}
+class Client extends EventEmitter {
+  input = vi.fn(); requests: RequestBody[] = []; snapshot = 'hello preview';
+  async request(body: RequestBody): Promise<SuccessResponse> {
+    this.requests.push(body);
+    return { id: randomUUID(), ok: true, ...(body.kind === 'sessions.list' ? { sessions: [session] } : {}), ...(body.kind.startsWith('settings.') ? { settings: { theme: body.kind === 'settings.set' ? body.patch.theme : 'graphite' } } : {}), ...(body.kind === 'sessions.preview' ? { snapshot: this.snapshot, sessionId: body.sessionId ?? undefined, cols: 88, rows: 27 } : {}) };
+  }
+}
+afterEach(() => vi.restoreAllMocks());
+async function fixture() {
+  const { Homepage } = await import('../src/client/tui/homepage.js');
+  const tty = new TTY(), client = new Client(), signals = new EventEmitter();
+  const home = new Homepage(client, { stdin: tty, stdout: tty, signals, cwd: '/tmp' });
+  await home.start();
+  return { home, tty, client, signals };
+}
+describe('homepage layout and cards', () => {
+  it.each([[130, 45], [100, 30], [99, 29], [59, 15]])('plain grid at %sx%s matches the approved breakpoints', async (cols, rows) => {
+    const { renderHomepage } = await import('../src/client/tui/layout.js');
+    const { createTheme } = await import('../src/client/tui/theme.js');
+    const { plainText } = await import('../src/client/tui/grid.js');
+    const grid = renderHomepage({ cols, rows, sessions: [session], selectedId: session.id, input: '', note: '', previewVisible: true, cwd: '/tmp', now: Date.parse('2026-10-11T10:04:00Z') }, createTheme('graphite'));
+    expect(plainText(grid)).toMatchSnapshot();
+    expect(grid).toHaveLength(rows); expect(grid.every(row => row.length === cols)).toBe(true);
+    const text = plainText(grid);
+    if (cols < 60) expect(text.trim()).toBe('make the window bigger');
+    else if (cols < 100) { expect(text).toContain('Agents 1'); expect(text).not.toContain('Usage'); }
+    else { expect(text).toContain('Usage'); expect(text).toContain('This Mac'); expect(text).not.toContain('notify on'); }
+  });
+  it('cards show running, exited 0, error and clipped long names with their status words', async () => {
+    const { renderHomepage } = await import('../src/client/tui/layout.js'), { createTheme } = await import('../src/client/tui/theme.js'), { plainText } = await import('../src/client/tui/grid.js');
+    const sessions = [session, { ...session, id: randomUUID(), status: 'exited' as const, statusDetail: 'exit 0', exitCode: 0 }, { ...session, id: randomUUID(), status: 'error' as const, statusDetail: 'spawn failed' }, { ...session, id: randomUUID(), title: 'very long name '.repeat(4) }];
+    const text = plainText(renderHomepage({ cols: 130, rows: 45, sessions, selectedId: session.id, input: '', note: '', previewVisible: true, cwd: '/tmp', now: Date.parse(session.createdAt) }, createTheme('graphite')));
+    expect(text).toContain('SH'); expect(text).toContain('running'); expect(text).toContain('exited · exit 0'); expect(text).toContain('failed · spawn failed'); expect(text).not.toContain(sessions[3]?.title);
+  });
+  it('waiting sorts to the top, otherwise newest first, keeping the selection visible', async () => {
+    const { sortSessions, visibleStart } = await import('../src/client/tui/layout.js');
+    const newer = { ...session, id: randomUUID(), createdAt: '2026-10-11T11:00:00Z' }, waiting = { ...session, id: randomUUID(), status: 'waiting' as const };
+    expect(sortSessions([session, newer, waiting]).map(s => s.id)).toEqual([waiting.id, newer.id, session.id]);
+    expect(visibleStart(20, 3, 0)).toBe(18); expect(visibleStart(1, 3, 18)).toBe(1);
+  });
+});
+it('letters type with text, shortcut only with an empty field; Ctrl+C needs two within one second', async () => {
+  const { CommandField } = await import('../src/client/tui/keys.js');
+  const field = new CommandField();
+  expect(field.key('p', 0)).toEqual({ kind: 'preview' });
+  field.key('h', 0); field.key('p', 0); expect(field.text).toBe('hp');
+  field.key('escape', 0); expect(field.text).toBe('');
+  expect(field.key('ctrl-c', 10).kind).toBe('note');
+  expect(field.key('ctrl-c', 1011).kind).toBe('note');
+  expect(field.key('ctrl-c', 1100).kind).toBe('quit');
+});
+it('decodes fragmented arrows, UTF-8, SGR mouse and bracketed paste without treating pasted shortcuts as actions', async () => {
+  const { InputParser } = await import('../src/client/tui/keys.js');
+  const events: unknown[] = []; const parser = new InputParser(event => events.push(event));
+  parser.push(Buffer.from('\x1b[')); parser.push(Buffer.from('A界')); parser.push(Buffer.from('\x1b[<0;42;5M\x1b[<0;43;5m'));
+  parser.push(Buffer.from('\x1b[200~p\r/exit\x1b[201~'));
+  expect(events).toContainEqual({ kind: 'key', key: 'up' }); expect(events).toContainEqual({ kind: 'key', key: '界' });
+  expect(events).toContainEqual({ kind: 'mouse', button: 0, x: 41, y: 4, release: true });
+  expect(events).toContainEqual({ kind: 'paste', text: 'p /exit' }); parser.dispose();
+});
+it('S15: OSC 52 / title / bell in a session never reaches homepage stdout', async () => {
+  const { home, tty, client } = await fixture();
+  try {
+    client.emit('output', session.id, Buffer.from('\x1b]52;c;FORBIDDEN_CLIPBOARD\x07\x1b]0;FORBIDDEN_TITLE\x07\x07safe cell text'));
+    await expect.poll(() => tty.output.includes('safe cell text')).toBe(true);
+    expect(tty.output).not.toContain('FORBIDDEN'); expect(tty.output).not.toContain('\x07'); expect(tty.output).not.toContain('\x1b]');
+  } finally { await home.stop(); }
+});
+it('homepage is read-only: no input frame is sent for typing, arrows, paste or mouse', async () => {
+  const { home, tty, client } = await fixture();
+  try {
+    tty.emit('data', Buffer.from('hello\r\x1b[A\x1b[200~echo nope\r\x1b[201~\x1b[<0;42;5M'));
+    await new Promise(resolve => setTimeout(resolve, 40));
+    expect(client.input).not.toHaveBeenCalled(); expect(client.requests.some(r => r.kind === 'sessions.create')).toBe(false);
+  } finally { await home.stop(); }
+});
+it('theme switch sends settings.set and the next frame uses the new colors', async () => {
+  const { home, tty, client } = await fixture();
+  try {
+    const before = tty.output.length; tty.emit('data', Buffer.from('/theme slate\r'));
+    await expect.poll(() => client.requests.some(r => r.kind === 'settings.set')).toBe(true);
+    await expect.poll(() => tty.output.slice(before).includes('48;2;27;32;41m')).toBe(true);
+  } finally { await home.stop(); }
+});
+it('previewSize report changes on SIGWINCH and forces a complete redraw', async () => {
+  const { home, tty, client, signals } = await fixture();
+  try {
+    const initial = client.requests.find(r => r.kind === 'layout.previewSize'), before = tty.output.length;
+    tty.columns = 100; tty.rows = 30; signals.emit('SIGWINCH');
+    await expect.poll(() => client.requests.filter(r => r.kind === 'layout.previewSize').length).toBe(2);
+    expect(client.requests.filter(r => r.kind === 'layout.previewSize')[1]).not.toEqual(initial);
+    expect(tty.output.slice(before)).toContain('\x1b[2J');
+  } finally { await home.stop(); }
+});
+it('idle homepage writes no redraws and restores mouse/raw/alternate modes on quit and crash', async () => {
+  for (const crash of [false, true]) {
+    const { home, tty, signals } = await fixture();
+    await new Promise(resolve => setTimeout(resolve, 70)); const before = tty.output.length;
+    await new Promise(resolve => setTimeout(resolve, 80)); expect(tty.output.length).toBe(before);
+    const outcome = home.done.catch(error => error);
+    if (crash) signals.emit('uncaughtException', new Error('forced crash')); else tty.emit('data', Buffer.from('/exit\r'));
+    await outcome;
+    expect(tty.isRaw).toBe(false); expect(tty.output).toContain('\x1b[?1002l'); expect(tty.output).toContain('\x1b[?1006l'); expect(tty.output.endsWith('\x1b[?1049l')).toBe(true);
+  }
+});
