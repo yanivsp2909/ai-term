@@ -21,7 +21,7 @@ Full values and usage notes are in `docs/design/tokens.json`. Code reads colors 
 
 | Token | Dark (Graphite) | Light | Use |
 |---|---|---|---|
-| `bg` | `#1E1F22` | `#FAFAF9` | ground. In other terminals the TUI paints nothing and inherits their background |
+| `bg` | `#1E1F22` | `#FAFAF9` | ground. Fixed palettes paint it; auto inherits the terminal background with SGR 49 |
 | `surface` | `#26282C` | `#F1F1EF` | command bar field, popups, frame bar, preview terminal area |
 | `surface-2` | `#313338` | `#E8E9E6` | selected row, key caps, logo badges. Never a large area |
 | `line` | `#4A4D55` | `#9EA3AB` | box borders and dividers. Decorative: nothing is told apart by a border alone |

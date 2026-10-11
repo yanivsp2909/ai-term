@@ -227,7 +227,7 @@ it('catch-up arriving during initial snapshot parse supersedes the startup snaps
     const { Preview } = await import('../src/client/tui/preview.js');
     const write = Preview.prototype.write;
     let caught = false;
-    const spy = vi.spyOn(Preview.prototype, 'write').mockImplementation(function (data) {
+    const spy = vi.spyOn(Preview.prototype, 'write').mockImplementation(function (this: import('../src/client/tui/preview.js').Preview, data) {
       if (data === 'hello preview' && !caught) {
         caught = true;
         const activeId = (home as unknown as { previewRequestId: string }).previewRequestId;

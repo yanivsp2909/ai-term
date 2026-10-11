@@ -144,7 +144,7 @@ type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 
 hello            {protocol: 1, version}            → {protocol, version, daemonPid}
 sessions.list    {}                                  → {sessions: SessionInfo[]}
 sessions.create  {engine, model, auth, cwd, permission, title?, firstMessage?}  → {session}
-sessions.attach  {sessionId, cols, rows}             → {snapshot, cols, rows}   then output frames stream
+sessions.attach  {sessionId, cols, rows}             → {snapshot, cols, rows, modes, session} then output frames stream
 sessions.detach  {sessionId}
 sessions.resize  {sessionId, cols, rows}             // attached client only
 sessions.preview {sessionId | null}                  → {snapshot, cols, rows} then output frames (read-only; null = stop).
@@ -162,11 +162,13 @@ keys.test        {keyId}                             → {results: DeploymentTes
 keys.scanEnvFile {path}                              → {found: {name, provider}[]}   // names only, never values
 keys.importEnv   {path, names}                       → {keys: KeyView[]}
 usage.summary    {}                                  → {summary: UsageSummary}
-settings.get     {} / settings.set {patch}
+settings.get     {} → {settings: {theme}}
+settings.set     {patch: {theme}} → {settings: {theme}} // v0.1.5: graphite|slate|ink|auto|light only; settings.json 0600
 system.subscribe {on: boolean}
 
 // events (daemon → client)
-session.updated {session}   session.removed {sessionId}   usage.updated {summary}   system.stats {stats}
+session.updated {session}   session.removed {sessionId}
+session.previewResized {sessionId, cols, rows}        // attach/detach/resize: previews request a fresh sized snapshot   usage.updated {summary}   system.stats {stats}
 ```
 
 `SessionInfo` = `{id, title, engine, model, auth: {kind, provider?, keyLabel?, last4?}, cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: number | null}`.

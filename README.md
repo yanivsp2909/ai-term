@@ -15,7 +15,7 @@ Agents keep running in a background service when you leave them or close the ter
 Personal and learning project. macOS first; Linux and Windows by v0.8.
 
 ## Status
-Nothing to run yet. The repo has its docs; code starts at v0.1.1. See `PROGRESS.md`.
+`ai` opens the v0.1.5 homepage with shell sessions, live read-only previews, attach/Ctrl+E home, scroll/copy, and saved themes. Create a shell with `ai debug shell [cwd]`. Agent starting comes in v0.1.6; login/keys in v0.1.7; usage and Mac stats in v0.1.8. See `PROGRESS.md` and `docs/testing/v0.1.5-homepage.md` for verification and manual checks.
 
 ## Docs
 - `AGENTS.md`: rules for every coding agent working here
