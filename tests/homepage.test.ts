@@ -117,3 +117,58 @@ it('idle homepage writes no redraws and restores mouse/raw/alternate modes on qu
     expect(tty.isRaw).toBe(false); expect(tty.output).toContain('\x1b[?1002l'); expect(tty.output).toContain('\x1b[?1006l'); expect(tty.output.endsWith('\x1b[?1049l')).toBe(true);
   }
 });
+it('turns homepage mouse reporting off before attach, restores it after home, and resubscribes preview', async () => {
+  const { Homepage } = await import('../src/client/tui/homepage.js');
+  const tty = new TTY(), client = new Client(), signals = new EventEmitter();
+  let returnHome: (reason: 'home key') => void = () => {};
+  const attachSession = vi.fn(() => new Promise<'home key'>(resolve => { returnHome = resolve; }));
+  const home = new Homepage(client, { stdin: tty, stdout: tty, signals, attachSession });
+  await home.start();
+  try {
+    tty.emit('data', Buffer.from('\r'));
+    await expect.poll(() => attachSession.mock.calls.length).toBe(1);
+    expect(tty.output.endsWith('\x1b[?1049l')).toBe(true); expect(tty.isRaw).toBe(false);
+    const attachStart = tty.output.length;
+    tty.emit('data', Buffer.from('session-only'));
+    returnHome('home key');
+    await expect.poll(() => client.requests.filter(r => r.kind === 'sessions.preview' && r.sessionId === session.id).length).toBe(2);
+    expect(tty.output.slice(attachStart)).toContain('\x1b[?1006h'); expect(tty.isRaw).toBe(true);
+    expect(client.input).not.toHaveBeenCalled(); expect(tty.output).not.toContain('session-only');
+  } finally { await home.stop(); }
+});
+it('drag selection highlights and copies plain preview text, clearing the flash after 1.2 seconds', async () => {
+  const { Homepage } = await import('../src/client/tui/homepage.js');
+  const tty = new TTY(), client = new Client(), copy = vi.fn(async () => {}), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), copy });
+  await home.start();
+  try {
+    tty.emit('data', Buffer.from('\x1b[<0;41;4M\x1b[<32;45;4M\x1b[<0;45;4m'));
+    await expect.poll(() => copy.mock.calls.length).toBe(1);
+    expect(copy).toHaveBeenCalledWith('hello'); await expect.poll(() => tty.output.includes('✓ copied 1 lines')).toBe(true);
+  } finally { await home.stop(); }
+});
+it('stop asks y/n, rename saves inline and remove targets only exited/error records', async () => {
+  const { home, tty, client } = await fixture();
+  try {
+    tty.emit('data', Buffer.from('s')); expect(client.requests.some(r => r.kind === 'sessions.stop')).toBe(false);
+    tty.emit('data', Buffer.from('y'));
+    await expect.poll(() => client.requests.some(r => r.kind === 'sessions.stop')).toBe(true);
+    tty.emit('data', Buffer.from('r\x7fnew\r'));
+    await expect.poll(() => client.requests.some(r => r.kind === 'sessions.rename')).toBe(true);
+    tty.emit('data', Buffer.from('x')); expect(client.requests.some(r => r.kind === 'sessions.remove')).toBe(false);
+    client.emit('event', { kind: 'session.updated', session: { ...session, status: 'exited', exitCode: 0 } }); tty.emit('data', Buffer.from('x'));
+    await expect.poll(() => client.requests.some(r => r.kind === 'sessions.remove')).toBe(true);
+  } finally { await home.stop(); }
+});
+it('Ctrl+C quits during stop confirmation and inline rename', async () => {
+  for (const key of ['s', 'r']) {
+    const { home, tty } = await fixture();
+    tty.emit('data', Buffer.from(key + '\x03\x03'));
+    const result = await Promise.race([home.done.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 80))]);
+    await home.stop(); expect(result).toBe(true);
+  }
+});
+it('daemon session validation rejects malformed strings and lifecycle metadata before rendering', async () => {
+  const { validateSession } = await import('../src/shared/validate.js');
+  expect(validateSession(session)).toEqual(session);
+  for (const patch of [{ statusSince: 'bad' }, { statusDetail: {} }, { model: '-bad' }, { auth: null }, { cwd: '/tmp\0bad' }]) expect(() => validateSession({ ...session, ...patch })).toThrow();
+});
