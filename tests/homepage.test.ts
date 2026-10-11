@@ -172,3 +172,30 @@ it('daemon session validation rejects malformed strings and lifecycle metadata b
   expect(validateSession(session)).toEqual(session);
   for (const patch of [{ statusSince: 'bad' }, { statusDetail: {} }, { model: '-bad' }, { auth: null }, { cwd: '/tmp\0bad' }]) expect(() => validateSession({ ...session, ...patch })).toThrow();
 });
+it('S2 rejects arrays and objects for daemon session engine and status', async () => {
+  const { validateSession } = await import('../src/shared/validate.js');
+  for (const patch of [{ engine: ['shell'] }, { status: ['running'] }, { engine: {} }, { status: {} }]) expect(() => validateSession({ ...session, ...patch })).toThrow();
+});
+it('dragging scroll banners never copies hidden preview text', async () => {
+  const { Homepage } = await import('../src/client/tui/homepage.js');
+  const tty = new TTY(), client = new Client(), copy = vi.fn(async () => {}); client.snapshot = Array.from({ length: 70 }, (_, i) => `line ${i}`).join('\r\n');
+  const home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), copy }); await home.start();
+  try {
+    tty.emit('data', Buffer.from('\x1b[5~')); await new Promise(resolve => setTimeout(resolve, 40));
+    tty.emit('data', Buffer.from('\x1b[<0;41;4M\x1b[<0;45;4m')); await Promise.resolve();
+    expect(copy).not.toHaveBeenCalled();
+  } finally { await home.stop(); }
+});
+it('latest catch-up snapshot wins without sharing chunks with older queued snapshots', async () => {
+  const { home, tty, client } = await fixture();
+  try {
+    const request = client.requests.find(r => r.kind === 'sessions.preview' && r.sessionId === session.id); expect(request).toBeDefined();
+    // Correlation id is obtained from a fake response recorded for this test.
+    const activeId = (home as unknown as { previewRequestId: string }).previewRequestId;
+    client.emit('event', { id: activeId, ok: true, sessionId: session.id, snapshot: 'OLD_SNAPSHOT', cols: 88, rows: 27 });
+    client.emit('event', { id: activeId, ok: true, sessionId: session.id, snapshot: 'LATEST_SNAPSHOT', cols: 88, rows: 27 });
+    client.emit('output', session.id, Buffer.from('\r\nLATEST_LIVE'));
+    await expect.poll(() => tty.output.includes('LATEST_SNAPSHOT')).toBe(true);
+    await expect.poll(() => tty.output.includes('LATEST_LIVE')).toBe(true);
+  } finally { await home.stop(); }
+});

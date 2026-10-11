@@ -41,3 +41,21 @@ it('auto accepts split OSC11 replies, retains SGR49 ground and uses slate on tim
   expect(styleEscape({ char: ' ', fg: theme.colors.ink, bg: theme.colors.bg, bold: false, width: 1 }, theme)).toContain(';49m');
   expect(createTheme('auto', '#ffffff').colors.ink).toBe('#1b1d21');
 });
+it('OSC11 filtering preserves unrelated Alt+] typing and recovers malformed replies', async () => {
+  const { BackgroundReplies } = await import('../src/client/tui/theme.js'); const parser = new BackgroundReplies(() => {});
+  expect(parser.push(Buffer.from('\x1b]hello\rworld')).toString()).toBe('\x1b]hello\rworld');
+  parser.push(Buffer.from('\x1b]11;rgb:ab!')); expect(parser.push(Buffer.from('typing')).toString()).toBe('typing');
+});
+it('wrap-only output past 5000 lines preserves the anchor and counts newly scrolled lines', async () => {
+  const { Preview } = await import('../src/client/tui/preview.js'); const preview = new Preview(4, 3, () => {});
+  try {
+    await preview.write('x'.repeat(4 * 5010)); preview.scroll(-10);
+    const before = preview.top;
+    await preview.write('y'.repeat(20)); expect(preview.top).toBe(before - 5); expect(preview.newLines).toBe(5);
+  } finally { preview.dispose(); }
+});
+it('source execution loads design palettes without a Vite loader', async () => {
+  const { execFile } = await import('node:child_process');
+  const result = await new Promise<string>((resolve, reject) => execFile(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', "await import('./src/client/tui/theme.ts')"], { cwd: process.cwd(), env: { PATH: '/usr/bin:/bin' } }, (error, stdout) => error ? reject(error) : resolve(stdout)));
+  expect(result).toBe('');
+});

@@ -38,3 +38,19 @@ it('refuses symlinked or malformed settings instead of silently replacing them',
   await writeFile(join(root, 'settings.json'), '{"theme":"invalid"}');
   await expect(new SettingsStore(root).get()).rejects.toThrow();
 });
+it('settings.get and settings.set round-trip through the daemon with invalid patches refused', async () => {
+  const { getPaths, preparePaths } = await import('../src/shared/paths.js');
+  const { SessionManager } = await import('../src/daemon/session-manager.js');
+  const { DaemonServer } = await import('../src/daemon/server.js');
+  const { Connection } = await import('../src/client/connection.js');
+  const { Logger } = await import('../src/daemon/log.js');
+  const root = await temporary(), paths = getPaths(root); await preparePaths(paths);
+  const log = new Logger(paths.log), manager = new SessionManager(paths, log, { executable: '/bin/sh', args: [], env: { PATH: '/usr/bin:/bin' } }); await manager.load();
+  const server = new DaemonServer(paths, manager, log); await server.listen();
+  const client = await Connection.connect(paths, { entry: '/unused', autoStart: false });
+  try {
+    expect((await client.request({ kind: 'settings.get' })).settings).toEqual({ theme: 'graphite' });
+    expect((await client.request({ kind: 'settings.set', patch: { theme: 'auto' } })).settings).toEqual({ theme: 'auto' });
+    expect((await client.request({ kind: 'settings.get' })).settings).toEqual({ theme: 'auto' });
+  } finally { client.close(); await server.close(); await manager.shutdown(); }
+});
