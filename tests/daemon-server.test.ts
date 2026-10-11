@@ -90,3 +90,19 @@ it('never runs coalesced requests after a hello mismatch',async()=>{
  socket.write(Buffer.concat([encodeControl({id:randomUUID(),kind:'hello',protocol:99,version:'bad'}),encodeControl({id:randomUUID(),kind:'hello',protocol:1,version:'valid'}),encodeControl({id:randomUUID(),kind:'sessions.create',engine:'shell',cwd:paths.root})]));
  await closed;expect(manager.list()).toEqual([]);expect(replies).toHaveLength(1);expect(replies[0]).toMatchObject({kind:'helloMismatch'});
 });
+it('keeps a client connected through a snapshot near the 4 MiB frame limit and the events after it',async()=>{
+ // Per-cell truecolor makes a ~2.3 MB snapshot, above the old 2 MiB control-queue cap.
+ const perl="$|=1; for $l (1..1200) { $s=q(); for $c (1..80) { $s .= sprintf(qq(\\e[38;2;%d;%d;%dm%s), ($l*7+$c)%256, ($c*13)%256, ($l*3)%256, chr(65+($c%26))); } print qq($s\\e[0m\\r\\n); }";
+ const {paths,manager}=await setup(['-c',`/usr/bin/perl -e '${perl}'; exec /bin/sleep 30`]);
+ const entry=resolve('src/cli/index.ts');
+ const client=await Connection.connect(paths,{entry,autoStart:false}),other=await Connection.connect(paths,{entry,autoStart:false});
+ let closed=false;client.on('disconnected',()=>{closed=true;});cleanup.unshift(async()=>{client.close();other.close();});
+ const session=(await client.request({kind:'sessions.create',engine:'shell',cwd:paths.root})).session;if(!session)throw new Error('Missing session');
+ await expect.poll(async()=>Buffer.byteLength(JSON.stringify(await manager.snapshot(session.id))),{timeout:10000,interval:200}).toBeGreaterThan(2.1*1024*1024);
+ const preview=client.request({kind:'sessions.preview',sessionId:session.id});await other.request({kind:'layout.previewSize',cols:86,rows:30});
+ expect((await preview).snapshot?.length).toBeGreaterThan(2*1024*1024);
+ await client.request({kind:'sessions.preview',sessionId:null});
+ const attached=await client.request({kind:'sessions.attach',sessionId:session.id,cols:85,rows:30});
+ expect(attached.snapshot?.length).toBeGreaterThan(2*1024*1024);
+ await new Promise(r=>setTimeout(r,100));expect(closed).toBe(false);
+},20000);
