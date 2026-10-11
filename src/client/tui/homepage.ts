@@ -283,8 +283,10 @@ export class Homepage {
     const point = { x: Math.max(0, Math.min(area.w - 1, event.x - area.x)), y: Math.max(firstRow, Math.min(lastRow - 1, event.y - area.y)) };
     if (!event.release && !(event.button & 32) && (event.button & 3) === 0 && inside) { this.drag = point; preview.select(point, point); }
     else if (this.drag) {
-      preview.select(this.drag, point);
-      if (event.release) {
+      const start = this.drag; preview.select(start, point);
+      // A click without movement is not a selection; it must never overwrite the clipboard.
+      if (event.release && start.x === point.x && start.y === point.y) { this.drag = null; preview.clearSelection(); }
+      else if (event.release) {
         this.drag = null; const text = preview.selectedText(area.w);
         void (this.options.copy ?? copyText)(text).then(() => { if (!this.ended) this.showNote(`✓ copied ${text.split('\n').length} lines`, 1200, true); }).catch(error => this.showNote(error instanceof Error ? error.message : 'Copy failed'));
       }
