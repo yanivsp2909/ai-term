@@ -63,3 +63,9 @@ it('preview-size changes leave attached PTYs alone and resize requests require o
  await a.request({kind:'sessions.resize',sessionId:id,cols:61,rows:19});a.input(id,Buffer.from('stty size\n'));await expect.poll(()=>manager.snapshot(id)).toContain('19 61');
  await a.request({kind:'sessions.detach',sessionId:id});expect(await b.request({kind:'sessions.preview',sessionId:id})).toMatchObject({cols:50,rows:15});
 });
+it('removing an attached exited session clears ownership before the client disconnects',async()=>{
+ const {a,b,id,manager,server}=await setup();await a.request({kind:'sessions.attach',sessionId:id,cols:40,rows:12});
+ await b.request({kind:'sessions.stop',sessionId:id});await b.request({kind:'sessions.remove',sessionId:id});
+ const detach=vi.spyOn(manager,'detach');a.close();await expect.poll(()=>server.clientCount()).toBe(1);
+ expect(detach).not.toHaveBeenCalled();expect(manager.list()).toHaveLength(0);
+});

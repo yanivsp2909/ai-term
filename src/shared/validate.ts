@@ -88,7 +88,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.kind!==undefined && (v.kind!=='hello'||v.protocol!==1||typeof v.version!=='string'||!/^[A-Za-z0-9._-]{1,40}$/.test(v.version)||!Number.isSafeInteger(v.daemonPid)||Number(v.daemonPid)<2))throw new ValidationError('Invalid daemon hello');
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
     if(v.modes!==undefined)validateModes(v.modes);
-    const session=(x:unknown)=>{if(!x||typeof x!=='object')return false;const s=x as Record<string,unknown>;return isUUID(s.id)&&isTitle(s.title)&&s.engine==='shell'&&typeof s.cwd==='string'&&isAbsolute(s.cwd)&&['starting','running','exited','error'].includes(String(s.status));};
+    const session=(x:unknown)=>{if(!x||typeof x!=='object')return false;const s=x as Record<string,unknown>;return isUUID(s.id)&&isTitle(s.title)&&s.engine==='shell'&&typeof s.cwd==='string'&&isAbsolute(s.cwd)&&['starting','running','exited','error'].includes(String(s.status))&&(s.exitCode===null||Number.isSafeInteger(s.exitCode));};
     if(v.session!==undefined&&!session(v.session))throw new ValidationError('Invalid daemon session');
     if(v.sessions!==undefined&&(!Array.isArray(v.sessions)||!v.sessions.every(session)))throw new ValidationError('Invalid daemon sessions');
     return v as unknown as SuccessResponse;
@@ -100,4 +100,10 @@ export function validateModes(value:unknown):import('./protocol.js').TerminalMod
     for(const key of ['applicationCursorKeys','applicationKeypad','bracketedPaste','focusEvents','cursorVisible'])if(typeof m[key]!=='boolean')throw new ValidationError('Invalid terminal modes');
     if(!['none','x10','vt200','drag','any'].includes(String(m.mouseTracking))||!['default','utf8','sgr','urxvt'].includes(String(m.mouseEncoding)))throw new ValidationError('Invalid terminal modes');
     return m as unknown as import('./protocol.js').TerminalModes;
+}
+
+export function validateExitCode(value:unknown):number|undefined {
+    if(value===null)return undefined;
+    if(typeof value!=='number'||!Number.isSafeInteger(value))throw new ValidationError('Invalid session exit code');
+    return value;
 }

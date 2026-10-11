@@ -219,13 +219,17 @@ export class DaemonServer {
                     await this.manager.stop(request.sessionId);
                     this.control(peer, { id: request.id, ok: true });
                     break;
-                case 'sessions.remove':
+                case 'sessions.remove': {
                     await this.manager.remove(request.sessionId);
+                    const removedOwner=this.owners.get(request.sessionId);
+                    if(removedOwner)removedOwner.attached=null;
+                    this.owners.delete(request.sessionId);
                     for (const p of this.peers)
                         if (p.preview === request.sessionId)
                             p.preview = null;
                     this.control(peer, { id: request.id, ok: true });
                     break;
+                }
                 case 'sessions.rename':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.rename(request.sessionId, request.title) });
                     break;

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type { RequestBody } from './connection.js';
 import type { SuccessResponse } from '../shared/protocol.js';
-import { isUUID, isSize, validateModes } from '../shared/validate.js';
+import { isUUID, isSize, validateModes, validateExitCode } from '../shared/validate.js';
 import { HomeKeyFilter } from './input-filter.js';
 import { enterModes, RESET_MODES } from './terminal-modes.js';
 export interface AttachTTY extends EventEmitter {
@@ -42,11 +42,14 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
     }catch(error){end(error instanceof Error?error:new Error('Output failed'));}
   };
   const onEvent=(value:unknown)=>{
-    if(!value||typeof value!=='object')return;const event=value as Record<string,unknown>;
+    if(ended||!value||typeof value!=='object')return;const event=value as Record<string,unknown>;
     if(event.kind==='session.detached'&&event.sessionId===id){end();return;}
     if(event.kind==='session.updated'&&event.session&&typeof event.session==='object'){
       const session=event.session as Record<string,unknown>;
-      if(session.id===id&&(session.status==='exited'||session.status==='error')){sessionEnded=true;exitCode=typeof session.exitCode==='number'?session.exitCode:undefined;end();}
+      if(session.id===id&&(session.status==='exited'||session.status==='error')){
+        try{exitCode=validateExitCode(session.exitCode);sessionEnded=true;end();}
+        catch(error){end(error instanceof Error?error:new Error('Invalid session exit code'));}
+      }
     }
   };
   const onDisconnect=()=>end(new Error('Daemon connection closed'));
@@ -69,7 +72,7 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
       const modes=validateModes(result.modes);
       active=!ended;writeOutput(result.snapshot);writeOutput(enterModes(modes));
       for(const data of buffered)writeOutput(data);buffered.length=0;
-      if(result.session&&(result.session.status==='exited'||result.session.status==='error')){exitCode=result.session.exitCode??undefined;end();}
+      if(result.session&&(result.session.status==='exited'||result.session.status==='error')){exitCode=validateExitCode(result.session.exitCode);end();}
     }
     await done;
   }catch(error){end(error instanceof Error?error:new Error('Attach failed'));}
