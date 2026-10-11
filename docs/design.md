@@ -163,7 +163,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - **Popup** with sections:
   - **KEYS** (OS keychain): label, endpoint, `key ····last4`, plus `+ add key` (paste, or import from .env).
   - **ENGINES:** Claude Code / Codex, each with `✓ installed` and `✓ logged in` (or `✗ not logged in` with `/login`).
-  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), home key, theme, copy on select, budget.
+  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, copy on select, budget.
 - **Footer:** `keys are never shown in full and never written to .env`.
 
 ### /login
