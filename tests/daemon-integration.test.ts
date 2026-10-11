@@ -112,3 +112,14 @@ it('rejects a second daemon and recovers a stale lock', async () => {
     } }, { timeout: 5000 }).toBe(true);
     expect((await wait(run(root, ['daemon', 'stop']))).code).toBe(0);
 }, 15000);
+it('peek renders generated PTY control sequences as plain text and never forwards OSC or bell',async()=>{
+ const root=await temp(),paths=getPaths(root);
+ const {preparePaths}=await import('../src/shared/paths.js');const {SessionManager}=await import('../src/daemon/session-manager.js');const {DaemonServer}=await import('../src/daemon/server.js');const {Logger}=await import('../src/daemon/log.js');
+ await preparePaths(paths);
+ const manager=new SessionManager(paths,new Logger(paths.log),{executable:'/bin/sh',args:['-c',"printf '\\033]52;c;R0VORVJBVEVE\\007\\033]0;GENERATED_TITLE\\007\\007plain\\n'; exit 0"],env:{PATH:'/usr/bin:/bin'}});await manager.load();
+ const server=new DaemonServer(paths,manager,new Logger(paths.log));await server.listen();
+ try{
+  const session=await manager.create({cwd:root});await expect.poll(()=>manager.get(session.id).exitCode).toBe(0);
+  const peek=await wait(run(root,['debug','peek',session.id]));expect(peek.code).toBe(0);expect(peek.out).toContain('plain');expect(peek.out.includes(String.fromCharCode(27))).toBe(false);expect(peek.out.includes(String.fromCharCode(7))).toBe(false);expect(peek.out).not.toContain('GENERATED_TITLE');expect(peek.out).not.toContain('R0VORVJBVEVE');
+ }finally{await server.close();await manager.shutdown();}
+});
