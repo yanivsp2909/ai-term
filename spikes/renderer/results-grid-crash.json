@@ -1,0 +1,44 @@
+{
+  "command": "/opt/homebrew/bin/node spikes/renderer/main.js grid --crash",
+  "seconds_requested": 3.0,
+  "terminal": [
+    130,
+    45
+  ],
+  "cpu_samples": [
+    18.3
+  ],
+  "cpu_average": 18.3,
+  "cpu_max": 18.3,
+  "wall_startup_ms": 60.927500016987324,
+  "input_samples_injected": 2,
+  "exit_code": 1,
+  "resize_injected": false,
+  "canonical_mode_restored": true,
+  "cursor_restore_seen": true,
+  "alt_off_seen": true,
+  "sync_off_seen": true,
+  "metrics": {
+    "engine": "grid",
+    "duration": 1.19895325,
+    "startupMs": 49.385209,
+    "frames": {
+      "n": 37,
+      "avg": 3.690988783783779,
+      "p95": 5.244000000000028,
+      "max": 5.847667000000115
+    },
+    "latencyMs": {
+      "n": 2,
+      "avg": 3.434728999999976,
+      "p95": 3.635249999999985,
+      "max": 3.635249999999985
+    },
+    "stdoutBytes": 27226,
+    "bytesPerSecond": 22708.141455890796,
+    "secondBuckets": [
+      4360
+    ],
+    "error": "intentional renderer crash"
+  }
+}

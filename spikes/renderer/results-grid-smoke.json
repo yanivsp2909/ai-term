@@ -1,0 +1,48 @@
+{
+  "command": "/opt/homebrew/bin/node spikes/renderer/main.js grid",
+  "seconds_requested": 3.0,
+  "terminal": [
+    130,
+    45
+  ],
+  "cpu_samples": [
+    21.0,
+    12.3,
+    10.4
+  ],
+  "cpu_average": 14.566666666666668,
+  "cpu_max": 21.0,
+  "wall_startup_ms": 64.18275006581098,
+  "input_samples_injected": 7,
+  "exit_code": 0,
+  "resize_injected": true,
+  "canonical_mode_restored": true,
+  "cursor_restore_seen": true,
+  "alt_off_seen": true,
+  "sync_off_seen": true,
+  "metrics": {
+    "engine": "grid",
+    "duration": 3.042809709,
+    "startupMs": 49.758291,
+    "frames": {
+      "n": 96,
+      "avg": 2.754701791666657,
+      "p95": 4.877541000000065,
+      "max": 5.7621250000001965
+    },
+    "latencyMs": {
+      "n": 7,
+      "avg": 1.8931009999999364,
+      "p95": 3.42841599999997,
+      "max": 3.42841599999997
+    },
+    "stdoutBytes": 51346,
+    "bytesPerSecond": 16874.535350708647,
+    "secondBuckets": [
+      4360,
+      21224,
+      3376
+    ],
+    "error": null
+  }
+}

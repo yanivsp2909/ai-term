@@ -1,0 +1,44 @@
+{
+  "command": "/opt/homebrew/bin/node spikes/renderer/main.js ink --crash",
+  "seconds_requested": 3.0,
+  "terminal": [
+    130,
+    45
+  ],
+  "cpu_samples": [
+    61.7
+  ],
+  "cpu_average": 61.7,
+  "cpu_max": 61.7,
+  "wall_startup_ms": 200.932375038974,
+  "input_samples_injected": 2,
+  "exit_code": 1,
+  "resize_injected": false,
+  "canonical_mode_restored": true,
+  "cursor_restore_seen": true,
+  "alt_off_seen": true,
+  "sync_off_seen": true,
+  "metrics": {
+    "engine": "ink",
+    "duration": 1.0669589999999998,
+    "startupMs": 186.955417,
+    "frames": {
+      "n": 34,
+      "avg": 16.927264735294123,
+      "p95": 21.02800000000002,
+      "max": 139.83645900000002
+    },
+    "latencyMs": {
+      "n": 2,
+      "avg": 14.374937500000101,
+      "p95": 19.30020800000011,
+      "max": 19.30020800000011
+    },
+    "stdoutBytes": 51894,
+    "bytesPerSecond": 48637.29534124555,
+    "secondBuckets": [
+      19208
+    ],
+    "error": "intentional renderer crash"
+  }
+}
