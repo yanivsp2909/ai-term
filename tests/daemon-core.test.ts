@@ -142,6 +142,23 @@ describe('real PTY lifecycle and mirror', () => {
             await manager.shutdown();
         }
     });
+    it('spawns sessions with the user umask, not the daemon private 077', async () => {
+        const paths = getPaths(await temp());
+        await preparePaths(paths);
+        const previous = process.umask(0o077);
+        const manager = new SessionManager(paths, new Logger(paths.log), { executable: '/bin/sh', args: ['-c', 'umask'], env: { PATH: '/usr/bin:/bin' } }, 0o022);
+        try {
+            await manager.load();
+            const session = await manager.create({ cwd: paths.root });
+            await expect.poll(() => manager.get(session.id).exitCode, { timeout: 5000 }).toBe(0);
+            expect(await manager.snapshot(session.id)).toContain('0022');
+            expect(process.umask()).toBe(0o077);
+        }
+        finally {
+            process.umask(previous);
+            await manager.shutdown();
+        }
+    });
     it('records an unrequested signal death as failed, while a requested stop stays exited', async () => {
         const paths = getPaths(await temp());
         await preparePaths(paths);
