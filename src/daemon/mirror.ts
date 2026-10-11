@@ -16,7 +16,7 @@ export class Mirror {
             for(const param of params) {
                 if(param===25)this.cursorVisible=final==='h';
                 const encoding=param===1005?'utf8':param===1006?'sgr':param===1015?'urxvt':null;
-                if(encoding)this.mouseEncoding=final==='h'?encoding:'default';
+                if(encoding&&(final==='h'||this.mouseEncoding===encoding))this.mouseEncoding=final==='h'?encoding:'default';
             }
             return false; // Let xterm apply the mode too.
         });
