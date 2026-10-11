@@ -93,6 +93,7 @@ export class Homepage {
     this.signals.off('SIGWINCH', this.onResize); this.signals.off('SIGINT', this.onSignal); this.signals.off('SIGTERM', this.onSignal); this.signals.off('uncaughtException', this.onError); this.signals.off('unhandledRejection', this.onError); this.signals.off('exit', this.onExit);
     if (!this.showing) return;
     this.showing = false;
+    this.drawTimer = undefined; this.inputTimer = undefined;
     try { this.stdout.write(RESET_MODES + '\x1b[?1049l'); }
     finally { try { this.stdin.setRawMode(this.originalRaw); } finally { this.stdin.pause(); } }
   }
@@ -134,6 +135,12 @@ export class Homepage {
     if (!this.showing || this.ended) return;
     if (event.kind === 'mouse') { this.mouse(event); return; }
     if (event.kind === 'paste') { this.field.paste(event.text); this.draw(true); return; }
+    if (event.key === 'ctrl-c') {
+      const action = this.field.key('ctrl-c');
+      if (action.kind === 'quit') void this.stop();
+      else if (action.kind === 'note') this.showNote(action.text, 1000);
+      return;
+    }
     if (this.confirmId) {
       const id = this.confirmId;
       if (event.key === 'y') { this.confirmId = null; this.enqueue(async () => { await this.operation({ kind: 'sessions.stop', sessionId: id }); }); }
@@ -300,8 +307,5 @@ export class Homepage {
 }
 export async function homepage(connection: import('../connection.js').Connection): Promise<void> {
   const home = new Homepage(connection, { truecolor: process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', attachSession: id => attach(connection, id) });
-  const done = home.done;
-  // Subscribe before startup so an early failure has a handler while start() unwinds.
-  const completion = done.catch(error => { throw error; });
-  try { await Promise.all([home.start(), completion]); } finally { await home.stop(); }
+  await Promise.all([home.start(), home.done]);
 }

@@ -70,10 +70,10 @@ exports[`homepage layout and cards > plain grid at 100x30 matches the approved b
 │                                  │  ╰────────────────────────────────────────────────────────────╯
 │                                  │
 │                                  │  ╭─ Usage ──────────────╮  ╭─ This Mac ───────────────────────╮
-│                                  │  │        today   week  │  │ CPU —             agents —       │
-│                                  │  │ spend    —      —    │  │ RAM —             agents —       │
-│                                  │  │ tokens   —      —    │  │ NET ↓ —  ↑ —                     │
-│                                  │  │ budget   —      —    │  │                                  │
+│                                  │  │     today week month │  │ CPU —             agents —       │
+│                                  │  │ spend   —    —    —  │  │ RAM —             agents —       │
+│                                  │  │ tokens  —    —    —  │  │ NET ↓ —  ↑ —                     │
+│                                  │  │ budget  —    —    —  │  │                                  │
 │                                  │  │ v0.1.8               │  │ v0.1.8                           │
 ╰──────────────────────────────────╯  ╰──────────────────────╯  ╰──────────────────────────────────╯
 
@@ -118,10 +118,10 @@ exports[`homepage layout and cards > plain grid at 130x45 matches the approved b
 │                                  │  ╰──────────────────────────────────────────────────────────────────────────────────────────╯
 │                                  │
 │                                  │  ╭─ Usage ────────────────────────────────────────────╮  ╭─ This Mac ───────────────────────╮
-│                                  │  │        today   week   month                        │  │ CPU —             agents —       │
-│                                  │  │ spend    —      —      —                           │  │ RAM —             agents —       │
-│                                  │  │ tokens   —      —      —                           │  │ NET ↓ —  ↑ —                     │
-│                                  │  │ budget   —      —      —                           │  │                                  │
+│                                  │  │     today week month                               │  │ CPU —             agents —       │
+│                                  │  │ spend   —    —    —                                │  │ RAM —             agents —       │
+│                                  │  │ tokens  —    —    —                                │  │ NET ↓ —  ↑ —                     │
+│                                  │  │ budget  —    —    —                                │  │                                  │
 │                                  │  │ v0.1.8                                             │  │ v0.1.8                           │
 ╰──────────────────────────────────╯  ╰────────────────────────────────────────────────────╯  ╰──────────────────────────────────╯
 

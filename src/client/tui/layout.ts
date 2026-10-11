@@ -48,7 +48,8 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const selected = sessions.find(s => s.id === view.selectedId);
   if (layout.preview) {
     const p = layout.preview, area = layout.terminal;
-    grid.box(p.x, p.y, p.w, p.h, selected?.title ?? 'Preview', t.surface);
+    grid.box(p.x, p.y, p.w, p.h, '', t.surface);
+    grid.text(p.x + 2, p.y, ` ${selected?.title ?? 'Preview'} `, t['ink-2'], t.surface, true, p.w - 23);
     const label = view.linesBack ? '◌ scrolled back' : '◉ live'; grid.text(p.x + p.w - label.length - 3, p.y, ` ${label} `, t.accent, t.surface);
     grid.text(p.x + 2, 2, selected?.engine === 'shell' ? 'shell' : selected ? `${selected.engine} · ${selected.model}` : 'Your agents, together in one terminal', t['ink-2'], t.surface, false, p.w - 4);
     for (let y = 0; y < area.h; y++) for (let x = 0; x < area.w; x++) { const cell = view.previewCells?.[y]?.[x]; if (cell) grid.put(area.x + x, area.y + y, cell); }
@@ -59,7 +60,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   if (!layout.compact) {
     const w = layout.statsW, x = layout.statsX, macW = 36, usageW = w - macW - 2;
     grid.box(x, layout.statsY, usageW, 7, 'Usage'); grid.box(x + usageW + 2, layout.statsY, macW, 7, 'This Mac');
-    ['       today   week   month', 'spend    —      —      —', 'tokens   —      —      —', 'budget   —      —      —', 'v0.1.8'].forEach((s, i) => grid.text(x + 2, layout.statsY + i + 1, s, t['ink-3'], t.bg, false, usageW - 4, i === 4));
+    ['    today week month', 'spend   —    —    —', 'tokens  —    —    —', 'budget  —    —    —', 'v0.1.8'].forEach((s, i) => grid.text(x + 2, layout.statsY + i + 1, s, t['ink-3'], t.bg, false, usageW - 4, i === 4));
     ['CPU —             agents —', 'RAM —             agents —', 'NET ↓ —  ↑ —', '', 'v0.1.8'].forEach((s, i) => grid.text(x + usageW + 4, layout.statsY + i + 1, s, t['ink-3'], t.bg, false, macW - 4, i === 4));
   }
   grid.box(0, rows - 4, cols, 3, '', t.surface); grid.text(2, rows - 3, '›', t.accent, t.surface);
