@@ -19,25 +19,34 @@ Every UI decision passes three tests:
 
 Full values and usage notes are in `docs/design/tokens.json`. Code reads colors only from there (through one theme module), never raw hex.
 
-| Token | Dark | Light | Use |
+| Token | Dark (Graphite) | Light | Use |
 |---|---|---|---|
-| `bg` | `#111317` | `#FAFAF9` | ground. In other terminals the TUI paints nothing and inherits their background |
-| `surface` | `#191C21` | `#F1F1EF` | command bar field, popups, frame bar, preview terminal area |
-| `surface-2` | `#242830` | `#E8E9E6` | selected row, key caps, logo badges. Never a large area |
-| `line` | `#3A3F48` | `#9EA3AB` | box borders and dividers. Decorative: nothing is told apart by a border alone |
-| `ink` | `#E6E8EB` | `#1B1D21` | primary text |
-| `ink-2` | `#A3A9B4` | `#4A515C` | secondary text: model, engine, numbers |
-| `ink-3` | `#8E96A3` | `#5A6270` | hints, labels, placeholders |
-| `accent` | `#4FD1C5` | `#07706A` | prompt chevron, running mark, links, + counts, selection bar |
+| `bg` | `#1E1F22` | `#FAFAF9` | ground. In other terminals the TUI paints nothing and inherits their background |
+| `surface` | `#26282C` | `#F1F1EF` | command bar field, popups, frame bar, preview terminal area |
+| `surface-2` | `#313338` | `#E8E9E6` | selected row, key caps, logo badges. Never a large area |
+| `line` | `#4A4D55` | `#9EA3AB` | box borders and dividers. Decorative: nothing is told apart by a border alone |
+| `ink` | `#E8E9EC` | `#1B1D21` | primary text |
+| `ink-2` | `#B0B5BE` | `#4A515C` | secondary text: model, engine, numbers |
+| `ink-3` | `#9CA2AD` | `#5A6270` | hints, labels, placeholders |
+| `accent` | `#5AD8CC` | `#07706A` | prompt chevron, running mark, links, + counts, selection bar |
 | `on-accent` | `#0B1A19` | `#FFFFFF` | text on an accent fill |
-| `status-waiting` | `#F5B84A` | `#8F5300` | ● waiting. The loudest color; never decoration |
-| `status-error` | `#F2686B` | `#B22C34` | ✗ failed, `!` don't ask, − counts |
+| `status-waiting` | `#F5BC55` | `#8F5300` | ● waiting. The loudest color; never decoration |
+| `status-error` | `#F47B7E` | `#B22C34` | ✗ failed, `!` don't ask, − counts |
 | `status-done` | = `ink-2` | = `ink-2` | ✓ done: calm, not a signal |
 | `status-running` | = `accent` | = `accent` | ◐ running |
 
-Theme setting: `auto` (default) | `dark` | `light`.
-- **auto:** asks the terminal for its background color (OSC 11) at startup and picks by luminance.
-- **No answer within 150 ms:** dark.
+**Palette setting** (`/settings` → theme), chosen by Yaniv on 2026-10-11 after trying each live in Terminal.app:
+- **`graphite`** (default): the dark column above. Neutral charcoal.
+- **`slate`:** blue-gray. bg `#1B2029`, surface `#232935`, surface-2 `#2D3443`, line `#46506A`, ink `#E6EAF0`, ink-2 `#AEB6C4`, ink-3 `#9AA4B5`, accent `#58D6C9`.
+- **`ink`:** the original darkest. bg `#111317`, surface `#191C21`, surface-2 `#242830`, line `#3A3F48`, ink `#E6E8EB`, ink-2 `#A3A9B4`, ink-3 `#8E96A3`, accent `#4FD1C5`.
+- **`auto`** ("match my terminal"):
+  - The background is never painted (SGR 49), so it is exactly the terminal's own color.
+  - At startup, the terminal is asked for its background (OSC 11, 200 ms timeout). Panels are derived from it: surface = 5% toward white, surface-2 = 11%, line = 24%. On a light background, mix toward black instead and use the light text tokens.
+  - No reply: slate.
+  - The rules are in `spikes/renderer/theme.js`.
+- **`light`:** the light column.
+
+Status colors and on-accent are the same across the dark palettes: waiting `#F5BC55`, error `#F47B7E`, done = ink-2.
 
 **Diff tints:** added lines use `accent` at 16% over the background, removed lines `status-error` at 16%.
 

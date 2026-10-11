@@ -218,18 +218,32 @@ A process exit always wins over a late status event.
 When you enter a session, the client:
 1. switches your terminal to the alternate screen and raw mode
 2. sends `sessions.attach` with the real size
-3. writes the snapshot, then pipes output frames straight to stdout and stdin straight to the session
+3. writes the snapshot
+4. replays the agent's terminal modes: cursor keys, keypad, bracketed paste, mouse tracking and encoding, focus events, cursor visibility. Some of these aren't in xterm's public `modes` (mouse encoding, cursor visibility), so the mirror tracks them from the output stream itself. Order matters: reset every mouse mode first, then enable the one in use.
+5. pipes output frames straight to stdout and stdin straight to the session
+
+**Ownership.**
+- One client is attached to a session at a time. A new attach takes over, and the previous client gets `session.detached {sessionId, reason: "attached elsewhere"}`.
+- A stale detach from the old client can't detach the new one.
+- Input frames are accepted only from the current owner; everything else is dropped and logged without content.
 
 AI Term draws nothing over the session in v0.1 (the frame bar comes in v0.2).
 
 **Home key: Ctrl+E** (D11). One key, no modes.
-- **Inside any session** (Claude Code, Codex, later AI Term's agent): Ctrl+E goes to the homepage, and the agent keeps running. The client watches stdin for byte `0x05` and never forwards it.
+- **Inside any session** (Claude Code, Codex, later AI Term's agent): Ctrl+E goes to the homepage, and the agent keeps running. The client never forwards it, in any of the forms it can arrive in:
+  - the raw byte `0x05`
+  - the kitty keyboard protocol (`CSI 101;5u`, including event-type variants)
+  - xterm modifyOtherKeys (`CSI 27;5;101~`)
+  
+  Sequences split across reads are handled. Inside a bracketed paste (`\e[200~` … `\e[201~`), a `0x05` is pasted text, not the home key.
 - **On the homepage:** ⏎ goes back into the selected agent; `/exit` quits `ai`. The agents keep running in the daemon.
 - **Ctrl+Shift+E:** most terminals send the same byte, so it works too.
 - **⌘E:** can't be used. Terminal.app and iTerm2 keep ⌘ keys for themselves and never pass them to a program.
 - **Cost:** inside sessions, Ctrl+E no longer jumps to the end of the line. Use End (Fn+→) instead.
 
-On the home key the client sends `sessions.detach`, restores its own screen and redraws the homepage. The agent keeps running.
+On the home key the client sends `sessions.detach`. It then resets every mode the agent may have turned on (mouse, bracketed paste, focus events, cursor keys, kitty keyboard, cursor visibility, colors), leaves the alt screen and raw mode, and redraws the homepage. The agent keeps running.
+
+**Cleanup is guaranteed** on every way out: home key, the session exiting (`[session exited with code N]`), the daemon dying, and an uncaught error in the client. Only SIGKILL can skip it.
 
 **`/exit` chain.** The chain is: session → home → shell.
 - Typing `/exit` inside Claude Code or Codex is *their* command: the agent exits, the session becomes `exited`, and the client returns home.
@@ -386,7 +400,7 @@ How to verify each: **Unit** = vitest. **Grep** = must find nothing in `src/` (o
 
 | # | Rule | Check |
 |---|---|---|
-| S1 | Socket is private | Unit: `~/.ai-term` and `run/` are created 0700 and the socket 0600; startup refuses a symlinked or foreign-owned dir. Manual: `ls -la ~/.ai-term ~/.ai-term/run`. |
+| S1 | Socket is private | Unit: `~/.ai-term` and `run/` are created 0700 and the socket is private from the moment it's bound (restrictive umask at bind, then verified 0600; never briefly world-accessible). Startup refuses a symlinked or foreign-owned dir. Manual: `ls -la ~/.ai-term ~/.ai-term/run`. |
 | S2 | Protocol input is validated | Unit: oversize frame, malformed JSON, unknown kind, bad types and out-of-range sizes are all rejected without crashing the daemon. |
 | S3 | Keys only in the keychain | Manual: add canary key `sk-ant-AITERMCANARY0000`, then `grep -r AITERMCANARY ~/.ai-term` and the repo → nothing. |
 | S4 | Keys never leave the daemon except into a child env | Unit: no response or event contains a stored secret (canary test over every handler). Grep: no `getPassword` outside `src/daemon/keys.ts`. |
