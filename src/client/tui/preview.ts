@@ -1,47 +1,54 @@
-import headless from '@xterm/headless';
+import headless, { type IMarker } from '@xterm/headless';
 import { cellColor, mix, type Theme } from './theme.js';
 import { safeText, type Frame } from './grid.js';
 export interface Point { x: number; y: number }
 export class Preview {
   readonly terminal: headless.Terminal;
-  private anchor: number | null = null;
+  private anchor: IMarker | null = null;
   private newCount = 0;
   private selection: { start: Point; end: Point } | null = null;
   private disposed = false;
-  private totalLines = 0;
+
   private queue: Promise<void> = Promise.resolve();
   private queuedBytes = 0;
   constructor(cols: number, rows: number, private readonly changed: () => void) {
     this.terminal = new headless.Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
-    // Count scrolls even when the bounded buffer trims its oldest line.
-    this.terminal.onLineFeed(() => { const b = this.terminal.buffer.active; if (b.cursorY === this.terminal.rows - 1) this.totalLines++; });
+
   }
-  get top(): number { return this.anchor ?? this.terminal.buffer.active.baseY; }
-  get linesBack(): number { return this.anchor === null ? 0 : this.terminal.buffer.active.baseY - this.anchor; }
+  get top(): number { return this.anchor ? Math.max(0, this.anchor.line) : this.terminal.buffer.active.baseY; }
+  get linesBack(): number { return this.anchor === null ? 0 : Math.max(0, this.terminal.buffer.active.baseY - this.top); }
   get newLines(): number { return this.newCount; }
   write(data: Buffer | string): Promise<void> {
+    if (this.queuedBytes + Buffer.byteLength(data) > 8 * 1024 * 1024) return Promise.reject(new Error('Preview queue exceeded; reopen the homepage'));
     this.queuedBytes += Buffer.byteLength(data);
-    if (this.queuedBytes > 8 * 1024 * 1024) return Promise.reject(new Error('Preview queue exceeded; reopen the homepage'));
     const task = this.queue.then(async () => {
       if (this.disposed) return;
-      const oldBase = this.terminal.buffer.active.baseY, oldLines = this.totalLines;
+      const buffer = this.terminal.buffer.active, oldBase = buffer.baseY;
+      // Markers track trims caused by LF, automatic wrapping and explicit scroll controls.
+      const marker = this.terminal.registerMarker(-buffer.cursorY);
+      const oldMarker = marker?.line;
       await new Promise<void>(resolve => this.terminal.write(data, resolve));
-      if (this.disposed) return;
+      if (this.disposed) { marker?.dispose(); return; }
+      if (this.terminal.buffer.active !== buffer) this.follow();
       if (this.anchor !== null) {
-        const added = Math.max(0, this.totalLines - oldLines), growth = this.terminal.buffer.active.baseY - oldBase;
-        this.anchor = Math.max(0, this.anchor - Math.max(0, added - growth)); this.newCount += added;
+        const growth = this.terminal.buffer.active.baseY - oldBase;
+        const trimmed = oldMarker !== undefined && marker ? Math.max(0, oldMarker - marker.line) : 0;
+        this.newCount += Math.max(0, growth + trimmed);
       }
+      marker?.dispose();
       this.changed();
     }).finally(() => { this.queuedBytes -= Buffer.byteLength(data); });
     this.queue = task; return task;
   }
   scroll(lines: number): void {
     const base = this.terminal.buffer.active.baseY;
-    this.anchor = Math.max(0, Math.min(base, this.top + lines));
-    if (this.anchor === base) { this.anchor = null; this.newCount = 0; }
+    const top = Math.max(0, Math.min(base, this.top + lines));
+    this.anchor?.dispose();
+    this.anchor = top === base ? null : this.terminal.registerMarker(top - base - this.terminal.buffer.active.cursorY) ?? null;
+    if (top === base) this.newCount = 0;
     this.selection = null; this.changed();
   }
-  follow(): void { this.anchor = null; this.newCount = 0; this.selection = null; this.changed(); }
+  follow(): void { this.anchor?.dispose(); this.anchor = null; this.newCount = 0; this.selection = null; this.changed(); }
   select(start: Point, end: Point): void { this.selection = { start: { ...start, y: start.y + this.top }, end: { ...end, y: end.y + this.top } }; this.changed(); }
   clearSelection(): void { this.selection = null; this.changed(); }
   private bounds(): { start: Point; end: Point } | null {

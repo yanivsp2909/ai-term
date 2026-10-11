@@ -249,8 +249,8 @@ export class Homepage {
       } else if (v.ok === true && v.snapshot !== undefined) {
         const result = validateSuccess(v);
         if (result.id === this.previewRequestId && result.sessionId === this.previewId && this.previewId) {
-          const id = this.previewId; this.loading = { id, chunks: [], bytes: 0 };
-          this.enqueue(async () => { const loading = this.loading; if (!loading || loading.id !== id) return; await this.replacePreview(id, result, loading.chunks); this.loading = null; this.draw(true); });
+          const id = this.previewId, loading = { id, chunks: [] as Buffer[], bytes: 0 }; this.loading = loading;
+          this.enqueue(async () => { if (this.loading !== loading || this.previewId !== id) return; await this.replacePreview(id, result, loading.chunks); if (this.loading === loading) this.loading = null; this.draw(true); });
         }
       }
       this.draw();
@@ -272,9 +272,10 @@ export class Homepage {
   private mouse(event: Extract<InputEvent, { kind: 'mouse' }>): void {
     const layout = homepageLayout(this.size().cols, this.size().rows, this.visible), area = layout.terminal, preview = this.currentPreview();
     if (!layout.preview || !preview || event.button & 4 || event.button & 8) return;
-    const inside = event.x >= area.x && event.x < area.x + area.w && event.y >= area.y && event.y < area.y + area.h;
+    const firstRow = preview.linesBack ? 1 : 0, lastRow = area.h - (preview.newLines ? 1 : 0);
+    const inside = event.x >= area.x && event.x < area.x + area.w && event.y >= area.y + firstRow && event.y < area.y + lastRow;
     if (event.button & 64) { if (inside) preview.scroll(event.button & 1 ? 3 : -3); return; }
-    const point = { x: Math.max(0, Math.min(area.w - 1, event.x - area.x)), y: Math.max(0, Math.min(area.h - 1, event.y - area.y)) };
+    const point = { x: Math.max(0, Math.min(area.w - 1, event.x - area.x)), y: Math.max(firstRow, Math.min(lastRow - 1, event.y - area.y)) };
     if (!event.release && !(event.button & 32) && (event.button & 3) === 0 && inside) { this.drag = point; preview.select(point, point); }
     else if (this.drag) {
       preview.select(this.drag, point);
@@ -283,7 +284,7 @@ export class Homepage {
         void (this.options.copy ?? copyText)(text).then(() => { if (!this.ended) this.showNote(`✓ copied ${text.split('\n').length} lines`, 1200, true); }).catch(error => this.showNote(error instanceof Error ? error.message : 'Copy failed'));
       }
     }
-    this.draw(true);
+    this.previewCells = undefined; this.draw(true);
   }
   private draw(immediate = false): void {
     if (!this.showing || this.ended || this.blocked) return;

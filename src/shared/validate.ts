@@ -129,10 +129,10 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid daemon session');
     const s = value as Record<string, unknown>;
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
-    if (!isUUID(s.id) || !isTitle(s.title) || !['shell', 'claude-code', 'codex'].includes(String(s.engine)) ||
+    if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
         typeof s.model !== 'string' || !isValidModelId(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
         !s.auth || typeof s.auth !== 'object' || !('kind' in s.auth) || s.auth.kind !== 'account' || s.permission !== 'ask' ||
-        !['starting', 'running', 'waiting', 'done', 'idle', 'exited', 'error'].includes(String(s.status)) ||
+        (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'idle', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || s.ctxPercent !== null ||
         !(s.exitCode === null || Number.isSafeInteger(s.exitCode))) throw new ValidationError('Invalid daemon session');

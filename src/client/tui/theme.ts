@@ -1,5 +1,8 @@
 import tokens from '../../../docs/design/tokens.json' with { type: 'json' };
-import design from '../../../docs/design.md?raw';
+import { readFileSync } from 'node:fs';
+declare const __AI_TERM_DESIGN__: string | undefined;
+// The build embeds the approved document; tsx reads the same source during development.
+const design = typeof __AI_TERM_DESIGN__ === 'string' ? __AI_TERM_DESIGN__ : readFileSync(new URL('../../../docs/design.md', import.meta.url), 'utf8');
 import type { ThemeName } from '../../shared/protocol.js';
 import type { Cell } from './grid.js';
 import type { IBufferCell } from '@xterm/headless';
@@ -100,8 +103,11 @@ export class BackgroundReplies {
       this.pending += String.fromCharCode(byte);
       if (this.pending === '\x1b]') continue;
       if (this.pending.startsWith('\x1b]')) {
+        const header = '\x1b]11;';
         if (byte === 7 || this.pending.endsWith('\x1b\\')) { const bg = parseBackground(this.pending); if (bg) this.reply(bg); this.pending = ''; }
-        else if (this.pending.length > 64) this.pending = '';
+        else if (!header.startsWith(this.pending) && !this.pending.startsWith(header)) { output.push(...Buffer.from(this.pending, 'latin1')); this.pending = ''; }
+        // eslint-disable-next-line no-control-regex -- Permit only bounded OSC11 RGB candidates.
+        else if (this.pending.length > 64 || this.pending.startsWith(header) && !/^\x1b\]11;[rgba-f\d:/\x1b]*$/i.test(this.pending)) this.pending = '';
       } else { output.push(...Buffer.from(this.pending, 'latin1')); this.pending = ''; }
     }
     return Buffer.from(output);
