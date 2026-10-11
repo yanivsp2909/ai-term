@@ -24,13 +24,13 @@ fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', args.rows, args.cols,
 command = ['/opt/homebrew/bin/node', 'spikes/renderer/main.js', args.engine]
 if args.crash:
     command.append('--crash')
+started = time.monotonic()
 child = subprocess.Popen(command, stdin=slave, stdout=slave, stderr=subprocess.PIPE,
                          env={'PATH': '/opt/homebrew/bin:/usr/bin:/bin', 'TERM': 'xterm-256color'},
                          start_new_session=True)
 sel = selectors.DefaultSelector()
 sel.register(master, selectors.EVENT_READ, 'screen')
 sel.register(child.stderr, selectors.EVENT_READ, 'metrics')
-started = time.monotonic()
 ready = None
 last_sample = started
 last_key = started
@@ -90,6 +90,20 @@ try:
         if now - started > args.seconds + 15:
             raise TimeoutError('Prototype did not start/exit within watchdog')
     returncode = child.wait(timeout=3)
+    # Parent retains slave for termios inspection, so EOF is not a drain boundary.
+    os.set_blocking(master, False)
+    while True:
+        try:
+            chunk = os.read(master, 65536)
+        except BlockingIOError:
+            break
+        except OSError as error:
+            if error.errno == 5:  # PTY hangup on platforms that signal EIO.
+                break
+            raise
+        if not chunk:
+            break
+        screen.extend(chunk)
     raw = bool(termios.tcgetattr(slave)[3] & termios.ICANON) is False
     metrics = None
     for line in stderr.decode().splitlines():
