@@ -1,6 +1,7 @@
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import { performance } from 'node:perf_hooks';
+import { parseInput } from './input.js';
 import { makeScreen, layout } from './screen.js';
 import { diffFrame } from './grid.js';
 
@@ -39,7 +40,7 @@ async function finish(error) {
 }
 function onInput(chunk) {
   const timestamp = performance.now();
-  for (const char of chunk.toString('utf8')) {
+  for (const char of parseInput(chunk)) {
     if (char === '\x03') { void finish(); return; }
     if (char === '\x7f') input = [...input].slice(0, -1).join('');
     else if (char === '\r' || char === '\n') input = '';
@@ -82,9 +83,11 @@ async function draw(immediate = false) {
       previous = grid;
     } else {
       const { inkFrame, startInk } = await import('./ink.js');
+      if (stopping) return;
       if (!ink) ink = startInk(grid); else ink.rerender(inkFrame(grid));
       await ink.waitUntilRenderFlush();
     }
+    if (stopping) return;
     const ended = performance.now();
     frames.push(ended - started);
     pendingKeys.forEach(t => latencies.push(ended - t));

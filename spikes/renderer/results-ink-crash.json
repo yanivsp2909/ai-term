@@ -6,11 +6,11 @@
     45
   ],
   "cpu_samples": [
-    61.7
+    60.3
   ],
-  "cpu_average": 61.7,
-  "cpu_max": 61.7,
-  "wall_startup_ms": 200.932375038974,
+  "cpu_average": 60.3,
+  "cpu_max": 60.3,
+  "wall_startup_ms": 196.7820000136271,
   "input_samples_injected": 2,
   "exit_code": 1,
   "resize_injected": false,
@@ -20,22 +20,22 @@
   "sync_off_seen": true,
   "metrics": {
     "engine": "ink",
-    "duration": 1.0669589999999998,
-    "startupMs": 186.955417,
+    "duration": 1.067754584,
+    "startupMs": 184.442333,
     "frames": {
       "n": 34,
-      "avg": 16.927264735294123,
-      "p95": 21.02800000000002,
-      "max": 139.83645900000002
+      "avg": 16.727493823529404,
+      "p95": 21.19633299999998,
+      "max": 138.893416
     },
     "latencyMs": {
       "n": 2,
-      "avg": 14.374937500000101,
-      "p95": 19.30020800000011,
-      "max": 19.30020800000011
+      "avg": 13.915250000000015,
+      "p95": 18.426249999999982,
+      "max": 18.426249999999982
     },
     "stdoutBytes": 51894,
-    "bytesPerSecond": 48637.29534124555,
+    "bytesPerSecond": 48601.055689778244,
     "secondBuckets": [
       19208
     ],
