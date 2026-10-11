@@ -34,9 +34,13 @@ Covers v0.1 in full and the later versions in outline. Each later version gets i
 
 **One package, one binary.** Running `ai` with no arguments opens the TUI. `ai daemon` is the internal entry point the client uses to start the daemon. Other subcommands: `ai doctor` (environment checks), `ai daemon stop`, `ai --version`.
 
-**Runtime:** Node.js ≥ 22 (LTS), TypeScript strict. Bun is not used, because node-pty is a Node native module (D25, confirmed in v0.1.1).
+**Runtime:** Node.js ≥ 22, TypeScript strict. Bun is not used, because node-pty is a Node native module (D25, verified in v0.1.1).
 
-**TUI renderer:** chosen by the v0.1.2 spike (D26). The default candidate is Ink (React for terminals). The fallback is a small renderer of our own: a cell grid, diffed each frame, written as escape codes.
+**Install gotcha:** npm 11 doesn't run a package's install scripts unless the project approves them. node-pty's own postinstall is what makes its macOS `spawn-helper` executable; skipped, every spawn fails with `posix_spawnp failed`. The fix is approving node-pty's scripts in `package.json`. Never a hand-written `chmod`.
+
+**TUI renderer:** our own cell renderer (D26), chosen by the v0.1.2 spike.
+- **How it works:** the screen is a grid of cells (character, colors, bold), diffed against the previous frame. Only changed cells are written, wrapped in synchronized-output escapes (`\e[?2026h` … `\e[?2026l`) so the terminal paints each frame at once.
+- **Why:** with a live preview, Ink used 46% CPU and 17.6 ms keystroke latency (p95). The grid used 14% and 3.1 ms (`docs/spikes/v0.1-tui-renderer.md`).
 
 ---
 
@@ -145,6 +149,7 @@ sessions.remove  {id}                                // exited/error only
 sessions.rename  {id, title}
 layout.previewSize {cols, rows}                      // size every detached session runs at
 engines.status   {}                                  → {claudeCode: EngineStatus, codex: EngineStatus}
+                                                      // EngineStatus = {installed, path, version, loggedIn: boolean | null, authMethod: 'subscription' | 'api-key' | 'unknown'}
 keys.list        {}                                  → {keys: KeyView[]}
 keys.add         {provider, label, secret, endpoint?, deployments?}  → {key: KeyView}
 keys.remove      {id}
@@ -236,22 +241,36 @@ On the home key the client sends `sessions.detach`, restores its own screen and 
 | Claude model, account | Claude Code | your Claude login (Claude Code's own) |
 | Claude model, Anthropic key | Claude Code | `ANTHROPIC_API_KEY` from the keychain |
 | GPT model, account | Codex | your ChatGPT login (Codex's own) |
-| Foundry deployment (GPT-6.1 Sol, Grok, Kimi, GLM, DeepSeek) | Codex with a Foundry provider | Foundry key from the keychain |
+| Foundry deployment that passed its test through Codex | Codex with a Foundry provider | Foundry key from the keychain |
+
+- **Foundry on Codex:** Codex only speaks the Responses API (it rejects `wire_api="chat"`). A Foundry deployment is offered in `/model` only after its test request through Codex succeeds. Deployments that only speak Chat Completions (possibly Grok, Kimi, GLM, DeepSeek) wait for AI Term's own agent in v0.4 (D30).
+- **"Account" means whatever the CLI is logged in with:**
+  - `claude auth status --json` and `codex login status` say whether that's a subscription or an API key. Codex is currently logged in with an API key.
+  - AI Term shows the method on the engine check and on each card.
+  - A session is marked `sub` only when the CLI reports a subscription (D31).
+  - AI Term never opens the CLIs' credential files; the masked hints the CLIs print are dropped, never shown or stored.
 
 From v0.4, key sessions default to AI Term's own agent. A setting sends them to Claude Code or Codex instead.
 
 ### 7.2 Arguments (`buildArgs`, pure, unit-tested)
 - Executable: `resolveExecutable('claude' | 'codex', PATH)` walks PATH and returns the absolute path of the first regular, executable file. Not found → the session goes to `error` with "claude not found in PATH".
 - Model: one argv element `--model=<id>`, only if `isValidModelId(id)`: `/^[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,79}$/`. The leading-character rule plus the single-element form mean a "model" can never be read as another flag.
-- First message:
-  - passed after `--` as one argv element, if v0.1.1 confirms each CLI supports that
-  - otherwise typed into the PTY with bracketed paste after the first output
-- Foundry on Codex: `-c` overrides that define a provider whose key comes from an env var. The exact keys are in `docs/spikes/v0.1-cli-facts.md`; nothing is written to `~/.codex`. Shape (to be confirmed in v0.1.1):
-  `-c model_provider="aiterm_foundry"` · `-c model_providers.aiterm_foundry.base_url="<endpoint>"` · `-c model_providers.aiterm_foundry.env_key="AITERM_FOUNDRY_KEY"` · `-c model_providers.aiterm_foundry.wire_api="responses"` · `--model=<deployment>`
+- First message: the last argv elements are `--` and then the message as one element. Both CLIs take a positional prompt, and both accept `--` (help-level parsing verified in v0.1.1). If a live run shows the prompt isn't delivered, fall back to typing it into the PTY with bracketed paste after the first output.
+- Foundry on Codex: `-c` overrides only, nothing written to `~/.codex` (from docs; the live test is pending in `docs/spikes/v0.1-cli-facts.md` #3 and #4). Each override is one argv element:
+  - `-c model_provider="aiterm_foundry"`
+  - `-c model_providers.aiterm_foundry.name="AI Term Foundry"`
+  - `-c model_providers.aiterm_foundry.base_url="<endpoint>"`, for example `https://narvis-resource.openai.azure.com/openai/v1` (no `api-version` on `/openai/v1`)
+  - `-c model_providers.aiterm_foundry.env_key="AITERM_FOUNDRY_KEY"`
+  - `-c model_providers.aiterm_foundry.env_http_headers={"api-key"="AITERM_FOUNDRY_KEY"}` (the value is the env var's *name*, never the key)
+  - `-c model_providers.aiterm_foundry.wire_api="responses"`
+  - `-c model_providers.aiterm_foundry.requires_openai_auth=false`
+  - `--model=<deployment>`
+
+  The endpoint goes into a `-c` value, so it's validated first: `https://`, a hostname, no quotes or whitespace.
 - **Permission mode:**
   - `ask` (default) adds nothing.
   - `dontAsk` is chosen per session only, never as a saved default, and is shown with a red `!`. It adds exactly one flag per engine: Claude Code `--permission-mode=bypassPermissions`; Codex `--ask-for-approval=never` plus `--sandbox=workspace-write`. Codex stays sandboxed: don't-ask never means `--dangerously-bypass-approvals-and-sandbox`.
-  - The exact flag spellings are confirmed in v0.1.1.
+  - Flag spellings verified in v0.1.1. Claude Code also has a mode literally named `dontAsk`, which denies tools that aren't pre-approved. That is not our Don't ask; we never use it.
 - Never passed: `--dangerously-skip-permissions`, `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `danger-full-access`.
 
 ### 7.3 Environment (`buildSpawnEnv`, pure, unit-tested)
@@ -285,7 +304,7 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 | Session | Env after base |
 |---|---|
 | Claude Code · account | remove `CLAUDE_AUTH_VARS`. `CLAUDE_CONFIG_DIR` left as inherited (your normal `~/.claude`, with your skills and agents) |
-| Claude Code · Anthropic key | remove `CLAUDE_AUTH_VARS`; set `ANTHROPIC_API_KEY=<from keychain>`. Config dir: decided in v0.1.1 (default dir keeps your skills; a separate dir isolates the key approval) |
+| Claude Code · Anthropic key | remove `CLAUDE_AUTH_VARS`; set `ANTHROPIC_API_KEY=<from keychain>`. Config dir: the normal one, so your skills and agents work (provisional; revisit after Yaniv's first-run approval test, `docs/spikes/v0.1-cli-facts.md` #1–2) |
 | Codex · account | remove `CODEX_AUTH_VARS`. `CODEX_HOME` left as inherited |
 | Codex · Foundry key | remove `CODEX_AUTH_VARS`; set `AITERM_FOUNDRY_KEY=<from keychain>`; provider via `-c` (7.2) |
 
@@ -321,13 +340,18 @@ Never logged, never stored, never sent to a client.
 
 ## 9. Usage, cost, budget
 
-- **Scope:** API-key sessions only. Subscription sessions show `sub` and are not counted. AI Term never reads Claude Code's or Codex's own files to count them.
-- **Source per engine:** decided in v0.1.1, preferring what the CLI itself exports:
-  - Claude Code's OpenTelemetry token and cost metrics, sent to a local receiver in the daemon
-  - Codex's OpenTelemetry events, if they carry token counts
-  
-  Any local receiver follows the same rules as the status endpoint (section 11, S12).
-- **Event** (`usage/YYYY-MM.jsonl`): `{ts, sessionId, provider, model, inputTokens, outputTokens, cachedTokens?, costUsd, costSource: 'cli' | 'estimated'}`.
+- **Scope:** every session whose effective auth is an API key. That's AI Term's keyed sessions, plus Claude Code or Codex when their own login is an API key (D31). Subscription sessions show `sub` and are not counted. AI Term never reads Claude Code's or Codex's own files to count anything.
+- **Source per engine:** OpenTelemetry the CLI exports itself, received by a local OTLP/HTTP receiver in the daemon. Payloads are JSON (`http/json`), never protobuf. Each session gets its own runtime-only receiver credential, sent as a header, never in argv or logs.
+  - **Claude Code (metrics only):**
+    - env: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_LOGS_EXPORTER=none`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:<port>/v1/metrics`, `OTEL_EXPORTER_OTLP_METRICS_HEADERS=x-ai-term-session=<credential>`, `OTEL_METRICS_INCLUDE_SESSION_ID=true`, `OTEL_METRIC_EXPORT_INTERVAL=10000`
+    - metrics read: `claude_code.token.usage` (input / output / cacheRead / cacheCreation) and `claude_code.cost.usage` (USD, Claude Code's own estimate)
+    - cumulative vs delta handling and restart de-duplication are specified before the receiver is written
+  - **Codex (logs):**
+    - `-c otel.log_user_prompt=false`, `-c otel.exporter={otlp-http={endpoint="http://127.0.0.1:<port>/v1/logs",protocol="json",headers={"x-ai-term-session"="<credential>"}}}`
+    - only the token counts of `codex.sse_event` / `response.completed` are kept; the rest of every event is dropped unread, because tool output in other events can contain your code
+    - cost is estimated from the price table
+  - The exact payload shapes are confirmed by live tests #5 and #6 in `docs/spikes/v0.1-cli-facts.md` before v0.1.8.
+- **Event** (`usage/YYYY-MM.jsonl`): `{ts, sessionId, provider, model, inputTokens, outputTokens, cachedTokens?, costUsd, costSource: 'cli-estimate' | 'price-table'}`. Neither is a bill: both are estimates and the UI says so.
 - **Price** when the CLI doesn't report cost: a bundled snapshot of the Models.dev catalog, plus per-deployment price overrides for Foundry in settings. Shown as estimated.
 - **Summary:** today / this week (Monday start, local time) / this month, as cost and tokens, by provider, recomputed incrementally.
 - **Budget:** optional daily / weekly / monthly limit in settings.
@@ -364,7 +388,7 @@ How to verify each: **Unit** = vitest. **Grep** = must find nothing in `src/` (o
 | S9 | Validated arguments | Unit: model validator rejects a leading `-` and spaces; cwd must exist and be a directory; deployment names follow the same pattern as model ids. |
 | S10 | Permission prompts never skipped by default | Unit: `buildArgs` with default settings contains no permission flag; `dontAsk` adds exactly the flags in 7.2; settings refuse `dontAsk` as a saved default. Grep: the permission flags appear only in `src/daemon/env.ts`. |
 | S11 | Never read CLI credentials | Grep: no `auth.json`, `.credentials.json`, `security find-generic-password`, and no file reads under `~/.claude` or `~/.codex`. |
-| S12 | Local HTTP endpoints locked down (usage receiver if used in v0.1; status endpoint in v0.2) | Unit + manual curl: bound to `127.0.0.1` only, random port; per-launch token compared with `timingSafeEqual`; `Host` must equal `127.0.0.1:<port>` (else 421); any `Origin` → 403; non-JSON → 415; body > 64 KB → 413; success → 204 with an empty body; bodies never logged. |
+| S12 | Local HTTP endpoints locked down: usage receiver (v0.1.8), status endpoint (v0.2) | Unit + manual curl: bound to `127.0.0.1` only, random port; per-session credential compared with `timingSafeEqual`; `Host` must equal `127.0.0.1:<port>` (else 421); any `Origin` → 403; non-JSON → 415; bodies never logged. Status endpoint: body > 64 KB → 413, success → 204 with an empty body (a hook response must never carry a decision). Usage receiver: only `POST /v1/metrics` and `/v1/logs`, body > 1 MB → 413, success → 200 with `{}` (what OTLP exporters expect), only usage numbers kept. |
 | S13 | .env import is read-only and value-blind | Unit: `scanEnvFile` returns names only; the file's mtime and content are unchanged afterwards. |
 | S14 | Deletion asks first (v0.3) | Unit (temp repo): removing a worktree with uncommitted, untracked or unmerged work is refused without explicit confirmation. |
 | S15 | Background sessions can't reach your terminal | Unit: the homepage preview renders from mirror cells only. No raw agent bytes reach your terminal unless you're attached, so a background agent can't set your clipboard (OSC 52), retitle your window or ring the bell. |
@@ -418,8 +442,10 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D22 | Live preview = the mirror's cells rendered by the client, read-only, `p` toggles it; keys on the homepage never reach an agent. | Pinned |
 | D23 | Size rule: detached sessions run at the preview size; attached at the client's size. | Proposed |
 | D24 | Keychain access through `@napi-rs/keyring`. | Proposed |
-| D25 | Node ≥ 22, not Bun (node-pty). | Proposed, confirmed in v0.1.1 |
-| D26 | TUI renderer chosen by the v0.1.2 spike; Ink is the default candidate. | Proposed |
+| D25 | Node ≥ 22, not Bun (node-pty). node-pty's install scripts are approved in package.json. | Pinned |
+| D26 | TUI renderer: our own diffed cell grid with synchronized output (v0.1.2: 14% CPU / 3.1 ms vs Ink 46% / 17.6 ms). | Pinned, unless Yaniv sees flicker in `node spikes/renderer/main.js grid` |
 | D27 | Usage counts API-key sessions only; subscription sessions show `sub`. | Pinned |
 | D28 | Notifications (macOS, with sound) for waiting and done arrive with v0.2 hooks. | Pinned |
 | D29 | Manager agent (goal → tasks → many agents) is a v2+ idea; nothing before v1.0 is built for it. | Pinned |
+| D30 | Foundry through Codex only for deployments whose Responses test passes; the rest wait for AI Term's agent (v0.4). | Pinned |
+| D31 | "Account" = whatever the CLI is logged in with. AI Term shows subscription vs API key from the CLI's own status command, and counts usage for API-key auth. | Pinned |
