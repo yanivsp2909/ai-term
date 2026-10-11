@@ -3,7 +3,16 @@ import { styleEscape } from './theme.js';
 export interface Cell { char: string; fg: string; bg: string; bold: boolean; width: number; italic?: boolean; underline?: boolean; dim?: boolean }
 export type Frame = Cell[][];
 const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
-export function graphemes(text: string): string[] { return Array.from(segmenter.segment(text), s => s.segment); }
+const textCache = new Map<string, readonly string[]>();
+export function graphemes(text: string): string[] {
+  let result = textCache.get(text);
+  if (!result) {
+    result = Array.from(segmenter.segment(text), s => s.segment);
+    if (textCache.size >= 512) textCache.clear();
+    textCache.set(text, result);
+  }
+  return [...result];
+}
 export function cellWidth(text: string): number {
   if (/^\p{Mark}/u.test(text)) return 0;
   return /[\u1100-\u115f\u2329\u232a\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff01-\uff60\uffe0-\uffe6]|\p{Extended_Pictographic}|\uFE0F/u.test(text) ? 2 : 1;
