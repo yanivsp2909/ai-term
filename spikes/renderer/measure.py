@@ -18,10 +18,16 @@ parser.add_argument('--seconds', type=float, default=30)
 parser.add_argument('--crash', action='store_true')
 parser.add_argument('--cols', type=int, default=130)
 parser.add_argument('--rows', type=int, default=45)
+parser.add_argument('--palette', choices=['ink', 'graphite', 'slate', 'auto'])
+parser.add_argument('--label', help='distinct evidence filename (letters, digits, hyphens)')
 args = parser.parse_args()
+if args.label and not all(char.isascii() and (char.isalnum() or char == '-') for char in args.label):
+    parser.error('label must contain only letters, digits and hyphens')
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', args.rows, args.cols, 0, 0))
 command = ['/opt/homebrew/bin/node', 'spikes/renderer/main.js', args.engine]
+if args.palette:
+    command.extend(['--palette', args.palette])
 if args.crash:
     command.append('--crash')
 started = time.monotonic()
@@ -123,8 +129,14 @@ try:
         'alt_off_seen': b'\x1b[?1049l' in screen[-300:],
         'sync_off_seen': b'\x1b[?2026l' in screen[-300:],
         'metrics': metrics,
+        'palette_diagnostic': next((line for line in stderr.decode().splitlines()
+                                    if line.startswith('AITERM_PALETTE ')), None),
     }
     suffix = 'crash' if args.crash else ('smoke' if args.seconds < 30 else '30s')
+    if args.label:
+        suffix = args.label
+    elif args.palette:
+        suffix = f'{args.palette}-{suffix}'
     output = pathlib.Path(f'spikes/renderer/results-{args.engine}-{suffix}.json')
     output.write_text(json.dumps(result, indent=2) + '\n')
     pathlib.Path(f'spikes/renderer/screen-{args.engine}-{suffix}.ansi').write_bytes(frame_snapshot or screen)

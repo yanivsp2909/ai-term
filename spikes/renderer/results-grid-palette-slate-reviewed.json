@@ -1,0 +1,48 @@
+{
+  "command": "/opt/homebrew/bin/node spikes/renderer/main.js grid --palette slate",
+  "seconds_requested": 3.0,
+  "terminal": [
+    130,
+    45
+  ],
+  "cpu_samples": [
+    7.4,
+    3.7
+  ],
+  "cpu_average": 5.550000000000001,
+  "cpu_max": 7.4,
+  "wall_startup_ms": 67.5762090831995,
+  "input_samples_injected": 7,
+  "exit_code": 0,
+  "resize_injected": true,
+  "canonical_mode_restored": true,
+  "cursor_restore_seen": true,
+  "alt_off_seen": true,
+  "sync_off_seen": true,
+  "metrics": {
+    "engine": "grid",
+    "duration": 3.030866709,
+    "startupMs": 53.833458,
+    "frames": {
+      "n": 96,
+      "avg": 0.7680990312499926,
+      "p95": 1.6030000000000655,
+      "max": 4.556375000000003
+    },
+    "latencyMs": {
+      "n": 7,
+      "avg": 0.5665652857143105,
+      "p95": 0.9332499999999868,
+      "max": 0.9332499999999868
+    },
+    "stdoutBytes": 51816,
+    "bytesPerSecond": 17096.099886588578,
+    "secondBuckets": [
+      4404,
+      21396,
+      3527
+    ],
+    "error": null
+  },
+  "palette_diagnostic": "AITERM_PALETTE {\"palette\":\"slate\",\"background\":\"no reply\",\"reason\":\"fixed palette\",\"TERM_PROGRAM\":\"unset\",\"COLORTERM\":\"unset\"}"
+}

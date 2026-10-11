@@ -1,0 +1,48 @@
+{
+  "command": "/opt/homebrew/bin/node spikes/renderer/main.js grid --palette graphite",
+  "seconds_requested": 3.0,
+  "terminal": [
+    130,
+    45
+  ],
+  "cpu_samples": [
+    8.6,
+    4.6
+  ],
+  "cpu_average": 6.6,
+  "cpu_max": 8.6,
+  "wall_startup_ms": 81.4846670255065,
+  "input_samples_injected": 7,
+  "exit_code": 0,
+  "resize_injected": true,
+  "canonical_mode_restored": true,
+  "cursor_restore_seen": true,
+  "alt_off_seen": true,
+  "sync_off_seen": true,
+  "metrics": {
+    "engine": "grid",
+    "duration": 3.024405334,
+    "startupMs": 65.950333,
+    "frames": {
+      "n": 96,
+      "avg": 0.8117574687499989,
+      "p95": 1.4767919999999322,
+      "max": 5.586666000000001
+    },
+    "latencyMs": {
+      "n": 7,
+      "avg": 0.6047440000000961,
+      "p95": 0.9788750000000164,
+      "max": 0.9788750000000164
+    },
+    "stdoutBytes": 51390,
+    "bytesPerSecond": 16991.77005882109,
+    "secondBuckets": [
+      4360,
+      21224,
+      3529
+    ],
+    "error": null
+  },
+  "palette_diagnostic": "AITERM_PALETTE {\"palette\":\"graphite\",\"background\":\"no reply\",\"reason\":\"fixed palette\",\"TERM_PROGRAM\":\"unset\",\"COLORTERM\":\"unset\"}"
+}

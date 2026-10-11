@@ -1,18 +1,25 @@
 import { readFileSync } from 'node:fs';
 const tokens = JSON.parse(readFileSync(new URL('../../docs/design/tokens.json', import.meta.url), 'utf8')).color.tokens;
-export const theme = {};
-for (const token of tokens) {
-  if (typeof token.value === 'object') theme[token.name] = token.value.dark;
+function tokenTheme(mode) {
+  const result = {};
+  for (const token of tokens) if (typeof token.value === 'object') result[token.name] = token.value[mode];
+  for (const token of tokens) if (typeof token.value === 'string') result[token.name] = result[token.value.slice(1, -1)];
+  return result;
 }
-for (const token of tokens) {
-  if (typeof token.value === 'string') theme[token.name] = theme[token.value.slice(1, -1)];
+export const dark = tokenTheme('dark'), light = tokenTheme('light');
+export const theme = { ...dark };
+let defaultBackground = false;
+export function usePalette(palette) {
+  Object.assign(theme, palette.colors);
+  defaultBackground = palette.defaultBackground;
 }
 export function rgb(hex) {
   const n = Number.parseInt(hex.slice(1), 16);
   return `${(n >> 16) & 255};${(n >> 8) & 255};${n & 255}`;
 }
 export function styleEscape(cell) {
-  return `\x1b[0${cell.bold ? ';1' : ''};38;2;${rgb(cell.fg)};48;2;${rgb(cell.bg)}m`;
+  const background = defaultBackground && cell.bg.toLowerCase() === theme.bg.toLowerCase() ? '49' : `48;2;${rgb(cell.bg)}`;
+  return `\x1b[0${cell.bold ? ';1' : ''};38;2;${rgb(cell.fg)};${background}m`;
 }
 export function colorOf(cell, foreground) {
   const mode = foreground ? 'Fg' : 'Bg';

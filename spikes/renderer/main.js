@@ -4,12 +4,25 @@ import { performance } from 'node:perf_hooks';
 import { parseInput } from './input.js';
 import { makeScreen, layout } from './screen.js';
 import { diffFrame } from './grid.js';
+import { usePalette } from './theme.js';
+import { createPalette } from './palettes.js';
+import { BackgroundReplies, BACKGROUND_QUERY } from './osc11.js';
 
 const engine = process.argv[2];
-if (!['ink', 'grid'].includes(engine) || !process.stdout.isTTY || !process.stdin.isTTY) {
-  process.stderr.write('Usage (in a terminal): node spikes/renderer/main.js ink|grid [--crash]\n');
+let paletteName=engine==='grid'?'auto':'ink';
+let invalidOptions=false;
+for(let i=3;i<process.argv.length;i++){
+  if(process.argv[i]==='--crash')continue;
+  if(process.argv[i]==='--palette'&&engine==='grid'&&['ink','graphite','slate','auto'].includes(process.argv[i+1]))paletteName=process.argv[++i];
+  else invalidOptions=true;
+}
+if (!['ink', 'grid'].includes(engine) || invalidOptions || !process.stdout.isTTY || !process.stdin.isTTY) {
+  process.stderr.write('Usage (in a terminal): node spikes/renderer/main.js ink|grid [--palette ink|graphite|slate|auto (grid only)] [--crash]\n');
   process.exit(2);
 }
+const terminalProgram=process.env.TERM_PROGRAM??'unset',colorTerm=process.env.COLORTERM??'unset';
+let palette=createPalette(paletteName),backgroundReply,resolveBackground;
+const replies=new BackgroundReplies(background=>{backgroundReply=background;resolveBackground?.(background);});
 const write = process.stdout.write.bind(process.stdout);
 let bytes = 0, buckets = [], bucketStart = 0, frames = [], latencies = [], keys = [], firstFrame = null, previous = null;
 let child, terminal, ink, timer, crashTimer, stopping = false, busy = false, dirty = true, input = '';
@@ -31,7 +44,10 @@ async function finish(error) {
   try { ink?.unmount(); child?.kill(); terminal?.dispose(); }
   finally {
     restore();
+    process.removeListener('exit',restore);
     process.stdout.write = write;
+    // JSON strings keep even unusual env text on one diagnostic line.
+    process.stderr.write(`AITERM_PALETTE ${JSON.stringify({palette:palette.name,background:palette.background??'no reply',reason:palette.reason,TERM_PROGRAM:terminalProgram,COLORTERM:colorTerm})}\n`);
     const duration = firstFrame === null ? 0 : (performance.now() - firstFrame) / 1000;
     process.stderr.write(`\nAITERM_METRICS ${JSON.stringify({ engine, duration, startupMs: firstFrame, frames: summary(frames), latencyMs: summary(latencies), stdoutBytes: bytes, bytesPerSecond: duration ? bytes / duration : null, secondBuckets: buckets, error: error?.message ?? null })}\n`);
     if (error) process.stderr.write(`Prototype failed: ${error.message}\n`);
@@ -39,6 +55,9 @@ async function finish(error) {
   }
 }
 function onInput(chunk) {
+  if(chunk.includes(3)){void finish();return;}
+  chunk=replies.push(chunk);
+  if(!chunk.length)return;
   const timestamp = performance.now();
   for (const char of parseInput(chunk)) {
     if (char === '\x03') { void finish(); return; }
@@ -47,7 +66,7 @@ function onInput(chunk) {
     else if (char >= ' ' && char !== '\x1b') input = (input + char).slice(-200);
   }
   keys.push(timestamp); dirty = true;
-  void draw(true);
+  if(terminal)void draw(true);
 }
 function resize() {
   const cols = process.stdout.columns, rows = process.stdout.rows;
@@ -56,7 +75,7 @@ function resize() {
   child?.resize(size.previewCols, size.previewRows);
   previous = null; forceRedraw = true; dirty = true;
   if (ink) ink.clear();
-  void draw(true);
+  if(terminal)void draw(true);
 }
 async function draw(immediate = false) {
   if (stopping || busy || (!dirty && !immediate)) return;
@@ -109,6 +128,16 @@ process.stdout.on('error', error => void finish(error));
 try {
   process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on('data', onInput);
   write('\x1b[?1049h\x1b[?25l\x1b[?7l');
+  if(paletteName==='auto'){
+    const detected=await new Promise(resolve=>{
+      const timeout=setTimeout(()=>{resolveBackground=undefined;resolve(null);},200);
+      resolveBackground=background=>{clearTimeout(timeout);resolveBackground=undefined;resolve(background);};
+      write(BACKGROUND_QUERY);
+    });
+    palette=createPalette('auto',detected??backgroundReply??null);
+  }
+  if(stopping)throw new Error('Startup cancelled');
+  usePalette(palette);
   const size = layout(process.stdout.columns, process.stdout.rows);
   terminal = new headless.Terminal({ cols: size.previewCols, rows: size.previewRows, scrollback: 100, allowProposedApi: true });
   // The child receives a literal minimal environment; no inherited credentials or routing.

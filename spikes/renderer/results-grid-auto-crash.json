@@ -1,0 +1,45 @@
+{
+  "command": "/opt/homebrew/bin/node spikes/renderer/main.js grid --palette auto --crash",
+  "seconds_requested": 3.0,
+  "terminal": [
+    130,
+    45
+  ],
+  "cpu_samples": [
+    14.7
+  ],
+  "cpu_average": 14.7,
+  "cpu_max": 14.7,
+  "wall_startup_ms": 282.3605830781162,
+  "input_samples_injected": 2,
+  "exit_code": 1,
+  "resize_injected": false,
+  "canonical_mode_restored": true,
+  "cursor_restore_seen": true,
+  "alt_off_seen": true,
+  "sync_off_seen": true,
+  "metrics": {
+    "engine": "grid",
+    "duration": 1.1912755830000001,
+    "startupMs": 265.765625,
+    "frames": {
+      "n": 36,
+      "avg": 2.7082731944444527,
+      "p95": 5.12379199999998,
+      "max": 10.624124999999992
+    },
+    "latencyMs": {
+      "n": 2,
+      "avg": 3.3557289999999966,
+      "p95": 3.7430409999999483,
+      "max": 3.7430409999999483
+    },
+    "stdoutBytes": 24041,
+    "bytesPerSecond": 20180.888740670172,
+    "secondBuckets": [
+      4252
+    ],
+    "error": "intentional renderer crash"
+  },
+  "palette_diagnostic": "AITERM_PALETTE {\"palette\":\"auto\",\"background\":\"no reply\",\"reason\":\"no reply within 200 ms; slate fallback\",\"TERM_PROGRAM\":\"unset\",\"COLORTERM\":\"unset\"}"
+}

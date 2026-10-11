@@ -1,0 +1,15 @@
+{
+  "scenario": "detected-dark",
+  "exit_code": 0,
+  "reply_stripped": true,
+  "typing_preserved": true,
+  "default_background": true,
+  "canonical_restored": true,
+  "diagnostic": {
+    "palette": "auto",
+    "background": "#1b2029",
+    "reason": "detected dark background",
+    "TERM_PROGRAM": "aiterm-test",
+    "COLORTERM": "truecolor"
+  }
+}

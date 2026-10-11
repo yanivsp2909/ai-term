@@ -1,0 +1,15 @@
+{
+  "scenario": "detected-light",
+  "exit_code": 0,
+  "reply_stripped": true,
+  "typing_preserved": true,
+  "default_background": true,
+  "canonical_restored": true,
+  "diagnostic": {
+    "palette": "auto",
+    "background": "#ffffff",
+    "reason": "detected light background",
+    "TERM_PROGRAM": "aiterm-test",
+    "COLORTERM": "truecolor"
+  }
+}

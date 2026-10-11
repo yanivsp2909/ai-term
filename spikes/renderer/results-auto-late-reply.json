@@ -1,0 +1,15 @@
+{
+  "scenario": "late-reply",
+  "exit_code": 0,
+  "reply_stripped": true,
+  "typing_preserved": true,
+  "default_background": true,
+  "canonical_restored": true,
+  "diagnostic": {
+    "palette": "auto",
+    "background": "no reply",
+    "reason": "no reply within 200 ms; slate fallback",
+    "TERM_PROGRAM": "aiterm-test",
+    "COLORTERM": "truecolor"
+  }
+}

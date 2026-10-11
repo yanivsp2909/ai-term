@@ -1,0 +1,48 @@
+{
+  "command": "/opt/homebrew/bin/node spikes/renderer/main.js grid --palette ink",
+  "seconds_requested": 3.0,
+  "terminal": [
+    130,
+    45
+  ],
+  "cpu_samples": [
+    7.4,
+    5.1
+  ],
+  "cpu_average": 6.25,
+  "cpu_max": 7.4,
+  "wall_startup_ms": 73.27845797408372,
+  "input_samples_injected": 7,
+  "exit_code": 0,
+  "resize_injected": true,
+  "canonical_mode_restored": true,
+  "cursor_restore_seen": true,
+  "alt_off_seen": true,
+  "sync_off_seen": true,
+  "metrics": {
+    "engine": "grid",
+    "duration": 3.026604875,
+    "startupMs": 59.059625,
+    "frames": {
+      "n": 96,
+      "avg": 0.9547787291666543,
+      "p95": 1.8605830000000196,
+      "max": 8.243166999999858
+    },
+    "latencyMs": {
+      "n": 7,
+      "avg": 0.6238928571428508,
+      "p95": 1.0682499999999777,
+      "max": 1.0682499999999777
+    },
+    "stdoutBytes": 51390,
+    "bytesPerSecond": 16979.421537474394,
+    "secondBuckets": [
+      4404,
+      21224,
+      3485
+    ],
+    "error": null
+  },
+  "palette_diagnostic": "AITERM_PALETTE {\"palette\":\"ink\",\"background\":\"no reply\",\"reason\":\"fixed palette\",\"TERM_PROGRAM\":\"unset\",\"COLORTERM\":\"unset\"}"
+}
