@@ -106,6 +106,18 @@ it('previewSize report changes on SIGWINCH and forces a complete redraw', async 
     expect(tty.output.slice(before)).toContain('\x1b[2J');
   } finally { await home.stop(); }
 });
+it('never shrinks detached sessions to the hidden preview area of a compact or tiny window', async () => {
+  const { home, tty, client, signals } = await fixture();
+  try {
+    const reported = () => client.requests.filter(r => r.kind === 'layout.previewSize');
+    expect(reported()).toHaveLength(1);
+    for (const [columns, rows] of [[80, 24], [50, 12]] as const) {
+      tty.columns = columns; tty.rows = rows; signals.emit('SIGWINCH');
+      await expect.poll(() => client.requests.filter(r => r.kind === 'sessions.preview').length).toBeGreaterThan(columns === 80 ? 1 : 2);
+    }
+    expect(reported()).toHaveLength(1);
+  } finally { await home.stop(); }
+});
 it('idle homepage writes no redraws and restores mouse/raw/alternate modes on quit and crash', async () => {
   for (const crash of [false, true]) {
     const { home, tty, signals } = await fixture();
