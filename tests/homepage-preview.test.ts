@@ -59,3 +59,19 @@ it('source execution loads design palettes without a Vite loader', async () => {
   const result = await new Promise<string>((resolve, reject) => execFile(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', "await import('./src/client/tui/theme.ts')"], { cwd: process.cwd(), env: { PATH: '/usr/bin:/bin' } }, (error, stdout) => error ? reject(error) : resolve(stdout)));
   expect(result).toBe('');
 });
+it('a single large scroll chunk counts every new line, while ED3 clears without counting new output', async () => {
+  const { Preview } = await import('../src/client/tui/preview.js'); const preview = new Preview(4, 3, () => {});
+  try {
+    await preview.write('x'.repeat(4 * 5010)); preview.scroll(-10);
+    await preview.write('y'.repeat(4 * 6000)); expect(preview.newLines).toBe(6000);
+    preview.follow(); preview.scroll(-2); await preview.write('\x1b[3J'); expect(preview.newLines).toBe(0);
+  } finally { preview.dispose(); }
+});
+it('multiline selection copies only displayed columns from a wider remote terminal', async () => {
+  const { Preview } = await import('../src/client/tui/preview.js'); const preview = new Preview(20, 4, () => {});
+  try {
+    await preview.write('12345HIDDEN\r\nabcdeHIDDEN\r\nfghijHIDDEN');
+    preview.select({ x: 0, y: 0 }, { x: 4, y: 2 });
+    expect(preview.selectedText(5)).toBe('12345\nabcde\nfghij');
+  } finally { preview.dispose(); }
+});

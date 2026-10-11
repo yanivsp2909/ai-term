@@ -221,3 +221,21 @@ it('switching selection back shows the latest cached mirror immediately while re
     expect(tty.output.slice(before)).not.toContain('Attach unavailable');
   } finally { await home.stop(); }
 });
+it('catch-up arriving during initial snapshot parse supersedes the startup snapshot', async () => {
+  const { home, tty, client } = await fixture();
+  try {
+    const { Preview } = await import('../src/client/tui/preview.js');
+    const write = Preview.prototype.write;
+    let caught = false;
+    const spy = vi.spyOn(Preview.prototype, 'write').mockImplementation(function (data) {
+      if (data === 'hello preview' && !caught) {
+        caught = true;
+        const activeId = (home as unknown as { previewRequestId: string }).previewRequestId;
+        client.emit('event', { id: activeId, ok: true, sessionId: session.id, snapshot: 'STARTUP_LATEST', cols: 88, rows: 27 });
+      }
+      return write.call(this, data);
+    });
+    tty.emit('data', Buffer.from('p')); await expect.poll(() => client.requests.filter(r => r.kind === 'sessions.preview' && r.sessionId === null).length).toBeGreaterThan(0);
+    tty.emit('data', Buffer.from('p')); await expect.poll(() => tty.output.includes('STARTUP_LATEST')).toBe(true); spy.mockRestore();
+  } finally { await home.stop(); }
+});

@@ -54,3 +54,13 @@ it('settings.get and settings.set round-trip through the daemon with invalid pat
     expect((await client.request({ kind: 'settings.get' })).settings).toEqual({ theme: 'auto' });
   } finally { client.close(); await server.close(); await manager.shutdown(); }
 });
+it('resizing detached sessions broadcasts new preview dimensions once, without redundant events', async () => {
+  const { getPaths, preparePaths } = await import('../src/shared/paths.js'), { SessionManager } = await import('../src/daemon/session-manager.js'), { Logger } = await import('../src/daemon/log.js');
+  const root = await temporary(), paths = getPaths(root); await preparePaths(paths);
+  const manager = new SessionManager(paths, new Logger(paths.log), { executable: '/bin/sh', args: ['-c', 'exit 0'], env: { PATH: '/usr/bin:/bin' } }); await manager.load();
+  try {
+    const session = await manager.create({ cwd: root }), events: unknown[] = []; manager.on('event', e => events.push(e));
+    await manager.previewSize(40, 12); await manager.previewSize(40, 12);
+    expect(events.filter(e => !!e && typeof e === 'object' && 'kind' in e && e.kind === 'session.previewResized')).toEqual([{ kind: 'session.previewResized', sessionId: session.id, cols: 40, rows: 12 }]);
+  } finally { await manager.shutdown(); }
+});
