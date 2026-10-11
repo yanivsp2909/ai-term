@@ -21,7 +21,7 @@ it('pauses a PTY for a stalled mirror queue and resumes when its own queue drain
  const p=await paths();const pause=vi.spyOn(PtyHost.prototype,'pause');const resume=vi.spyOn(PtyHost.prototype,'resume');
  let release:()=>void=()=>{};const gate=new Promise<void>(r=>{release=r;});const real=Mirror.prototype.write;
  vi.spyOn(Mirror.prototype,'write').mockImplementation(async function(this:Mirror,data){await gate;await real.call(this,data);});
- const manager=new SessionManager(p,new Logger(p.log),{executable:'/bin/sh',args:['-c','while :; do printf "%01000d" 1; done'],env:{PATH:'/usr/bin:/bin'}});await manager.load();
+ const manager=new SessionManager(p,new Logger(p.log),{executable:'/bin/sh',args:['-c','i=0; while [ "$i" -lt 2500 ]; do printf "%01000d" 1; i=$((i+1)); done; read answer'],env:{PATH:'/usr/bin:/bin'}});await manager.load();
  await manager.create({cwd:p.root});
  try{await expect.poll(()=>pause.mock.calls.length,{timeout:3000}).toBeGreaterThan(0);release();await expect.poll(()=>resume.mock.calls.length,{timeout:5000}).toBeGreaterThan(0);}finally{release();await manager.shutdown();}
 },10000);

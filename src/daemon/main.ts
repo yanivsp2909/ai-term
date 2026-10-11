@@ -1,0 +1,60 @@
+import { getPaths, preparePaths } from '../shared/paths.js';
+import { acquireLock } from './lock.js';
+import { Logger } from './log.js';
+import { SessionManager } from './session-manager.js';
+import { DaemonServer } from './server.js';
+export async function runDaemon(): Promise<void> {
+    process.umask(0o077);
+    const paths = getPaths();
+    await preparePaths(paths);
+    const log = new Logger(paths.log), release = acquireLock(paths.pid);
+    const manager = new SessionManager(paths, log), server = new DaemonServer(paths, manager, log);
+    let closing = false;
+    let idleSince: number | null = null;
+    let idle: ReturnType<typeof setInterval> | undefined;
+    let resolveDone: () => void = () => { };
+    const done = new Promise<void>(resolve => { resolveDone = resolve; });
+    const shutdown = async (error?: unknown) => {
+        if (closing)
+            return;
+        closing = true;
+        if (idle)
+            clearInterval(idle);
+        if (error) {
+            log.error(`Daemon failed: ${error instanceof Error ? error.message : 'unknown'}`);
+            process.exitCode = 1;
+        }
+        try {
+            for(const cleanup of [()=>server.close(),()=>manager.shutdown()]) {
+                try{await cleanup();}catch(cleanupError){log.error(`Shutdown failed: ${cleanupError instanceof Error?cleanupError.message:'unknown'}`);process.exitCode=1;}
+            }
+        } finally {
+            try{release();}finally{process.off('SIGTERM',onSignal);process.off('SIGINT',onSignal);resolveDone();}
+        }
+    };
+    const onSignal = () => { void shutdown(); };
+    process.on('SIGTERM', onSignal);
+    process.on('SIGINT', onSignal);
+    manager.on('fatal', (error: unknown) => { void shutdown(error); });
+    try {
+        await manager.load();
+        if (!closing)
+            await server.listen();
+        if (!closing) {
+            log.info('Daemon started');
+            idle = setInterval(() => {
+                if (manager.activeCount() === 0 && server.clientCount() === 0) {
+                    idleSince ??= Date.now();
+                    if (Date.now() - idleSince >= 10 * 60 * 1000)
+                        void shutdown();
+                }
+                else
+                    idleSince = null;
+            }, 1000);
+        }
+    }
+    catch (error) {
+        await shutdown(error);
+    }
+    await done;
+}
