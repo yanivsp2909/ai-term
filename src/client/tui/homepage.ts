@@ -161,7 +161,7 @@ export class Homepage {
       case 'note': this.showNote(action.text, 1000); return;
       case 'submit': this.enqueue(() => this.submit(action.text)); break;
       case 'attach': this.enqueue(() => this.openSelected()); break;
-      case 'preview': this.visible = !this.visible; this.previewCells = undefined; this.enqueue(() => this.updatePreview(false)); break;
+      case 'preview': this.visible = !this.visible; this.previewCells = undefined; this.enqueue(() => this.updatePreview(true)); break;
       case 'up': case 'down': {
         const sessions = sortSessions(this.sessions), index = sessions.findIndex(s => s.id === this.selectedId), next = sessions[Math.max(0, Math.min(sessions.length - 1, index + (action.kind === 'up' ? -1 : 1)))];
         if (next && next.id !== this.selectedId) { this.selectedId = next.id; this.drag = null; this.previewCells = undefined; this.enqueue(() => this.updatePreview(false)); }
@@ -202,7 +202,8 @@ export class Homepage {
   private currentPreview(): Preview | undefined { return this.selectedId ? this.previews.get(this.selectedId) : undefined; }
   private async updatePreview(resize: boolean): Promise<void> {
     const { cols, rows } = this.size(), layout = homepageLayout(cols, rows, this.visible);
-    if (resize) {
+    // Without a visible preview there is no area to match; never reflow detached sessions down to it.
+    if (resize && layout.preview) {
       await this.connection.request({ kind: 'layout.previewSize', cols: layout.terminal.w, rows: layout.terminal.h });
       // Re-subscribe below: an attached session can have a different size from our layout.
     }
