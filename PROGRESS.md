@@ -1,12 +1,15 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: aa86080 docs: record final mouse mode regression and checks
-Roadmap step: v0.1.4 done (physical-terminal manual checks need Yaniv)
+Last commit: e83b7ed docs: record attach diagnostics and unresolved Terminal.app check
+Roadmap step: v0.1.4 implementation done; B1 partial (original immediate return still needs a controlled Terminal.app check)
 Private remote: https://github.com/yanivsp2909/ai-term (main)
 This handover is committed last; its own hash is in git log.
 
 ## What works
+- B1 diagnostics: `ai debug attach` now prints a reason on every completion/failure. `AI_TERM_DEBUG=1` logs the fixed reason plus at most the first 64 stdin bytes as hex; it is off by default. Timeouts/malformed replies are errors, valid daemon rejection is distinct, and rejected directory paths cannot receive diagnostic writes.
+- Fixed a separately reproduced daemon startup race: the Unix socket is now 0600 at binding, before clients can observe it. Previously it briefly had mode 0700 before chmod, causing intermittent `Unsafe daemon socket` failures.
+- Real CLI outer-PTY regression passes terminal query replies/startup noise, vim text entry, resize, Ctrl+E, reattach with text intact and exit code 0. Already-exited sessions report `session exited`; an early exit cannot swallow a subsequent attach rejection.
 - v0.1.1 scaffold and v0.1.2 renderer spike remain working. Renderer is the pinned custom cell grid (D26); no product homepage exists.
 - Private Unix-socket daemon: protocol 1, 4 MiB bounded frames, per-client validators/queues, hello mismatch closes, single-instance lock, stale recovery, atomic state, redacted rotated logs.
 - Internal shell PTYs: argv spawn, always env hygiene, starting/running/exited/error lifecycle, preview sizing, detached query replies, TERM/KILL stop, restart records become exited.
@@ -15,17 +18,22 @@ This handover is committed last; its own hash is in git log.
 - Full-screen attach: snapshot plus saved terminal modes, raw byte input/output, Ctrl+E returns to the caller while the shell continues. Only the attached owner can send input/resize; a new attach takes over and notifies the old client. Detach/disconnect restores preview sizing and mirror query replies.
 - Home-key parsing handles raw 0x05, kitty CSI-u press/repeat/release and modifyOtherKeys across split chunks. Bracketed-paste contents pass through. Attached Ctrl+C goes to the shell; startup Ctrl+C restores the client.
 - Independent mirror/attached-client backpressure, mode cleanup after home/exit/disconnect/uncaught error, safe numeric exit status. Mouse mode restoration round trips all 20 tracking/encoding combinations.
-- All final checks pass: typecheck, lint, 72 tests across 14 files, build. Coverage: 85.55% statements, 89.32% lines, 86.29% functions, 74.75% branches; branch coverage remains below 80% and subprocess coverage is separate.
+- All B1 final checks pass: typecheck, lint, 86 tests across 18 files (original 72 included), build. Coverage: 85.8% statements, 90.22% lines, 85.92% functions, 75.05% branches; branch coverage remains below 80% and subprocess coverage is separate.
 - Built CLI real outer-PTY checks passed for home, session exit, daemon death and an actual uncaught timer error: reset escapes and canonical/signal-enabled termios verified. Temporary daemons/shells/test roots/preload files/npm caches cleaned up; no process started by v0.1.4 remains running.
 - Read-only security, code and TypeScript review findings fixed with regression tests. Final mode-ordering fix re-reviewed with no findings. Evidence and architecture corrections: docs/spikes/v0.1-attach.md; prior daemon evidence remains docs/spikes/v0.1-daemon-core.md.
+- B1 code/TypeScript reviews passed after fixing all real findings. The code review also checked S2/S8/S15; a fresh security-agent follow-up was rejected by the agent thread limit, so no new security-role review is claimed. B1 evidence, failing-first commits and corrections: docs/spikes/v0.1-attach-b1.md. No homepage or account CLI work was added.
 
 ## What's next
+- Finish B1's controlled physical-terminal check before calling its original reported symptom fixed. Yaniv's latest transcript runs `vim` after `back in your shell (home key)`, so that vim was outside AI Term. The corresponding diagnostic records successful attach and only raw byte 05. The original unexplained return remains unconfirmed; do not claim the socket race caused that home-key return.
+- Copy into one Mac shell: `cd ~/ai-term`, then `aiterm_session_id=$(ai debug shell ~)`, then `AI_TERM_DEBUG=1 ai debug attach "$aiterm_session_id"`. Run vim only while the session remains attached. After Control+E returns home, `ai debug attach "$aiterm_session_id"` should restore that same vim. If attach returns immediately, send the printed reason.
 - v0.1.5: homepage, only with a new authorized prompt. Do not start it or Claude/Codex spawning v0.1.6 in this session.
 - Yaniv: run the six physical-terminal checks below. Automation checked protocol, terminal bytes and termios; it does not prove vim/top rendering or keyboard feel in Terminal.app/iTerm2.
 - Planning chat: apply the attach report's §4–6 additions for modes/lifecycle in the attach reply, takeover event, encoded home keys/paste, cleanup and combined flow control. The previously uncommitted v0.1.3 findings were committed alone at this session's start.
 - Prior renderer/key/telemetry manual checks remain in earlier reports. The v0.1.3 transcript showed the same session in a second list command; physical close/reopen remains unconfirmed.
 
 ## Manual checks
+- B1: real terminal reply/noise + clean vim/resize/home/reattach/exit test ran with a created temporary home; passes. Original instant-return symptom not reproduced. Yaniv says the diagnostic attach opened, but his subsequent transcript shows vim launched after return, so physical attached-vim behavior remains needs Yaniv.
+- B1: use `ai ...` for all user checks, because Yaniv linked the command. The exact five checks and what they prove are in docs/spikes/v0.1-attach-b1.md. Do not run `vim` in the Mac shell after the return message and treat it as attached.
 - Built CLI home, exit, daemon death, actual uncaught error: ran in real outer PTYs with temp AI_TERM_HOME and literal minimal env; normal termios and mode-reset bytes confirmed.
 - Real daemon/fake TTY echo → Ctrl+E → detached dimensions → reattach snapshot → exit: ran. Real PTY size/query and attached versus preview flow tests: ran.
 - `cd ~/ai-term; npm run build && node dist/cli/index.js debug shell ~`, then `node dist/cli/index.js debug attach <id>`; type `ls`: needs Yaniv (normal terminal behavior).
@@ -37,6 +45,9 @@ This handover is committed last; its own hash is in git log.
 - Prior v0.1.3 login-shell/list/peek/doctor/stop checks: ran by Yaniv; transcript details remain in docs/spikes/v0.1-daemon-core.md. Closing/reopening the physical window was not explicitly confirmed.
 
 ## Gotchas
+- B1 is partial even though diagnostics and a separately confirmed socket startup race are fixed. Need user evidence from an actually attached Terminal.app vim session; automated terminal emulation does not prove physical key behavior.
+- The existing user daemon and shell/vim/top processes were left running. Tests/drivers cleaned up only their own processes and created folders. Every B1 npm command used /tmp/ai-term-b1-cache.8Tr5Fw, removed afterward; no forbidden credential/config files were read, and no write-boundary exception occurred.
+- Debug hex is reversible input, so capture is explicit, bounded and off by default; do not leave AI_TERM_DEBUG enabled for sensitive session input. No env contents or input text are logged. Log setup must pass directory validation before diagnostics may write.
 - node-pty 1.1.0 still has a 0644 macOS arm64 spawn-helper even when its scripts run. No chmod used this step. Pin 1.2.0-beta.15 and its exact allowScripts approval: published helper is executable and a clean npm ci + real PTY passed. Beta dependency is deliberate and should be revisited when stable packaging is fixed.
 - Correlation `id` and target `sessionId` are distinct. Catchup sends another snapshot response with the preview request ID; after the first reply Connection emits it as an event. Snapshot carries captured cols/rows.
 - Attach response carries modes and the current session record. xterm public modes omit mouse encoding/cursor visibility; the mirror tracks them through its public parser hooks. Reset all mouse modes before enabling the selected one.
@@ -53,6 +64,7 @@ This handover is committed last; its own hash is in git log.
 - The implementation agent ran no real Claude/Codex auth or key operation. Yaniv subsequently verified doctor in his terminal; its sanitized classification is recorded above. Prior Foundry Responses-only/non-GPT, telemetry/context and renderer manual limits remain documented in earlier spike reports.
 
 ## New dependencies
+- B1: none; existing Node, node-pty and headless terminal APIs were sufficient.
 - v0.1.4: none; existing node-pty/headless/serialize and Node APIs were enough.
 - node-pty 1.2.0-beta.15 (moved to runtime): real shell pseudo-terminal; Node streams cannot provide terminal semantics. This exact beta fixes the packaged macOS helper permissions.
 - @xterm/headless 6.0.0 (moved to runtime): parses terminal output and answers detached queries without touching the user's terminal.
@@ -60,6 +72,9 @@ This handover is committed last; its own hash is in git log.
 - @vitest/coverage-v8 remains dev, pinned 5.0.3: verification-loop coverage evidence. No other new product dependency.
 
 ## Concepts introduced
+- Completion reasons — src/client/attach.ts: navigation, session exit and failures are different outcomes. A typed AttachError preserves the cause and a short reason while cleanup runs, so the CLI can explain why it returned.
+- Explicit rejection — src/client/connection.ts: only a valid negative daemon response is a DaemonRequestError. Bad frames and timeouts remain general errors rather than pretending the daemon rejected a legitimate request.
+- Socket creation permissions — src/daemon/server.ts: Unix binding uses 0777 masked by the process umask. Temporarily use 0177 during synchronous binding and restore it immediately, so the socket is private and has its final 0600 mode from the first observable moment.
 - Attached ownership — src/daemon/server.ts: one socket owns input and resize for a session. Takeover changes that owner atomically with snapshot delivery; stale-client detach cannot undo another client's ownership.
 - Streaming home-key filter — src/client/input-filter.ts: terminal keys and paste markers can span socket reads, so the parser retains partial escape sequences. It consumes navigation outside paste while forwarding ordinary bytes unchanged.
 - Terminal restoration — src/client/attach.ts and terminal-modes.ts: raw mode sends keystrokes directly; alternate screen gives the session its own screen. Entry reinstates the mirror's input modes, and every supported exit resets them before returning to the caller.
