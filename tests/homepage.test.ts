@@ -158,6 +158,16 @@ it('drag selection highlights and copies plain preview text, clearing the flash 
     expect(copy).toHaveBeenCalledWith('hello'); await expect.poll(() => tty.output.includes('✓ copied 1 lines')).toBe(true);
   } finally { await home.stop(); }
 });
+it('a plain click in the preview never overwrites the clipboard', async () => {
+  const { Homepage } = await import('../src/client/tui/homepage.js');
+  const tty = new TTY(), client = new Client(), copy = vi.fn(async () => {}), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), copy });
+  await home.start();
+  try {
+    for (const x of [41, 60]) tty.emit('data', Buffer.from(`\x1b[<0;${x};4M\x1b[<0;${x};4m`));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(copy).not.toHaveBeenCalled(); expect(tty.output).not.toContain('copied');
+  } finally { await home.stop(); }
+});
 it('stop asks y/n, rename saves inline and remove targets only exited/error records', async () => {
   const { home, tty, client } = await fixture();
   try {
