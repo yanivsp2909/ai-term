@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, lstat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, lstat, symlink, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -78,6 +78,21 @@ describe('lock, logger and shell environment', () => {
         const again = acquireLock(paths.pid);
         again();
         await expect(lstat(paths.pid)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+    it('recovers a stale lock whose PID now belongs to a process that started after the lock was written', async () => {
+        const paths = getPaths(await temp());
+        await preparePaths(paths);
+        // After a crash and reboot the old daemon PID can belong to any live process, even a root one.
+        await writeFile(paths.pid, `${process.pid}\n`, { mode: 0o600 });
+        const written = new Date('2001-01-01T00:00:00Z');
+        await utimes(paths.pid, written, written);
+        const release = await acquireLock(paths.pid);
+        expect((await readFile(paths.pid, 'utf8')).trim()).toBe(String(process.pid));
+        expect((await lstat(paths.pid)).mtimeMs).toBeGreaterThan(written.getTime());
+        release();
+        // PID 1 belongs to root: never this user's daemon, however old the lock.
+        await writeFile(paths.pid, '1\n', { mode: 0o600 });
+        (await acquireLock(paths.pid))();
     });
     it('redacts canary and key assignments and rotates private logs', async () => {
         expect(redact('sk-ant-AITERMCANARY0000 OPENAI_API_KEY=dummy-value')).not.toContain('AITERMCANARY');
