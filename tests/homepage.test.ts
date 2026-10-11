@@ -66,14 +66,17 @@ it('decodes fragmented arrows, UTF-8, SGR mouse and bracketed paste without trea
   parser.push(Buffer.from('\x1b[')); parser.push(Buffer.from('A界')); parser.push(Buffer.from('\x1b[<0;42;5M\x1b[<0;43;5m'));
   parser.push(Buffer.from('\x1b[200~p\r/exit\x1b[201~'));
   expect(events).toContainEqual({ kind: 'key', key: 'up' }); expect(events).toContainEqual({ kind: 'key', key: '界' });
-  expect(events).toContainEqual({ kind: 'mouse', button: 0, x: 41, y: 4, release: true });
+  expect(events).toContainEqual({ kind: 'mouse', button: 0, x: 42, y: 4, release: true });
   expect(events).toContainEqual({ kind: 'paste', text: 'p /exit' }); parser.dispose();
 });
 it('S15: OSC 52 / title / bell in a session never reaches homepage stdout', async () => {
   const { home, tty, client } = await fixture();
   try {
-    client.emit('output', session.id, Buffer.from('\x1b]52;c;FORBIDDEN_CLIPBOARD\x07\x1b]0;FORBIDDEN_TITLE\x07\x07safe cell text'));
-    await expect.poll(() => tty.output.includes('safe cell text')).toBe(true);
+    client.emit('output', session.id, Buffer.from('\x1b]52;c;FORBIDDEN_CLIPBOARD\x07\x1b]0;FORBIDDEN_TITLE\x07\x07\r\nsafe cell text'));
+    await expect.poll(() => tty.output.includes('safe')).toBe(true);
+    const headless = (await import('@xterm/headless')).default;
+    const display = new headless.Terminal({ cols: 130, rows: 45, allowProposedApi: true });
+    try { await new Promise<void>(resolve => display.write(tty.output, resolve)); expect(display.buffer.active.getLine(4)?.translateToString()).toContain('safe cell text'); } finally { display.dispose(); }
     expect(tty.output).not.toContain('FORBIDDEN'); expect(tty.output).not.toContain('\x07'); expect(tty.output).not.toContain('\x1b]');
   } finally { await home.stop(); }
 });

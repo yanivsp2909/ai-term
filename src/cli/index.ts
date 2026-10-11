@@ -14,7 +14,9 @@ const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
 function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug ls|shell [cwd]|stop <id>|peek <id>|attach <id>]\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
     if (args.length === 0) {
-        process.stdout.write('AI Term v0.1: not built yet. See PROGRESS.md.\n');
+        const client = await Connection.connect(getPaths(), { entry });
+        try { const { homepage } = await import('../client/tui/homepage.js'); await homepage(client); }
+        finally { client.close(); }
         return;
     }
     if (args.length === 1 && args[0] === '--version') {
