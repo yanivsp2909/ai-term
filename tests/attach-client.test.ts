@@ -42,3 +42,15 @@ it('Ctrl+C cancels startup but belongs to the agent after attach completes',asyn
 it('retains SGR mouse encoding when an unrelated encoding is reset',async()=>{
  const mirror=new Mirror(80,24,()=>{});try{await mirror.write('\x1b[?1006h\x1b[?1015l');expect(mirror.modes().mouseEncoding).toBe('sgr');}finally{mirror.dispose();}
 });
+it('restores locally immediately when startup request stays pending',async()=>{
+ const {tty,connection,signals,options}=fixture();let release:(value:Awaited<ReturnType<FakeConnection['request']>>)=>void=()=>{};const real=connection.request.bind(connection);
+ const pending=new Promise<Awaited<ReturnType<FakeConnection['request']>>>(r=>{release=r;});connection.request=body=>body.kind==='sessions.attach'?pending:real(body);
+ const done=attach(connection,id,options);signals.emit('SIGINT');await new Promise(r=>setTimeout(r,0));
+ try{expect(tty.isRaw).toBe(false);expect(tty.output).toContain('\x1b[?1049l');}finally{release(await real({kind:'sessions.attach',sessionId:id,cols:80,rows:24}));await done;}
+});
+it('preserves final snapshot and output when exit arrives in the attach response read',async()=>{
+ const {tty,connection,options}=fixture();const real=connection.request.bind(connection);connection.request=async body=>{
+ const result=await real(body);if(body.kind==='sessions.attach'){connection.emit('output',id,Buffer.from('FINAL_OUTPUT'));connection.emit('event',{kind:'session.updated',session:{id,status:'exited',exitCode:0}});}return result;
+ };
+ await attach(connection,id,options);expect(tty.output).toContain('SNAPSHOT');expect(tty.output).toContain('FINAL_OUTPUT');expect(tty.output).toContain('[session exited with code 0]');
+});
