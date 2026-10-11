@@ -8,7 +8,7 @@ import { Logger } from '../src/daemon/log.js';
 import { attach, type AttachTTY } from '../src/client/attach.js';
 import { enterModes, RESET_MODES } from '../src/client/terminal-modes.js';
 import { Mirror } from '../src/daemon/mirror.js';
-import type { RequestBody } from '../src/client/connection.js';
+import { DaemonRequestError, type RequestBody } from '../src/client/connection.js';
 const id=randomUUID();
 class FakeTTY extends EventEmitter implements AttachTTY {
  isTTY=true;columns=80;rows=24;isRaw=false;output='';setRawMode(raw:boolean){this.isRaw=raw;}resume(){}pause(){}write(data:string|Buffer){this.output+=data.toString();return true;}
@@ -54,7 +54,7 @@ it('reports an already exited session instead of an unexplained home return',asy
 });
 it('reports rejected attach as failure and does not render a session snapshot',async()=>{
  const {tty,connection,options}=fixture();const real=connection.request.bind(connection);
- connection.request=body=>body.kind==='sessions.attach'?Promise.reject(new Error('Session operation failed')):real(body);
+ connection.request=body=>body.kind==='sessions.attach'?Promise.reject(new DaemonRequestError('Session operation failed')):real(body);
  await expect(attach(connection,id,options)).rejects.toMatchObject({reason:'attach rejected'});expect(tty.output).not.toContain('SNAPSHOT');expect(tty.isRaw).toBe(false);
 });
 it('reports an attach request timeout as an error rather than a daemon rejection',async()=>{
@@ -78,7 +78,7 @@ it('reports non-TTY stdin without changing terminal modes',async()=>{
 });
 it('does not turn an early exit followed by a rejected attach into a successful return',async()=>{
  const {tty,connection,options}=fixture();const real=connection.request.bind(connection);
- connection.request=async body=>{if(body.kind!=='sessions.attach')return real(body);connection.emit('event',{kind:'session.updated',session:{id,status:'exited',exitCode:0}});throw new Error('Attach rejected after exit');};
+ connection.request=async body=>{if(body.kind!=='sessions.attach')return real(body);connection.emit('event',{kind:'session.updated',session:{id,status:'exited',exitCode:0}});throw new DaemonRequestError('Attach rejected after exit');};
  await expect(attach(connection,id,options)).rejects.toMatchObject({reason:'attach rejected'});expect(tty.output).not.toContain('SNAPSHOT');expect(tty.isRaw).toBe(false);
 });
 it.each(['exit','disconnect','uncaught','takeover'] as const)('restores raw/alternate modes after %s',async(reason)=>{

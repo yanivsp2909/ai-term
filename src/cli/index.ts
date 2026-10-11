@@ -6,9 +6,10 @@ import { resolve } from 'node:path';
 import { lstat, open } from 'node:fs/promises';
 import headless from '@xterm/headless';
 import { Connection } from '../client/connection.js';
-import { getPaths, isFsError } from '../shared/paths.js';
+import { getPaths, preparePaths, isFsError } from '../shared/paths.js';
 import { isUUID, validCwd } from '../shared/validate.js';
-import { redact } from '../daemon/log.js';
+import { redact, Logger } from '../daemon/log.js';
+import { AttachError } from '../client/attach.js';
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
 function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug ls|shell [cwd]|stop <id>|peek <id>|attach <id>]\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
@@ -49,13 +50,24 @@ async function main(): Promise<void> {
     }
     const paths = getPaths();
     let client: Connection;
+    let pathsReady=false;
     try {
-        client = await Connection.connect(paths, { entry, autoStart: !stopDaemon });
+        await preparePaths(paths);pathsReady=true;
+        client = await Connection.connect(paths, { entry, autoStart: !stopDaemon, readOnly:true });
     }
     catch (error) {
         if (stopDaemon && isFsError(error, 'ENOENT')) {
             process.stdout.write('Daemon is not running.\n');
             return;
+        }
+        if(action==='attach'){
+            const reason=isFsError(error,'ENOENT')||isFsError(error,'ECONNREFUSED')?'daemon gone':'error';
+            process.stdout.write(`back in your shell (${reason})\n`);
+            // Connection setup may have rejected these directories: never log through them.
+            if(pathsReady&&process.env.AI_TERM_DEBUG==='1'){
+                try{new Logger(paths.log).info(`attach reason=${reason} inputHex=`);}
+                catch(logError){process.stderr.write(`Attach debug log failed: ${redact(logError instanceof Error?logError.message:'Log failed')}\n`);}
+            }
         }
         throw error;
     }
@@ -106,7 +118,16 @@ async function main(): Promise<void> {
             await client.request({ kind: 'sessions.stop', sessionId: args[2] });
             process.stdout.write('Session stopped.\n');
         }
-        if(action==='attach'&&args[2]){const {attach}=await import('../client/attach.js');await attach(client,args[2]);process.stdout.write('back in your shell\n');}
+        if(action==='attach'&&args[2]){
+            const {attach}=await import('../client/attach.js');
+            try{
+                const reason=await attach(client,args[2],{debugLog:process.env.AI_TERM_DEBUG==='1'?new Logger(paths.log):undefined});
+                process.stdout.write(`back in your shell (${reason})\n`);
+            }catch(error){
+                process.stdout.write(`back in your shell (${error instanceof AttachError?error.reason:'error'})\n`);
+                throw error;
+            }
+        }
         if (action === 'peek' && args[2]) {
             const result = await client.request({ kind: 'sessions.preview', sessionId: args[2] });
             const terminal = new headless.Terminal({ cols: result.cols ?? 85, rows: result.rows ?? 30, allowProposedApi: true });

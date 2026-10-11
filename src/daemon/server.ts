@@ -96,7 +96,13 @@ export class DaemonServer {
             if (!isFsError(error, 'ENOENT'))
                 throw error;
         }
-        await new Promise<void>((resolve, reject) => { this.server.once('error', reject); this.server.listen(this.paths.socket, () => { this.server.off('error', reject); resolve(); }); });
+        await new Promise<void>((resolve, reject) => {
+            this.server.once('error', reject);
+            // Unix sockets start with 0777 & ~umask. Create as 0600 before clients can lstat it.
+            const previousMask=process.umask(0o177);
+            try{this.server.listen(this.paths.socket, () => { this.server.off('error', reject); resolve(); });}
+            finally{process.umask(previousMask);}
+        });
         await chmod(this.paths.socket, 0o600);
         const stat = await lstat(this.paths.socket);
         this.socketIdentity = { ino: stat.ino, dev: stat.dev };

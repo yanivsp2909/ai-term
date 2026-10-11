@@ -10,6 +10,7 @@ import { preparePaths, isFsError } from '../shared/paths.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, PROTOCOL_VERSION, type Request, type SuccessResponse } from '../shared/protocol.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 export type RequestBody = Request extends infer R ? R extends Request ? Omit<R, 'id'> : never : never;
+export class DaemonRequestError extends Error {}
 export class Connection extends EventEmitter {
     private pending = new Map<string, {
         resolve: (value: SuccessResponse) => void;
@@ -37,6 +38,7 @@ export class Connection extends EventEmitter {
                     const pending = typeof v.id === 'string' ? this.pending.get(v.id) : undefined;
                     if (pending && typeof v.id === 'string') {
                         if(v.ok===true)validateSuccess(value);
+                        else if(v.kind!=='helloMismatch'&&(v.ok!==false||!v.error||typeof v.error!=='object'||!('code' in v.error)||typeof v.error.code!=='string'||!('message' in v.error)||typeof v.error.message!=='string'))throw new Error('Invalid daemon response');
                         clearTimeout(pending.timer);
                         this.pending.delete(v.id);
                         if (v.kind === 'helloMismatch')
@@ -44,7 +46,7 @@ export class Connection extends EventEmitter {
                         else if (v.ok === true)
                             pending.resolve(validateSuccess(value));
                         else
-                            pending.reject(new Error('error' in v && v.error && typeof v.error === 'object' && 'message' in v.error ? String(v.error.message) : 'Daemon request failed'));
+                            pending.reject(new DaemonRequestError((v.error as {message:string}).message));
                     }
                     else
                         this.emit('event', value);

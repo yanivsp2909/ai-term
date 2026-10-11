@@ -1,4 +1,4 @@
-import { expect,it,vi } from 'vitest';
+import { expect,it } from 'vitest';
 import { createServer } from 'node:net';
 import { mkdtemp,chmod,rm } from 'node:fs/promises';
 import { join,resolve } from 'node:path';
