@@ -212,9 +212,10 @@ export class Homepage {
     const loading = { id, chunks: [] as Buffer[], bytes: 0 }; this.loading = loading;
     const result = await this.connection.request({ kind: 'sessions.preview', sessionId: id });
     if (this.ended || this.loading !== loading) return;
-    this.previewRequestId = result.id;
+    this.previewRequestId = result.id; this.previewId = id;
     await this.replacePreview(id, result, loading.chunks);
-    this.loading = null; this.previewId = id; this.draw(true);
+    if (this.loading === loading) this.loading = null;
+    this.draw(true);
   }
   private async replacePreview(id: string, result: SuccessResponse, chunks: Buffer[] = []): Promise<void> {
     if (typeof result.snapshot !== 'string' || !isSize(result.cols, result.rows)) throw new Error('Invalid preview snapshot');
@@ -283,7 +284,7 @@ export class Homepage {
     else if (this.drag) {
       preview.select(this.drag, point);
       if (event.release) {
-        this.drag = null; const text = preview.selectedText();
+        this.drag = null; const text = preview.selectedText(area.w);
         void (this.options.copy ?? copyText)(text).then(() => { if (!this.ended) this.showNote(`✓ copied ${text.split('\n').length} lines`, 1200, true); }).catch(error => this.showNote(error instanceof Error ? error.message : 'Copy failed'));
       }
     }

@@ -119,7 +119,10 @@ export class SessionManager extends EventEmitter {
     async previewSize(cols: number, rows: number): Promise<void> { if (!isSize(cols, rows))
         throw new Error('Invalid preview size'); this.size = { cols, rows }; for (const live of this.sessions.values()) {
         await live.output;
-        if(!live.attached){live.mirror.resize(cols, rows);live.host?.resize(cols, rows);}
+        if(!live.attached && (live.mirror.terminal.cols !== cols || live.mirror.terminal.rows !== rows)){
+            live.mirror.resize(cols, rows);live.host?.resize(cols, rows);
+            this.event({kind:'session.previewResized',sessionId:live.info.id,cols,rows});
+        }
     } }
     private updatePause(live:Live):void {
         const blocked=live.clientPaused||live.queuedBytes>=1024*1024;

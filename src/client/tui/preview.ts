@@ -11,8 +11,16 @@ export class Preview {
 
   private queue: Promise<void> = Promise.resolve();
   private queuedBytes = 0;
+  private scrollCount = 0;
+  private clearScrollback = false;
   constructor(cols: number, rows: number, private readonly changed: () => void) {
     this.terminal = new headless.Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
+    let previousBase = 0;
+    this.terminal.onScroll(base => {
+      if (this.terminal.buffer.active.type === 'normal' && base >= previousBase) this.scrollCount++;
+      previousBase = base;
+    });
+    this.terminal.parser.registerCsiHandler({ final: 'J' }, params => { if (params[0] === 3) this.clearScrollback = true; return false; });
 
   }
   get top(): number { return this.anchor ? Math.max(0, this.anchor.line) : this.terminal.buffer.active.baseY; }
@@ -23,19 +31,14 @@ export class Preview {
     this.queuedBytes += Buffer.byteLength(data);
     const task = this.queue.then(async () => {
       if (this.disposed) return;
-      const buffer = this.terminal.buffer.active, oldBase = buffer.baseY;
-      // Markers track trims caused by LF, automatic wrapping and explicit scroll controls.
-      const marker = this.terminal.registerMarker(-buffer.cursorY);
-      const oldMarker = marker?.line;
+      const buffer = this.terminal.buffer.active, oldScroll = this.scrollCount;
+      // Markers keep the viewport anchored; onScroll counts even after those markers trim.
+      this.clearScrollback = false;
       await new Promise<void>(resolve => this.terminal.write(data, resolve));
-      if (this.disposed) { marker?.dispose(); return; }
-      if (this.terminal.buffer.active !== buffer) this.follow();
-      if (this.anchor !== null) {
-        const growth = this.terminal.buffer.active.baseY - oldBase;
-        const trimmed = oldMarker !== undefined && marker ? Math.max(0, oldMarker - marker.line) : 0;
-        this.newCount += Math.max(0, growth + trimmed);
-      }
-      marker?.dispose();
+      if (this.disposed) return;
+      if (this.terminal.buffer.active !== buffer || this.clearScrollback) this.follow();
+      if (this.anchor !== null) this.newCount += this.scrollCount - oldScroll;
+      this.selection = null;
       this.changed();
     }).finally(() => { this.queuedBytes -= Buffer.byteLength(data); });
     this.queue = task; return task;
@@ -56,11 +59,11 @@ export class Preview {
     const { start, end } = this.selection;
     return start.y * this.terminal.cols + start.x <= end.y * this.terminal.cols + end.x ? { start, end } : { start: end, end: start };
   }
-  selectedText(): string {
+  selectedText(visibleCols = this.terminal.cols): string {
     const bounds = this.bounds(); if (!bounds) return '';
     const lines: string[] = [];
     for (let y = bounds.start.y; y <= bounds.end.y; y++) {
-      const first = y === bounds.start.y ? bounds.start.x : 0, last = y === bounds.end.y ? bounds.end.x + 1 : this.terminal.cols;
+      const first = y === bounds.start.y ? bounds.start.x : 0, last = y === bounds.end.y ? Math.min(visibleCols, bounds.end.x + 1) : Math.min(visibleCols, this.terminal.cols);
       lines.push(safeText(this.terminal.buffer.active.getLine(y)?.translateToString(true, first, last) ?? ''));
     }
     return lines.join('\n');
