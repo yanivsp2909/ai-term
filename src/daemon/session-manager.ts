@@ -23,7 +23,7 @@ export class SessionManager extends EventEmitter {
     private size = { cols: 85, rows: 30 };
     private saving: Promise<void> = Promise.resolve();
     private closing = false;
-    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe: SpawnRecipe = { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) }) { super(); }
+    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe: SpawnRecipe = { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) }, private readonly childUmask?: number) { super(); }
     async load(): Promise<void> {
         const state = await readState(this.paths.state);
         if (!state || typeof state !== 'object' || !('sessions' in state) || !Array.isArray(state.sessions))
@@ -67,7 +67,7 @@ export class SessionManager extends EventEmitter {
         const live: Live = { info, mirror: new Mirror(this.size.cols, this.size.rows, data => live.host?.write(data)), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         this.sessions.set(info.id, live);
         try {
-            live.host = new PtyHost(this.recipe, request.cwd, this.size.cols, this.size.rows);
+            live.host = new PtyHost(this.recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
             live.host.pty.onData(data => {
                 const bytes=Buffer.byteLength(data);live.queuedBytes+=bytes;
                 this.updatePause(live);

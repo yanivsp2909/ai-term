@@ -4,11 +4,12 @@ import { Logger } from './log.js';
 import { SessionManager } from './session-manager.js';
 import { DaemonServer } from './server.js';
 export async function runDaemon(): Promise<void> {
-    process.umask(0o077);
+    // Private files for the daemon; sessions get the user's own umask back (session-manager).
+    const userUmask = process.umask(0o077);
     const paths = getPaths();
     await preparePaths(paths);
     const log = new Logger(paths.log), release = await acquireLock(paths.pid);
-    const manager = new SessionManager(paths, log), server = new DaemonServer(paths, manager, log);
+    const manager = new SessionManager(paths, log, undefined, userUmask), server = new DaemonServer(paths, manager, log);
     let closing = false;
     let idleSince: number | null = null;
     let idle: ReturnType<typeof setInterval> | undefined;

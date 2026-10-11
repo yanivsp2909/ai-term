@@ -11,8 +11,16 @@ export class PtyHost {
     // A signal death the user asked for is an exit; any other one is a crash.
     stopRequested = false;
     private exitPromise: Promise<void>;
-    constructor(recipe: SpawnRecipe, cwd: string, cols: number, rows: number) {
-        this.pty = pty.spawn(recipe.executable, recipe.args, { name: 'xterm-256color', cwd, cols, rows, env: recipe.env });
+    constructor(recipe: SpawnRecipe, cwd: string, cols: number, rows: number, umask?: number) {
+        // The child inherits the umask at fork; give it the user's, not the daemon's private 077.
+        const previous = umask === undefined ? undefined : process.umask(umask);
+        try {
+            this.pty = pty.spawn(recipe.executable, recipe.args, { name: 'xterm-256color', cwd, cols, rows, env: recipe.env });
+        }
+        finally {
+            if (previous !== undefined)
+                process.umask(previous);
+        }
         this.exitPromise = new Promise(resolve => this.pty.onExit(() => { this.exited = true; resolve(); }));
     }
     write(data: string | Buffer): void { if (!this.exited)
