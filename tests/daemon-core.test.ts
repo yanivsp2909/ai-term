@@ -96,6 +96,24 @@ describe('lock, logger and shell environment', () => {
         await writeFile(paths.pid, '1\n', { mode: 0o600 });
         (await acquireLock(paths.pid))();
     });
+    it('never calls a lock stale when ps itself cannot run', async () => {
+        const paths = getPaths(await temp());
+        await preparePaths(paths);
+        await writeFile(paths.pid, `${process.pid}\n`, { mode: 0o600 });
+        const written = new Date('2001-01-01T00:00:00Z');
+        await utimes(paths.pid, written, written);
+        vi.resetModules();
+        vi.doMock('node:child_process', async (original: () => Promise<object>) => ({ ...(await original()), execFile: (_file: string, _args: string[], _options: object, callback: (error: Error, stdout: string) => void) => callback(Object.assign(new Error('spawn /bin/ps ENOENT'), { code: 'ENOENT' }), '') }));
+        try {
+            const { acquireLock: lockWithoutPs } = await import('../src/daemon/lock.js');
+            await expect(lockWithoutPs(paths.pid)).rejects.toThrow();
+            expect((await readFile(paths.pid, 'utf8')).trim()).toBe(String(process.pid));
+        }
+        finally {
+            vi.doUnmock('node:child_process');
+            vi.resetModules();
+        }
+    });
     it('redacts canary and key assignments and rotates private logs', async () => {
         expect(redact('sk-ant-AITERMCANARY0000 OPENAI_API_KEY=dummy-value')).not.toContain('AITERMCANARY');
         expect(redact('OPENAI_API_KEY=dummy-value')).not.toContain('dummy-value');
