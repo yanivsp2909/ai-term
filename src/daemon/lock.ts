@@ -5,8 +5,9 @@ import { isFsError } from '../shared/paths.js';
 function processStart(pid: number): Promise<number | null> {
     return new Promise((resolve, reject) => execFile('/bin/ps', ['-o', 'etime=', '-p', String(pid)], { timeout: 3000, env: { LC_ALL: 'C' } }, (error, stdout) => {
         const now = Date.now(), text = stdout.trim();
+        // ps exits 1 with no output only for "no such process"; any other failure must not free the lock.
         if (error && !text)
-            return resolve(null);
+            return error.code === 1 ? resolve(null) : reject(new Error('Could not read daemon PID start time', { cause: error }));
         const match = text.match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
         if (!match)
             return reject(new Error('Unreadable daemon PID start time', { cause: error ?? undefined }));
