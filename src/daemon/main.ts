@@ -7,7 +7,7 @@ export async function runDaemon(): Promise<void> {
     process.umask(0o077);
     const paths = getPaths();
     await preparePaths(paths);
-    const log = new Logger(paths.log), release = acquireLock(paths.pid);
+    const log = new Logger(paths.log), release = await acquireLock(paths.pid);
     const manager = new SessionManager(paths, log), server = new DaemonServer(paths, manager, log);
     let closing = false;
     let idleSince: number | null = null;

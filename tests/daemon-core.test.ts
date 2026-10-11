@@ -71,11 +71,11 @@ describe('lock, logger and shell environment', () => {
     it('refuses a second daemon and recovers a stale PID without signalling it', async () => {
         const paths = getPaths(await temp());
         await preparePaths(paths);
-        const release = acquireLock(paths.pid);
-        expect(() => acquireLock(paths.pid)).toThrow();
+        const release = await acquireLock(paths.pid);
+        await expect(acquireLock(paths.pid)).rejects.toThrow('Daemon already running');
         release();
         await writeFile(paths.pid, '2147483647\n', { mode: 0o600 });
-        const again = acquireLock(paths.pid);
+        const again = await acquireLock(paths.pid);
         again();
         await expect(lstat(paths.pid)).rejects.toMatchObject({ code: 'ENOENT' });
     });
