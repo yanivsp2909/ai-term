@@ -8,6 +8,7 @@ import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror } from './mirror.js';
 import { buildShellEnv } from './env.js';
+import { ReplyBudget } from './reply-budget.js';
 interface Live {
     info: SessionInfo;
     host?: PtyHost;
@@ -64,7 +65,14 @@ export class SessionManager extends EventEmitter {
             throw new Error('Invalid session request');
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? 'shell', engine: 'shell', model: 'shell', auth: { kind: 'account' }, cwd: request.cwd, permission: 'ask', status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null };
-        const live: Live = { info, mirror: new Mirror(this.size.cols, this.size.rows, data => live.host?.write(data)), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
+        const replies = new ReplyBudget();
+        let dropping = false;
+        const reply = (data: string) => {
+            if (replies.take(Buffer.byteLength(data))) { dropping = false; live.host?.write(data); return; }
+            if (!dropping) this.log.error(`Dropped terminal query replies over budget for session ${info.id}`);
+            dropping = true;
+        };
+        const live: Live = { info, mirror: new Mirror(this.size.cols, this.size.rows, reply), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         this.sessions.set(info.id, live);
         try {
             live.host = new PtyHost(this.recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);

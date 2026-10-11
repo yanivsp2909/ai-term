@@ -12,6 +12,7 @@ import { acquireLock } from '../src/daemon/lock.js';
 import { buildShellEnv } from '../src/daemon/env.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
 import { PtyHost } from '../src/daemon/pty-host.js';
+import { ReplyBudget, REPLY_BURST_BYTES, REPLY_BYTES_PER_SECOND } from '../src/daemon/reply-budget.js';
 const roots: string[] = [];
 async function temp() { const root = await mkdtemp(join(tmpdir(), 'ai-term-core-')); roots.push(root); return root; }
 afterEach(async () => { for (const root of roots.splice(0))
@@ -184,6 +185,18 @@ describe('real PTY lifecycle and mirror', () => {
         finally {
             await stopping.shutdown();
         }
+    });
+    it('refills the reply budget with time but never above its burst', () => {
+        let now = 0;
+        const budget = new ReplyBudget(() => now);
+        expect(budget.take(REPLY_BURST_BYTES)).toBe(true);
+        expect(budget.take(1)).toBe(false);
+        now = 1000;
+        expect(budget.take(REPLY_BYTES_PER_SECOND)).toBe(true);
+        expect(budget.take(1)).toBe(false);
+        now = 1e9;
+        expect(budget.take(REPLY_BURST_BYTES + 1)).toBe(false);
+        expect(budget.take(REPLY_BURST_BYTES)).toBe(true);
     });
     it('bounds detached query replies when a session floods queries and never reads them', async () => {
         const paths = getPaths(await temp());
