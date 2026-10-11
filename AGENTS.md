@@ -110,3 +110,4 @@ Update `PROGRESS.md` in this shape, then commit it as the last commit of the ses
     - <concept>: 2-3 sentences tied to the file where it lives (Yaniv is learning; explain each new concept once)
 
 Your final message: what you did, commit hashes, check results, anything in the prompt you found to be wrong, and the PROGRESS.md checkpoint.
+- `.claude/` holds review agents and skills for cloud sessions. Never review or edit it unless the prompt says so.
