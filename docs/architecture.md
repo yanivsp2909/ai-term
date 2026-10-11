@@ -36,7 +36,7 @@ Covers v0.1 in full and the later versions in outline. Each later version gets i
 
 **Runtime:** Node.js ≥ 22, TypeScript strict. Bun is not used, because node-pty is a Node native module (D25, verified in v0.1.1).
 
-**Install gotcha:** npm 11 doesn't run a package's install scripts unless the project approves them. node-pty's own postinstall is what makes its macOS `spawn-helper` executable; skipped, every spawn fails with `posix_spawnp failed`. The fix is approving node-pty's scripts in `package.json`. Never a hand-written `chmod`.
+**node-pty version:** pinned to exactly `1.2.0-beta.15`, with its install scripts approved in `package.json` (npm 11 doesn't run a package's install scripts unless the project approves them). 1.1.0 ships its macOS `spawn-helper` without the execute bit, so every spawn fails with `posix_spawnp failed`, even with its scripts approved. Never a hand-written `chmod`. Move to the stable 1.2.x once it's released.
 
 **TUI renderer:** our own cell renderer (D26), chosen by the v0.1.2 spike.
 - **How it works:** the screen is a grid of cells (character, colors, bold), diffed against the previous frame. Only changed cells are written, wrapped in synchronized-output escapes (`\e[?2026h` … `\e[?2026l`) so the terminal paints each frame at once.
@@ -95,7 +95,7 @@ The daemon takes an exclusive lock (`run/daemon.pid`, created with `O_EXCL`; a s
 2. On a protocol mismatch the daemon answers `helloMismatch`.
 3. The client then shows "AI Term was updated. Restart the background service? (N agents running will be stopped)". It never restarts silently.
 
-**Stop.** `ai daemon stop` stops all agents (SIGTERM, then SIGKILL after 3 s) and exits. With zero live sessions and zero clients for 10 minutes, the daemon exits on its own.
+**Stop.** `ai daemon stop` stops all agents (SIGTERM, then SIGKILL after 3 s) and exits. With zero *live* sessions and zero clients for 10 minutes, the daemon exits on its own. Exited records don't keep it alive.
 
 **Daemon restart.** Sessions whose process is gone keep their record with status `exited` and the detail "background service restarted". The scrollback is lost; the record stays until you remove it.
 
@@ -107,7 +107,7 @@ The daemon takes an exclusive lock (`run/daemon.pid`, created with `O_EXCL`; a s
 | `state.json` | session records (section 5) | 0600 |
 | `usage/YYYY-MM.jsonl` | one usage event per line (section 9) | 0600 |
 | `run/` | `daemon.sock` (0600), `daemon.pid` | 0700 |
-| `logs/daemon.log` | redacted log, rotated at 5 MB, 3 files kept | 0600 |
+| `logs/daemon.log` | redacted log, rotated at 5 MB; 3 files in total (`daemon.log`, `.1`, `.2`) | 0600 |
 | `sessions/<id>/` | per-session generated files (hook settings from v0.2), deleted with the session | 0700 |
 
 Writes are atomic: write to a temp file in the same folder, `fsync`, `rename`.
@@ -118,7 +118,11 @@ Writes are atomic: write to a temp file in the same folder, `fsync`, `rename`.
 
 ## 4. Protocol (client ⇄ daemon)
 
-Frames on the socket: `uint32 BE length` + `uint8 type` + payload. Max frame 4 MB; a bigger or malformed frame closes that connection.
+Frames on the socket: `uint32 BE length` + `uint8 type` + payload. The length counts the type byte plus the payload, not itself. Max frame 4 MiB; a bigger or malformed frame closes that connection.
+
+**Ids:**
+- `id` on a control message is only the request/response correlation id.
+- The session a message targets is always `sessionId`.
 
 | Type | Payload |
 |---|---|
@@ -137,23 +141,24 @@ type Permission = 'ask' | 'dontAsk';
 type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 'error';
 
 // requests (client → daemon), each answered with {ok:true, ...} or {ok:false, error:{code, message}}
-hello            {protocol: 1, version}
+hello            {protocol: 1, version}            → {protocol, version, daemonPid}
 sessions.list    {}                                  → {sessions: SessionInfo[]}
 sessions.create  {engine, model, auth, cwd, permission, title?, firstMessage?}  → {session}
-sessions.attach  {id, cols, rows}                    → {snapshot}   then output frames stream
-sessions.detach  {id}
-sessions.resize  {id, cols, rows}                    // attached client only
-sessions.preview {id | null}                         → {snapshot} then output frames (read-only; null = stop)
-sessions.stop    {id}
-sessions.remove  {id}                                // exited/error only
-sessions.rename  {id, title}
+sessions.attach  {sessionId, cols, rows}             → {snapshot, cols, rows}   then output frames stream
+sessions.detach  {sessionId}
+sessions.resize  {sessionId, cols, rows}             // attached client only
+sessions.preview {sessionId | null}                  → {snapshot, cols, rows} then output frames (read-only; null = stop).
+                                                      // A subscriber that fell behind gets a catch-up snapshot response with the same request id
+sessions.stop    {sessionId}
+sessions.remove  {sessionId}                         // exited/error only
+sessions.rename  {sessionId, title}
 layout.previewSize {cols, rows}                      // size every detached session runs at
 engines.status   {}                                  → {claudeCode: EngineStatus, codex: EngineStatus}
                                                       // EngineStatus = {installed, path, version, loggedIn: boolean | null, authMethod: 'subscription' | 'api-key' | 'unknown'}
 keys.list        {}                                  → {keys: KeyView[]}
 keys.add         {provider, label, secret, endpoint?, deployments?}  → {key: KeyView}
-keys.remove      {id}
-keys.test        {id}                                → {results: DeploymentTest[]}
+keys.remove      {keyId}
+keys.test        {keyId}                             → {results: DeploymentTest[]}
 keys.scanEnvFile {path}                              → {found: {name, provider}[]}   // names only, never values
 keys.importEnv   {path, names}                       → {keys: KeyView[]}
 usage.summary    {}                                  → {summary: UsageSummary}
@@ -161,7 +166,7 @@ settings.get     {} / settings.set {patch}
 system.subscribe {on: boolean}
 
 // events (daemon → client)
-session.updated {session}   session.removed {id}   usage.updated {summary}   system.stats {stats}
+session.updated {session}   session.removed {sessionId}   usage.updated {summary}   system.stats {stats}
 ```
 
 `SessionInfo` = `{id, title, engine, model, auth: {kind, provider?, keyLabel?, last4?}, cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: number | null}`.
@@ -184,7 +189,8 @@ A process exit always wins over a late status event.
 
 **Mirror.**
 - Every output chunk goes to the session's `@xterm/headless` terminal (scrollback 5,000 lines) before it goes to any client.
-- On attach or preview, the daemon sends `@xterm/addon-serialize`'s snapshot first, then live output.
+- On attach or preview, the daemon sends `@xterm/addon-serialize`'s snapshot first, then live output. The snapshot carries the cols × rows it was captured at.
+- **Snapshot size:** a snapshot must fit one 4 MiB frame. The daemon trims old scrollback until it fits. If the visible screen alone doesn't fit (pathological styling), the request fails with a clear error. Chunked snapshots are a later protocol change, only if that ever happens in practice.
 
 **Size rule** (the one that makes the preview work):
 - **Attached:** the session's PTY and its mirror take the attached client's terminal size.
@@ -196,7 +202,10 @@ A process exit always wins over a late status event.
 - **Nobody attached:** the mirror's own `onData` replies are written to the PTY instead, so an agent never hangs waiting for an answer.
 - **Never both at once.**
 
-**Flow control.** If a client's socket buffer exceeds 1 MB, the daemon pauses that PTY (`pty.pause()`) and resumes it below 256 KB. A slow preview must never block the agent for long: preview subscribers that fall behind get a fresh snapshot instead of the backlog.
+**Flow control.** Three separate rules:
+- **The mirror:** has its own bounded queue. If the mirror can't keep up, it pauses the PTY until it catches up, even with no client connected.
+- **An attached client** (v0.1.4): if its socket buffer exceeds 1 MB, the daemon pauses that PTY and resumes it below 256 KB.
+- **Preview subscribers:** never pause a PTY. One that falls behind is dropped from live output and gets a catch-up snapshot when it drains.
 
 **Stop.** SIGTERM to the process group, then SIGKILL after 3 s.
 
