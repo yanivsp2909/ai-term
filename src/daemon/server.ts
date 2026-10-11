@@ -5,6 +5,7 @@ import { isFsError } from '../shared/paths.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, type Request, type SessionEvent } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
+import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
@@ -40,6 +41,7 @@ export async function socketAnswers(path: string): Promise<boolean> {
 }
 export class DaemonServer {
     private server: Server;
+    private readonly settings: SettingsStore;
     private peers = new Set<Peer>();
     private owners=new Map<string,Peer>();
     private socketIdentity: {
@@ -47,6 +49,7 @@ export class DaemonServer {
         dev: number;
     } | undefined;
     constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger) {
+        this.settings = new SettingsStore(paths.root);
         this.server = createServer(socket => this.accept(socket));
         this.server.on('error', error => { this.log.error(`Server failed: ${error.message}`); this.manager.emit('fatal', error); });
         manager.on('event', (event: SessionEvent) => { for (const peer of this.peers)
@@ -81,6 +84,7 @@ export class DaemonServer {
         peer.socket.write(encodeControl(value));
     }
     async listen(): Promise<void> {
+        await this.settings.get();
         try {
             const stat = await lstat(this.paths.socket);
             if (!stat.isSocket() || stat.uid !== process.getuid?.())
@@ -186,6 +190,12 @@ export class DaemonServer {
         }
         try {
             switch (request.kind) {
+                case 'settings.get':
+                    this.control(peer, { id: request.id, ok: true, settings: await this.settings.get() });
+                    break;
+                case 'settings.set':
+                    this.control(peer, { id: request.id, ok: true, settings: await this.settings.set(request.patch) });
+                    break;
                 case 'sessions.list':
                     this.control(peer, { id: request.id, ok: true, sessions: this.manager.list() });
                     break;

@@ -2,8 +2,10 @@ import { isUUID } from './validate.js';
 export const PROTOCOL_VERSION = 1;
 // Length counts the type byte and payload, excluding the four-byte prefix.
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
-export type Engine = 'claude-code' | 'codex' | 'shell'; // shell is internal, hidden from the UI.
-export type Status = 'starting' | 'running' | 'exited' | 'error';
+export type Engine = 'claude-code' | 'codex' | 'shell'; // Shell spawning remains internal; the homepage can display it.
+export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 'error';
+export type ThemeName = 'graphite' | 'slate' | 'ink' | 'auto' | 'light';
+export interface Settings { theme: ThemeName }
 export interface SessionInfo {
     id: string;
     title: string;
@@ -29,6 +31,11 @@ export type Request = {
     kind: 'hello';
     protocol: number;
     version: string;
+} | {
+    kind: 'settings.get';
+} | {
+    kind: 'settings.set';
+    patch: Settings;
 } | {
     kind: 'sessions.list';
 } | {
@@ -66,6 +73,7 @@ export interface SuccessResponse {
     protocol?: number;
     version?: string;
     daemonPid?: number;
+    settings?: Settings;
     sessions?: SessionInfo[];
     session?: SessionInfo;
     snapshot?: string;
