@@ -33,6 +33,26 @@ it('writes snapshot first, streams only target output, sends input, and never fo
  connection.emit('output',randomUUID(),Buffer.from('OTHER_SESSION'));connection.emit('output',id,Buffer.from('live'));tty.emit('data',Buffer.from('echo hi\r'));tty.emit('data',Buffer.from([5]));connection.emit('output',id,Buffer.from('AFTER_HOME'));
  await done;expect(tty.output).toContain('SNAPSHOT');expect(tty.output.indexOf('SNAPSHOT')).toBeLessThan(tty.output.indexOf('live'));expect(tty.output).not.toContain('OTHER_SESSION');expect(tty.output).not.toContain('AFTER_HOME');expect(Buffer.concat(connection.inputBytes)).toEqual(Buffer.from('echo hi\r'));expect(connection.requests).toContainEqual({kind:'sessions.detach',sessionId:id});expect(tty.isRaw).toBe(false);expect(tty.output).toContain('\x1b[?1049l');
 });
+it('ignores terminal startup noise and live lifecycle events until a real home key',async()=>{
+ const {tty,connection,options}=fixture();let returned=false;
+ const done=attach(connection,id,options).then(reason=>{returned=true;return reason;});
+ const noise=Buffer.from('\x1b[?1;2c\x1b[>0;276;0c\x1b[1;1R\x1b]10;rgb:ffff/ffff/ffff\x07\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[?0u\x1b[I\x1b[O\x1b[?2004h\x1b=');
+ tty.emit('data',noise.subarray(0,18));await Promise.resolve();await Promise.resolve();tty.emit('data',noise.subarray(18));
+ connection.emit('event',{kind:'session.updated',session:{id,status:'running',exitCode:null}});
+ connection.emit('output',id,Buffer.from('\x1b[0m\x1b[?25h'));
+ await new Promise(r=>setTimeout(r,40));expect(returned).toBe(false);expect(tty.isRaw).toBe(true);
+ tty.emit('data',Buffer.from([5]));expect(await done).toBe('home key');
+});
+it('reports an already exited session instead of an unexplained home return',async()=>{
+ const {tty,connection,options}=fixture();const real=connection.request.bind(connection);
+ connection.request=async body=>{const result=await real(body);if(body.kind!=='sessions.attach')return result;return {...result,session:{id,title:'shell',engine:'shell',cwd:'/tmp',status:'exited',exitCode:0}} as unknown as Awaited<ReturnType<FakeConnection['request']>>;};
+ expect(await attach(connection,id,options)).toBe('session exited');expect(tty.output).toContain('[session exited with code 0]');
+});
+it('reports rejected attach as failure and does not render a session snapshot',async()=>{
+ const {tty,connection,options}=fixture();const real=connection.request.bind(connection);
+ connection.request=body=>body.kind==='sessions.attach'?Promise.reject(new Error('Session operation failed')):real(body);
+ await expect(attach(connection,id,options)).rejects.toMatchObject({reason:'attach rejected'});expect(tty.output).not.toContain('SNAPSHOT');expect(tty.isRaw).toBe(false);
+});
 it.each(['exit','disconnect','uncaught','takeover'] as const)('restores raw/alternate modes after %s',async(reason)=>{
  const {tty,connection,signals,options}=fixture();const done=attach(connection,id,options);const outcome=done.catch(error=>error);await Promise.resolve();await Promise.resolve();
  if(reason==='exit')connection.emit('event',{kind:'session.updated',session:{id,status:'exited',exitCode:0}});
