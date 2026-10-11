@@ -88,7 +88,7 @@ ai-term/
 - detached, with stdin ignored and stdout/stderr going to `~/.ai-term/logs/daemon.log`, then `unref()`
 - the client then retries the connection for up to 3 s
 
-The daemon takes an exclusive lock (`run/daemon.pid`, created with `O_EXCL`; a stale pid is checked with `process.kill(pid, 0)`) so only one daemon runs.
+The daemon takes an exclusive lock (`run/daemon.pid`, created with `O_EXCL`) so only one daemon runs. A stale pid is checked with `process.kill(pid, 0)`; a pid that belongs to another user, or to a process that started more than 2 s after the lock was written (`ps -o etime=`, pid reuse after a crash and reboot), is stale too.
 
 **Handshake.**
 1. The client sends `hello {protocol, version}`.
@@ -201,7 +201,7 @@ A process exit always wins over a late status event.
 
 **Terminal queries.** Agents ask the terminal things (cursor position, colors, device attributes).
 - **Attached:** your real terminal answers through the client's input.
-- **Nobody attached:** the mirror's own `onData` replies are written to the PTY instead, so an agent never hangs waiting for an answer.
+- **Nobody attached:** the mirror's own `onData` replies are written to the PTY instead, so an agent never hangs waiting for an answer. Replies are budgeted per session (16 KiB burst, 4 KiB/s; `src/daemon/reply-budget.ts`) because node-pty queues writes without limit; a session that floods queries gets the rest dropped.
 - **Never both at once.**
 
 **Flow control.** Three separate rules:
@@ -245,7 +245,7 @@ AI Term draws nothing over the session in v0.1 (the frame bar comes in v0.2).
 
 On the home key the client sends `sessions.detach`. It then resets every mode the agent may have turned on (mouse, bracketed paste, focus events, cursor keys, kitty keyboard, cursor visibility, colors), leaves the alt screen and raw mode, and redraws the homepage. The agent keeps running.
 
-**Cleanup is guaranteed** on every way out: home key, the session exiting (`[session exited with code N]`), the daemon dying, and an uncaught error in the client. Only SIGKILL can skip it.
+**Cleanup is guaranteed** on every way out: home key, the session exiting (`[session exited with code N]`), the daemon dying, and an uncaught error in the client. SIGKILL skips it, and so do SIGHUP and SIGQUIT today (listed in `docs/reviews/2026-10-12-checkpoint-review.md`).
 
 **`/exit` chain.** The chain is: session → home → shell.
 - Typing `/exit` inside Claude Code or Codex is *their* command: the agent exits, the session becomes `exited`, and the client returns home.
