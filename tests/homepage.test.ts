@@ -199,3 +199,25 @@ it('latest catch-up snapshot wins without sharing chunks with older queued snaps
     await expect.poll(() => tty.output.includes('LATEST_LIVE')).toBe(true);
   } finally { await home.stop(); }
 });
+it('preview dimension changes from a session attached elsewhere request a fresh sized snapshot', async () => {
+  const { home, client } = await fixture();
+  try {
+    const before = client.requests.filter(r => r.kind === 'sessions.preview' && r.sessionId === session.id).length;
+    client.emit('event', { kind: 'session.previewResized', sessionId: session.id, cols: 80, rows: 24 });
+    await expect.poll(() => client.requests.filter(r => r.kind === 'sessions.preview' && r.sessionId === session.id).length).toBe(before + 1);
+  } finally { await home.stop(); }
+});
+it('switching selection back shows the latest cached mirror immediately while resubscription is pending', async () => {
+  const { Homepage } = await import('../src/client/tui/homepage.js');
+  const tty = new TTY(), client = new Client(), second = { ...session, id: randomUUID(), title: 'second', createdAt: '2026-10-11T09:00:00Z' };
+  const original = client.request.bind(client);
+  client.request = async body => body.kind === 'sessions.list' ? { id: randomUUID(), ok: true, sessions: [session, second] } : original(body);
+  const home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter() }); await home.start();
+  try {
+    tty.emit('data', Buffer.from('\x1b[B'));
+    await expect.poll(() => client.requests.filter(r => r.kind === 'sessions.preview' && r.sessionId === second.id).length).toBe(1);
+    const before = tty.output.length; tty.emit('data', Buffer.from('\x1b[A'));
+    await expect.poll(() => client.requests.filter(r => r.kind === 'sessions.preview' && r.sessionId === session.id).length).toBe(2);
+    expect(tty.output.slice(before)).not.toContain('Attach unavailable');
+  } finally { await home.stop(); }
+});
