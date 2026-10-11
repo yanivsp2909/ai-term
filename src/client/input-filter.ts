@@ -15,7 +15,7 @@ export class HomeKeyFilter {
         const sequence=Buffer.from(this.pending).toString('ascii');
         if(sequence==='\x1b[200~')this.paste=true;
         else if(sequence==='\x1b[201~')this.paste=false;
-        else if(!this.paste&&/^\x1b\[(?:101;5(?::[123])?(?:;[0-9:]+)?u|27;5;101~)$/.test(sequence)){home=true;this.stopped=true;this.pending=[];break;}
+        else if(!this.paste&&sequence.startsWith('\x1b[')&&/^(?:101;5(?::[123])?(?:;[0-9:]+)?u|27;5;101~)$/.test(sequence.slice(2))){home=true;this.stopped=true;this.pending=[];break;}
         output.push(...this.pending);this.pending=[];
       }
     }

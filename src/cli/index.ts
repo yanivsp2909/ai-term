@@ -10,7 +10,7 @@ import { getPaths, isFsError } from '../shared/paths.js';
 import { isUUID, validCwd } from '../shared/validate.js';
 import { redact } from '../daemon/log.js';
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
-function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug ls|shell [cwd]|stop <id>|peek <id>]\n'); process.exitCode = 2; }
+function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug ls|shell [cwd]|stop <id>|peek <id>|attach <id>]\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
     if (args.length === 0) {
         process.stdout.write('AI Term v0.1: not built yet. See PROGRESS.md.\n');
@@ -33,11 +33,11 @@ async function main(): Promise<void> {
     const stopDaemon = args.length === 2 && args[0] === 'daemon' && args[1] === 'stop';
     const debug = args[0] === 'debug';
     const action = args[1];
-    if (!stopDaemon && (!debug || !['ls', 'shell', 'stop', 'peek'].includes(action ?? '') || args.length > 3)) {
+    if (!stopDaemon && (!debug || !['ls', 'shell', 'stop', 'peek', 'attach'].includes(action ?? '') || args.length > 3)) {
         usage();
         return;
     }
-    if (debug && ((action === 'ls' && args.length !== 2) || (['stop', 'peek'].includes(action ?? '') && !isUUID(args[2])))) {
+    if (debug && ((action === 'ls' && args.length !== 2) || (['stop', 'peek','attach'].includes(action ?? '') && !isUUID(args[2])))) {
         usage();
         return;
     }
@@ -106,6 +106,7 @@ async function main(): Promise<void> {
             await client.request({ kind: 'sessions.stop', sessionId: args[2] });
             process.stdout.write('Session stopped.\n');
         }
+        if(action==='attach'&&args[2]){const {attach}=await import('../client/attach.js');await attach(client,args[2]);process.stdout.write('back in your shell\n');}
         if (action === 'peek' && args[2]) {
             const result = await client.request({ kind: 'sessions.preview', sessionId: args[2] });
             const terminal = new headless.Terminal({ cols: result.cols ?? 85, rows: result.rows ?? 30, allowProposedApi: true });

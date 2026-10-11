@@ -73,6 +73,8 @@ export class Connection extends EventEmitter {
             } });
         });
     }
+    pauseOutput():void {this.socket.pause();}
+    resumeOutput():void {this.socket.resume();}
     input(id:string,data:Buffer):void {this.socket.write(encodeData(3,id,data));}
     close(): void { this.socket.destroy(); }
     static async connect(paths: Paths, options: {

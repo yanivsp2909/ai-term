@@ -48,3 +48,18 @@ it('attached backpressure pauses and drains without overriding mirror backpressu
  for(let i=0;i<100;i++)manager.emit('output',id,Buffer.alloc(65536,120));
  expect(pause).toHaveBeenCalled();a.socket.resume();await expect.poll(()=>resume.mock.calls.length).toBeGreaterThan(0);
 });
+it('does not answer terminal queries while attached and resumes mirror replies after detach',async()=>{
+ const script="stty -echo; read trigger; sleep 0.2; stty raw -echo; printf '\\033[2J\\033[H\\033[6n'; answer=$(dd bs=1 count=6 2>/dev/null); [ \"$answer\" = \"$(printf '\\033[1;1R')\" ] || exit 4; printf '\\r\\nREPLY_VALID\\r\\n'";
+ const attached=await setup(script);await attached.a.request({kind:'sessions.attach',sessionId:attached.id,cols:40,rows:12});attached.a.input(attached.id,Buffer.from('go\n'));
+ await new Promise(r=>setTimeout(r,350));expect(await attached.manager.snapshot(attached.id)).not.toContain('REPLY_VALID');
+ attached.a.input(attached.id,Buffer.from('\x1b[1;1R'));await expect.poll(()=>attached.manager.snapshot(attached.id),{timeout:2000}).toContain('REPLY_VALID');
+ const detached=await setup(script);await detached.a.request({kind:'sessions.attach',sessionId:detached.id,cols:40,rows:12});detached.a.input(detached.id,Buffer.from('go\n'));await detached.a.request({kind:'sessions.detach',sessionId:detached.id});
+ await expect.poll(()=>detached.manager.snapshot(detached.id),{timeout:2000}).toContain('REPLY_VALID');
+});
+it('preview-size changes leave attached PTYs alone and resize requests require ownership',async()=>{
+ const {a,b,id,manager}=await setup();await a.request({kind:'sessions.attach',sessionId:id,cols:73,rows:21});
+ await b.request({kind:'layout.previewSize',cols:50,rows:15});await expect(b.request({kind:'sessions.resize',sessionId:id,cols:60,rows:18})).rejects.toThrow();
+ a.input(id,Buffer.from('stty size\n'));await expect.poll(()=>manager.snapshot(id)).toContain('21 73');
+ await a.request({kind:'sessions.resize',sessionId:id,cols:61,rows:19});a.input(id,Buffer.from('stty size\n'));await expect.poll(()=>manager.snapshot(id)).toContain('19 61');
+ await a.request({kind:'sessions.detach',sessionId:id});expect(await b.request({kind:'sessions.preview',sessionId:id})).toMatchObject({cols:50,rows:15});
+});
