@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { CpuInfo } from 'node:os';
-import { parsePs, parseVmStat, parseNetstat, netRates, cpuPercent, sessionUsage, SystemSampler, SAMPLE_COMMANDS, runCommand, defaultSamplerDeps, type SamplerDeps } from '../src/daemon/sysstats.js';
+import { parsePs, parseVmStat, parseNetstat, netRates, cpuPercent, sessionUsage, SystemSampler, SAMPLE_COMMANDS, SAMPLE_INTERVAL_MS, runCommand, defaultSamplerDeps, type SamplerDeps } from '../src/daemon/sysstats.js';
 import { validateRequest, validateSystemStats } from '../src/shared/validate.js';
 import type { SystemStats } from '../src/shared/protocol.js';
 
@@ -135,7 +135,7 @@ describe('SystemSampler', () => {
     sampler.setSubscribers(1);
     await vi.advanceTimersByTimeAsync(0);
     expect(events).toHaveLength(0); // the first sample is only a baseline for the deltas
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(2 * SAMPLE_INTERVAL_MS);
     expect(events).toHaveLength(2);
     const last = events.at(-1);
     expect(validateSystemStats(last)).toBeTruthy();
@@ -166,10 +166,10 @@ describe('SystemSampler', () => {
     expect(events).toHaveLength(0);
     expect(logs).toEqual(['System stats sample skipped (timed out)']); // never the error text: it can carry stderr
     fail = false;
-    await vi.advanceTimersByTimeAsync(4000);
+    await vi.advanceTimersByTimeAsync(2 * SAMPLE_INTERVAL_MS);
     expect(events).toHaveLength(1);
     expect(logs.at(-1)).toBe('System stats sampling recovered');
-    await vi.advanceTimersByTimeAsync(2000); // this tick's ps hangs
+    await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS); // this tick's ps hangs
     const before = run.mock.calls.length;
     await vi.advanceTimersByTimeAsync(6000); // no new tick starts behind it
     expect(run.mock.calls.length).toBe(before);
@@ -186,15 +186,15 @@ describe('SystemSampler', () => {
       return base(file, args);
     });
     sampler.setSubscribers(1);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS);
     expect(events).toHaveLength(1);
     holding = true;
-    await vi.advanceTimersByTimeAsync(2000); // this sample hangs in ps
+    await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS); // this sample hangs in ps
     sampler.setSubscribers(0);
     holding = false; (hang as (() => void) | null)?.();
     await vi.advanceTimersByTimeAsync(60_000);
     sampler.setSubscribers(1);
-    await vi.advanceTimersByTimeAsync(1999);
+    await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS - 1);
     expect(events).toHaveLength(1); // the restart's first sample is a baseline again, not a 60 s average
     await vi.advanceTimersByTimeAsync(1);
     expect(events).toHaveLength(2);
@@ -228,7 +228,7 @@ describe('SystemSampler', () => {
       return base(command, args);
     });
     sampler.setSubscribers(1);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS);
     expect(events).toHaveLength(1);
     broken = true;
     await vi.advanceTimersByTimeAsync(4000);
@@ -236,9 +236,9 @@ describe('SystemSampler', () => {
     expect(logs).toEqual([`System stats sample skipped (${words})`]);
     broken = false;
     // The first good sample after a failure is a fresh baseline, never a delta across the gap.
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS);
     expect(events).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS);
     expect(events).toHaveLength(2);
     sampler.setSubscribers(0);
   });
@@ -253,12 +253,12 @@ describe('SystemSampler', () => {
     });
     sampler.setSubscribers(1); // baseline at rx 1000
     await vi.advanceTimersByTimeAsync(0);
-    rx = 5000; await vi.advanceTimersByTimeAsync(2000);
-    expect(events.map(e => e.netRxBytesPerSec)).toEqual([2000]);
-    rx = 10; await vi.advanceTimersByTimeAsync(2000); // interface reset
+    rx = 5000; await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS);
+    expect(events.map(e => e.netRxBytesPerSec)).toEqual([4000]);
+    rx = 10; await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS); // interface reset
     expect(events).toHaveLength(1);
-    rx = 4010; await vi.advanceTimersByTimeAsync(2000);
-    expect(events.map(e => e.netRxBytesPerSec)).toEqual([2000, 2000]);
+    rx = 4010; await vi.advanceTimersByTimeAsync(SAMPLE_INTERVAL_MS);
+    expect(events.map(e => e.netRxBytesPerSec)).toEqual([4000, 4000]);
     expect(logs).toEqual([]); // a reset is normal, not a failure
     sampler.setSubscribers(0);
   });

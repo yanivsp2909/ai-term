@@ -22,7 +22,7 @@ export const SAMPLE_COMMANDS = {
   vmStat: { file: '/usr/bin/vm_stat', args: [] as string[] },
   netstat: { file: '/usr/sbin/netstat', args: ['-ibn'] },
 } as const;
-export const SAMPLE_INTERVAL_MS = 2000;
+export const SAMPLE_INTERVAL_MS = 1000;
 const COMMAND_TIMEOUT_MS = 2000, MAX_OUTPUT_BYTES = 1024 * 1024;
 
 export function parsePs(text: string): ProcRow[] {
