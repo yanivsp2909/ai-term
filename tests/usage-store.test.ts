@@ -1,4 +1,5 @@
-import {expect,it} from 'vitest';
+import {expect,it,vi} from 'vitest';
+import * as fs from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {mkdtemp,rm,lstat,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -20,4 +21,8 @@ it('write failure warns without throwing and next change retries unsaved records
 it('summary rolls local day and month boundaries without new telemetry',async()=>{
  const root=await mkdtemp('/tmp/ai-usage-calendar-');let now=new Date(2026,9,31,23,59);const store=new UsageStore(root,{error:()=>{}},()=>now);
  try{await store.load();await store.add(record(new Date(2026,9,31,23,30).toISOString()));expect(store.summary().today.tokens).toBe(1100);now=new Date(2026,10,1,0,1);expect(store.summary().today.tokens).toBe(0);expect(store.summary().month.tokens).toBe(0);expect(store.summary().week.tokens).toBe(1100);}finally{await rm(root,{recursive:true,force:true});}
+});
+it('a partial append is rolled back before retry so restart keeps every successfully saved record',async()=>{
+ const root=await mkdtemp('/tmp/ai-usage-partial-'),real=fs.open;let fail=true;const spy=vi.spyOn(fs,'open').mockImplementation(async(...args)=>{const file=await real(...args);if(String(args[0]).endsWith('.jsonl')&&fail){fail=false;const write=file.writeFile.bind(file);vi.spyOn(file,'writeFile').mockImplementationOnce(async()=>{await write('{"partial":');throw Object.assign(new Error('private disk detail'),{code:'ENOSPC'});});}return file;});
+ try{const store=new UsageStore(root,{error:()=>{}});await store.load();await store.add(record(new Date().toISOString()));await store.add(record(new Date().toISOString()));const loaded=new UsageStore(root,{error:()=>{}});await loaded.load();expect(loaded.summary().today.tokens).toBe(2200);expect(loaded.summary()).toEqual(store.summary());}finally{spy.mockRestore();await rm(root,{recursive:true,force:true});}
 });
