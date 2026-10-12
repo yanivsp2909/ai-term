@@ -66,6 +66,7 @@ export class Homepage {
   private keys:KeyView[]=[];
   private auth:AuthRef={kind:'account'};
   private copying = false;
+  private pasteNote = '';
   private confirmId: string | null = null;
   private renameId: string | null = null;
   private previews = new Map<string, Preview>();
@@ -195,13 +196,15 @@ export class Homepage {
     if (event.kind === 'mouse') { if(this.helpOffset===null&&!this.box&&!this.credentials&&!this.cleanIds)this.mouse(event); return; }
     if (event.kind === 'paste') {
       if(this.helpOffset!==null||this.cleanIds)return;
-      if(event.tooLong){if(this.box?.kind==='start')this.box.messageNote=FIRST_MESSAGE_TOO_LONG;else this.showNote(FIRST_MESSAGE_TOO_LONG);this.draw(true);return;}
+      if(event.tooLong){if(this.box?.kind==='start')this.box.messageNote=FIRST_MESSAGE_TOO_LONG;else this.pasteNote=FIRST_MESSAGE_TOO_LONG;this.draw(true);return;}
+      this.pasteNote='';
       if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});}
       else if(this.usageForm)this.usageForm.paste(event.text);
       else if(this.box)this.boxText(event.text,true);
-      else {const error=this.field.paste(event.text);this.menuChoice=0;if(error)this.showNote(error);}
+      else {const error=this.field.paste(event.text);this.menuChoice=0;this.pasteNote=error??'';}
       this.draw(true);return;
     }
+    this.pasteNote='';
     if (event.key === 'ctrl-c') {
       const action = this.field.key('ctrl-c');
       if (action.kind === 'quit') void this.stop();
@@ -593,7 +596,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,usage:this.usage,budgets:this.budgets }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,usage:this.usage,budgets:this.budgets }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);
