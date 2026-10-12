@@ -26,3 +26,9 @@ it('does not double count cumulative input followed by delta then another cumula
  const p=new UsageParser(()=>{});const first=p.parse('/v1/metrics',metric('claude_code.token.usage','input',100,'2',2),context);const delta=p.parse('/v1/metrics',metric('claude_code.token.usage','input',10,'3',1),context);const next=p.parse('/v1/metrics',metric('claude_code.token.usage','input',120,'4',2),context);
  expect(first[0]?.inputTokens).toBe(100);expect(delta[0]?.inputTokens).toBe(10);expect(next[0]?.inputTokens).toBe(10);
 });
+it('never reads private attribute values or the body of a dropped Codex event',()=>{
+ const privateValue={key:'user.email',get value():never{throw new Error('Private value was read');}},privateMetric={name:'not-a-usage-metric',get sum():never{throw new Error('Private metric was read');}};
+ const p=new UsageParser(()=>{});expect(()=>p.parse('/v1/metrics',{resourceMetrics:[{scopeMetrics:[{metrics:[privateMetric]}]}]},context)).not.toThrow();
+ const codex={...context,engine:'codex' as const,provider:'openai' as const};expect(p.parse('/v1/logs',{resourceLogs:[{scopeLogs:[{logRecords:[{attributes:[{key:'event.name',value:{stringValue:'codex.tool_output'}},privateValue],get body():never{throw new Error('Private body was read');}}]}]}]},codex)).toEqual([]);
+ const raw=metric('claude_code.token.usage','input',1,'10');raw.resourceMetrics[0]?.scopeMetrics[0]?.metrics[0]?.sum.dataPoints[0]?.attributes.push(privateValue as never);expect(()=>p.parse('/v1/metrics',raw,context)).not.toThrow();
+});
