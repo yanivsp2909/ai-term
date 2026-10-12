@@ -15,3 +15,8 @@ it('cards and next-agent defaults explicitly show own login auth or last4 only',
  const text=plainText(renderHomepage({cols:130,rows:45,sessions:[session],selectedId:session.id,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0,engine:'codex',model:'gpt-6.1-sol',authLabel:'own login · API key'},createTheme('graphite')));
  expect(text.split('\n').slice(2,5).join('\n')).toContain('own login · API key');expect(text.split('\n').at(-1)).toContain('· own login · API key');
 });
+it('long auth labels do not overwrite model text or hide the dontAsk marker',()=>{
+ const now=new Date().toISOString();const session:SessionInfo={id:randomUUID(),title:'Codex',engine:'codex',model:null,auth:{kind:'account'},authMethod:'api-key',cwd:'/tmp',permission:'dontAsk',status:'running',statusDetail:'running',statusSince:now,createdAt:now,lastOutputAt:null,exitCode:null,ctxPercent:null};
+ const frame=renderHomepage({cols:130,rows:45,sessions:[session],selectedId:session.id,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0},createTheme('graphite'));const text=plainText(frame);
+ expect(text.split('\n')[3]).toContain('CLI default · codex');expect(text.split('\n')[4]).toContain('own login · API key');expect(text).toContain("! don't ask");expect(frame[2]?.some(c=>c.char==='!'&&c.fg===createTheme('graphite').colors['status-error'])).toBe(true);
+});
