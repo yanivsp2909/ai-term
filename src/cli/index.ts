@@ -39,12 +39,12 @@ async function main(): Promise<void> {
     const debug = args[0] === 'debug';
     const action = args[1];
     if(debug && action==='stats' && args.length===2){
-    // A downstream pipe consumer may close between writes; stdout errors are asynchronous.
-process.stdout.on('error',(error:unknown)=>{
-    if(isFsError(error,'EPIPE'))process.exit(0);
-    process.stderr.write('Standard output failed\n');process.exit(1);
-});
-const {debugStats}=await import('./debug-stats.js');await debugStats();return;}
+        // A downstream pipe consumer may close between writes; stdout errors are asynchronous.
+        process.stdout.on('error',(error:unknown)=>{
+            if(isFsError(error,'EPIPE'))process.exit(0);
+            process.stderr.write('Standard output failed\n');process.exit(1);
+        });
+        const {debugStats}=await import('./debug-stats.js');await debugStats();return;}
     if (!stopDaemon && (!debug || action==='stats' || !debugActions.includes(action ?? '') || args.length > 3)) {
         usage();
         return;

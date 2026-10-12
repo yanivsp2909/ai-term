@@ -30,7 +30,7 @@ Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source
 | `ai doctor` | Report Node, daemon, file modes, CLI installation/version and login method |
 | `ai daemon` | Internal background service entry point |
 | `ai daemon stop` | Stop the background service and all its sessions |
-| `ai debug stats` | Print ten one-second numeric RAM/CPU diagnostics; no daemon connection |
+| `ai debug stats` | Print ten one-second numeric RAM/CPU diagnostics; no daemon connection; a closed output pipe exits quietly |
 | `ai debug usage` | Ask the running daemon for its receiver port and last ten minutes of allowlisted numeric telemetry; never headers, credentials or bodies |
 | `ai debug ls` | List session IDs, status and title |
 | `ai debug shell [cwd]` | Create a debug shell in the folder (current folder if omitted) |
@@ -52,7 +52,7 @@ Homepage slash commands:
 | `/shell` | Start a plain login shell in the /cd folder |
 | `/copy` | Copy last reply from v0.2; until then copy the same cleaned whole session as `/copy all`, with an explicit note |
 | `/copy all` | Copy cleaned selected-agent scrollback and screen; up to 5 MiB, oldest content cut if needed |
-| `/clean` | Confirm y/n before removing all exited/failed list records; running agents and files untouched |
+| `/clean` | Confirm y/n before removing all exited/failed list records; reports removed/failed counts and first failure; running agents and files untouched |
 | `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
 | `/theme graphite\|slate\|ink\|auto\|light` | Save the theme |
 | `/exit` | Quit client; sessions keep running |
@@ -97,7 +97,9 @@ Letter shortcuts act only when the command field is empty. Paste a task beginnin
 
 Paste into the command bar or the start box's first-message row: more than one line or more than 200 characters appears as `[pasted · N lines]`. The start box also shows the first line, clipped to fit. Full pasted text and newlines become the first message; Backspace deletes the token whole, and typing before/after it works. Small pastes stay literal. Letter shortcuts stay off while the field has text. The combined first message is limited to 16 KB (16,384 UTF-8 bytes): an oversized insertion adds nothing and says `too long for a first message (16 KB): start the agent, then paste inside`. Pasted text stays in memory and is never logged or saved.
 
-The Usage panel marks estimates with `≈`. Unknown model prices show `price ?`; the spend row includes known costs only. Foundry overrides apply their input rate to all input tokens without assuming a cache discount. Historical estimates keep the price used at ingestion. Existing sessions need to be restarted to receive telemetry settings.
+The Usage panel marks estimates with `≈`. Unknown model prices show `price ?`; the spend row includes known costs only. Foundry overrides apply their input rate to all input tokens without assuming a cache discount. Historical estimates keep the price used at ingestion. If settings cannot be read, a persistent warning appears and ingestion uses the last good prices until settings recover. Each session accepts at most 120 unique usage records per 60-second window; excess records are dropped with one fixed log line per window. Existing sessions need to be restarted to receive telemetry settings.
+
+Key and engine failures show fixed reasons without private error text. A malformed key metadata entry is skipped and warned about; valid keys remain usable, and skipped metadata stays on disk for later cleanup.
 
 Native Keychain tests are opt-in: `AITERM_NATIVE_KEYCHAIN_TEST=1 npm test -- tests/keys-store.test.ts`. Normal `npm test` skips only those two native tests and prints the reason; fake-vault tests still run.
 
