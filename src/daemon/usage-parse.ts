@@ -19,7 +19,7 @@ export class UsageParser {
   if(route==='/v1/metrics'&&context.engine==='claude-code')for(const resource of list(object(raw).resourceMetrics))for(const scope of list(object(resource).scopeMetrics))for(const metricRaw of list(object(scope).metrics)){
    const metric=object(metricRaw);if(metric.name!=='claude_code.token.usage'&&metric.name!=='claude_code.cost.usage')continue;
    const sum=object(metric.sum);for(const pointRaw of list(sum.dataPoints)){
-    const point=object(pointRaw),model=this.model(point.attributes,context),type=metric.name==='claude_code.cost.usage'?'cost':stringAttribute(point.attributes,'type');if(!type||!['input','output','cacheRead','cacheCreation','cost'].includes(type))continue;
+    const point=object(pointRaw),model=this.model(point.attributes,context),type=metric.name==='claude_code.cost.usage'?'cost':stringAttribute(point.attributes,'type');if(!type||!(metric.name==='claude_code.cost.usage'?type==='cost':['input','output','cacheRead','cacheCreation'].includes(type)))continue;
     let value=numeric(point.asInt??point.asDouble);if(value===null||type!=='cost'&&!Number.isSafeInteger(value))continue;
     this.diagnostic({sessionId:context.sessionId,at:new Date(this.now()).toISOString(),values:[{name:metric.name+'.'+type,value}]});
     const start=typeof point.startTimeUnixNano==='string'&&/^\d{1,30}$/.test(point.startTimeUnixNano)?point.startTimeUnixNano:'',time=typeof point.timeUnixNano==='string'&&/^\d{1,30}$/.test(point.timeUnixNano)?point.timeUnixNano:'';
