@@ -34,9 +34,9 @@ it.each(['sessions.create','sessions.resume'] as const)('%s outlives the ordinar
 });
 // The auto-started daemon's stdio is ignored, so a startup failure (corrupt state.json, lock) is only in its log; say where.
 it('a daemon that never comes up names the log that holds the reason',async()=>{
- const {vi}=await import('vitest');const {writeFile}=await import('node:fs/promises');const root=await mkdtemp('/tmp/ai-connection-start-'),paths=getPaths(root);await preparePaths(paths);const entry=join(root,'exit.mjs');await writeFile(entry,'process.exit(0);\n');
- try{vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']});const pending=Connection.connect(paths,{entry});let failed:unknown=null;void pending.catch((e:unknown)=>{failed=e;});
-  for(let i=0;i<80&&failed===null;i++)await vi.advanceTimersByTimeAsync(50);
+ const {writeFile}=await import('node:fs/promises');const root=await mkdtemp('/tmp/ai-connection-start-'),paths=getPaths(root);await preparePaths(paths);const entry=join(root,'exit.mjs');await writeFile(entry,'process.exit(0);\n');
+ // Real time on purpose: the 3 s startup deadline races real spawn and socket I/O that a fake clock would outrun.
+ try{const failed:unknown=await Connection.connect(paths,{entry}).catch((e:unknown)=>e);
   expect(failed).toBeInstanceOf(Error);expect((failed as Error).message).toContain(paths.log);
- }finally{vi.useRealTimers();await rm(root,{recursive:true,force:true});}
-});
+ }finally{await rm(root,{recursive:true,force:true});}
+},10000);

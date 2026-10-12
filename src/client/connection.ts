@@ -78,7 +78,8 @@ export class Connection extends EventEmitter {
         const id = randomUUID();
         return new Promise((resolve, reject) => {
             // Up to forty deployments, each with a Responses and fallback probe (15 s each).
-            const timeout=body.kind==='keys.test'?40*30_000+5000:body.kind==='keys.add'||body.kind==='keys.importEnv'?60_000:5000;
+            // Create/resume may run two 5 s engine checks and wait on a Keychain prompt before spawning.
+            const timeout=body.kind==='keys.test'?40*30_000+5000:['keys.add','keys.importEnv','sessions.create','sessions.resume'].includes(body.kind)?60_000:5000;
             const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Daemon request timed out')); }, timeout);
             this.pending.set(id, { resolve, reject, timer, ...(body.kind==='sessions.text'?{textSession:body.sessionId}:{}) });
             this.socket.write(encodeControl({ ...body, id }), error => { if (error) {
@@ -142,7 +143,7 @@ export class Connection extends EventEmitter {
                         throw retryError;
                 }
                 if (Date.now() >= deadline)
-                    throw new Error('Daemon did not start within 3 s', { cause: error });
+                    throw new Error(`Daemon did not start within 3 s; see ${paths.log}`, { cause: error });
                 await new Promise(r => setTimeout(r, 50));
             }
         }
