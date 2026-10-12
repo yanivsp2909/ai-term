@@ -46,6 +46,12 @@ Homepage slash commands:
 | `/cd` | Choose folder for the next session, with directory completion |
 | `/login` | Anthropic/OpenAI account login or API key; Microsoft Foundry endpoint/key/deployments and test |
 | `/settings` | KEYS, ENGINES, DEFAULTS; add/import/remove/test keys, edit saved defaults/theme, set Foundry input/output prices per 1M tokens |
+| `/effort [CLI default\|<level>]` | Reasoning for next agent; levels follow selected CLI; CLI default passes nothing |
+| `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
+| `/resume` | Continue selected finished Claude conversation; Codex opens its own folder-filtered resume picker |
+| `/shell` | Start a plain login shell in the /cd folder |
+| `/clean` | Confirm y/n before removing all exited/failed list records; running agents and files untouched |
+| `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
 | `/theme graphite\|slate\|ink\|auto\|light` | Save the theme |
 | `/exit` | Quit client; sessions keep running |
 
