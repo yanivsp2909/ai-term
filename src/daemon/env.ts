@@ -24,6 +24,11 @@ export function buildSpawnEnv(engine: AgentEngine, auth: {kind:'account'} | {kin
     if(auth.kind==='key')result[engine==='claude-code'?'ANTHROPIC_API_KEY':'AITERM_FOUNDRY_KEY']=auth.secret;
     return result;
 }
+// D40: Ask passes explicit ask flags, or the user's own CLI config (e.g. Codex YOLO) silently turns Ask into Don't ask. Claude 2.1.296 help lists this mode as 'manual'; the CLI maps 'manual' to its canonical 'default'.
+const PERMISSION_ARGS:Record<AgentEngine,Record<Permission,readonly string[]>>={
+    'claude-code':{ask:['--permission-mode=default'],dontAsk:['--permission-mode=bypassPermissions']},
+    codex:{ask:['--ask-for-approval=on-request','--sandbox=workspace-write'],dontAsk:['--ask-for-approval=never','--sandbox=workspace-write']},
+};
 export function buildArgs(request:{engine:AgentEngine;model:string|null;permission:Permission;firstMessage?:string;foundryEndpoint?:string}):string[] {
     if(!isModel(request.model)||!isPermission(request.permission)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid spawn arguments');
     // D41: without --no-daemon the Codex TUI may join a shared background server started elsewhere, whose env and config win over this recipe's env and -c overrides. Codex rejects the flag twice, so only this line adds it.
@@ -35,7 +40,7 @@ export function buildArgs(request:{engine:AgentEngine;model:string|null;permissi
         for(const config of ['model_provider="aiterm_foundry"','model_providers.aiterm_foundry.name="AI Term Foundry"',`model_providers.aiterm_foundry.base_url="${endpoint}"`,'model_providers.aiterm_foundry.env_key="AITERM_FOUNDRY_KEY"','model_providers.aiterm_foundry.env_http_headers={"api-key"="AITERM_FOUNDRY_KEY"}','model_providers.aiterm_foundry.wire_api="responses"','model_providers.aiterm_foundry.requires_openai_auth=false'])args.push('-c',config);
     }
     if(request.model!==null)args.push(`--model=${request.model}`);
-    if(request.permission==='dontAsk')args.push(...request.engine==='claude-code'?['--permission-mode=bypassPermissions']:['--ask-for-approval=never','--sandbox=workspace-write']);
+    args.push(...PERMISSION_ARGS[request.engine][request.permission]);
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return args;
 }
