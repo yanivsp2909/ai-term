@@ -31,3 +31,39 @@ describe('frame contract', () => {
         expect(() => encodeData(2, '-bad', bytes)).toThrow();
     });
 });
+describe('frame rejections', () => {
+    const frame = (type: number, payload: Buffer) => { const header = Buffer.alloc(5); header.writeUInt32BE(payload.length + 1); header[4] = type; return Buffer.concat([header, payload]); };
+    it('refuses to encode a frame over 4 MB, so the daemon never sends what a client must reject', () => {
+        // JSON adds two quotes; this payload plus the type byte is exactly the limit.
+        expect(encodeControl('x'.repeat(MAX_FRAME_BYTES - 3)).length).toBe(MAX_FRAME_BYTES + 4);
+        expect(() => encodeControl('x'.repeat(MAX_FRAME_BYTES - 2))).toThrow(expect.objectContaining({ code: 'FRAME_TOO_LARGE' }));
+        expect(() => encodeData(2, randomUUID(), Buffer.alloc(MAX_FRAME_BYTES))).toThrow(expect.objectContaining({ code: 'FRAME_TOO_LARGE' }));
+    });
+    it('decodes only control frames as JSON', () => {
+        for (const type of [2, 3] as const)
+            expect(() => decodeControl({ type, payload: Buffer.from('{}') })).toThrow(expect.objectContaining({ code: 'INVALID_FRAME' }));
+        expect(() => decodeControl({ type: 1, payload: Buffer.from('{"a":1}{') })).toThrow(expect.objectContaining({ code: 'INVALID_JSON' }));
+    });
+    it('accepts string input as bytes', () => {
+        const hello = { id: randomUUID(), kind: 'hello' };
+        expect(new FrameDecoder().push(encodeControl(hello).toString('latin1')).map(decodeControl)).toEqual([hello]);
+    });
+    it('refuses unknown types 0 and 4 with a typed error', () => {
+        for (const type of [0, 4, 255])
+            expect(() => new FrameDecoder().push(frame(type, Buffer.from('{}')))).toThrow(expect.objectContaining({ code: 'INVALID_TYPE' }));
+    });
+    it('refuses data frames without a leading session UUID, for output and input alike', () => {
+        for (const type of [2, 3]) {
+            for (const payload of [Buffer.alloc(0), Buffer.from('short'), Buffer.from('x'.repeat(36) + 'data'), Buffer.from('-' + randomUUID().slice(1) + 'data')])
+                expect(() => new FrameDecoder().push(frame(type, payload))).toThrow(expect.objectContaining({ code: 'INVALID_ID' }));
+            expect(new FrameDecoder().push(frame(type, Buffer.from(randomUUID() + 'data')))).toHaveLength(1);
+        }
+    });
+    it('keeps no partial state after a frame: a decoder returns each later frame whole', () => {
+        const decoder = new FrameDecoder(), a = { id: randomUUID(), kind: 'a' }, b = { id: randomUUID(), kind: 'b' };
+        expect(decoder.push(encodeControl(a)).map(decodeControl)).toEqual([a]);
+        const second = encodeControl(b);
+        expect(decoder.push(second.subarray(0, 3))).toEqual([]);
+        expect(decoder.push(second.subarray(3)).map(decodeControl)).toEqual([b]);
+    });
+});
