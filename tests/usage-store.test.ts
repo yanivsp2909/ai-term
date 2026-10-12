@@ -1,5 +1,6 @@
 import {expect,it,vi} from 'vitest';
 import * as fs from 'node:fs/promises';
+vi.mock('node:fs/promises',async()=>{const actual=await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');return {...actual,open:vi.fn(actual.open)};});
 import {randomUUID} from 'node:crypto';
 import {mkdtemp,rm,lstat,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
