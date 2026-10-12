@@ -1,9 +1,10 @@
-import type { SessionInfo, Status, AgentEngine, SystemStats, UsageSummary, Budgets } from '../../shared/protocol.js';
+import type { SessionInfo, Status, AgentEngine, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
 import { Grid, graphemes, type Frame } from './grid.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { Theme, ColorName } from './theme.js';
 import { drawUsage, budgetWarning } from './usage-panel.js';
 import { ownLoginLabel } from '../../shared/models.js';
+import { commandRegistry, commandRows, modeLabel } from './commands.js';
 import { agentUsage, drawThisMac } from './this-mac.js';
 export interface Rect { x: number; y: number; w: number; h: number }
 export function homepageLayout(cols: number, rows: number, visible = true) {
@@ -17,11 +18,11 @@ export function homepageLayout(cols: number, rows: number, visible = true) {
 }
 export function sortSessions(sessions: SessionInfo[]): SessionInfo[] { return [...sessions].sort((a, b) => Number(b.status === 'waiting') - Number(a.status === 'waiting') || Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id)); }
 export function visibleStart(selected: number, capacity: number, start: number): number { return selected < start ? selected : selected >= start + capacity ? selected - capacity + 1 : start; }
-export const commands = ['/model', '/cd', '/settings', '/login', '/theme', '/exit'];
+export const commands = commandRegistry.map(c=>c.name);
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
 const marks: Record<Status, [string, ColorName, string]> = { starting: ['◐', 'status-running', 'starting'], running: ['◐', 'status-running', 'running'], waiting: ['●', 'status-waiting', 'waiting'], done: ['✓', 'status-done', 'to review'], idle: ['·', 'status-idle', 'idle'], exited: ['■', 'status-idle', 'exited'], error: ['✗', 'status-error', 'failed'] };
 function age(session: SessionInfo, now: number): string { const minutes = Math.max(0, Math.floor((now - Date.parse(session.statusSince)) / 60000)); return minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`; }
-export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string;usage?:UsageSummary|null;budgets?:Budgets }
+export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string;usage?:UsageSummary|null;budgets?:Budgets;effort?:Effort|null;permission?:Permission;themeName?:import('../../shared/protocol.js').ThemeName }
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
   if (layout.tiny) { const label = 'make the window bigger'; grid.text(Math.floor((cols - label.length) / 2), Math.floor(rows / 2), label, t['ink-3']); return grid.cells; }
@@ -81,19 +82,22 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const end = grid.text(4, rows - 3, view.input ? input.join('') : 'What do you want to build?', view.input ? t.ink : t['ink-3'], t.surface, false, cols - 6);
   grid.text(end, rows - 3, '█', t.cursor, t.surface, false, 1);
   const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;
-  const defaultWidth=Math.max(0,hintsX-2),auth=view.engine?` · ${view.authLabel??'own login'} · ask`:'',model=view.engine?`${view.model??'CLI default'} · ${view.engine==='codex'?'codex':'claude code'}`:'shell';
+  const defaultWidth=Math.max(0,hintsX-2),auth=view.engine?` · ${view.authLabel??'own login'} · ${view.effort??'CLI default'} · ${modeLabel(view.permission??'ask')}`:'',model=view.engine?`${view.model??'CLI default'} · ${view.engine==='codex'?'codex':'claude code'}`:'shell';
   let clippedModel='';for(const char of graphemes(model)){if(textWidth(clippedModel+char)>Math.max(0,defaultWidth-textWidth(auth)-3))break;clippedModel+=char;}
   const prefix=`${clippedModel} · `,folderWidth=Math.max(0,defaultWidth-textWidth(prefix)-textWidth(auth));
   let folder='';for(const char of graphemes(view.cwd)){if(textWidth(folder+char)>folderWidth)break;folder+=char;}
-  grid.text(1, rows - 1, prefix+folder+auth, t['ink-3'], t.bg, false, defaultWidth); grid.text(hintsX, rows - 1, hints, t['ink-3']);
+  grid.text(1, rows - 1, prefix+folder+auth, t['ink-3'], t.bg, false, defaultWidth); if(view.permission==='dontAsk')grid.text(1+textWidth(prefix+folder+auth)-textWidth(modeLabel('dontAsk')),rows-1,modeLabel('dontAsk'),t['status-error'],t.bg,false,textWidth(modeLabel('dontAsk'))); grid.text(hintsX, rows - 1, hints, t['ink-3']);
   if (view.input.startsWith('/')) {
-    const choices = filteredCommands(view.input), h = choices.length + 2, y = rows - 4 - h;
-    grid.box(0, y, Math.min(64, cols), h, 'Commands', t.surface);
-    choices.forEach((command, i) => {
-      const selected=i===(view.menuChoice??0), bg=selected?t['surface-2']:t.surface;
-      grid.fill(1,y+1+i,Math.min(64,cols)-2,1,bg);
-      if(selected)grid.text(1,y+1+i,'▎',t.accent,bg);
-      grid.text(3,y+1+i,command==='/theme'?'/theme graphite|slate|ink|auto|light':command,t['ink-2'],bg,selected);
+    const choices = commandRows(view.input,{engine:view.engine??'claude-code',model:view.model??null,cwd:view.cwd,theme:theme.name,effort:view.effort,permission:view.permission,selectedTitle:selected?.title}), capacity=Math.max(1,Math.min(choices.length,rows-7)),choice=Math.min(view.menuChoice??0,Math.max(0,choices.length-1)),start=visibleStart(choice,capacity,0),h=capacity+2,y=rows-4-h,w=cols;
+    grid.box(0,y,w,h,'Commands',t.surface);
+    choices.slice(start,start+capacity).forEach((command,i)=>{
+      const selected=start+i===choice,bg=selected?t['surface-2']:t.surface,row=y+1+i;
+      grid.fill(1,row,w-2,1,bg);if(selected)grid.text(1,row,'▎',t.accent,bg);
+      const valueW=Math.min(Math.floor(w/3),textWidth(command.value)),valueX=w-3-valueW,leftW=Math.max(0,valueX-5);
+      const label=command.name+(command.hint?' '+command.hint:'');
+      const end=grid.text(3,row,label,t['ink-2'],bg,selected,Math.min(leftW,Math.max(14,Math.floor(w/2)-4)));
+      if(command.description&&end+3<valueX)grid.text(end+2,row,command.description,t['ink-2'],bg,false,valueX-end-3);
+      grid.text(valueX,row,command.value,t['ink-3'],bg,false,valueW);
     });
   }
   if (view.note && !view.input.startsWith('/')) { grid.fill(0, rows - 5, cols, 1, view.copying ? t.accent : t.bg); grid.text(2, rows - 5, view.note, view.copying ? t['on-accent'] : t['ink-3'], view.copying ? t.accent : t.bg, false, cols - 4); }
