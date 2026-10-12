@@ -21,8 +21,10 @@ async function setup(makeSampler: MakeSampler) {
   const sampler = makeSampler(manager, log), server = new DaemonServer(paths, manager, log, sampler); await server.listen();
   const entry = resolve('src/cli/index.ts');
   const connect = async () => { const client = await Connection.connect(paths, { entry, autoStart: false }); await client.hello; cleanup.unshift(async () => { client.close(); }); return client; };
-  cleanup.push(async () => { await server.close(); await manager.shutdown(); });
-  return { paths, manager, sampler, connect };
+  let closed = false;
+  const close = async () => { if (closed) return; closed = true; await server.close(); await manager.shutdown(); };
+  cleanup.push(close);
+  return { paths, manager, sampler, connect, close };
 }
 const statsOf = (events: unknown[]): SystemStats[] => events.flatMap(e => e && typeof e === 'object' && 'kind' in e && e.kind === 'system.stats' && 'stats' in e ? [validateSystemStats(e.stats)] : []);
 const fake = (interval: number): MakeSampler => (manager, log) => {
@@ -79,4 +81,16 @@ it('real ps, vm_stat and netstat on this Mac give a live session non-zero memory
   expect(stats?.memTotalBytes).toBeGreaterThan(0); expect(stats?.memUsedBytes).toBeGreaterThan(0);
   expect(stats?.sessions[0]).toMatchObject({ sessionId: session.id }); expect(stats?.sessions[0]?.rssBytes).toBeGreaterThan(0);
   expect(JSON.stringify(events)).not.toMatch(/sleep|\/bin\//);
+});
+
+it('closing the server stops sampling for good, even with several subscribers', async () => {
+  const { connect, sampler, close } = await setup(fake(50));
+  const a = await connect(), b = await connect();
+  await a.request({ kind: 'system.subscribe', on: true }); await b.request({ kind: 'system.subscribe', on: true });
+  expect(sampler.running()).toBe(true);
+  const calls: number[] = []; const original = sampler.setSubscribers.bind(sampler);
+  sampler.setSubscribers = (count: number) => { calls.push(count); original(count); };
+  await close();
+  await new Promise(r => setTimeout(r, 100));
+  expect(sampler.running()).toBe(false); expect(calls.filter(count => count > 0)).toEqual([]);
 });

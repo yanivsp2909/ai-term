@@ -16,16 +16,18 @@ class TTY extends EventEmitter {
   write(value: string | Buffer) { this.output += value.toString(); return true; }
 }
 class Client extends EventEmitter {
-  requests: RequestBody[] = [];
+  requests: RequestBody[] = []; failSubscribe = false; hangUnsubscribe = false;
   async request(body: RequestBody): Promise<SuccessResponse> {
     this.requests.push(body);
+    if (body.kind === 'system.subscribe' && body.on && this.failSubscribe) throw new Error('Daemon request timed out');
+    if (body.kind === 'system.subscribe' && !body.on && this.hangUnsubscribe) return new Promise<SuccessResponse>(() => {});
     return { id: randomUUID(), ok: true, ...(body.kind === 'sessions.list' ? { sessions: [selected, other] } : {}), ...(body.kind === 'settings.get' ? { settings: { theme: 'graphite' } } : {}), ...(body.kind === 'sessions.preview' ? { snapshot: '', cols: 80, rows: 20 } : {}) };
   }
   subscriptions(): boolean[] { return this.requests.flatMap(r => r.kind === 'system.subscribe' ? [r.on] : []); }
 }
-async function fixture() {
+async function fixture(setup: (client: Client) => void = () => {}) {
   const { Homepage } = await import('../src/client/tui/homepage.js');
-  const tty = new TTY(), client = new Client(), signals = new EventEmitter();
+  const tty = new TTY(), client = new Client(), signals = new EventEmitter(); setup(client);
   let returnHome: (reason: 'home key') => void = () => {};
   const attachSession = vi.fn(async () => { expect(client.subscriptions().at(-1)).toBe(false); return new Promise<'home key'>(resolve => { returnHome = resolve; }); });
   const home = new Homepage(client, { stdin: tty, stdout: tty, signals, cwd: '/tmp', attachSession });
@@ -81,4 +83,34 @@ it('a stats event that breaks the contract stops the homepage like any invalid d
     client.emit('event', { kind: 'system.stats', stats: { ...stats(10), command: '/usr/bin/secret' } });
     await expect(home.done).rejects.toThrow();
   } finally { done(); }
+});
+it('returning from a session shows no stale numbers until a fresh sample arrives', async () => {
+  const { home, tty, client, screen, attachSession, back, done } = await fixture();
+  try {
+    client.emit('event', { kind: 'system.stats', stats: stats(70) });
+    expect(await screen()).toContain('CPU 70%');
+    tty.emit('data', Buffer.from('\r'));
+    await expect.poll(() => attachSession.mock.calls.length).toBe(1);
+    back();
+    await expect.poll(() => client.subscriptions()).toEqual([true, false, true]);
+    const text = await screen();
+    expect(text).toContain('CPU —'); expect(text).not.toContain('cpu 4%');
+  } finally { done(); await home.stop(); }
+});
+it('a failed stats subscribe leaves the homepage running with a note', async () => {
+  const { home, screen, client, done } = await fixture(c => { c.failSubscribe = true; });
+  try {
+    expect(await screen()).toContain('This Mac unavailable');
+    client.emit('event', { kind: 'system.stats', stats: stats(10) });
+    expect(await screen()).toContain('CPU —');
+  } finally { done(); await home.stop(); }
+  await expect(home.done).resolves.toBeUndefined();
+});
+it('quitting never waits on an unresponsive daemon for the unsubscribe', async () => {
+  const { home, client, done } = await fixture(c => { c.hangUnsubscribe = true; });
+  done();
+  const quit = home.stop(), timeout = new Promise(r => setTimeout(() => r('hung'), 500));
+  expect(await Promise.race([quit.then(() => 'quit'), timeout])).toBe('quit');
+  await expect(home.done).resolves.toBeUndefined();
+  expect(client.subscriptions()).toEqual([true, false]);
 });

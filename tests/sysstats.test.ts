@@ -172,4 +172,28 @@ describe('SystemSampler', () => {
     expect(hang).not.toBeNull();
     sampler.setSubscribers(0);
   });
+  it('a sample still in flight when sampling stops never leaves a baseline for the next run', async () => {
+    const { sampler, run, events } = fixture();
+    const base = run.getMockImplementation();
+    let hang: (() => void) | null = null, holding = false;
+    run.mockImplementation(async (file: string, args: string[]) => {
+      if (holding && file === SAMPLE_COMMANDS.ps.file) await new Promise<void>(resolve => { hang = resolve; });
+      if (!base) throw new Error('fixture');
+      return base(file, args);
+    });
+    sampler.setSubscribers(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(events).toHaveLength(1);
+    holding = true;
+    await vi.advanceTimersByTimeAsync(2000); // this sample hangs in ps
+    sampler.setSubscribers(0);
+    holding = false; (hang as (() => void) | null)?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    sampler.setSubscribers(1);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(events).toHaveLength(1); // the restart's first sample is a baseline again, not a 60 s average
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events).toHaveLength(2);
+    sampler.setSubscribers(0);
+  });
 });
