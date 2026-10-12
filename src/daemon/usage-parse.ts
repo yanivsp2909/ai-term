@@ -8,10 +8,10 @@ function stringAttribute(attrs:unknown,key:string):string|null{for(const raw of 
 function numberAttribute(attrs:unknown,key:string):number|null{for(const raw of list(attrs)){const a=object(raw);if(a.key===key){const v=object(a.value);return numeric(v.intValue??v.doubleValue??v.stringValue);}}return null;}
 const tokenNames=['input_token_count','output_token_count','cached_token_count','reasoning_token_count'] as const;
 export class UsageParser {
- private seen=new Map<string,number>();private cumulative=new Map<string,number>();
+ private seen=new Set<string>();private cumulative=new Map<string,number>();
  constructor(private readonly diagnostic:(entry:UsageDiagnostic)=>void,private readonly now=()=>Date.now()){}
  revoke(sessionId:string):void{for(const key of this.seen.keys())if(key.startsWith(sessionId+':'))this.seen.delete(key);for(const key of this.cumulative.keys())if(key.startsWith(sessionId+':'))this.cumulative.delete(key);}
- private duplicate(key:string):boolean{const now=this.now();for(const [id,at]of this.seen)if(now-at>3600000)this.seen.delete(id);if(this.seen.has(key))return true;if(this.seen.size>=10000){const first=this.seen.keys().next().value;if(first)this.seen.delete(first);}this.seen.set(key,now);return false;}
+ private duplicate(key:string):boolean{if(this.seen.has(key))return true;this.seen.add(key);return false;}
  private model(attrs:unknown,context:UsageContext):string{const model=stringAttribute(attrs,'model');return model&&isValidModelId(model)&&!model.startsWith('sk-')?model:context.model??'unknown';}
  private record(context:UsageContext,model:string):UsageRecord{return {ts:new Date(this.now()).toISOString(),sessionId:context.sessionId,provider:context.provider,model,inputTokens:0,outputTokens:0,costUsd:context.engine==='claude-code'?0:null,costSource:context.engine==='claude-code'?'cli-estimate':'price-table'};}
  parse(route:string,raw:unknown,context:UsageContext):UsageRecord[]{
