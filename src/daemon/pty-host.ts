@@ -58,8 +58,10 @@ export class PtyHost {
                 process.kill(-this.pty.pid, name);
             }
             catch (error) {
-                if (!isFsError(error, 'ESRCH'))
+                if (!isFsError(error, 'ESRCH')) {
+                    // eslint-disable-next-line preserve-caught-error -- Process errors may contain private data; retain only the fixed operation cause.
                     throw new Error('Session stop signal failed');
+                }
             }
         };
         signal('SIGTERM');

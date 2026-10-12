@@ -48,7 +48,7 @@ it('broadcasts lifecycle events, renders snapshots first and refreshes a slow pr
  await client.request({kind:'sessions.stop',sessionId:session.id});
  await client.request({kind:'sessions.remove',sessionId:session.id});
  await expect.poll(()=>events.some(e=>typeof e==='object'&&e!==null&&'kind' in e&&e.kind==='session.removed')).toBe(true);
- await expect(client.request({kind:'sessions.stop',sessionId:randomUUID()})).rejects.toThrow('Session operation failed');
+ await expect(client.request({kind:'sessions.stop',sessionId:randomUUID()})).rejects.toThrow('Session not found');
 },10000);
 it('requires hello and refuses unsafe socket modes; probes do not unlink a live socket',async()=>{
  const {paths}=await setup();expect(await socketAnswers(paths.socket)).toBe(true);
