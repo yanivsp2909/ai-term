@@ -24,6 +24,56 @@ export const SAMPLE_COMMANDS = {
 } as const;
 export const SAMPLE_INTERVAL_MS = 1000;
 const COMMAND_TIMEOUT_MS = 2000, MAX_OUTPUT_BYTES = 1024 * 1024;
+export interface MemoryParts {
+  anonymousBytes:number;purgeableBytes:number;appBytes:number;wiredBytes:number;compressedBytes:number;
+  cachedBytes:number;freeBytes:number;appWiredCompressedBytes:number;anonymousWiredCompressedBytes:number;
+}
+function vmCounts(text:string,labels:string[]):number[]|null {
+  const pageSize=Number(text.match(/page size of (\d+) bytes/)?.[1]);
+  if(!Number.isSafeInteger(pageSize)||pageSize<=0)return null;
+  const result:number[]=[];
+  for(const label of labels){const value=text.match(new RegExp(`^${label}:\\s+(\\d+)\\.$`,'m'))?.[1];if(value===undefined)return null;const bytes=Number(value)*pageSize;if(!Number.isSafeInteger(bytes))return null;result.push(bytes);}
+  return result;
+}
+export function parseMemoryParts(text:string):MemoryParts|null {
+  const counts=vmCounts(text,['Anonymous pages','Pages purgeable','Pages wired down','Pages occupied by compressor','File-backed pages','Pages free']);
+  if(!counts)return null;
+  const [anonymousBytes=0,purgeableBytes=0,wiredBytes=0,compressedBytes=0,cachedBytes=0,freeBytes=0]=counts;
+  if(purgeableBytes>anonymousBytes)return null;
+  const appBytes=anonymousBytes-purgeableBytes,appWiredCompressedBytes=appBytes+wiredBytes+compressedBytes,anonymousWiredCompressedBytes=anonymousBytes+wiredBytes+compressedBytes;
+  if(!Number.isSafeInteger(anonymousWiredCompressedBytes))return null;
+  return {anonymousBytes,purgeableBytes,appBytes,wiredBytes,compressedBytes,cachedBytes,freeBytes,appWiredCompressedBytes,anonymousWiredCompressedBytes};
+}
+export interface TopCpu {userPercent:number;systemPercent:number;idlePercent:number;busyPercent:number}
+export function parseTopCpu(text:string):TopCpu|null {
+  let result:TopCpu|null=null;
+  for(const line of text.split('\n')){
+    const match=line.match(/^CPU usage:\s*([\d.]+)% user,\s*([\d.]+)% sys,\s*([\d.]+)% idle\s*$/);
+    if(!match)continue;
+    const userPercent=Number(match[1]),systemPercent=Number(match[2]),idlePercent=Number(match[3]),busyPercent=userPercent+systemPercent;
+    if([userPercent,systemPercent,idlePercent,busyPercent].some(v=>!Number.isFinite(v)||v<0||v>100))return null;
+    result={userPercent,systemPercent,idlePercent,busyPercent};
+  }
+  return result;
+}
+// Capture os.cpus() at top's two CPU lines so both rates cover the same sampling interval.
+// top -n 0 suppresses its process table; only the parsed CPU numbers survive this boundary.
+export function compareCpuWithTop():Promise<{cpuPercent:number;top:TopCpu;seconds:number}> {
+  return new Promise((resolve,reject)=>{
+    let pending='',before:CpuInfo[]|undefined,after:CpuInfo[]|undefined,top:TopCpu|null=null,start=0,end=0;
+    const child=execFile('/usr/bin/top',['-l','2','-n','0','-s','1'],{timeout:5000,maxBuffer:MAX_OUTPUT_BYTES,encoding:'utf8',env:{PATH:'/usr/bin:/bin',LC_ALL:'C'}},error=>{
+      const value=before&&after?cpuPercent(before,after):null;
+      if(error||value===null||!top){reject(new Error('CPU comparison unavailable'));return;}
+      resolve({cpuPercent:value,top,seconds:(end-start)/1000});
+    });
+    child.stdout?.on('data',(chunk:string)=>{
+      pending+=chunk;let boundary:number;
+      while((boundary=pending.indexOf('\n'))>=0){const line=pending.slice(0,boundary);pending=pending.slice(boundary+1);const parsed=parseTopCpu(line);if(!parsed)continue;
+        if(!before){before=cpus();start=performance.now();}else {after=cpus();end=performance.now();top=parsed;}
+      }
+    });
+  });
+}
 
 export function parsePs(text: string): ProcRow[] {
   const rows: ProcRow[] = [];

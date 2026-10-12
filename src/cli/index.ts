@@ -12,7 +12,7 @@ import { redact, Logger } from '../daemon/log.js';
 import { AttachError } from '../client/attach.js';
 import { ClientSignal } from '../client/signals.js';
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
-function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug ls|shell [cwd]|stop <id>|peek <id>|attach <id>]\n'); process.exitCode = 2; }
+function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug stats|ls|shell [cwd]|stop <id>|peek <id>|attach <id>]\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
     if (args.length === 0) {
         const client = await Connection.connect(getPaths(), { entry });
@@ -37,6 +37,7 @@ async function main(): Promise<void> {
     const stopDaemon = args.length === 2 && args[0] === 'daemon' && args[1] === 'stop';
     const debug = args[0] === 'debug';
     const action = args[1];
+    if(debug && action==='stats' && args.length===2){const {debugStats}=await import('./debug-stats.js');await debugStats();return;}
     if (!stopDaemon && (!debug || !['ls', 'shell', 'stop', 'peek', 'attach'].includes(action ?? '') || args.length > 3)) {
         usage();
         return;

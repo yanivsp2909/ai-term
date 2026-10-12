@@ -1,5 +1,4 @@
 import { expect,it } from 'vitest';
-import type { CpuInfo } from 'node:os';
 import { parseMemoryParts, parseTopCpu } from '../src/daemon/sysstats.js';
 import { debugStats } from '../src/cli/debug-stats.js';
 const vm=`Mach Virtual Memory Statistics: (page size of 16384 bytes)
