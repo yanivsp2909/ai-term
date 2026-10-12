@@ -13,6 +13,10 @@ import {MAX_COPY_BYTES, type Request, type SuccessResponse } from './protocol.js
 export class ValidationError extends Error {
     readonly code = 'INVALID_REQUEST';
 }
+export const MAX_FIRST_MESSAGE_BYTES = 16 * 1024;
+export function isFirstMessage(value: unknown): value is string {
+    return typeof value === 'string' && Buffer.byteLength(value) <= MAX_FIRST_MESSAGE_BYTES && !value.includes('\0');
+}
 export function warningText(value: string): string {
     // Strip whole escape sequences as well as individual controls before drawing.
     return [...stripVTControlCharacters(value).replace(/[\p{C}]/gu, '')].slice(0, 200).join('');
@@ -74,7 +78,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'sessions.create':
             fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
-            if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermissionForEngine(v.engine,v.permission) || v.effort !== undefined && !isEffortForEngine(v.engine,v.effort) || (v.firstMessage !== undefined && (typeof v.firstMessage !== 'string' || Buffer.byteLength(v.firstMessage) > 16384 || v.firstMessage.includes('\0'))))) throw new ValidationError('Invalid account agent request');
+            if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermissionForEngine(v.engine,v.permission) || v.effort !== undefined && !isEffortForEngine(v.engine,v.effort) || (v.firstMessage !== undefined && !isFirstMessage(v.firstMessage)))) throw new ValidationError('Invalid account agent request');
             if (v.login !== undefined && (v.login !== true || v.model!==null || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined || v.effort !== undefined)) throw new ValidationError('Invalid login session');
             if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
             break;

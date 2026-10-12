@@ -9,6 +9,7 @@ import { getPaths } from '../../shared/paths.js';
 import { Logger, redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
 import { CommandField, InputParser, type InputEvent } from './keys.js';
+import { MessageField, FIRST_MESSAGE_TOO_LONG } from './message-field.js';
 import { Preview, type Point } from './preview.js';
 import { copyText } from './clipboard.js';
 import { BACKGROUND_QUERY, BackgroundReplies, createTheme, type Theme } from './theme.js';
@@ -191,7 +192,15 @@ export class Homepage {
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
     if (event.kind === 'mouse') { if(this.helpOffset===null&&!this.box&&!this.credentials&&!this.cleanIds)this.mouse(event); return; }
-    if (event.kind === 'paste') { if(this.helpOffset!==null||this.cleanIds)return; if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});} else if(this.usageForm){this.usageForm.paste(event.text);} else if (this.box) this.boxText(event.text); else {this.field.paste(event.text);this.menuChoice=0;} this.draw(true); return; }
+    if (event.kind === 'paste') {
+      if(this.helpOffset!==null||this.cleanIds)return;
+      if(event.tooLong){if(this.box?.kind==='start')this.box.messageNote=FIRST_MESSAGE_TOO_LONG;else this.showNote(FIRST_MESSAGE_TOO_LONG);this.draw(true);return;}
+      if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});}
+      else if(this.usageForm)this.usageForm.paste(event.text);
+      else if(this.box)this.boxText(event.text,true);
+      else {const error=this.field.paste(event.text);this.menuChoice=0;if(error)this.showNote(error);}
+      this.draw(true);return;
+    }
     if (event.key === 'ctrl-c') {
       const action = this.field.key('ctrl-c');
       if (action.kind === 'quit') void this.stop();
@@ -224,7 +233,7 @@ export class Homepage {
       }
       this.field.key(event.key); this.showNote('rename: type a name, ⏎ save · Esc cancel'); return;
     }
-    if(this.field.text.startsWith('/')){
+    if(!this.field.hasPastes&&this.field.text.startsWith('/')){
       const choices=filteredCommands(this.field.text);
       if(event.key==='up'||event.key==='down'){
         if(choices.length)this.menuChoice=(this.menuChoice+(event.key==='up'?-1:1)+choices.length)%choices.length;
@@ -243,7 +252,7 @@ export class Homepage {
     switch (action.kind) {
       case 'quit': void this.stop(); return;
       case 'note': this.showNote(action.text, 1000); return;
-      case 'submit': this.queueSubmit(action.text); break;
+      case 'submit': this.queueSubmit(action.text,action.message); break;
       case 'attach': this.enqueue(() => this.openSelected()); break;
       case 'preview': this.visible = !this.visible; this.previewCells = undefined; this.enqueue(() => this.updatePreview(true)); break;
       case 'up': case 'down': {
@@ -277,8 +286,9 @@ export class Homepage {
   }
   private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title};}
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
-  private queueSubmit(text:string):void{const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.submit(text,selected));}
-  private async submit(text: string, copyTarget:SessionInfo|null=null): Promise<void> {
+  private queueSubmit(text:string,message?:MessageField):void{const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.submit(text,selected,message));}
+  private async submit(text: string, copyTarget:SessionInfo|null=null,message?:MessageField): Promise<void> {
+    if(message?.hasPastes){this.openBox('start',text,message);await this.checkSelectedEngine();return;}
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
     if(command==='/copy'){if(argument){this.showNote('/copy uses the selected agent');return;}await this.copySelected(copyTarget);return;}
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
@@ -311,8 +321,9 @@ export class Homepage {
       theme:async theme=>{await this.submit('/theme '+theme);},
     });this.credentials=panel;this.draw(true);await panel.load();
   }
-  private openBox(kind: AgentBox['kind'], message = ''): void {
-    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
+  private openBox(kind: AgentBox['kind'], message = '',messageField?:MessageField): void {
+    const draft=messageField?.copy()??new MessageField();if(!messageField)draft.text=message;
+    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,messageField:draft,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
     this.returnToStart = false;if(kind==='effort'||kind==='mode')this.valueChoices();else this.resetModelTabs();this.draw(true);
   }
   private valueChoices():void{const b=this.box;if(!b)return;b.values=b.kind==='effort'?effortValues(b.engine):modeValues(b.engine).map(modeLabel);const value=b.kind==='effort'?b.effort??'CLI default':modeLabel(b.permission);b.choice=Math.max(0,b.values.indexOf(value));}
@@ -328,9 +339,9 @@ export class Homepage {
     } catch (error) { box.error = error instanceof Error ? error.message : 'Engine check failed'; }
     finally { box.checking = false; this.draw(true); }
   }
-  private boxText(text: string): void {
+  private boxText(text: string,paste=false): void {
     const b = this.box; if (!b) return;
-    if (b.kind === 'start') { if (b.row === 4) b.message = (b.message + text).slice(0,16384); }
+    if (b.kind === 'start') { if (b.row === 4 && b.messageField) {b.messageNote=paste?b.messageField.paste(text):b.messageField.type(text);b.message=b.messageField.text;} }
     else if (b.kind === 'folder') { b.path = (b.path + text).slice(0,4096); b.completions = []; }
     else if(b.kind==='model') { b.filter = (b.filter + text).slice(0,80); this.modelChoices(); }
     b.error = ''; this.draw(true);
@@ -365,13 +376,13 @@ export class Homepage {
     if (key === 'escape') {
       this.savingDefault=false;
       if (b.kind !== 'start' && this.returnToStart) { b.kind = 'start'; this.returnToStart = false; this.enqueue(() => this.checkSelectedEngine()); }
-      else { if (b.kind === 'start'){this.field.text = b.message;this.permission='ask';} this.box = undefined; }
+      else { if (b.kind === 'start'){if(b.messageField)this.field.restore(b.messageField);else this.field.text=b.message;this.permission='ask';} this.box = undefined; }
       this.draw(true); return;
     }
     if (key === 'backspace') {
       if (b.kind === 'model') { b.filter = [...b.filter].slice(0,-1).join(''); this.modelChoices(); }
       else if (b.kind === 'folder') b.path = [...b.path].slice(0,-1).join('');
-      else if (b.row === 4) b.message = [...b.message].slice(0,-1).join('');
+      else if (b.row === 4 && b.messageField) {b.messageField.backspace();b.message=b.messageField.text;b.messageNote=undefined;}
       b.error = ''; this.draw(true); return;
     }
     if(b.kind==='model'&&(key==='left'||key==='right')){
@@ -580,7 +591,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,usage:this.usage,budgets:this.budgets }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,usage:this.usage,budgets:this.budgets }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);

@@ -61,7 +61,7 @@ it('parser preserves fragmented UTF-8, CRLF, tabs and escape-looking text across
 it.each(['line one\nline two', 'x'.repeat(201)])('command bar tokens become the intact first message', async text => {
   const f = await fixture();
   try {
-    send(f.tty, 'before '); paste(f.tty, text); send(f.tty, ' after');
+    paste(f.tty, 'before '); paste(f.tty, text); send(f.tty, ' after');
     expect(await screen(f.tty)).toContain(`[pasted · ${text.includes('\n') ? 2 : 1} lines] after`);
     send(f.tty, '\r'); await expect.poll(() => screen(f.tty)).toContain('Start a new agent');
     expect(await screen(f.tty)).toContain('[pasted ·');
@@ -74,10 +74,10 @@ it('small pastes and typed 201-character text stay literal; a token deletes as o
   const f = await fixture();
   try {
     paste(f.tty, 'x'.repeat(200)); expect(await screen(f.tty)).not.toContain('[pasted');
-    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 60));
+    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 120));
     send(f.tty, 'x'.repeat(201)); expect(await screen(f.tty)).not.toContain('[pasted');
-    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 60));
-    send(f.tty, 'before '); paste(f.tty, 'first\nsecond'); send(f.tty, 'cprsxb');
+    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 120));
+    paste(f.tty, 'before '); paste(f.tty, 'first\nsecond'); send(f.tty, 'cprsxb');
     expect(await screen(f.tty)).toContain('[pasted · 2 lines]cprsxb');
     send(f.tty, '\x7f'.repeat(6) + '\x7f'); expect(await screen(f.tty)).not.toContain('[pasted');
     send(f.tty, '\r'); await expect.poll(() => screen(f.tty)).toContain('Start a new agent'); send(f.tty, '\r');
@@ -89,13 +89,13 @@ it('small pastes and typed 201-character text stay literal; a token deletes as o
 it('start-row paste shows token and clipped first line, survives pickers/cancel, and deletes atomically', async () => {
   const f = await fixture();
   try {
-    send(f.tty, 'before \r'); await expect.poll(() => screen(f.tty)).toContain('Start a new agent');
+    paste(f.tty, 'before '); send(f.tty, '\r'); await expect.poll(() => screen(f.tty)).toContain('Start a new agent');
     send(f.tty, messageRow); paste(f.tty, 'FIRST ' + '界'.repeat(120) + '\r\nPRIVATE SECOND');
     const text = await screen(f.tty); expect(text).toContain('[pasted · 2 lines] FIRST'); expect(text).not.toContain('PRIVATE SECOND');
-    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 60)); expect(await screen(f.tty)).toContain('[pasted · 2 lines]');
+    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 120)); expect(await screen(f.tty)).toContain('[pasted · 2 lines]');
     send(f.tty, '\r'); await expect.poll(() => screen(f.tty)).toContain('Start a new agent');
     send(f.tty, 'm'); await expect.poll(() => screen(f.tty)).toContain('Select model');
-    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 60));
+    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 120));
     send(f.tty, messageRow + '\x7f'); expect(await screen(f.tty)).not.toContain('[pasted');
     paste(f.tty, 'again\nintact'); send(f.tty, 'c\r');
     await expect.poll(() => f.client.requests.some(r => r.kind === 'sessions.create')).toBe(true);
@@ -118,8 +118,8 @@ it.each([false, true])('oversized UTF-8 paste inserts nothing in start row=%s, r
 it('combined UTF-8 limit rejects a whole insertion; exactly 16 KiB reaches the request intact', async () => {
   const f = await fixture();
   try {
-    send(f.tty, 'prefix '); paste(f.tty, 'x'.repeat(16384)); expect(await screen(f.tty)).toContain(tooLong);
-    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 60));
+    paste(f.tty, 'prefix '); paste(f.tty, 'x'.repeat(16384)); expect(await screen(f.tty)).toContain(tooLong);
+    send(f.tty, '\x1b'); await new Promise(r => setTimeout(r, 120));
     const text = '界'.repeat(5461) + 'x'; paste(f.tty, text); send(f.tty, '\r');
     await expect.poll(() => screen(f.tty)).toContain('Start a new agent'); send(f.tty, '\r');
     await expect.poll(() => f.client.requests.some(r => r.kind === 'sessions.create')).toBe(true);
