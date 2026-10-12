@@ -36,6 +36,14 @@ it('shows a persistent error-color warning with terminal controls stripped and a
  }finally{display.dispose();await home.stop();}
 });
 describe('homepage layout and cards', () => {
+  it('B8 command menu hides the note until it closes without overwriting the menu border', async () => {
+    const { renderHomepage } = await import('../src/client/tui/layout.js'), { createTheme } = await import('../src/client/tui/theme.js'), { plainText } = await import('../src/client/tui/grid.js');
+    const view = { cols: 130, rows: 45, sessions: [session], selectedId: session.id, input: '/', note: 'session exited', previewVisible: true, cwd: '/tmp', now: Date.now() };
+    const menu = plainText(renderHomepage(view, createTheme('graphite')));
+    expect(menu).toContain('Commands'); expect(menu).not.toContain('session exited');
+    expect(menu.split('\n')[40]?.slice(0,64)).toBe('╰' + '─'.repeat(62) + '╯');
+    expect(plainText(renderHomepage({ ...view, input: '' }, createTheme('graphite')))).toContain('session exited');
+  });
   it.each([[130, 45], [100, 30], [99, 29], [59, 15]])('plain grid at %sx%s matches the approved breakpoints', async (cols, rows) => {
     const { renderHomepage } = await import('../src/client/tui/layout.js');
     const { createTheme } = await import('../src/client/tui/theme.js');
