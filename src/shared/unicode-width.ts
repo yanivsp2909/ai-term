@@ -7,7 +7,8 @@ export function useUnicode11(terminal: headless.Terminal): void {
   terminal.loadAddon(new unicode11.Unicode11Addon());
   terminal.unicode.activeVersion = '11';
 }
-// The addon hands its table only to a terminal's register(); capture it once from a stand-in.
+// The addon hands its table only to a terminal's register(); capture it once from a stand-in. This
+// compiles because the addon's typings import @xterm/xterm, which isn't installed (skipLibCheck makes it any).
 const provider = ((): headless.IUnicodeVersionProvider => {
   let captured: headless.IUnicodeVersionProvider | undefined;
   new unicode11.Unicode11Addon().activate({ unicode: { register: (version: headless.IUnicodeVersionProvider) => { captured = version; } } });
