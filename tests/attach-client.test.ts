@@ -81,18 +81,22 @@ it('does not turn an early exit followed by a rejected attach into a successful 
  connection.request=async body=>{if(body.kind!=='sessions.attach')return real(body);connection.emit('event',{kind:'session.updated',session:{id,status:'exited',exitCode:0}});throw new DaemonRequestError('Attach rejected after exit');};
  await expect(attach(connection,id,options)).rejects.toMatchObject({reason:'attach rejected'});expect(tty.output).not.toContain('SNAPSHOT');expect(tty.isRaw).toBe(false);
 });
-it.each(['exit','disconnect','uncaught','takeover'] as const)('restores raw/alternate modes after %s',async(reason)=>{
+it.each(['exit','disconnect','uncaught','takeover','home','SIGTERM','SIGHUP','SIGQUIT'] as const)('restores all terminal modes, title, palette and cursor after %s',async(reason)=>{
  const {tty,connection,signals,options}=fixture();const done=attach(connection,id,options);const outcome=done.catch(error=>error);await Promise.resolve();await Promise.resolve();
  if(reason==='exit')connection.emit('event',{kind:'session.updated',session:{id,status:'exited',exitCode:0}});
  if(reason==='disconnect')connection.emit('disconnected');
  if(reason==='uncaught')signals.emit('uncaughtException',new Error('forced uncaught failure'));
  if(reason==='takeover')connection.emit('event',{kind:'session.detached',sessionId:id,reason:'attached elsewhere'});
+ if(reason==='home')tty.emit('data',Buffer.from([5]));
+ if(reason==='SIGTERM'||reason==='SIGHUP'||reason==='SIGQUIT')signals.emit(reason);
  const result=await outcome;
  if(reason==='disconnect')expect(result).toMatchObject({reason:'daemon gone'});
  if(reason==='uncaught')expect(result).toMatchObject({reason:'error'});
  if(reason==='takeover')expect(result).toBe('attached elsewhere');
  if(reason==='exit')expect(result).toBe('session exited');
  expect(tty.isRaw).toBe(false);expect(tty.output).toContain(RESET_MODES);expect(tty.output).toContain('\x1b[?1049l');if(reason==='exit')expect(tty.output).toContain('[session exited with code 0]');expect(signals.listenerCount('uncaughtException')).toBe(0);
+ for(const bytes of ['\x1b]0;\x1b\\','\x1b]104\x1b\\','\x1b]110\x1b\\','\x1b]111\x1b\\','\x1b]112\x1b\\','\x1b[0 q','\x1b[?1007l'])expect(tty.output).toContain(bytes);
+ expect(connection.requests).toContainEqual({kind:'sessions.detach',sessionId:id});expect(connection.requests.some(r=>r.kind==='sessions.stop')).toBe(false);
 });
 it('Ctrl+C cancels startup but belongs to the agent after attach completes',async()=>{
  const {tty,connection,options}=fixture();const done=attach(connection,id,options);tty.emit('data',Buffer.from([3]));await done;expect(connection.inputBytes).toHaveLength(0);expect(tty.isRaw).toBe(false);

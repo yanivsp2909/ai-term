@@ -88,7 +88,7 @@ it('S15: OSC 52 / title / bell in a session never reaches homepage stdout', asyn
     const headless = (await import('@xterm/headless')).default;
     const display = new headless.Terminal({ cols: 130, rows: 45, allowProposedApi: true });
     try { await new Promise<void>(resolve => display.write(tty.output, resolve)); expect(display.buffer.active.getLine(4)?.translateToString()).toContain('safe cell text'); } finally { display.dispose(); }
-    expect(tty.output).not.toContain('FORBIDDEN'); expect(tty.output).not.toContain('\x07'); expect(tty.output).not.toContain('\x1b]');
+    expect(tty.output).not.toContain('FORBIDDEN'); expect(tty.output).not.toContain('\x07'); expect(tty.output).not.toContain('\x1b]52');
   } finally { await home.stop(); }
 });
 it('homepage is read-only: no input frame is sent for typing, arrows, paste or mouse', async () => {
