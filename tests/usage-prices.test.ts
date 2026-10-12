@@ -5,3 +5,4 @@ it('trims price catalog to supported providers and computes cached input separat
  expect(estimateCost({input:2,output:10,cacheRead:0.2},1000,100,500)).toBeCloseTo(0.0021,8);expect(estimateCost(undefined,1000,100,0)).toBeNull();expect(estimateCost({input:2,output:10},1000,100,500)).toBeNull();
 });
 it('an explicit input/output Foundry override prices all input tokens unless a cache price is specified',()=>{const snapshot=trimPrices({},'2026-10-12');const price=findPrice(snapshot,'foundry','custom-deployment',{'custom-deployment':{input:2,output:10}});expect(estimateCost(price,1000,100,500)).toBeCloseTo(0.003,8);});
+it('prototype property names are unknown models, never inherited prices',()=>{const snapshot=trimPrices({},'2026-10-12');for(const provider of ['anthropic','openai','foundry']as const)for(const model of ['constructor','toString','__proto__'])expect(estimateCost(findPrice(snapshot,provider,model,{}),10,1)).toBeNull();});
