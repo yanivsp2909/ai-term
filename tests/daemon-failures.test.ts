@@ -8,6 +8,7 @@ import { SessionManager } from '../src/daemon/session-manager.js';
 import { Mirror } from '../src/daemon/mirror.js';
 import { PtyHost } from '../src/daemon/pty-host.js';
 import { MAX_FRAME_BYTES } from '../src/shared/protocol.js';
+import { atomicWrite } from '../src/daemon/store.js';
 const roots:string[]=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
 async function paths(){const root=await mkdtemp(join(tmpdir(),'ai-term-failures-'));roots.push(root);const paths=getPaths(root);await preparePaths(paths);return paths;}
@@ -32,4 +33,29 @@ it('bounds serialized snapshots by trimming scrollback',async()=>{
 it('fails safely on a corrupted state file and refuses a symlinked state',async()=>{
  const p=await paths();await writeFile(p.state,'{bad');const manager=new SessionManager(p,new Logger(p.log));await expect(manager.load()).rejects.toThrow();
  await rm(p.state);const target=join(p.root,'target');await writeFile(target,'{"sessions":[]}');await symlink(target,p.state);await expect(manager.load()).rejects.toThrow();
+});
+it('keeps a running session through ENOSPC and retries state on the next change',async()=>{
+ const p=await paths();let fail=false;
+ const writer=vi.fn(async(path:string,value:unknown)=>{if(fail)throw Object.assign(new Error('ENOSPC SECRET=PRIVATE'),{code:'ENOSPC'});await atomicWrite(path,value);});
+ const manager=new SessionManager(p,new Logger(p.log),{executable:'/bin/sh',args:['-c','printf up; read answer'],env:{PATH:'/usr/bin:/bin'}},undefined,writer);
+ const events:unknown[]=[];const fatal=vi.fn();manager.on('event',event=>events.push(event));manager.on('fatal',fatal);
+ try{
+  await manager.load();const session=await manager.create({cwd:p.root});await expect.poll(()=>manager.get(session.id).status).toBe('running');
+  fail=true;await manager.rename(session.id,'new title');expect(manager.get(session.id).status).toBe('running');expect(fatal).not.toHaveBeenCalled();
+  expect(events).toContainEqual({kind:'daemon.warning',text:expect.any(String)});expect(JSON.stringify(events)).not.toContain('PRIVATE');
+  fail=false;await manager.rename(session.id,'saved title');expect(events).toContainEqual({kind:'daemon.warningCleared'});
+  expect(await readFile(p.state,'utf8')).toContain('saved title');expect(manager.get(session.id).status).toBe('running');
+ }finally{fail=false;await manager.shutdown();}
+});
+it('log write failures do not throw or stop sessions and clear only after recovery',async()=>{
+ const p=await paths();const log=new Logger(p.log);const manager=new SessionManager(p,log,{executable:'/bin/sh',args:['-c','printf up; read answer'],env:{PATH:'/usr/bin:/bin'}});
+ const events:unknown[]=[];manager.on('event',event=>events.push(event));
+ try{
+  await manager.load();const session=await manager.create({cwd:p.root});await expect.poll(()=>manager.get(session.id).status).toBe('running');
+  await rm(p.log,{force:true});await symlink(p.state,p.log);
+  expect(()=>log.error('SECRET=PRIVATE')).not.toThrow();expect(manager.get(session.id).status).toBe('running');
+  expect(events).toContainEqual({kind:'daemon.warning',text:expect.any(String)});
+  await rm(p.log);log.info('recovered');expect(events).toContainEqual({kind:'daemon.warningCleared'});
+  expect(JSON.stringify(events)).not.toContain('PRIVATE');
+ }finally{await rm(p.log,{force:true});await manager.shutdown();}
 });

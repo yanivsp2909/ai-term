@@ -24,6 +24,17 @@ async function fixture() {
   await home.start();
   return { home, tty, client, signals };
 }
+it('shows a persistent error-color warning with terminal controls stripped and a 200-character cap',async()=>{
+ const {home,tty,client}=await fixture();
+ const headless=(await import('@xterm/headless')).default;const display=new headless.Terminal({cols:130,rows:45,allowProposedApi:true});
+ const text=()=>Array.from({length:45},(_,y)=>display.buffer.active.getLine(y)?.translateToString()??'').join('\n');
+ try{
+  const before=tty.output.length;client.emit('event',{kind:'daemon.warning',text:'disk full\x1b]52;c;FORBIDDEN\x07\x1b[31m'+ 'x'.repeat(300)});
+  await new Promise<void>(r=>display.write(tty.output,r));expect(text()).toContain('disk full');expect(tty.output.slice(before)).toContain('38;2;244;123;126m');
+  expect(tty.output.slice(before)).not.toContain('FORBIDDEN');
+  client.emit('event',{kind:'daemon.warningCleared'});await new Promise<void>(r=>display.write(tty.output,r));expect(text()).not.toContain('disk full');
+ }finally{display.dispose();await home.stop();}
+});
 describe('homepage layout and cards', () => {
   it.each([[130, 45], [100, 30], [99, 29], [59, 15]])('plain grid at %sx%s matches the approved breakpoints', async (cols, rows) => {
     const { renderHomepage } = await import('../src/client/tui/layout.js');
