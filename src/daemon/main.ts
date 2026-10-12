@@ -24,12 +24,12 @@ export async function runDaemon(): Promise<void> {
         if (idle)
             clearInterval(idle);
         if (error) {
-            try{log.error(`Daemon failed: ${error instanceof Error ? error.message : 'unknown'}`);}catch{process.stderr.write('Daemon logging failed\n');}
+            try{log.error('Daemon failed');}catch{process.stderr.write('Daemon logging failed\n');}
             process.exitCode = 1;
         }
         try {
             for(const cleanup of [()=>server.close(),()=>manager.shutdown(),()=>usage.close()]) {
-                try{await cleanup();}catch(cleanupError){try{log.error(`Shutdown failed: ${cleanupError instanceof Error?cleanupError.message:'unknown'}`);}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
+                try{await cleanup();}catch{try{log.error('Shutdown cleanup failed');}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
             }
         } finally {
             try{release();}catch{process.stderr.write('Daemon lock cleanup failed\n');process.exitCode=1;}finally{process.off('SIGTERM',onSignal);process.off('SIGINT',onSignal);process.off('uncaughtException',onFailure);process.off('unhandledRejection',onFailure);resolveDone();}

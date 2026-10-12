@@ -41,6 +41,11 @@ export class PtyHost {
     }
     pause(): void { this.pty.pause(); }
     resume(): void { this.pty.resume(); }
+    private async waitForExit():Promise<void>{
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        try{await Promise.race([this.exitPromise,new Promise<void>(resolve=>{timer=setTimeout(resolve,3000);})]);}
+        finally{if(timer)clearTimeout(timer);}
+    }
     async stop(): Promise<void> {
         if (this.exited)
             return;
@@ -54,18 +59,15 @@ export class PtyHost {
             }
             catch (error) {
                 if (!isFsError(error, 'ESRCH'))
-                    throw error;
+                    throw new Error('Session stop signal failed');
             }
         };
         signal('SIGTERM');
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<void>(resolve => { timer = setTimeout(resolve, 3000); });
-        await Promise.race([this.exitPromise, timeout]);
-        if (timer)
-            clearTimeout(timer);
+        await this.waitForExit();
         if (!this.exited) {
             signal('SIGKILL');
-            await this.exitPromise;
+            await this.waitForExit();
+            if(!this.exited)throw new Error('Session stop timed out');
         }
     }
 }

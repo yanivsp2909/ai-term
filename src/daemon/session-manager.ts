@@ -255,6 +255,13 @@ export class SessionManager extends EventEmitter {
         const task=live.output.then(()=>{if(!owned())throw new Error('Not attached');live.mirror.resize(cols,rows);live.host?.resize(cols,rows);this.event({kind:'session.previewResized',sessionId:id,cols,rows});});
         live.output=task.catch(()=>{this.log.error('Attachment change failed');});await task;
     }
-    async shutdown(): Promise<void> { this.closing = true; await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); await this.saving; for (const live of this.sessions.values())
-        live.mirror.dispose(); this.log.off('writeFailed', this.onLogFailure); this.log.off('writeRecovered', this.onLogRecovery); }
+    async shutdown(): Promise<void> {
+        this.closing=true;
+        const ids=[...this.sessions.keys()];
+        const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
+        for(const [index,result]of stopped.entries())if(result.status==='rejected')this.log.error(`Session stop failed: ${ids[index]}`);
+        await this.saving;
+        for(const live of this.sessions.values())live.mirror.dispose();
+        this.log.off('writeFailed',this.onLogFailure);this.log.off('writeRecovered',this.onLogRecovery);
+    }
 }
