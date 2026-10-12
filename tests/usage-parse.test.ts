@@ -13,7 +13,7 @@ it('Claude allowlist numeric strings delta dedupe and cumulative reset',()=>{
  expect(parse(metric('claude_code.token.usage','input','150','4',2))[0]?.inputTokens).toBe(150);
  expect(parse(metric('claude_code.token.usage','input','180','5',2))[0]?.inputTokens).toBe(30);
  expect(parse(metric('claude_code.token.usage','input','10','6',2))[0]?.inputTokens).toBe(10);
- const cost=metric('claude_code.cost.usage','cost',undefined,'7');const point=cost.resourceMetrics[0].scopeMetrics[0].metrics[0].sum.dataPoints[0];delete point.asInt;Object.assign(point,{asDouble:0.12});expect(parse(cost)[0]?.costUsd).toBe(0.12);
+ const cost=metric('claude_code.cost.usage','cost',undefined,'7');const point=cost.resourceMetrics[0]?.scopeMetrics[0]?.metrics[0]?.sum.dataPoints[0];if(!point)throw new Error('fixture');delete point.asInt;Object.assign(point,{asDouble:0.12});expect(parse(cost)[0]?.costUsd).toBe(0.12);
  expect(JSON.stringify(diagnostics)).not.toMatch(/AITERMCANARY|fake@example/);
 });
 it('Codex only accepts response.completed token fields and ignores private record bodies/attributes',()=>{
