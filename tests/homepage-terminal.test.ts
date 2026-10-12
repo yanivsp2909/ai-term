@@ -31,7 +31,7 @@ it('source CLI opens homepage, enters a shell, returns via Ctrl+E, previews it a
     child.resize(99, 29); terminal.resize(99, 29); await expect.poll(lines).not.toContain('This Mac');
     child.resize(130, 45); terminal.resize(130, 45); await expect.poll(lines).toContain('This Mac');
     child.write('/exit\r'); expect(await childDone).toBe(0);
-    expect(output.slice(-500)).toContain('\x1b[?1006l'); expect(output.slice(-500)).toContain('\x1b[?1049l');
+    expect(output.slice(-500)).toContain('\x1b[?1006l'); expect(output.slice(-500)).toContain('\x1b[?2031l'); expect(output.slice(-500)).toContain('\x1b[?1049l');
     expect((await client.request({ kind: 'sessions.list' })).sessions?.find(s => s.id === id)?.status).toBe('running');
   } finally {
     if (child && !finished) child.kill(); if (childDone) await childDone;

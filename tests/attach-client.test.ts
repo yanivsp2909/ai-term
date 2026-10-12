@@ -23,7 +23,7 @@ it('restores modes from a mirror and resets every session input mode on leaving'
  const mirror=new Mirror(80,24,()=>{});try{
  await mirror.write('\x1b[?1h\x1b[?2004h\x1b[?1002h\x1b[?1006h\x1b[?1004h\x1b[?25l');
  const modes=enterModes(mirror.modes());for(const seq of ['\x1b[?1h','\x1b[?2004h','\x1b[?1002h','\x1b[?1006h','\x1b[?1004h','\x1b[?25l'])expect(modes).toContain(seq);
- for(const code of [1000,1002,1003,1006,1015,2004,1004,1])expect(RESET_MODES).toContain(`\x1b[?${code}l`);expect(RESET_MODES).toContain('\x1b[<u');expect(RESET_MODES).toContain('\x1b[?25h');
+ for(const code of [1000,1002,1003,1006,1015,2004,1004,1,2031])expect(RESET_MODES).toContain(`\x1b[?${code}l`);expect(RESET_MODES).toContain('\x1b[<u');expect(RESET_MODES).toContain('\x1b[?25h');
  }finally{mirror.dispose();}
 });
 it('mode restore round trips every mouse tracking and encoding combination',async()=>{
@@ -95,7 +95,7 @@ it.each(['exit','disconnect','uncaught','takeover','home','SIGTERM','SIGHUP','SI
  if(reason==='takeover')expect(result).toBe('attached elsewhere');
  if(reason==='exit')expect(result).toBe('session exited');
  expect(tty.isRaw).toBe(false);expect(tty.output).toContain(RESET_MODES);expect(tty.output).toContain('\x1b[?1049l');if(reason==='exit')expect(tty.output).toContain('[session exited with code 0]');expect(signals.listenerCount('uncaughtException')).toBe(0);
- for(const bytes of ['\x1b]0;\x1b\\','\x1b]104\x1b\\','\x1b]110\x1b\\','\x1b]111\x1b\\','\x1b]112\x1b\\','\x1b[0 q','\x1b[?1007l'])expect(tty.output).toContain(bytes);
+ for(const bytes of ['\x1b]0;\x1b\\','\x1b]104\x1b\\','\x1b]110\x1b\\','\x1b]111\x1b\\','\x1b]112\x1b\\','\x1b[0 q','\x1b[?1007l','\x1b[?2031l'])expect(tty.output).toContain(bytes);
  expect(connection.requests).toContainEqual({kind:'sessions.detach',sessionId:id});expect(connection.requests.some(r=>r.kind==='sessions.stop')).toBe(false);
 });
 it('Ctrl+C cancels startup but belongs to the agent after attach completes',async()=>{

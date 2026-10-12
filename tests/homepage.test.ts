@@ -137,7 +137,7 @@ it('idle homepage writes no redraws and restores mouse/raw/alternate modes on qu
     const outcome = home.done.catch(error => error);
     if (crash) signals.emit('uncaughtException', new Error('forced crash')); else tty.emit('data', Buffer.from('/exit\r'));
     await outcome;
-    expect(tty.isRaw).toBe(false); expect(tty.output).toContain('\x1b[?1002l'); expect(tty.output).toContain('\x1b[?1006l'); expect(tty.output.endsWith('\x1b[?1049l')).toBe(true);
+    expect(tty.isRaw).toBe(false); expect(tty.output).toContain('\x1b[?1002l'); expect(tty.output).toContain('\x1b[?1006l'); expect(tty.output).toContain('\x1b[?2031l'); expect(tty.output.endsWith('\x1b[?1049l')).toBe(true);
   }
 });
 it('turns homepage mouse reporting off before attach, restores it after home, and resubscribes preview', async () => {
@@ -150,7 +150,7 @@ it('turns homepage mouse reporting off before attach, restores it after home, an
   try {
     tty.emit('data', Buffer.from('\r'));
     await expect.poll(() => attachSession.mock.calls.length).toBe(1);
-    expect(tty.output.endsWith('\x1b[?1049l')).toBe(true); expect(tty.isRaw).toBe(false);
+    expect(tty.output.endsWith('\x1b[?1049l')).toBe(true); expect(tty.output).toContain('\x1b[?2031l'); expect(tty.isRaw).toBe(false);
     const attachStart = tty.output.length;
     tty.emit('data', Buffer.from('session-only'));
     returnHome('home key');

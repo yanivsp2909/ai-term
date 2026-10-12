@@ -29,7 +29,7 @@ it('real terminal query replies and startup noise stay attached; Ctrl+E detaches
   const noise='\x1b[?1;2c\x1b[>0;276;0c\x1b[1;1R\x1b]10;rgb:ffff/ffff/ffff\x07\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[?0u\x1b[I\x1b[O\x1b[?2004h\x1b=';
   first.child.write(noise.slice(0,18));first.child.write(noise.slice(18));await new Promise(r=>setTimeout(r,150));expect(first.finished()).toBe(false);first.child.write('\x15');
   first.child.write('/usr/bin/vim -u NONE -U NONE -i NONE -n\r');await expect.poll(first.output).toContain('VIM');first.child.write('iB1_VIM_TEXT');await expect.poll(first.output).toContain('B1_VIM_TEXT');
-  first.child.resize(100,35);first.child.write('\x05');expect(await first.exit).toBe(0);expect(first.output()).toContain('back in your shell (home key)');expect(first.output()).toContain(RESET_MODES+'\x1b[?1049l');
+  first.child.resize(100,35);first.child.write('\x05');expect(await first.exit).toBe(0);expect(first.output()).toContain('back in your shell (home key)');expect(first.output()).toContain(RESET_MODES+'\x1b[?1049l');expect(first.output()).toContain('\x1b[?2031l');
   const again=open(id);await expect.poll(again.output).toContain('B1_VIM_TEXT');again.child.write('\x1b:qa!\r');await new Promise(r=>setTimeout(r,100));again.child.write('exit\r');expect(await again.exit).toBe(0);expect(again.output()).toContain('[session exited with code 0]');expect(again.output()).toContain('back in your shell (session exited)');
  }finally{
   for(const child of children){if(!child.finished())child.child.kill();await child.exit;}
