@@ -32,6 +32,10 @@ export interface SessionInfo {
     lastOutputAt: string | null;
     ctxPercent: null;
 }
+// This Mac (§10). Numbers only: no process name, command line, user or pid ever crosses the socket.
+// cpuPercent is a share of the whole machine (0–100) for the machine and for each session alike.
+export interface SessionStats { sessionId: string; cpuPercent: number; rssBytes: number }
+export interface SystemStats { cpuPercent: number; memUsedBytes: number; memTotalBytes: number; netRxBytesPerSec: number; netTxBytesPerSec: number; sessions: SessionStats[] }
 // `id` identifies the request; `sessionId` identifies its target (no ambiguous duplicate id).
 export type Request = {
     id: string;
@@ -70,6 +74,9 @@ export type Request = {
     kind: 'layout.previewSize';
     cols: number;
     rows: number;
+} | {
+    kind: 'system.subscribe';
+    on: boolean;
 });
 export interface SuccessResponse {
     id: string;
@@ -119,6 +126,9 @@ export type SessionEvent = {
 } | {
     kind: 'session.removed';
     sessionId: string;
+} | {
+    kind: 'system.stats';
+    stats: SystemStats;
 };
 export interface Frame {
     type: 1 | 2 | 3;
