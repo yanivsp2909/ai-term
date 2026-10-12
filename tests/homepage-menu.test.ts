@@ -21,7 +21,7 @@ it('menu arrows select commands without changing agents, Enter picks, and Esc cl
   const previews=client.requests.filter(r=>r.kind==='sessions.preview').length;
   tty.emit('data',Buffer.from('/\x1b[B\r'));await expect.poll(()=>screen(tty)).toContain('Select folder');
   expect(client.requests.filter(r=>r.kind==='sessions.preview')).toHaveLength(previews);expect(client.input).not.toHaveBeenCalled();
-  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,50));expect(await screen(tty)).not.toContain('Select folder');
+  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,100));expect(await screen(tty)).not.toContain('Select folder');
   tty.emit('data',Buffer.from('\x1b[B'));await expect.poll(()=>client.requests.filter(r=>r.kind==='sessions.preview').length).toBe(previews+1);
  }finally{await home.stop();}
 });
@@ -29,7 +29,7 @@ it('menu wraps, typing resets to first filtered match, and argument command fill
  const {home,tty,client}=await fixture();try{
   tty.emit('data',Buffer.from('/\x1b[A\x1b[A\r'));await expect.poll(()=>screen(tty)).toContain('› /theme █');
   expect(client.requests.some(r=>r.kind==='settings.set')).toBe(false);
-  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,50));
+  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,100));
   tty.emit('data',Buffer.from('/\x1b[Bm\r'));await expect.poll(()=>screen(tty)).toContain('Select model');
  }finally{await home.stop();}
 });

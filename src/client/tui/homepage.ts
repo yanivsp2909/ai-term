@@ -12,7 +12,7 @@ import { Preview, type Point } from './preview.js';
 import { copyText } from './clipboard.js';
 import { BACKGROUND_QUERY, BackgroundReplies, createTheme, type Theme } from './theme.js';
 import { diffFrame, type Frame } from './grid.js';
-import { homepageLayout, renderHomepage, sortSessions } from './layout.js';
+import { homepageLayout, renderHomepage, sortSessions, filteredCommands } from './layout.js';
 import { CredentialsPanel } from './credentials.js';
 import { modelChoices } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
@@ -39,6 +39,7 @@ export class Homepage {
   private selectedId: string | null = null;
   private visible = true;
   private field = new CommandField();
+  private menuChoice = 0;
   private theme: Theme = createTheme('graphite');
   private background?: string;
   private backgroundResolve?: () => void;
@@ -180,7 +181,7 @@ export class Homepage {
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
     if (event.kind === 'mouse') { this.mouse(event); return; }
-    if (event.kind === 'paste') { if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});} else if (this.box) this.boxText(event.text); else this.field.paste(event.text); this.draw(true); return; }
+    if (event.kind === 'paste') { if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});} else if (this.box) this.boxText(event.text); else {this.field.paste(event.text);this.menuChoice=0;} this.draw(true); return; }
     if (event.key === 'ctrl-c') {
       const action = this.field.key('ctrl-c');
       if (action.kind === 'quit') void this.stop();
@@ -203,7 +204,20 @@ export class Homepage {
       }
       this.field.key(event.key); this.showNote('rename: type a name, ⏎ save · Esc cancel'); return;
     }
-    const action = this.field.key(event.key);
+    if(this.field.text.startsWith('/')){
+      const choices=filteredCommands(this.field.text);
+      if(event.key==='up'||event.key==='down'){
+        if(choices.length)this.menuChoice=(this.menuChoice+(event.key==='up'?-1:1)+choices.length)%choices.length;
+        this.draw(true);return;
+      }
+      if(event.key==='enter'&&!this.field.text.includes(' ')){
+        const command=choices[this.menuChoice];if(!command)return;
+        if(command==='/theme'){this.field.text='/theme ';this.menuChoice=0;this.draw(true);return;}
+        this.field.text='';this.menuChoice=0;this.enqueue(()=>this.submit(command));return;
+      }
+    }
+    const beforeText=this.field.text, action = this.field.key(event.key);
+    if(this.field.text!==beforeText)this.menuChoice=0;
     switch (action.kind) {
       case 'quit': void this.stop(); return;
       case 'note': this.showNote(action.text, 1000); return;
@@ -479,7 +493,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,menuChoice:this.menuChoice }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
