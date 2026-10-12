@@ -292,8 +292,9 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 - Executable: `resolveExecutable('claude' | 'codex', PATH)` walks PATH and returns the absolute path of the first regular, executable file. Not found → the session goes to `error` with "claude not found in PATH".
 - Model: null ("CLI default") adds nothing; otherwise one argv element `--model=<id>`, only if `isValidModelId(id)`: `/^[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,79}$/`. The leading-character rule plus the single-element form mean a "model" can never be read as another flag.
 - First message: the last argv elements are `--` and then the message as one element. Both CLIs take a positional prompt and accept `--`. v0.1.6 keeps argv delivery: Codex displayed the exact prompt in live runs; Claude paused at folder trust before prompt execution. No paste fallback or automatic trust acceptance was added.
+- Codex daemon: every Codex session's argv starts with `--no-daemon`, exactly once (D41). Without it the Codex TUI may join a shared background server started elsewhere, and that server's env and config win over this session's env and `-c` overrides. Codex rejects the flag when it appears twice.
 - Foundry on Codex: `-c` overrides only, nothing written to `~/.codex` (from docs; the live test is pending in `docs/spikes/v0.1-cli-facts.md` #3 and #4). Each override is one argv element:
-  - `--no-daemon` (required for invocation-local config overrides)
+  - `--no-daemon` (the same single flag every Codex session starts with; also required for invocation-local config overrides)
   - `-c model_provider="aiterm_foundry"`
   - `-c model_providers.aiterm_foundry.name="AI Term Foundry"`
   - `-c model_providers.aiterm_foundry.base_url="<endpoint>"`, for example `https://narvis-resource.openai.azure.com/openai/v1` (no `api-version` on `/openai/v1`)
@@ -305,7 +306,7 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 
   The endpoint goes into a `-c` value, so it's validated first: `https://`, a hostname, no quotes or whitespace.
 - **Permission mode:**
-  - `ask` (default) adds nothing.
+  - `ask` (default) adds explicit ask flags (D40), so a bypass in your own CLI config can't turn Ask into Don't ask: Claude Code `--permission-mode=default`; Codex `--ask-for-approval=on-request` plus `--sandbox=workspace-write`. Claude Code 2.1.296's help lists this mode as `manual`; the CLI maps `manual` to its canonical `default`, which it accepts.
   - `dontAsk` is chosen per session only, never as a saved default, and is shown with a red `!`. It adds exactly one flag per engine: Claude Code `--permission-mode=bypassPermissions`; Codex `--ask-for-approval=never` plus `--sandbox=workspace-write`. Codex stays sandboxed: don't-ask never means `--dangerously-bypass-approvals-and-sandbox`.
   - Flag spellings verified in v0.1.1. Claude Code also has a mode literally named `dontAsk`, which denies tools that aren't pre-approved. That is not our Don't ask; we never use it.
 - Never passed: `--dangerously-skip-permissions`, `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `danger-full-access`.
@@ -335,15 +336,17 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 `CODEX_AUTH_VARS` (removed for every Codex session):
 - `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`
 - `OPENAI_ORG_ID`, `OPENAI_ORGANIZATION`, `OPENAI_PROJECT_ID`
-- `AZURE_OPENAI_API_KEY`, `AITERM_FOUNDRY_KEY`
+- `AITERM_FOUNDRY_KEY`
 - plus anything v0.1.1 finds Codex reads
+
+`AZURE_OPENAI_API_KEY` is not on the list (D41): your Codex config may route Azure through it, so Codex account sessions keep it. A Codex key session still removes it, so a key session gets only its own key.
 
 | Session | Env after base |
 |---|---|
 | Claude Code · account | remove `CLAUDE_AUTH_VARS`. `CLAUDE_CONFIG_DIR` left as inherited (your normal `~/.claude`, with your skills and agents) |
 | Claude Code · Anthropic key | remove `CLAUDE_AUTH_VARS`; set `ANTHROPIC_API_KEY=<from keychain>`. Config dir: the normal one, so your skills and agents work (provisional; revisit after Yaniv's first-run approval test, `docs/spikes/v0.1-cli-facts.md` #1–2) |
-| Codex · account | remove `CODEX_AUTH_VARS`. `CODEX_HOME` left as inherited |
-| Codex · Foundry key | remove `CODEX_AUTH_VARS`; set `AITERM_FOUNDRY_KEY=<from keychain>`; provider via `-c` (7.2) |
+| Codex · account | remove `CODEX_AUTH_VARS`; `AZURE_OPENAI_API_KEY` passes through (D41). `CODEX_HOME` left as inherited |
+| Codex · Foundry key | remove `CODEX_AUTH_VARS` and `AZURE_OPENAI_API_KEY`; set `AITERM_FOUNDRY_KEY=<from keychain>`; provider via `-c` (7.2) |
 
 Why stripping matters: an exported `ANTHROPIC_API_KEY` overrides a logged-in Claude subscription, and `CLAUDE_CODE_OAUTH_TOKEN` silently switches accounts. Without the strip, an "account" session could bill your API key without telling you.
 
@@ -354,9 +357,9 @@ Why stripping matters: an exported `ANTHROPIC_API_KEY` overrides a logged-in Cla
 
 Never logged, never stored, never sent to a client.
 
-**Engine checks (v0.1.6).** `engines.ts` resolves the first regular executable in absolute PATH entries, checks version and login with execFile argv arrays, 5 s timeout and 64 KiB output cap, and keeps only installed/path/version/loggedIn/authMethod. Invalid schema, timeout or unavailable status remains null/unknown. Raw CLI output is never logged.
+**Engine checks (v0.1.6).** `engines.ts` resolves the first regular executable in absolute PATH entries, checks version and login with execFile argv arrays, 5 s timeout and 64 KiB output cap, and keeps only installed/path/version/loggedIn/authMethod. Invalid schema, timeout or unavailable status remains null/unknown. Raw CLI output is never logged. `codex login status` reads the login from the `CODEX_HOME` in its own env, not from the shared daemon (v0.1.6f: an empty temp `CODEX_HOME` reports "Not logged in" with or without `--no-daemon` while a logged-in daemon runs), so the check doesn't pass `--no-daemon`; Codex accepts that flag only before the subcommand.
 
-**Known limit.** Env hygiene controls the process env only. Live v0.1.6 Codex showed inherited "YOLO mode" while AI Term passed no permission flags in Ask mode; a run reported missing AZURE_OPENAI_API_KEY after own-provider cleanup. AI Term does not override or inspect the user's routing or permission configuration, so successful replies and effective Ask permissions require the manual checks in `docs/testing/v0.1.6-agents.md`. An `env` block or `apiKeyHelper` in your own `~/.claude/settings.json`, or `model_provider` in `~/.codex/config.toml`, still applies, exactly as in Terminal.app. AI Term never reads or edits those files.
+**Known limit.** Env hygiene controls the process env only. Live v0.1.6 Codex showed inherited "YOLO mode" while Ask passed no permission flags, and a run reported missing AZURE_OPENAI_API_KEY after own-provider cleanup. v0.1.6f fixed both: Ask now passes explicit ask flags (D40), and Codex account sessions keep `AZURE_OPENAI_API_KEY` and run with `--no-daemon` (D41). AI Term still doesn't inspect your routing or permission configuration, so successful replies and effective Ask permissions still need the manual checks in `docs/testing/v0.1.6f-fixes.md`. An `env` block or `apiKeyHelper` in your own `~/.claude/settings.json`, or `model_provider` in `~/.codex/config.toml`, still applies, exactly as in Terminal.app. AI Term never reads or edits those files.
 
 ---
 
@@ -421,11 +424,11 @@ How to verify each: **Unit** = vitest. **Grep** = must find nothing in `src/` (o
 | S3 | Keys only in the keychain | Manual: add canary key `sk-ant-AITERMCANARY0000`, then `grep -r AITERMCANARY ~/.ai-term` and the repo → nothing. |
 | S4 | Keys never leave the daemon except into a child env | Unit: no response or event contains a stored secret (canary test over every handler). Grep: no `getPassword` outside `src/daemon/keys.ts`. |
 | S5 | Keys and env never logged | Unit: the logger redacts values of keys matching `/(KEY|TOKEN|SECRET|PASSWORD)/i` and strings matching `sk-`, `sk-ant-`. Grep: no logging of `process.env` or a spawn env. |
-| S6 | Account sessions spawn without API keys | Unit: `buildSpawnEnv` for Claude account with every `CLAUDE_AUTH_VARS` entry in base → none present; same for Codex. Manual: inside an account session, `! env \| grep -iE 'anthropic\|oauth\|api_key'` → nothing. |
+| S6 | Account sessions spawn without API keys | Unit: `buildSpawnEnv` for Claude account with every `CLAUDE_AUTH_VARS` entry in base → none present; same for Codex, whose account env keeps only `AZURE_OPENAI_API_KEY` from its provider (D41). Manual: inside an account session, `! env \| grep -iE 'anthropic\|oauth\|api_key'` → nothing. |
 | S7 | A key session sets only its own key | Unit: Claude key env has `ANTHROPIC_API_KEY` = keychain value and no other `CLAUDE_AUTH_VARS`; Foundry env has `AITERM_FOUNDRY_KEY` and no `OPENAI_API_KEY` from the keychain. |
 | S8 | No shell strings | Grep: no `exec(`, `execSync(`, `shell: true`, or a single-string command passed to `spawn`/`execFile`. |
 | S9 | Validated arguments | Unit: model validator rejects a leading `-` and spaces; cwd must exist and be a directory; deployment names follow the same pattern as model ids. |
-| S10 | Permission prompts never skipped by default | Unit: `buildArgs` with default settings contains no permission flag; `dontAsk` adds exactly the flags in 7.2; settings refuse `dontAsk` as a saved default. Grep: the permission flags appear only in `src/daemon/env.ts`. |
+| S10 | Permission prompts never skipped by default | Unit: `buildArgs` with Ask (the default) adds exactly the ask flags in 7.2 (D40) and no bypass flag; `dontAsk` adds exactly the flags in 7.2; settings refuse `dontAsk` as a saved default. Grep: the permission flags appear only in `src/daemon/env.ts`. |
 | S11 | Never read CLI credentials | Grep: no `auth.json`, `.credentials.json`, `security find-generic-password`, and no file reads under `~/.claude` or `~/.codex`. |
 | S12 | Local HTTP endpoints locked down: usage receiver (v0.1.8), status endpoint (v0.2) | Unit + manual curl: bound to `127.0.0.1` only, random port; per-session credential compared with `timingSafeEqual`; `Host` must equal `127.0.0.1:<port>` (else 421); any `Origin` → 403; non-JSON → 415; bodies never logged. Status endpoint: body > 64 KB → 413, success → 204 with an empty body (a hook response must never carry a decision). Usage receiver: only `POST /v1/metrics` and `/v1/logs`, body > 1 MB → 413, success → 200 with `{}` (what OTLP exporters expect), only usage numbers kept. |
 | S13 | .env import is read-only and value-blind | Unit: `scanEnvFile` returns names only; the file's mtime and content are unchanged afterwards. |
@@ -492,3 +495,5 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D33 | Log/state write failures and a full disk never stop the daemon or an agent; the homepage shows a warning instead. | Pinned |
 | D34 | SIGTERM / SIGHUP to ai quits the client after full terminal cleanup; daemon and agents keep running. | Pinned |
 | D35 | Socket trust: any process running as the user may use the daemon socket, like ssh-agent. No token, because an agent running as the user could read a token file anyway. Accepted risk; agents you don't trust stay in Ask mode. | Pinned |
+| D40 | Ask means ask: an Ask session passes explicit ask flags (Claude Code `--permission-mode=default`; Codex `--ask-for-approval=on-request --sandbox=workspace-write`), so your own CLI config can't turn Ask into Don't ask. | Pinned |
+| D41 | Every Codex session starts with `--no-daemon`, and `AZURE_OPENAI_API_KEY` passes through to Codex account sessions. | Pinned |
