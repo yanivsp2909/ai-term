@@ -11,8 +11,8 @@ export function buildShellEnv(base: NodeJS.ProcessEnv): Record<string, string> {
     return result;
 }
 
-import type { AgentEngine, Permission } from '../shared/protocol.js';
-import { isModel, isPermission } from '../shared/validate.js';
+import type { AgentEngine, Permission, Effort } from '../shared/protocol.js';
+import { isModel, isPermissionForEngine, isEffortForEngine, isUUID } from '../shared/validate.js';
 export const CLAUDE_AUTH_VARS = ['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES','ANTHROPIC_PROFILE','ANTHROPIC_FEDERATION_RULE_ID','ANTHROPIC_ORGANIZATION_ID','ANTHROPIC_WORKSPACE_ID','ANTHROPIC_AWS_*','ANTHROPIC_BEDROCK_*','ANTHROPIC_VERTEX_*','ANTHROPIC_FOUNDRY_*','AWS_BEARER_TOKEN_BEDROCK','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_SIMPLE'] as const;
 export const CODEX_AUTH_VARS = ['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_URL','OPENAI_ORG_ID','OPENAI_ORGANIZATION','OPENAI_PROJECT_ID','AITERM_FOUNDRY_KEY'] as const;
 // D41: a Codex account config may route Azure through AZURE_OPENAI_API_KEY, so account sessions keep it. A key session still gets only its own key (D16).
@@ -25,15 +25,16 @@ export function buildSpawnEnv(engine: AgentEngine, auth: {kind:'account'} | {kin
     return result;
 }
 // D40: Ask passes explicit ask flags, or the user's own CLI config (e.g. Codex YOLO) silently turns Ask into Don't ask. Claude 2.1.296 help lists this mode as 'manual'; the CLI maps 'manual' to its canonical 'default'.
-const PERMISSION_ARGS:Record<AgentEngine,Record<Permission,readonly string[]>>={
-    'claude-code':{ask:['--permission-mode=default'],dontAsk:['--permission-mode=bypassPermissions']},
+const PERMISSION_ARGS:Record<AgentEngine,Partial<Record<Permission,readonly string[]>>>={
+    'claude-code':{ask:['--permission-mode=default'],auto:['--permission-mode=auto'],dontAsk:['--permission-mode=bypassPermissions']},
     codex:{ask:['--ask-for-approval=on-request','--sandbox=workspace-write'],dontAsk:['--ask-for-approval=never','--sandbox=workspace-write']},
 };
-export function buildArgs(request:{engine:AgentEngine;model:string|null;permission:Permission;firstMessage?:string;foundryEndpoint?:string;openaiKey?:boolean}):string[] {
-    if(!isModel(request.model)||!isPermission(request.permission)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid spawn arguments');
+export function buildArgs(request:{engine:AgentEngine;model:string|null;permission:Permission;effort?:Effort|null;conversationId?:string;resume?:boolean;firstMessage?:string;foundryEndpoint?:string;openaiKey?:boolean}):string[] {
+    if(!isModel(request.model)||!isPermissionForEngine(request.engine,request.permission)||request.effort!==undefined&&!isEffortForEngine(request.engine,request.effort)||request.conversationId!==undefined&&(request.engine!=='claude-code'||!isUUID(request.conversationId))||request.resume!==undefined&&typeof request.resume!=='boolean'||request.resume&&request.engine==='claude-code'&&!request.conversationId||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid spawn arguments');
     // D41: without --no-daemon the Codex TUI may join a shared background server started elsewhere, whose env and config win over this recipe's env and -c overrides. Codex rejects the flag twice, so only this line adds it.
     // B5: Codex's startup update menu takes Enter as "Update now"; its own check_for_update_on_startup (config_toml.rs, rust-v0.160.1) turns the check off for this session only.
     const args:string[]=request.engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false']:[];
+    if(request.resume&&request.engine==='codex')args.push('resume');
     if(request.foundryEndpoint!==undefined){
         const endpoint=request.foundryEndpoint;
         let url:URL;try{url=new URL(endpoint);}catch{throw new Error('Invalid Foundry endpoint');}
@@ -42,7 +43,9 @@ export function buildArgs(request:{engine:AgentEngine;model:string|null;permissi
     }
     if(request.openaiKey){if(request.engine!=='codex')throw new Error('Invalid OpenAI engine');args.push('-c','model_provider="openai"');}
     if(request.model!==null)args.push(`--model=${request.model}`);
-    args.push(...PERMISSION_ARGS[request.engine][request.permission]);
+    if(request.effort!==undefined&&request.effort!==null)args.push(...(request.engine==='codex'?['-c',`model_reasoning_effort="${request.effort}"`]:[`--effort=${request.effort}`]));
+    if(request.conversationId)args.push(`${request.resume?'--resume':'--session-id'}=${request.conversationId}`);
+    args.push(...(PERMISSION_ARGS[request.engine][request.permission]??[]));
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return args;
 }
