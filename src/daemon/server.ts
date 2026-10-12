@@ -183,6 +183,8 @@ export class DaemonServer {
             peer.hello = true;
             peer.socket.setTimeout(0);
             this.control(peer, { id: request.id, ok: true, kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version, daemonPid: process.pid });
+            const warning = this.manager.warningText();
+            if (warning) this.control(peer, { kind: 'daemon.warning', text: warning });
             return;
         }
         if (!peer.hello) {
@@ -199,6 +201,7 @@ export class DaemonServer {
                     break;
                 case 'sessions.list':
                     this.control(peer, { id: request.id, ok: true, sessions: this.manager.list() });
+                    if (this.manager.warningText()) this.control(peer, { kind: 'daemon.warning', text: this.manager.warningText() });
                     break;
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });

@@ -30,7 +30,7 @@ it('shows a persistent error-color warning with terminal controls stripped and a
  const text=()=>Array.from({length:45},(_,y)=>display.buffer.active.getLine(y)?.translateToString()??'').join('\n');
  try{
   const before=tty.output.length;client.emit('event',{kind:'daemon.warning',text:'disk full\x1b]52;c;FORBIDDEN\x07\x1b[31m'+ 'x'.repeat(300)});
-  await new Promise<void>(r=>display.write(tty.output,r));expect(text()).toContain('disk full');expect(tty.output.slice(before)).toContain('38;2;244;123;126m');
+  await new Promise<void>(r=>display.write(tty.output,r));expect(text()).toContain('disk full');expect(tty.output.slice(before)).toContain('38;2;244;123;126;');
   expect(tty.output.slice(before)).not.toContain('FORBIDDEN');
   client.emit('event',{kind:'daemon.warningCleared'});await new Promise<void>(r=>display.write(tty.output,r));expect(text()).not.toContain('disk full');
  }finally{display.dispose();await home.stop();}

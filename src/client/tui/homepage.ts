@@ -4,7 +4,8 @@ import type { RequestBody } from '../connection.js';
 import { attach, type AttachReason } from '../attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
 import type { SessionInfo, SuccessResponse } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName } from '../../shared/validate.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText } from '../../shared/validate.js';
+import { redact } from '../../daemon/log.js';
 import { CommandField, InputParser, type InputEvent } from './keys.js';
 import { Preview, type Point } from './preview.js';
 import { copyText } from './clipboard.js';
@@ -39,6 +40,7 @@ export class Homepage {
   private inputTimer?: ReturnType<typeof setTimeout>;
   private noteTimer?: ReturnType<typeof setTimeout>;
   private note = '';
+  private warning = '';
   private copying = false;
   private confirmId: string | null = null;
   private renameId: string | null = null;
@@ -236,6 +238,10 @@ export class Homepage {
     if (id === this.previewId) { const preview = this.previews.get(id); if (preview) void preview.write(data).catch(this.onError); }
   };
   private onEvent = (value: unknown) => {
+    if (value && typeof value === 'object' && 'kind' in value) {
+      if (value.kind === 'daemon.warning' && 'text' in value && typeof value.text === 'string') { this.warning = warningText(redact(warningText(value.text))); this.draw(true); return; }
+      if (value.kind === 'daemon.warningCleared') { this.warning = ''; this.draw(true); return; }
+    }
     if (this.ended) return;
     try {
       if (!value || typeof value !== 'object') throw new Error('Invalid daemon event');
@@ -307,7 +313,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.options.cwd ?? process.cwd(), home = homedir();
-      const grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines }, this.theme);
+      const grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines }, this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
       if (output) this.blocked = !this.stdout.write(output);
     } catch (error) { this.onError(error); }

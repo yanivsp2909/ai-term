@@ -24,7 +24,21 @@ export class SessionManager extends EventEmitter {
     private size = { cols: 85, rows: 30 };
     private saving: Promise<void> = Promise.resolve();
     private closing = false;
-    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe: SpawnRecipe = { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) }, private readonly childUmask?: number) { super(); }
+    private warnings = new Map<string, string>();
+    private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
+    private onLogRecovery = () => this.clearWarning('log');
+    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe: SpawnRecipe = { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) }, private readonly childUmask?: number, private readonly writeState = atomicWrite) {
+        super(); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+    }
+    warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
+    private warning(source: string, text: string): void {
+        if (this.warnings.get(source) === text) return;
+        this.warnings.set(source, text); this.event({ kind: 'daemon.warning', text: this.warningText() ?? '' });
+    }
+    private clearWarning(source: string): void {
+        if (!this.warnings.delete(source)) return;
+        const text = this.warningText(); this.event(text ? { kind: 'daemon.warning', text } : { kind: 'daemon.warningCleared' });
+    }
     async load(): Promise<void> {
         const state = await readState(this.paths.state);
         if (!state || typeof state !== 'object' || !('sessions' in state) || !Array.isArray(state.sessions))
@@ -56,9 +70,16 @@ export class SessionManager extends EventEmitter {
     private event(event: SessionEvent): void { this.emit('event', event); }
     private persist(): Promise<void> {
         const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: 'shell', model: 'shell', auth: { kind: 'account' }, cwd: s.info.cwd, permission: 'ask' } })) };
-        const next = this.saving.then(() => atomicWrite(this.paths.state, data));
-        this.saving = next.catch(error => { this.log.error(`State write failed: ${error instanceof Error ? error.message : 'unknown'}`); this.emit('fatal', error); });
-        return next;
+        this.saving = this.saving.then(async () => {
+            try { await this.writeState(this.paths.state, data); }
+            catch {
+                this.warning('state', 'Session state could not be saved; agents keep running.');
+                this.log.error('State write failed; will retry on the next change');
+                return;
+            }
+            this.clearWarning('state');
+        });
+        return this.saving;
     }
     async create(request: {
         cwd: string;
@@ -173,5 +194,5 @@ export class SessionManager extends EventEmitter {
         live.output=task.catch(error=>{this.log.error(`Attachment change failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
     }
     async shutdown(): Promise<void> { this.closing = true; await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); await this.saving; for (const live of this.sessions.values())
-        live.mirror.dispose(); }
+        live.mirror.dispose(); this.log.off('writeFailed', this.onLogFailure); this.log.off('writeRecovered', this.onLogRecovery); }
 }

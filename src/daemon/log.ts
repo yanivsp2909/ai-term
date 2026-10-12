@@ -1,14 +1,16 @@
 import { constants, openSync, closeSync, writeSync, fstatSync, fchmodSync, lstatSync, renameSync, unlinkSync } from 'node:fs';
 import { isFsError } from '../shared/paths.js';
+import { EventEmitter } from 'node:events';
 export function redact(text: string): string {
     return text.replace(/sk-[A-Za-z0-9_-]+/g, '[REDACTED]')
         .replace(/([A-Za-z0-9_-]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_-]*["\x27]?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
         .replace(/bearer\s+\S+/gi, 'Bearer [REDACTED]')
         // eslint-disable-next-line no-control-regex -- Logs discard terminal controls.
-        .replace(/[\x00-\x1f\x7f]/g, ' ');
+        .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
 }
-export class Logger {
-    constructor(private readonly path: string, private readonly maxBytes = 5 * 1024 * 1024) { }
+export class Logger extends EventEmitter {
+    private failed = false;
+    constructor(private readonly path: string, private readonly maxBytes = 5 * 1024 * 1024) { super(); }
     info(message: string): void { this.write('info', message); }
     error(message: string): void { this.write('error', message); }
     private safe(path: string): boolean {
@@ -25,6 +27,17 @@ export class Logger {
         }
     }
     private write(level: string, message: string): void {
+        try {
+            this.append(level, message);
+        } catch {
+            // Reporting must not try the same broken writer, or propagate into a PTY handler.
+            this.failed = true;
+            this.emit('writeFailed');
+            return;
+        }
+        if (this.failed) { this.failed = false; this.emit('writeRecovered'); }
+    }
+    private append(level: string, message: string): void {
         if (this.safe(this.path) && lstatSync(this.path).size >= this.maxBytes) {
             if (this.safe(`${this.path}.2`))
                 unlinkSync(`${this.path}.2`);

@@ -8,9 +8,14 @@ export function isUUID(value: unknown): value is string {
 }
 import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 import type { Request, SuccessResponse } from './protocol.js';
 export class ValidationError extends Error {
     readonly code = 'INVALID_REQUEST';
+}
+export function warningText(value: string): string {
+    // Strip whole escape sequences as well as individual controls before drawing.
+    return [...stripVTControlCharacters(value).replace(/[\p{C}]/gu, '')].slice(0, 200).join('');
 }
 export function isTitle(value: unknown): value is string {
     return typeof value === 'string' && [...value].length >= 1 && [...value].length <= 60 && !/[\p{C}]/u.test(value);
