@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, readFile, lstat } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, lstat, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { createConnection, type Socket } from 'node:net';
+import { createConnection, createServer, type Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { getPaths, preparePaths, type Paths } from '../src/shared/paths.js';
 import { Connection } from '../src/client/connection.js';
@@ -192,8 +192,17 @@ it('a second daemon on a live socket fails, and closing it never removes the fir
   expect((await first.request({ kind: 'sessions.list' })).sessions).toEqual([]);
 });
 
-// Node's pipe server unlinks its bound path on close() whatever is there now, so the inode check in close() can't help; fixing it means binding elsewhere and renaming (S1 path), too big for a test chore.
-it.todo('close leaves a socket path alone once something else replaced it');
+// B6: libuv unlinks a pipe server's bound path on close() whatever is there now, so an inode check alone can't protect a replacement.
+it('close leaves a socket path alone once something else replaced it', async () => {
+  const { paths, server } = await setup();
+  await unlink(paths.socket);
+  const replacement = createServer(socket => socket.end());
+  await new Promise<void>(done => replacement.listen(paths.socket, done));
+  cleanup.unshift(async () => { await new Promise<void>(done => replacement.close(() => done())); });
+  await server.close();
+  expect((await lstat(paths.socket)).isSocket()).toBe(true);
+  expect(await socketAnswers(paths.socket)).toBe(true);
+});
 
 it('socketAnswers reports a missing or refused socket as dead and rethrows any other error', async () => {
   const paths = await home();
