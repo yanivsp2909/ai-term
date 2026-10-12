@@ -3,8 +3,8 @@ import { homedir } from 'node:os';
 import type { RequestBody } from '../connection.js';
 import { attach, type AttachReason } from '../attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
-import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats, UsageSummary, Budgets } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets } from '../../shared/validate.js';
+import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine } from '../../shared/validate.js';
 import { redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
 import { CommandField, InputParser, type InputEvent } from './keys.js';
@@ -18,6 +18,8 @@ import { modelChoices, ownLoginLabel } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
 import { BudgetForm, PriceForm, drawUsageForm } from './usage-forms.js';
+import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,type CommandContext} from './commands.js';
+import {drawHelp} from './help.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
@@ -41,6 +43,7 @@ export class Homepage {
   private visible = true;
   private field = new CommandField();
   private menuChoice = 0;
+  private effort:Effort|null=null;private permission:Permission='ask';private cleanIds:string[]|null=null;private helpOffset:number|null=null;
   private theme: Theme = createTheme('graphite');
   private background?: string;
   private backgroundResolve?: () => void;
@@ -101,6 +104,7 @@ export class Homepage {
       this.budgets=validateBudgets(settings.budgets??{});
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
+      if(settings.defaultEffort!==undefined&&isEffortForEngine(this.engine,settings.defaultEffort))this.effort=settings.defaultEffort;
       if(settings.defaultCwd && await validCwd(settings.defaultCwd))this.folder=settings.defaultCwd;
       if (settings.theme === 'auto') await this.detectBackground();
       if (this.ended) return;
@@ -185,14 +189,16 @@ export class Homepage {
   }
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
-    if (event.kind === 'mouse') { this.mouse(event); return; }
-    if (event.kind === 'paste') { if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});} else if(this.usageForm){this.usageForm.paste(event.text);} else if (this.box) this.boxText(event.text); else {this.field.paste(event.text);this.menuChoice=0;} this.draw(true); return; }
+    if (event.kind === 'mouse') { if(this.helpOffset===null&&!this.box&&!this.credentials&&!this.cleanIds)this.mouse(event); return; }
+    if (event.kind === 'paste') { if(this.helpOffset!==null||this.cleanIds)return; if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});} else if(this.usageForm){this.usageForm.paste(event.text);} else if (this.box) this.boxText(event.text); else {this.field.paste(event.text);this.menuChoice=0;} this.draw(true); return; }
     if (event.key === 'ctrl-c') {
       const action = this.field.key('ctrl-c');
       if (action.kind === 'quit') void this.stop();
       else if (action.kind === 'note') this.showNote(action.text, 1000);
       return;
     }
+    if(this.helpOffset!==null){if(event.key==='escape')this.helpOffset=null;else{const page=Math.max(1,this.size().rows-8),delta=event.key==='up'?-1:event.key==='down'?1:event.key==='page-up'?-page:event.key==='page-down'?page:0;this.helpOffset=Math.max(0,Math.min(Math.max(0,helpLines(this.commandContext()).length-page),this.helpOffset+delta));}this.draw(true);return;}
+    if(this.cleanIds){const ids=this.cleanIds;if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status))await this.operation({kind:'sessions.remove',sessionId:id});}this.showNote('');});}else if(event.key==='n'||event.key==='escape'){this.cleanIds=null;this.showNote('');}return;}
     if(this.usageForm){const form=this.usageForm;if(event.key==='escape'){this.usageForm=undefined;this.usageFormError='';}else if(event.key==='enter')this.enqueue(async()=>{try{if(form instanceof BudgetForm){const budgets=form.values();await this.connection.request({kind:'settings.set',patch:{budgets}});this.budgets=budgets;}else{const {model,price}=form.values(),settings=(await this.connection.request({kind:'settings.get'})).settings;await this.connection.request({kind:'settings.set',patch:{priceOverrides:{...settings?.priceOverrides,[model]:price}}});}this.usageForm=undefined;}catch(error){this.usageFormError=error instanceof Error?error.message:'Settings could not save';}this.draw(true);});else form.key(event.key);this.draw(true);return;}
     if(this.credentials){const panel=this.credentials;if(event.key==='escape'){panel.dispose();this.credentials=undefined;this.draw(true);}else this.enqueue(()=>panel.key(event.key));return;}
     if (this.box) { this.boxInput(event.key); return; }
@@ -216,9 +222,10 @@ export class Homepage {
         if(choices.length)this.menuChoice=(this.menuChoice+(event.key==='up'?-1:1)+choices.length)%choices.length;
         this.draw(true);return;
       }
+      if(event.key==='tab'){this.field.text=completeCommand(this.field.text,this.menuChoice,this.commandContext());this.menuChoice=0;this.draw(true);return;}
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
-        if(command==='/theme'){this.field.text='/theme ';this.menuChoice=0;this.draw(true);return;}
+        if(commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.enqueue(()=>this.submit(command));return;
       }
     }
@@ -248,7 +255,16 @@ export class Homepage {
     try { await this.connection.request(body); this.showNote(''); }
     catch (error) { this.showNote(error instanceof Error ? error.message : 'Operation failed'); }
   }
+  private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title};}
+  private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
   private async submit(text: string): Promise<void> {
+    const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
+    if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
+    if(command==='/clean'){if(argument){this.showNote('/clean takes no argument');return;}this.cleanIds=this.sessions.filter(s=>['exited','error'].includes(s.status)).map(s=>s.id);if(!this.cleanIds.length){this.cleanIds=null;this.showNote('No finished agents to remove');}else this.showNote(`remove ${this.cleanIds.length} finished agents? y/n`);return;}
+    if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));return;}
+    if(command==='/resume'){if(argument){this.showNote('/resume uses the selected agent');return;}const session=this.sessions.find(s=>s.id===this.selectedId);if(!session||!['exited','error'].includes(session.status)){this.showNote('Select an exited or failed agent to resume');return;}if(session.engine==='shell'){this.showNote('A shell has no AI conversation to resume');return;}if(session.engine==='claude-code'&&!session.conversationId){this.showNote('This older Claude agent has no conversation ID');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.resume',sessionId:session.id}));if(session.engine==='codex')this.showNote('Codex resume picker · choose its conversation');}catch(error){this.showNote(error instanceof Error?error.message:'Resume failed');}return;}
+    if(command==='/effort'){if(!argument){this.openBox('effort');return;}const effort=argument==='CLI default'?null:argument;if(!isEffortForEngine(this.engine,effort)){this.showNote('/effort '+effortValues(this.engine).join('|'));return;}this.effort=effort;this.showNote('');return;}
+    if(command==='/mode'){if(!argument){this.openBox('mode');return;}const permission=argument==="don't ask"||argument==='dontAsk'?'dontAsk':argument;if(!isPermissionForEngine(this.engine,permission)){this.showNote(this.engine==='codex'&&permission==='auto'?'Codex has no distinct auto mode; choose ask or don\'t ask':'/mode ask|auto|don\'t ask');return;}this.permission=permission;this.showNote('');return;}
     if (text === '/exit') { await this.stop(); return; }
     const theme = text.match(/^\/theme (graphite|slate|ink|auto|light)$/)?.[1];
     if (isThemeName(theme)) {
@@ -274,9 +290,11 @@ export class Homepage {
     });this.credentials=panel;this.draw(true);await panel.load();
   }
   private openBox(kind: AgentBox['kind'], message = ''): void {
-    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:'ask',message,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
-    this.returnToStart = false; this.resetModelTabs();this.draw(true);
+    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
+    this.returnToStart = false;if(kind==='effort'||kind==='mode')this.valueChoices();else this.resetModelTabs();this.draw(true);
   }
+  private valueChoices():void{const b=this.box;if(!b)return;b.values=b.kind==='effort'?effortValues(b.engine):modeValues(b.engine).map(modeLabel);const value=b.kind==='effort'?b.effort??'CLI default':modeLabel(b.permission);b.choice=Math.max(0,b.values.indexOf(value));}
+  private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission))this.permission='ask';}
   private async checkSelectedEngine(): Promise<void> {
     const box = this.box; if (!box) return;
     box.checking = true; box.error = ''; this.draw(true);
@@ -290,9 +308,9 @@ export class Homepage {
   }
   private boxText(text: string): void {
     const b = this.box; if (!b) return;
-    if (b.kind === 'start') { if (b.row === 3) b.message = (b.message + text).slice(0,16384); }
+    if (b.kind === 'start') { if (b.row === 4) b.message = (b.message + text).slice(0,16384); }
     else if (b.kind === 'folder') { b.path = (b.path + text).slice(0,4096); b.completions = []; }
-    else { b.filter = (b.filter + text).slice(0,80); this.modelChoices(); }
+    else if(b.kind==='model') { b.filter = (b.filter + text).slice(0,80); this.modelChoices(); }
     b.error = ''; this.draw(true);
   }
   private nextAuthLabel():string {
@@ -331,7 +349,7 @@ export class Homepage {
     if (key === 'backspace') {
       if (b.kind === 'model') { b.filter = [...b.filter].slice(0,-1).join(''); this.modelChoices(); }
       else if (b.kind === 'folder') b.path = [...b.path].slice(0,-1).join('');
-      else if (b.row === 3) b.message = [...b.message].slice(0,-1).join('');
+      else if (b.row === 4) b.message = [...b.message].slice(0,-1).join('');
       b.error = ''; this.draw(true); return;
     }
     if(b.kind==='model'&&(key==='left'||key==='right')){
@@ -340,23 +358,25 @@ export class Homepage {
     }
     if (key === 'up' || key === 'down') {
       const delta = key === 'up' ? -1 : 1;
-      if (b.kind === 'start') b.row = Math.max(0,Math.min(3,b.row+delta));
+      if (b.kind === 'start') b.row = Math.max(0,Math.min(4,b.row+delta));
+      if(b.kind==='effort'||b.kind==='mode')b.choice=Math.max(0,Math.min((b.values?.length??1)-1,b.choice+delta));
       if (b.kind === 'model') b.choice = Math.max(0,Math.min(b.choices.length-1,b.choice+delta));
       this.draw(true); return;
     }
     if (key === 'tab') {
-      if (b.kind === 'start') b.permission = b.permission === 'ask' ? 'dontAsk' : 'ask';
+      if (b.kind === 'start'){const modes=modeValues(b.engine);b.permission=modes[(modes.indexOf(b.permission)+1)%modes.length]??'ask';this.permission=b.permission;}
       else if (b.kind === 'model') { this.boxInput('right');return; }
       else this.enqueue(async () => { b.completions = await completeFolder(b.path || b.cwd, b.cwd); if (b.completions.length === 1) b.path = b.completions[0] ?? b.path; this.draw(true); });
       this.draw(true); return;
     }
-    if (b.kind === 'start' && b.row !== 3 && (key === 'm' || key === 'c')) { b.kind = key === 'm' ? 'model' : 'folder'; this.returnToStart = true;if(b.kind==='model')this.resetModelTabs();this.draw(true);return; }
+    if (b.kind === 'start' && b.row !== 4 && (key === 'm' || key === 'c' || key==='e')) { b.kind = key === 'm' ? 'model' : key==='e'?'effort':'folder'; this.returnToStart = true;if(b.kind==='model')this.resetModelTabs();else if(b.kind==='effort')this.valueChoices();this.draw(true);return; }
     if (key === 'enter') {
       this.enqueue(async () => {
+        if(b.kind==='effort'||b.kind==='mode'){const value=b.values?.[b.choice];if(value===undefined)return;if(b.kind==='effort'){const effort=value==='CLI default'?null:value;if(!isEffortForEngine(b.engine,effort))return;b.effort=effort;this.effort=effort;if(this.savingDefault)await this.connection.request({kind:'settings.set',patch:{defaultEngine:b.engine,defaultEffort:effort}});}else{const modes=modeValues(b.engine);b.permission=modes[b.choice]??'ask';this.permission=b.permission;}this.savingDefault=false;if(this.returnToStart){b.kind='start';this.returnToStart=false;}else this.box=undefined;this.draw(true);return;}
         if (b.kind === 'model') {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
-          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine; this.model = choice.model;b.authLabel=this.nextAuthLabel();
-          if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:choice.engine,defaultModel:choice.model}});this.savingDefault=false;}
+          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine;this.compatibleDefaults(choice.engine);b.effort=this.effort;b.permission=this.permission; this.model = choice.model;b.authLabel=this.nextAuthLabel();
+          if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:choice.engine,defaultModel:choice.model,defaultEffort:this.effort}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
           else this.box = undefined;
           this.draw(true); return;
@@ -372,7 +392,7 @@ export class Homepage {
         }
         if (b.checking || b.error) return;
         try {
-          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,firstMessage:b.message});
+          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message});
           const session = validateSession(result.session); this.sessions = [session,...this.sessions.filter(s => s.id !== session.id)]; this.selectedId = session.id;
           this.box = undefined; this.field.text = ''; this.previewCells = undefined; await this.updatePreview(false);
         } catch (error) { b.error = error instanceof Error ? error.message : 'Agent could not start'; }
@@ -528,9 +548,10 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,usage:this.usage,budgets:this.budgets }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.effort,permission:this.permission,usage:this.usage,budgets:this.budgets }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
+      if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);
       if(this.usageForm)grid=drawUsageForm(grid,this.usageForm.lines(),this.usageFormError,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
       if (output) this.blocked = !this.stdout.write(output);
