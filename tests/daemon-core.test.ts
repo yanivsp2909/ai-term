@@ -259,6 +259,8 @@ describe('real PTY lifecycle and mirror', () => {
             expect(loaded.list()[1]).toMatchObject({ status: 'exited', exitCode: 0, statusDetail: 'exit 0', statusSince: since });
             expect(loaded.list()[2]).toMatchObject({ status: 'exited', exitCode: null, statusDetail: 'background service restarted' });
             expect(loaded.list()[2]?.statusSince).not.toBe(since);
+            expect(loaded.list()[0]).not.toHaveProperty('pid');
+            expect(loaded.list()[0]).not.toHaveProperty('recipe');
             expect(kill).not.toHaveBeenCalled();
         } finally { kill.mockRestore(); await loaded.shutdown(); }
     });
