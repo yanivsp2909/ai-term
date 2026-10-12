@@ -149,6 +149,7 @@ export class Homepage {
     for (const [name, guard] of this.guards) this.signals.off(name, guard);
     try { this.leave(); } catch (cleanupError) { error ??= cleanupError instanceof Error ? cleanupError : new Error('Terminal restore failed'); }
     for (const preview of this.previews.values()) preview.dispose(); this.previews.clear();
+    // Quitting never waits on the daemon; it drops a closed connection's usage subscription, as with stats below.
     if(this.usageOn){this.usageOn=false;void this.connection.request({kind:'usage.subscribe',on:false}).catch(()=>undefined);}
     if (this.statsOn && !this.disconnected) {
       this.statsOn = false;
