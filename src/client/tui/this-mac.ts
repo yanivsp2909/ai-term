@@ -1,13 +1,16 @@
 import type { SystemStats } from '../../shared/protocol.js';
 import type { Grid } from './grid.js';
 import type { Theme } from './theme.js';
-// This Mac panel (docs/design.md). Memory in binary GB/MB like Activity Monitor; network in decimal MB/s.
+// This Mac panel (docs/design.md). Memory in binary GB/MB; network rates use decimal units.
 export const SPARKLINE_SAMPLES = 10;
 const BARS = '▁▂▃▄▅▆▇█', GB = 1024 ** 3, MB = 1024 ** 2;
 const percent = (value: number): string => `${Math.round(value)}%`;
 const gigabytes = (bytes: number): string => (bytes / GB).toFixed(1);
 const memory = (bytes: number): string => bytes >= GB ? `${gigabytes(bytes)} GB` : `${Math.round(bytes / MB)} MB`;
-const rate = (bytesPerSecond: number): string => `${(bytesPerSecond / 1e6).toFixed(1)} MB/s`;
+export function formatNetworkRate(bytesPerSecond: number): string {
+  const [scale, unit] = bytesPerSecond >= 1e6 ? [1e6, 'MB/s'] : bytesPerSecond >= 1000 ? [1000, 'KB/s'] : [1, 'B/s'];
+  return `${(bytesPerSecond / scale).toFixed(1)} ${unit}`;
+}
 // Absolute scale (0–100%), so a quiet machine reads as quiet rather than stretched to full height.
 export function sparkline(history: readonly number[]): string {
   return history.slice(-SPARKLINE_SAMPLES).map(value => BARS[Math.min(BARS.length - 1, Math.max(0, Math.floor(value / (100 / BARS.length))))] ?? '').join('');
@@ -31,5 +34,5 @@ export function drawThisMac(grid: Grid, x: number, y: number, width: number, sta
   grid.text(x + 4, y + 1, `${gigabytes(stats.memUsedBytes)}/${gigabytes(stats.memTotalBytes).replace(/\.0$/, '')} GB`, t.ink, t.bg);
   right(y + 1, `agents ${memory(agentsRam)}`);
   grid.text(x, y + 2, 'NET', t['ink-3'], t.bg);
-  grid.text(x + 4, y + 2, `↓ ${rate(stats.netRxBytesPerSec)}  ↑ ${rate(stats.netTxBytesPerSec)}`, t.ink, t.bg);
+  grid.text(x + 4, y + 2, `↓ ${formatNetworkRate(stats.netRxBytesPerSec)}  ↑ ${formatNetworkRate(stats.netTxBytesPerSec)}`, t.ink, t.bg);
 }
