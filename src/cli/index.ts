@@ -12,7 +12,7 @@ import { redact, Logger } from '../daemon/log.js';
 import { AttachError } from '../client/attach.js';
 import { ClientSignal } from '../client/signals.js';
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
-function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug stats|ls|shell [cwd]|stop <id>|peek <id>|attach <id>]\n'); process.exitCode = 2; }
+function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug usage|stats|ls|shell [cwd]|stop <id>|peek <id>|attach <id>]\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
     if (args.length === 0) {
         const client = await Connection.connect(getPaths(), { entry });
@@ -38,11 +38,11 @@ async function main(): Promise<void> {
     const debug = args[0] === 'debug';
     const action = args[1];
     if(debug && action==='stats' && args.length===2){const {debugStats}=await import('./debug-stats.js');await debugStats();return;}
-    if (!stopDaemon && (!debug || !['ls', 'shell', 'stop', 'peek', 'attach'].includes(action ?? '') || args.length > 3)) {
+    if (!stopDaemon && (!debug || !['usage','ls', 'shell', 'stop', 'peek', 'attach'].includes(action ?? '') || args.length > 3)) {
         usage();
         return;
     }
-    if (debug && ((action === 'ls' && args.length !== 2) || (['stop', 'peek','attach'].includes(action ?? '') && !isUUID(args[2])))) {
+    if (debug && ((['ls','usage'].includes(action??'') && args.length !== 2) || (['stop', 'peek','attach'].includes(action ?? '') && !isUUID(args[2])))) {
         usage();
         return;
     }
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     let pathsReady=false;
     try {
         await preparePaths(paths);pathsReady=true;
-        client = await Connection.connect(paths, { entry, autoStart: !stopDaemon, readOnly:true });
+        client = await Connection.connect(paths, { entry, autoStart: !stopDaemon&&action!=='usage', readOnly:true });
     }
     catch (error) {
         if (stopDaemon && isFsError(error, 'ENOENT')) {
@@ -107,6 +107,7 @@ async function main(): Promise<void> {
             }
             throw new Error('Daemon shutdown timed out');
         }
+        if(action==='usage'){const {debugUsage}=await import('./debug-usage.js');await debugUsage(client);}
         if (action === 'ls') {
             const result = await client.request({ kind: 'sessions.list' });
             for (const session of result.sessions ?? [])
