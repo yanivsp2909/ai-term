@@ -266,7 +266,7 @@ export class Homepage {
   }
   private async copySelected():Promise<void>{
     const session=this.sessions.find(s=>s.id===this.selectedId);if(!session){this.showNote('select an agent first');return;}
-    let copy:import('../../shared/protocol.js').SessionText;
+    let copy:ReturnType<typeof validateSessionText>;
     try{const result=await this.connection.request({kind:'sessions.text',sessionId:session.id});copy=validateSessionText(result.copy);if(copy.sessionId!==session.id||copy.more===true)throw new Error('Invalid session text');}
     catch{this.showNote('Copy failed: session text unavailable');return;}
     if(this.ended)return;
