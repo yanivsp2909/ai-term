@@ -84,3 +84,18 @@ it('B17 provider error codes accept only known fixed codes', async () => {
   const results = await testFoundry('https://example.com', ['gpt'], 'fake-value', async () => ({ status: 401, errorCode: 'AITERMCANARY' }));
   expect(results).toEqual([{ model: 'gpt', status: 'error', httpStatus: 401 }]);
 });
+it('B17 unrelated settings writes preserve skipped metadata for later cleanup', async () => {
+  const { SettingsStore } = await import('../src/daemon/settings.js');
+  const root = await mkdtemp('/tmp/ai-b17-preserve-');
+  const valid = { id: randomUUID(), provider: 'anthropic', label: 'good', last4: '' };
+  const invalid = { id: randomUUID(), provider: 'anthropic', label: '', last4: '' };
+  try {
+    await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', keys: [valid, invalid] }));
+    const settings = new SettingsStore(root, () => {});
+    expect(await settings.set({ theme: 'ink' })).toMatchObject({ theme: 'ink', keys: [valid] });
+    expect(JSON.parse(await readFile(join(root, 'settings.json'), 'utf8'))).toMatchObject({ theme: 'ink', keys: [valid, invalid] });
+    const keys = new KeyStore(root, { vault: { read: async () => null, write: async () => {}, remove: async () => {} } });
+    await keys.remove(valid.id);
+    expect(JSON.parse(await readFile(join(root, 'settings.json'), 'utf8')).keys).toEqual([invalid]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
