@@ -66,7 +66,7 @@ Before you report done, run `npm run typecheck`, `npm run lint`, `npm test` and 
 - **Never read, copy, log or proxy the CLIs' own logins:** `~/.claude`, `~/.codex/auth.json`, `.credentials.json`, Keychain entries that belong to Claude Code or Codex. Never edit `~/.claude` or `~/.codex`.
 - **Never log** `process.env`, a spawn env, a secret, or anything matching `sk-`.
 - **Socket:** `~/.ai-term` is 0700, the socket 0600. Refuse to start if the folder is a symlink or owned by another user.
-- **Local HTTP endpoints** (usage receiver, status endpoint): `127.0.0.1` only, a token compared in constant time, an exact `Host` check, reject any `Origin`, answer 204 with an empty body.
+- **Local HTTP endpoints** (usage receiver, status endpoint): `127.0.0.1` only, a token compared in constant time, an exact `Host` check, reject any `Origin`; the status endpoint answers 204 with an empty body; the usage receiver answers 200 {} because OTLP exporters expect it (S12).
 - **Never make agents skip their permission prompts by default.** Don't ask is a per-session choice only, and its flags appear only in `src/daemon/env.ts`. Codex stays sandboxed even in Don't ask.
 - **Never delete** a worktree or branch with uncommitted, untracked or unmerged work without Yaniv's explicit confirmation.
 - **Background agents' raw output** never reaches the user's terminal. The homepage renders mirror cells only.
