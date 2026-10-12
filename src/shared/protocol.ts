@@ -6,7 +6,8 @@ export type Engine = 'claude-code' | 'codex' | 'shell'; // Shell spawning remain
 export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 'error';
 export type ThemeName = 'graphite' | 'slate' | 'ink' | 'auto' | 'light';
 export type AgentEngine = 'claude-code' | 'codex';
-export type Permission = 'ask' | 'dontAsk';
+export type Permission = 'ask' | 'auto' | 'dontAsk';
+export type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'persistent';
 export type AuthMethod = 'subscription' | 'api-key' | 'unknown';
 export interface EngineStatus { installed: boolean; path: string | null; version: string | null; loggedIn: boolean | null; authMethod: AuthMethod }
 export interface EnginesStatus { claudeCode: EngineStatus; codex: EngineStatus }
@@ -23,14 +24,16 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'}
-export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultCwd?: string; permission?: 'ask'; [key: string]: unknown }
+export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
-export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean };
+export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; effort?:Effort|null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean };
 export interface SessionInfo {
     id: string;
     title: string;
     engine: Engine;
     model: string | null;
+    effort?:Effort|null;
+    conversationId?:string; // AI Term-generated Claude CLI UUID; absent on legacy records and Codex.
     auth: AuthView;
     cwd: string;
     permission: Permission;
@@ -72,7 +75,7 @@ export type Request = {
     kind: 'sessions.preview';
     sessionId: string | null;
 } | {
-    kind: 'sessions.stop' | 'sessions.remove';
+    kind: 'sessions.stop' | 'sessions.remove' | 'sessions.resume';
     sessionId: string;
 } | {
     kind: 'sessions.rename';

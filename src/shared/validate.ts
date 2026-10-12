@@ -72,10 +72,10 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields = [];
             break;
         case 'sessions.create':
-            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','auth','cwd','permission','title','firstMessage','login'];
+            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
-            if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermission(v.permission) || (v.firstMessage !== undefined && (typeof v.firstMessage !== 'string' || Buffer.byteLength(v.firstMessage) > 16384 || v.firstMessage.includes('\0'))))) throw new ValidationError('Invalid account agent request');
-            if (v.login !== undefined && (v.login !== true || v.model!==null || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined)) throw new ValidationError('Invalid login session');
+            if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermissionForEngine(v.engine,v.permission) || v.effort !== undefined && !isEffortForEngine(v.engine,v.effort) || (v.firstMessage !== undefined && (typeof v.firstMessage !== 'string' || Buffer.byteLength(v.firstMessage) > 16384 || v.firstMessage.includes('\0'))))) throw new ValidationError('Invalid account agent request');
+            if (v.login !== undefined && (v.login !== true || v.model!==null || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined || v.effort !== undefined)) throw new ValidationError('Invalid login session');
             if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
             break;
         case 'sessions.attach':
@@ -91,6 +91,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'sessions.detach':
         case 'sessions.stop':
         case 'sessions.remove':
+        case 'sessions.resume':
         case 'sessions.rename':
             fields = v.kind === 'sessions.rename' ? ['sessionId', 'title'] : ['sessionId'];
             if (!isUUID(v.sessionId) || (v.kind === 'sessions.rename' && !isTitle(v.title)))
@@ -153,16 +154,25 @@ export function isThemeName(value: unknown): value is import('./protocol.js').Th
 }
 export function isAgentEngine(value: unknown): value is import('./protocol.js').AgentEngine { return value === 'claude-code' || value === 'codex'; }
 export function isModel(value: unknown): value is string | null { return value === null || typeof value === 'string' && isValidModelId(value); }
-export function isPermission(value: unknown): value is import('./protocol.js').Permission { return value === 'ask' || value === 'dontAsk'; }
+export function isPermission(value: unknown): value is import('./protocol.js').Permission { return value === 'ask' || value === 'auto' || value === 'dontAsk'; }
+
+// Installed Claude help and Codex rust-v0.160.1 ReasoningEffort/config define these values.
+export const EFFORT_LEVELS:Record<import('./protocol.js').AgentEngine,readonly import('./protocol.js').Effort[]>={
+ 'claude-code':['low','medium','high','xhigh','max'],
+ codex:['none','minimal','low','medium','high','xhigh','max','ultra','persistent'],
+};
+export function isEffort(value:unknown):value is import('./protocol.js').Effort|null{return value===null||typeof value==='string'&&EFFORT_LEVELS.codex.includes(value as import('./protocol.js').Effort);}
+export function isEffortForEngine(engine:unknown,value:unknown):value is import('./protocol.js').Effort|null{return isAgentEngine(engine)&&isEffort(value)&&(value===null||EFFORT_LEVELS[engine].includes(value));}
+export function isPermissionForEngine(engine:unknown,value:unknown):value is import('./protocol.js').Permission{return isAgentEngine(engine)&&isPermission(value)&&(value!=='auto'||engine==='claude-code');}
 function isAccount(value: unknown): boolean { return !!value && typeof value === 'object' && Object.keys(value).length === 1 && 'kind' in value && value.kind === 'account'; }
 export function sanitizeTitle(value: string): string { return [...stripVTControlCharacters(value).replace(/[\p{C}]/gu, '').trim()].slice(0,60).join(''); }
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultCwd','permission','budgets','priceOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isAgentEngine(v.defaultEngine) ||
-        v.defaultModel !== undefined && !isModel(v.defaultModel) || v.permission !== undefined && v.permission !== 'ask' ||
+        v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' ||
         v.defaultCwd !== undefined && (typeof v.defaultCwd !== 'string' || !isAbsolute(v.defaultCwd) || v.defaultCwd.includes('\0')) || JSON.stringify(v).length > 16384) throw new ValidationError('Invalid settings patch; permission default must be ask');
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
@@ -171,6 +181,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
 export function validateSettings(value: unknown): import('./protocol.js').Settings {
     const v = validateSettingsPatch(value);
     if(v.keys!==undefined){if(!Array.isArray(v.keys)||v.keys.length>100)throw new ValidationError('Invalid key metadata');v.keys.forEach(validateKeyView);}
+    if(v.defaultEffort!==undefined&&!isEffortForEngine(v.defaultEngine??'claude-code',v.defaultEffort))throw new ValidationError('Effort unavailable for default engine');
     if (!isThemeName(v.theme)) throw new ValidationError('Invalid settings theme');
     return {...v,theme:v.theme};
 }
@@ -186,7 +197,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
     if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
         !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
-        !isAuthView(s.auth) || !isPermission(s.permission) ||
+        !isAuthView(s.auth) || !(s.engine==='shell'?s.permission==='ask':isPermissionForEngine(s.engine,s.permission)) || s.effort!==undefined && !isEffortForEngine(s.engine,s.effort) || s.conversationId!==undefined && (s.engine!=='claude-code'||!isUUID(s.conversationId)) ||
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'idle', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || s.ctxPercent !== null ||
