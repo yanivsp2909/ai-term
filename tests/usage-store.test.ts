@@ -17,3 +17,7 @@ it('write failure warns without throwing and next change retries unsaved records
  const root=await mkdtemp('/tmp/ai-usage-fail-');let fail=true,writes=0;const store=new UsageStore(root,{error:()=>{}},()=>new Date(),async()=>{writes++;if(fail)throw Object.assign(new Error('PRIVATE'),{code:'ENOSPC'});});const warnings:boolean[]=[];store.on('warning',value=>warnings.push(value));
  try{await store.load();await expect(store.add(record(new Date().toISOString()))).resolves.toBeUndefined();expect(warnings).toEqual([true]);fail=false;await store.add(record(new Date().toISOString()));expect(warnings).toEqual([true,false]);expect(writes).toBe(3);expect(store.summary().today.tokens).toBe(2200);}finally{await rm(root,{recursive:true,force:true});}
 });
+it('summary rolls local day and month boundaries without new telemetry',async()=>{
+ const root=await mkdtemp('/tmp/ai-usage-calendar-');let now=new Date(2026,9,31,23,59);const store=new UsageStore(root,{error:()=>{}},()=>now);
+ try{await store.load();await store.add(record(new Date(2026,9,31,23,30).toISOString()));expect(store.summary().today.tokens).toBe(1100);now=new Date(2026,10,1,0,1);expect(store.summary().today.tokens).toBe(0);expect(store.summary().month.tokens).toBe(0);expect(store.summary().week.tokens).toBe(1100);}finally{await rm(root,{recursive:true,force:true});}
+});
