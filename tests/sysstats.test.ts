@@ -130,16 +130,16 @@ describe('SystemSampler', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(run).not.toHaveBeenCalled();
   });
-  it('samples every 2 s while subscribed, emits valid numbers only, and stops with the last subscriber', async () => {
+  it('samples every 1 s while subscribed, emits valid numbers only, and stops with the last subscriber', async () => {
     const { sampler, run, events, id, logs } = fixture(`${PS}  500   200  2048  0.5 /usr/bin/secret-tool --token=SECRET\n`);
     sampler.setSubscribers(1);
     await vi.advanceTimersByTimeAsync(0);
     expect(events).toHaveLength(0); // the first sample is only a baseline for the deltas
-    await vi.advanceTimersByTimeAsync(4000);
+    await vi.advanceTimersByTimeAsync(2000);
     expect(events).toHaveLength(2);
     const last = events.at(-1);
     expect(validateSystemStats(last)).toBeTruthy();
-    expect(last).toMatchObject({ cpuPercent: 25, memTotalBytes: 64 * 1024 ** 3, netRxBytesPerSec: 2000, netTxBytesPerSec: 0, sessions: [{ sessionId: id, cpuPercent: 45, rssBytes: 35000 * 1024 }] });
+    expect(last).toMatchObject({ cpuPercent: 25, memTotalBytes: 64 * 1024 ** 3, netRxBytesPerSec: 4000, netTxBytesPerSec: 0, sessions: [{ sessionId: id, cpuPercent: 45, rssBytes: 35000 * 1024 }] });
     expect(JSON.stringify(events) + logs.join('\n')).not.toMatch(/secret|SECRET/);
     const used = run.mock.calls.length;
     sampler.setSubscribers(0);
