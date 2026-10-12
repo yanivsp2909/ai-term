@@ -40,3 +40,6 @@ it('rejects private auth and engine fields at response boundaries',()=>{
  expect(()=>validateSession(session)).toThrow();
  expect(()=>validateSuccess({id:randomUUID(),ok:true,engines:{claudeCode:{installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown',email:'PRIVATE'},codex:{installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown'}}})).toThrow();
 });
+it('settings patches cannot smuggle secret fields while preserving unknown stored settings',async()=>{
+ for(const patch of [{secret:'sk-ant-AITERMCANARY0000'},{defaultPermission:'dontAsk'},{future:'sk-ant-AITERMCANARY0000'}])await expect(validateRequest({id:randomUUID(),kind:'settings.set',patch})).rejects.toThrow();
+});
