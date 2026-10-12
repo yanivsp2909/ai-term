@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
-import type { SessionInfo, SessionEvent, TerminalModes } from '../shared/protocol.js';
+import type { SessionInfo, SessionEvent, TerminalModes, CreateSession } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession } from '../shared/validate.js';
 import { atomicWrite, readState } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror } from './mirror.js';
-import { buildShellEnv } from './env.js';
+import { buildShellEnv, buildSpawnEnv, buildArgs } from './env.js';
+import { checkEngine } from './engines.js';
 import { ReplyBudget } from './reply-budget.js';
 interface Live {
     info: SessionInfo;
@@ -27,7 +28,7 @@ export class SessionManager extends EventEmitter {
     private warnings = new Map<string, string>();
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
-    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe: SpawnRecipe = { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) }, private readonly childUmask?: number, private readonly writeState = atomicWrite) {
+    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite) {
         super(); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -70,7 +71,7 @@ export class SessionManager extends EventEmitter {
     activeCount(): number { return this.list().filter(s => s.status === 'starting' || s.status === 'running').length; }
     private event(event: SessionEvent): void { this.emit('event', event); }
     private persist(): Promise<void> {
-        const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: 'shell', model: 'shell', auth: { kind: 'account' }, cwd: s.info.cwd, permission: 'ask' } })) };
+        const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: s.info.engine, model: s.info.model, auth: { kind: 'account' }, cwd: s.info.cwd, permission: s.info.permission } })) };
         this.saving = this.saving.then(async () => {
             try { await this.writeState(this.paths.state, data); }
             catch {
@@ -82,15 +83,22 @@ export class SessionManager extends EventEmitter {
         });
         return this.saving;
     }
-    async create(request: {
-        cwd: string;
-        title?: string;
-    }): Promise<SessionInfo> {
+    async create(request: CreateSession | { cwd: string; title?: string }): Promise<SessionInfo> {
         const cwdValid=await validCwd(request.cwd);
         if (this.closing || !cwdValid || (request.title !== undefined && !isTitle(request.title)))
             throw new Error('Invalid session request');
+        const agent = 'engine' in request && request.engine !== 'shell' ? request : null;
+        let recipe: SpawnRecipe;
+        let authMethod: SessionInfo['authMethod'];
+        if (agent) {
+            const status = await checkEngine(agent.engine);
+            if (!status.installed || !status.path) throw new Error(`${agent.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`);
+            if (status.loggedIn !== true) throw new Error(status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable');
+            authMethod = status.authMethod;
+            recipe = { executable: status.path, args: buildArgs(agent), env: buildSpawnEnv(agent.engine, {kind:'account'}, process.env) };
+        } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
         const now = new Date().toISOString();
-        const info: SessionInfo = { id: randomUUID(), title: request.title ?? 'shell', engine: 'shell', model: 'shell', auth: { kind: 'account' }, cwd: request.cwd, permission: 'ask', status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null };
+        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', auth: { kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null };
         const replies = new ReplyBudget();
         let dropping = false;
         const reply = (data: string) => {
@@ -101,7 +109,7 @@ export class SessionManager extends EventEmitter {
         const live: Live = { info, mirror: new Mirror(this.size.cols, this.size.rows, reply), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         this.sessions.set(info.id, live);
         try {
-            live.host = new PtyHost(this.recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
+            live.host = new PtyHost(recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
             live.host.pty.onData(data => {
                 const bytes=Buffer.byteLength(data);live.queuedBytes+=bytes;
                 this.updatePause(live);

@@ -7,6 +7,7 @@ import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
+import { enginesStatus } from './engines.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
     socket: Socket;
@@ -193,6 +194,9 @@ export class DaemonServer {
         }
         try {
             switch (request.kind) {
+                case 'engines.status':
+                    this.control(peer, { id: request.id, ok: true, engines: await enginesStatus() });
+                    break;
                 case 'settings.get':
                     this.control(peer, { id: request.id, ok: true, settings: await this.settings.get() });
                     break;
