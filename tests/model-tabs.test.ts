@@ -28,6 +28,6 @@ it('typing searches all providers and jumps to matching tab, Escape leaves defau
  const {home,tty}=await fixture();try{
   tty.emit('data',Buffer.from('/model\r'));await expect.poll(()=>screen(tty)).toContain('Select model');
   tty.emit('data',Buffer.from('opus'));await expect.poll(()=>screen(tty)).toContain('opus · claude code · own login · sub');
-  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,100));expect(await screen(tty)).not.toContain('Select model');expect(await screen(tty)).toContain('gpt-6.1-sol · codex');
+  tty.emit('data',Buffer.from('\x1b'));await expect.poll(()=>screen(tty)).not.toContain('Select model');expect(await screen(tty)).toContain('gpt-6.1-sol · codex');
  }finally{await home.stop();}
 });

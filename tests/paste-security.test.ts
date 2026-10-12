@@ -48,10 +48,12 @@ it.each(['claude-code', 'codex'] as const)('%s local stub receives pasted canary
     const data = Buffer.from('\x1b[200~' + message + '\x1b[201~\r');
     for (let i = 0; i < data.length; i += 113) tty.emit('data', data.subarray(i, i + 113));
     await expect.poll(() => tty.output.includes('safe intro')).toBe(true); tty.emit('data', Buffer.from('\r'));
-    await expect.poll(() => manager.list()[0]?.status).toBe('running');
+    // B10: waits on a real node process; a loaded machine can take over the default 1 s to start it.
+    await expect.poll(() => manager.list()[0]?.status, { timeout: 10000 }).toBe('running');
     const id = manager.list()[0]?.id; if (!id) throw new Error('Stub agent missing');
     const expected = 'MESSAGE_DIGEST:' + createHash('sha256').update(message).digest('hex');
-    expect((await client.request({ kind: 'sessions.text', sessionId: id })).copy?.text).toBe(expected);
+    // running starts at the first output chunk; the digest line may still be arriving.
+    await expect.poll(async () => (await client?.request({ kind: 'sessions.text', sessionId: id }))?.copy?.text, { timeout: 10000 }).toBe(expected);
     tty.emit('data', Buffer.from('c')); await expect.poll(() => copied.length).toBe(1); expect(copied[0]).toBe(expected);
     await manager.stop(id);
     expect(tty.output.includes(canary)).toBe(false); expect(logs).toEqual([]);

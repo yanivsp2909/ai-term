@@ -15,7 +15,7 @@ it.each(['SIGTERM','SIGHUP'] as const)('spawned client quits on %s from homepage
  const server=new DaemonServer(paths,manager,log);let client:Connection|undefined;
  try{
   const events:unknown[]=[];manager.on('event',event=>events.push(event));
-  await manager.load();await server.listen();const session=await manager.create({cwd:root});await expect.poll(()=>manager.get(session.id).status).toBe('running');
+  await manager.load();await server.listen();const session=await manager.create({cwd:root});await expect.poll(()=>manager.get(session.id).status,{timeout:10000}).toBe('running');
   client=await Connection.connect(paths,{entry:resolve('src/cli/index.ts'),autoStart:false});
   for(const attached of [false,true]){
    const child=pty.spawn(process.execPath,['--import','tsx',resolve('src/cli/index.ts')],{cwd:resolve('.'),cols:130,rows:45,env:{PATH:'/usr/bin:/bin',HOME:root,AI_TERM_HOME:root,TERM:'xterm-256color',COLORTERM:'truecolor'}});
@@ -23,7 +23,8 @@ it.each(['SIGTERM','SIGHUP'] as const)('spawned client quits on %s from homepage
    const slave=openSync((child as unknown as {ptsName:string}).ptsName,constants.O_RDWR|constants.O_NOCTTY);
    let output='',finished=false;child.onData(data=>{output+=data;});const exited=new Promise<number>(r=>child.onExit(event=>{finished=true;r(event.exitCode);}));
    try{
-    await expect.poll(()=>output).toContain('AI Term'); if(output.includes('Connect a provider')){child.write('\x1b');await new Promise(r=>setTimeout(r,100));}
+    // B10: a spawned client process; under full-suite load it can take over the default 1 s to draw.
+    await expect.poll(()=>output,{timeout:10000}).toContain('AI Term'); if(output.includes('Connect a provider')){child.write('\x1b');await new Promise(r=>setTimeout(r,100));}
     // SESSION_READY can come from the homepage preview too; the daemon resizes to the client's 130x45 only once attached.
     if(attached){child.write('\r');await expect.poll(()=>events).toContainEqual({kind:'session.previewResized',sessionId:session.id,cols:130,rows:45});}
     output='';child.kill(signal);expect(await exited).toBe(signal==='SIGTERM'?143:129);

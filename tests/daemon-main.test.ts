@@ -18,8 +18,8 @@ it('idles out after ten minutes with no live sessions or clients',async()=>{
  const paths=getPaths(await root());vi.stubEnv('AI_TERM_HOME',paths.root);vi.stubEnv('SHELL','/bin/sh');
  const mask=process.umask();vi.useFakeTimers({toFake:['Date','setInterval','clearInterval']});
  const running=runDaemon();
- try{await expect.poll(()=>exists(paths.socket)).toBe(true);await vi.advanceTimersByTimeAsync(601000);await running;expect(await exists(paths.pid)).toBe(false);expect(await exists(paths.socket)).toBe(false);}finally{vi.useRealTimers();process.umask(mask);}
-});
+ try{await expect.poll(()=>exists(paths.socket),{timeout:10000}).toBe(true);await vi.advanceTimersByTimeAsync(601000);await running;expect(await exists(paths.pid)).toBe(false);expect(await exists(paths.socket)).toBe(false);}finally{vi.useRealTimers();process.umask(mask);}
+},20000);
 it('still stops live sessions when socket cleanup fails',async()=>{
  const {DaemonServer}=await import('../src/daemon/server.js');const {SessionManager}=await import('../src/daemon/session-manager.js');
  const paths=getPaths(await root());vi.stubEnv('AI_TERM_HOME',paths.root);vi.stubEnv('SHELL','/bin/sh');const mask=process.umask(),oldExit=process.exitCode;
