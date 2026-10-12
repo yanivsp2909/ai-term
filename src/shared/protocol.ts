@@ -2,6 +2,9 @@ import { isUUID } from './validate.js';
 export const PROTOCOL_VERSION = 1;
 // Length counts the type byte and payload, excluding the four-byte prefix.
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
+export const MAX_COPY_BYTES = 5 * 1024 * 1024;
+export const COPY_CHUNK_BYTES = 1024 * 1024;
+export interface SessionText {sessionId:string;text:string;truncated:boolean}
 export type Engine = 'claude-code' | 'codex' | 'shell'; // Shell spawning remains internal; the homepage can display it.
 export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 'error';
 export type ThemeName = 'graphite' | 'slate' | 'ink' | 'auto' | 'light';
@@ -75,7 +78,7 @@ export type Request = {
     kind: 'sessions.preview';
     sessionId: string | null;
 } | {
-    kind: 'sessions.stop' | 'sessions.remove' | 'sessions.resume';
+    kind: 'sessions.stop' | 'sessions.remove' | 'sessions.resume' | 'sessions.text';
     sessionId: string;
 } | {
     kind: 'sessions.rename';
@@ -120,6 +123,7 @@ export interface SuccessResponse {
     cols?: number;
     rows?: number;
     modes?: TerminalModes;
+    copy?:SessionText & {more?:boolean}; // Bounded chunks echo the same request id; client joins before resolving.
 }
 export type Response = SuccessResponse | {
     id?: string;

@@ -92,6 +92,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'sessions.stop':
         case 'sessions.remove':
         case 'sessions.resume':
+        case 'sessions.text':
         case 'sessions.rename':
             fields = v.kind === 'sessions.rename' ? ['sessionId', 'title'] : ['sessionId'];
             if (!isUUID(v.sessionId) || (v.kind === 'sessions.rename' && !isTitle(v.title)))
@@ -120,6 +121,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(!isUUID(v.id)||v.ok!==true)throw new ValidationError('Invalid daemon response');
     if(v.kind!==undefined && (v.kind!=='hello'||v.protocol!==1||typeof v.version!=='string'||!/^[A-Za-z0-9._-]{1,40}$/.test(v.version)||!Number.isSafeInteger(v.daemonPid)||Number(v.daemonPid)<2))throw new ValidationError('Invalid daemon hello');
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
+    if(v.copy!==undefined)validateSessionText(v.copy);
     if(v.usage!==undefined)validateUsageSummary(v.usage);
     if(v.usageDiagnostics!==undefined)validateUsageDiagnostics(v.usageDiagnostics);
     if(v.key!==undefined)validateKeyView(v.key);
@@ -275,4 +277,11 @@ export function validateUsageDiagnostics(v:unknown):import('./protocol.js').Usag
  if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid usage diagnostics');const d=v as Record<string,unknown>;if(!hasOnly(d,['port','sessions'])||!Number.isInteger(d.port)||Number(d.port)<1||Number(d.port)>65535||!Array.isArray(d.sessions)||d.sessions.length>1000)throw new ValidationError('Invalid usage diagnostics');
  for(const raw of d.sessions){if(!raw||typeof raw!=='object'||!hasOnly(raw,['sessionId','at','values'])||!isUUID(raw.sessionId)||typeof raw.at!=='string'||!Number.isFinite(Date.parse(raw.at))||!Array.isArray(raw.values)||raw.values.length>20)throw new ValidationError('Invalid usage diagnostic');for(const val of raw.values)if(!val||typeof val!=='object'||!hasOnly(val,['name','value'])||typeof val.name!=='string'||! /^(?:input_token_count|output_token_count|cached_token_count|reasoning_token_count|claude_code\.token\.usage\.(?:input|output|cacheRead|cacheCreation)|claude_code\.cost\.usage\.cost)$/.test(val.name)||!isAmount(val.value))throw new ValidationError('Invalid usage attribute');}
  return v as unknown as import('./protocol.js').UsageDiagnostics;
+}
+
+export function validateSessionText(value:unknown):import('./protocol.js').SessionText & {more?:boolean}{
+ if(!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid session text');const v=value as Record<string,unknown>;
+ // Only newline survives among C0/C1 controls; terminal escape sequences cannot reach the clipboard.
+ if(Object.keys(v).some(k=>!['sessionId','text','truncated','more'].includes(k))||!isUUID(v.sessionId)||typeof v.text!=='string'||Buffer.byteLength(v.text)>5*1024*1024||/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/u.test(v.text)||typeof v.truncated!=='boolean'||v.more!==undefined&&typeof v.more!=='boolean')throw new ValidationError('Invalid session text');
+ return v as unknown as import('./protocol.js').SessionText & {more?:boolean};
 }
