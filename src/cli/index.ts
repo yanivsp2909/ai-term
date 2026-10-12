@@ -39,7 +39,7 @@ async function main(): Promise<void> {
     const debug = args[0] === 'debug';
     const action = args[1];
     if(debug && action==='stats' && args.length===2){const {debugStats}=await import('./debug-stats.js');await debugStats();return;}
-    if (!stopDaemon && (!debug || !debugActions.includes(action ?? '') || args.length > 3)) {
+    if (!stopDaemon && (!debug || action==='stats' || !debugActions.includes(action ?? '') || args.length > 3)) {
         usage();
         return;
     }
