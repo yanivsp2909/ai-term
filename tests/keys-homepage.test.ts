@@ -1,4 +1,4 @@
-import {expect,it,vi} from 'vitest';
+import {expect,it} from 'vitest';
 import {EventEmitter} from 'node:events';
 import {randomUUID} from 'node:crypto';
 import {Homepage} from '../src/client/tui/homepage.js';

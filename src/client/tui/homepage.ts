@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import type { RequestBody } from '../connection.js';
 import { attach, type AttachReason } from '../attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
-import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, SystemStats } from '../../shared/protocol.js';
+import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats } from '../../shared/protocol.js';
 import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats } from '../../shared/validate.js';
 import { redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
@@ -13,7 +13,8 @@ import { copyText } from './clipboard.js';
 import { BACKGROUND_QUERY, BackgroundReplies, createTheme, type Theme } from './theme.js';
 import { diffFrame, type Frame } from './grid.js';
 import { homepageLayout, renderHomepage, sortSessions } from './layout.js';
-import { accountModels } from '../../shared/models.js';
+import { CredentialsPanel } from './credentials.js';
+import { modelChoices } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
@@ -52,6 +53,9 @@ export class Homepage {
   private engines?: EnginesStatus;
   private box?: AgentBox;
   private returnToStart = false;
+  private credentials?:CredentialsPanel;
+  private keys:KeyView[]=[];
+  private auth:AuthRef={kind:'account'};
   private copying = false;
   private confirmId: string | null = null;
   private renameId: string | null = null;
@@ -97,7 +101,10 @@ export class Homepage {
       const result = await this.connection.request({ kind: 'sessions.list' });
       if (!Array.isArray(result.sessions)) throw new Error('Missing daemon sessions');
       this.sessions = result.sessions.map(validateSession); this.selectedId = sortSessions(this.sessions)[0]?.id ?? null;
-      this.draw(true); await this.updatePreview(true); await this.subscribeStats(true);
+      const engines=(await this.connection.request({kind:'engines.status'})).engines;this.engines=engines;
+      this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];
+      if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length)await this.openCredentials('login');
+      this.draw(true);await this.updatePreview(true);await this.subscribeStats(true);
     } catch (error) { await this.stop(error instanceof Error ? error : new Error('Homepage failed')); throw error; }
   }
   private enter(): void {
@@ -120,7 +127,7 @@ export class Homepage {
   }
   async stop(error?: Error): Promise<void> {
     if (this.ended) return;
-    this.ended = true; this.loading = null;
+    this.ended = true; this.loading = null; this.credentials?.dispose();
     if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve?.();
     if (this.noteTimer) clearTimeout(this.noteTimer);
     this.connection.off('event', this.onEvent); this.connection.off('output', this.onOutput); this.connection.off('disconnected', this.onDisconnect);
@@ -171,13 +178,14 @@ export class Homepage {
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
     if (event.kind === 'mouse') { this.mouse(event); return; }
-    if (event.kind === 'paste') { if (this.box) this.boxText(event.text); else this.field.paste(event.text); this.draw(true); return; }
+    if (event.kind === 'paste') { if(this.credentials)this.credentials.paste(event.text); else if (this.box) this.boxText(event.text); else this.field.paste(event.text); this.draw(true); return; }
     if (event.key === 'ctrl-c') {
       const action = this.field.key('ctrl-c');
       if (action.kind === 'quit') void this.stop();
       else if (action.kind === 'note') this.showNote(action.text, 1000);
       return;
     }
+    if(this.credentials){const panel=this.credentials;if(event.key==='escape'){panel.dispose();this.credentials=undefined;this.draw(true);}else this.enqueue(()=>panel.key(event.key));return;}
     if (this.box) { this.boxInput(event.key); return; }
     if (this.confirmId) {
       const id = this.confirmId;
@@ -227,13 +235,22 @@ export class Homepage {
       this.theme = createTheme(theme, this.background); this.previewCells = undefined; this.previous = null; this.forceRedraw = true; this.showNote(''); return;
     }
     if (text.startsWith('/theme')) { this.showNote('/theme graphite|slate|ink|auto|light'); return; }
-    if (text === '/model' || text === '/cd') { this.openBox(text === '/model' ? 'model' : 'folder'); return; }
-    if (['/settings', '/login'].includes(text)) { this.showNote(`${text} comes in v0.1.7`); return; }
+    if (text === '/model' || text === '/cd') { this.keys=(await this.connection.request({kind:'keys.list'})).keys??[]; this.openBox(text === '/model' ? 'model' : 'folder'); return; }
+    if (text==='/settings'||text==='/login') { await this.openCredentials(text==='/settings'?'settings':'login'); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
   }
+  private async openCredentials(kind:'login'|'settings'):Promise<void>{
+    this.box=undefined;
+    const panel=new CredentialsPanel(kind,{
+      request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.draw(true);},
+      login:async engine=>{const response=await this.connection.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:this.folder,permission:'ask',login:true,title:engine==='codex'?'Codex login':'Claude login'});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.credentials=undefined;await this.openSelected();},
+      defaults:()=>{this.credentials=undefined;this.openBox('model');},
+      theme:async theme=>{await this.submit('/theme '+theme);},
+    });this.credentials=panel;this.draw(true);await panel.load();
+  }
   private openBox(kind: AgentBox['kind'], message = ''): void {
-    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:'ask',message,error:'',checking:false,row:0,filter:'',choices:[...accountModels],choice:0,path:'',completions:[]};
+    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:'ask',message,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys),choice:0,path:'',completions:[],auth:this.auth};
     this.returnToStart = false; this.draw(true);
   }
   private async checkSelectedEngine(): Promise<void> {
@@ -243,7 +260,7 @@ export class Homepage {
       this.engines = (await this.connection.request({kind:'engines.status'})).engines;
       const status = box.engine === 'codex' ? this.engines?.codex : this.engines?.claudeCode;
       if (!status?.installed) box.error = `${box.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`;
-      else if (status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
+      else if (box.auth?.kind!=='key' && status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
     } catch (error) { box.error = error instanceof Error ? error.message : 'Engine check failed'; }
     finally { box.checking = false; this.draw(true); }
   }
@@ -256,7 +273,7 @@ export class Homepage {
   }
   private modelChoices(): void {
     const b = this.box; if (!b) return;
-    b.choices = accountModels.filter(choice => choice.label.toLowerCase().includes(b.filter.toLowerCase()));
+    b.choices = modelChoices(this.keys).filter(choice => choice.label.toLowerCase().includes(b.filter.toLowerCase()));
     if (b.filter && isValidModelId(b.filter) && !b.choices.some(c => c.model === b.filter)) b.choices.push({engine:b.engine,model:b.filter,label:`${b.filter} (custom)`});
     b.choice = 0;
   }
@@ -290,7 +307,7 @@ export class Homepage {
       this.enqueue(async () => {
         if (b.kind === 'model') {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
-          b.engine = choice.engine; b.model = choice.model; this.engine = choice.engine; this.model = choice.model;
+          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine; this.model = choice.model;
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
           else this.box = undefined;
           this.draw(true); return;
@@ -305,7 +322,7 @@ export class Homepage {
         }
         if (b.checking || b.error) return;
         try {
-          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:{kind:'account'},cwd:b.cwd,permission:b.permission,firstMessage:b.message});
+          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,firstMessage:b.message});
           const session = validateSession(result.session); this.sessions = [session,...this.sessions.filter(s => s.id !== session.id)]; this.selectedId = session.id;
           this.box = undefined; this.field.text = ''; this.previewCells = undefined; await this.updatePreview(false);
         } catch (error) { b.error = error instanceof Error ? error.message : 'Agent could not start'; }
@@ -459,6 +476,7 @@ export class Homepage {
       const cwd = this.folder, home = homedir();
       let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
+      if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
       if (output) this.blocked = !this.stdout.write(output);
     } catch (error) { this.onError(error); }

@@ -43,9 +43,9 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     grid.text(7, y, session.title, t.ink, bg, selected, panel.w - status.length - 9);
     grid.text(panel.w - status.length - 2, y, status, color, bg);
     grid.text(7, y + 1, session.engine === 'shell' ? 'shell' : `${session.model ?? 'CLI default'} · ${session.engine === 'codex' ? 'codex' : 'claude code'} · ${session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : 'unknown'}`, t['ink-2'], bg, false, panel.w - 9);
-    if (session.engine !== 'shell') { const authLabel = session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : 'unknown'; grid.text(panel.w - authLabel.length - 2, y + 1, authLabel, t['ink-3'], bg); }
-    const auth = session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : session.engine === 'shell' ? '' : 'auth unknown';
-    const detail = `${session.permission === 'dontAsk' ? "! don't ask · " : ''}${session.statusDetail === word ? word : `${word} · ${session.statusDetail}`}${auth ? ' · ' + auth : ''}`;
+    if (session.engine !== 'shell') { const authLabel = session.auth.kind==='key'?`····${session.auth.last4}`:session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : 'unknown'; grid.text(panel.w - authLabel.length - 2, y + 1, authLabel, t['ink-3'], bg); }
+    const auth = session.auth.kind==='key'?`API key ····${session.auth.last4}`:session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : session.engine === 'shell' ? '' : 'auth unknown';
+    const detail = `${session.auth.kind==='key'?auth+' · ':''}${session.permission === 'dontAsk' ? "! don't ask · " : ''}${session.statusDetail === word ? word : `${word} · ${session.statusDetail}`}${auth && session.auth.kind!=='key' ? ' · ' + auth : ''}`;
     grid.text(7, y + 2, detail, session.permission === 'dontAsk' ? t['status-error'] : session.status === 'error' || session.status === 'waiting' ? color : t['ink-3'], bg, false, panel.w - 9);
   }
   if (!sessions.length) grid.text(3, 3, 'No sessions yet', t['ink-3']);
