@@ -49,7 +49,7 @@ export class InputParser {
       }
       if (char === '\x1b') { this.sequence = char; continue; }
       if (this.pasteText !== null) { this.pasteText = (this.pasteText + char).slice(0, 4096); continue; }
-      const key = char === '\x03' ? 'ctrl-c' : char === '\r' || char === '\n' ? 'enter' : char === '\x7f' || char === '\b' ? 'backspace' : char;
+      const key = char === '\x03' ? 'ctrl-c' : char === '\t' ? 'tab' : char === '\r' || char === '\n' ? 'enter' : char === '\x7f' || char === '\b' ? 'backspace' : char;
       if (!/[\p{C}]/u.test(key)) this.emit({ kind: 'key', key });
     }
     if (this.sequence === '\x1b') this.timer = setTimeout(() => { this.sequence = ''; this.emit({ kind: 'key', key: 'escape' }); }, 30);

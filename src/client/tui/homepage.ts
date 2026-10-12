@@ -3,8 +3,8 @@ import { homedir } from 'node:os';
 import type { RequestBody } from '../connection.js';
 import { attach, type AttachReason } from '../attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
-import type { SessionInfo, SuccessResponse } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText } from '../../shared/validate.js';
+import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus } from '../../shared/protocol.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId } from '../../shared/validate.js';
 import { redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
 import { CommandField, InputParser, type InputEvent } from './keys.js';
@@ -13,6 +13,9 @@ import { copyText } from './clipboard.js';
 import { BACKGROUND_QUERY, BackgroundReplies, createTheme, type Theme } from './theme.js';
 import { diffFrame, type Frame } from './grid.js';
 import { homepageLayout, renderHomepage, sortSessions } from './layout.js';
+import { accountModels } from '../../shared/models.js';
+import { drawAgentBox, type AgentBox } from './agent-box.js';
+import { folderPath, completeFolder } from './folders.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
@@ -42,6 +45,12 @@ export class Homepage {
   private noteTimer?: ReturnType<typeof setTimeout>;
   private note = '';
   private warning = '';
+  private engine: AgentEngine = 'claude-code';
+  private model: string | null = null;
+  private folder: string;
+  private engines?: EnginesStatus;
+  private box?: AgentBox;
+  private returnToStart = false;
   private copying = false;
   private confirmId: string | null = null;
   private renameId: string | null = null;
@@ -61,6 +70,7 @@ export class Homepage {
   private readonly replies: BackgroundReplies;
   constructor(private readonly connection: HomepageConnection, private readonly options: Options = {}) {
     this.stdin = options.stdin ?? process.stdin; this.stdout = options.stdout ?? process.stdout; this.signals = options.signals ?? process;
+    this.folder = options.cwd ?? process.cwd();
     this.done = new Promise((resolve, reject) => { this.resolveDone = resolve; this.rejectDone = reject; });
     this.parser = new InputParser(event => this.handleInput(event));
     this.replies = new BackgroundReplies(background => { this.background = background; this.backgroundResolve?.(); });
@@ -73,6 +83,8 @@ export class Homepage {
     try {
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
+      if (settings.defaultEngine) this.engine = settings.defaultEngine;
+      if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
       if (settings.theme === 'auto') await this.detectBackground();
       if (this.ended) return;
       this.theme = createTheme(settings.theme, this.background);
@@ -140,13 +152,14 @@ export class Homepage {
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
     if (event.kind === 'mouse') { this.mouse(event); return; }
-    if (event.kind === 'paste') { this.field.paste(event.text); this.draw(true); return; }
+    if (event.kind === 'paste') { if (this.box) this.boxText(event.text); else this.field.paste(event.text); this.draw(true); return; }
     if (event.key === 'ctrl-c') {
       const action = this.field.key('ctrl-c');
       if (action.kind === 'quit') void this.stop();
       else if (action.kind === 'note') this.showNote(action.text, 1000);
       return;
     }
+    if (this.box) { this.boxInput(event.key); return; }
     if (this.confirmId) {
       const id = this.confirmId;
       if (event.key === 'y') { this.confirmId = null; this.enqueue(async () => { await this.operation({ kind: 'sessions.stop', sessionId: id }); }); }
@@ -195,8 +208,92 @@ export class Homepage {
       this.theme = createTheme(theme, this.background); this.previewCells = undefined; this.previous = null; this.forceRedraw = true; this.showNote(''); return;
     }
     if (text.startsWith('/theme')) { this.showNote('/theme graphite|slate|ink|auto|light'); return; }
-    if (['/model', '/cd', '/settings', '/login'].includes(text)) { this.showNote(`${text} comes in ${text === '/login' || text === '/settings' ? 'v0.1.7' : 'v0.1.6'}`); return; }
-    this.showNote('starting agents comes in v0.1.6 — for now: ai debug shell');
+    if (text === '/model' || text === '/cd') { this.openBox(text === '/model' ? 'model' : 'folder'); return; }
+    if (['/settings', '/login'].includes(text)) { this.showNote(`${text} comes in v0.1.7`); return; }
+    if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
+    this.openBox('start', text); await this.checkSelectedEngine();
+  }
+  private openBox(kind: AgentBox['kind'], message = ''): void {
+    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:'ask',message,error:'',checking:false,row:0,filter:'',choices:[...accountModels],choice:0,path:'',completions:[]};
+    this.returnToStart = false; this.draw(true);
+  }
+  private async checkSelectedEngine(): Promise<void> {
+    const box = this.box; if (!box) return;
+    box.checking = true; box.error = ''; this.draw(true);
+    try {
+      this.engines = (await this.connection.request({kind:'engines.status'})).engines;
+      const status = box.engine === 'codex' ? this.engines?.codex : this.engines?.claudeCode;
+      if (!status?.installed) box.error = `${box.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`;
+      else if (status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
+    } catch (error) { box.error = error instanceof Error ? error.message : 'Engine check failed'; }
+    finally { box.checking = false; this.draw(true); }
+  }
+  private boxText(text: string): void {
+    const b = this.box; if (!b) return;
+    if (b.kind === 'start') { if (b.row === 3) b.message = (b.message + text).slice(0,16384); }
+    else if (b.kind === 'folder') { b.path = (b.path + text).slice(0,4096); b.completions = []; }
+    else { b.filter = (b.filter + text).slice(0,80); this.modelChoices(); }
+    b.error = ''; this.draw(true);
+  }
+  private modelChoices(): void {
+    const b = this.box; if (!b) return;
+    b.choices = accountModels.filter(choice => choice.label.toLowerCase().includes(b.filter.toLowerCase()));
+    if (b.filter && isValidModelId(b.filter) && !b.choices.some(c => c.model === b.filter)) b.choices.push({engine:b.engine,model:b.filter,label:`${b.filter} (custom)`});
+    b.choice = 0;
+  }
+  private boxInput(key: string): void {
+    const b = this.box; if (!b) return;
+    if (key === 'escape') {
+      if (b.kind !== 'start' && this.returnToStart) { b.kind = 'start'; this.returnToStart = false; this.enqueue(() => this.checkSelectedEngine()); }
+      else { if (b.kind === 'start') this.field.text = b.message; this.box = undefined; }
+      this.draw(true); return;
+    }
+    if (key === 'backspace') {
+      if (b.kind === 'model') { b.filter = [...b.filter].slice(0,-1).join(''); this.modelChoices(); }
+      else if (b.kind === 'folder') b.path = [...b.path].slice(0,-1).join('');
+      else if (b.row === 3) b.message = [...b.message].slice(0,-1).join('');
+      b.error = ''; this.draw(true); return;
+    }
+    if (key === 'up' || key === 'down') {
+      const delta = key === 'up' ? -1 : 1;
+      if (b.kind === 'start') b.row = Math.max(0,Math.min(3,b.row+delta));
+      if (b.kind === 'model') b.choice = Math.max(0,Math.min(b.choices.length-1,b.choice+delta));
+      this.draw(true); return;
+    }
+    if (key === 'tab') {
+      if (b.kind === 'start') b.permission = b.permission === 'ask' ? 'dontAsk' : 'ask';
+      else if (b.kind === 'model') { b.engine = b.engine === 'codex' ? 'claude-code' : 'codex'; this.modelChoices(); }
+      else this.enqueue(async () => { b.completions = await completeFolder(b.path || b.cwd, b.cwd); if (b.completions.length === 1) b.path = b.completions[0] ?? b.path; this.draw(true); });
+      this.draw(true); return;
+    }
+    if (b.kind === 'start' && b.row !== 3 && (key === 'm' || key === 'c')) { b.kind = key === 'm' ? 'model' : 'folder'; this.returnToStart = true; this.draw(true); return; }
+    if (key === 'enter') {
+      this.enqueue(async () => {
+        if (b.kind === 'model') {
+          const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
+          b.engine = choice.engine; b.model = choice.model; this.engine = choice.engine; this.model = choice.model;
+          if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
+          else this.box = undefined;
+          this.draw(true); return;
+        }
+        if (b.kind === 'folder') {
+          const path = folderPath(b.path || b.cwd,b.cwd);
+          try { if (!(await validCwd(path))) { b.error = 'Folder must be an existing directory'; this.draw(true); return; } }
+          catch { b.error = 'Cannot access folder'; this.draw(true); return; }
+          b.cwd = path; this.folder = path;
+          if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; } else this.box = undefined;
+          this.draw(true); return;
+        }
+        if (b.checking || b.error) return;
+        try {
+          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:{kind:'account'},cwd:b.cwd,permission:b.permission,firstMessage:b.message});
+          const session = validateSession(result.session); this.sessions = [session,...this.sessions.filter(s => s.id !== session.id)]; this.selectedId = session.id;
+          this.box = undefined; this.field.text = ''; this.previewCells = undefined; await this.updatePreview(false);
+        } catch (error) { b.error = error instanceof Error ? error.message : 'Agent could not start'; }
+        this.draw(true);
+      }); return;
+    }
+    if ([...key].length === 1) this.boxText(key);
   }
   private async detectBackground(): Promise<void> {
     if (this.background) return;
@@ -316,8 +413,9 @@ export class Homepage {
         this.previewCells = layout.preview ? preview?.cells(this.theme, layout.terminal.w, layout.terminal.h) : undefined;
         this.nextPreview = now + 1000 / 30;
       }
-      const cwd = this.options.cwd ?? process.cwd(), home = homedir();
-      const grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines }, this.theme);
+      const cwd = this.folder, home = homedir();
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines }, this.theme);
+      if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
       if (output) this.blocked = !this.stdout.write(output);
     } catch (error) { this.onError(error); }

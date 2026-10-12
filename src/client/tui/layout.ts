@@ -1,4 +1,4 @@
-import type { SessionInfo, Status } from '../../shared/protocol.js';
+import type { SessionInfo, Status, AgentEngine } from '../../shared/protocol.js';
 import { Grid, cellWidth, graphemes, type Frame } from './grid.js';
 import type { Theme, ColorName } from './theme.js';
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -17,7 +17,7 @@ export const commands = ['/model', '/cd', '/settings', '/login', '/theme', '/exi
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
 const marks: Record<Status, [string, ColorName, string]> = { starting: ['◐', 'status-running', 'starting'], running: ['◐', 'status-running', 'running'], waiting: ['●', 'status-waiting', 'waiting'], done: ['✓', 'status-done', 'to review'], idle: ['·', 'status-idle', 'idle'], exited: ['■', 'status-idle', 'exited'], error: ['✗', 'status-error', 'failed'] };
 function age(session: SessionInfo, now: number): string { const minutes = Math.max(0, Math.floor((now - Date.parse(session.statusSince)) / 60000)); return minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`; }
-export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean }
+export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean }
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
   if (layout.tiny) { const label = 'make the window bigger'; grid.text(Math.floor((cols - label.length) / 2), Math.floor(rows / 2), label, t['ink-3']); return grid.cells; }
@@ -40,9 +40,11 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     const status = `${glyph} ${age(session, view.now)}`;
     grid.text(7, y, session.title, t.ink, bg, selected, panel.w - status.length - 9);
     grid.text(panel.w - status.length - 2, y, status, color, bg);
-    grid.text(7, y + 1, session.engine === 'shell' ? 'shell' : `${session.model} · ${session.engine === 'codex' ? 'codex' : 'claude code'}`, t['ink-2'], bg, false, panel.w - 9);
-    const detail = session.statusDetail === word ? word : `${word} · ${session.statusDetail}`;
-    grid.text(7, y + 2, detail, session.status === 'error' || session.status === 'waiting' ? color : t['ink-3'], bg, false, panel.w - 9);
+    grid.text(7, y + 1, session.engine === 'shell' ? 'shell' : `${session.model ?? 'CLI default'} · ${session.engine === 'codex' ? 'codex' : 'claude code'} · ${session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : 'unknown'}`, t['ink-2'], bg, false, panel.w - 9);
+    if (session.engine !== 'shell') { const authLabel = session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : 'unknown'; grid.text(panel.w - authLabel.length - 2, y + 1, authLabel, t['ink-3'], bg); }
+    const auth = session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : session.engine === 'shell' ? '' : 'auth unknown';
+    const detail = `${session.permission === 'dontAsk' ? "! don't ask · " : ''}${session.statusDetail === word ? word : `${word} · ${session.statusDetail}`}${auth ? ' · ' + auth : ''}`;
+    grid.text(7, y + 2, detail, session.permission === 'dontAsk' ? t['status-error'] : session.status === 'error' || session.status === 'waiting' ? color : t['ink-3'], bg, false, panel.w - 9);
   }
   if (!sessions.length) grid.text(3, 3, 'No sessions yet', t['ink-3']);
   const selected = sessions.find(s => s.id === view.selectedId);
@@ -51,9 +53,9 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     grid.box(p.x, p.y, p.w, p.h, '', t.surface);
     grid.text(p.x + 2, p.y, ` ${selected?.title ?? 'Preview'} `, t['ink-2'], t.surface, true, p.w - 23);
     const label = view.linesBack ? '◌ scrolled back' : '◉ live'; grid.text(p.x + p.w - label.length - 3, p.y, ` ${label} `, t.accent, t.surface);
-    grid.text(p.x + 2, 2, selected?.engine === 'shell' ? 'shell' : selected ? `${selected.engine} · ${selected.model}` : 'Your agents, together in one terminal', t['ink-2'], t.surface, false, p.w - 4);
+    grid.text(p.x + 2, 2, selected?.engine === 'shell' ? 'shell' : selected ? `${selected.engine} · ${selected.model ?? 'CLI default'}` : 'Your agents, together in one terminal', t['ink-2'], t.surface, false, p.w - 4);
     for (let y = 0; y < area.h; y++) for (let x = 0; x < area.w; x++) { const cell = view.previewCells?.[y]?.[x]; if (cell) grid.put(area.x + x, area.y + y, cell); }
-    if (!selected) { grid.text(area.x + 1, area.y + 2, 'Build with AI coding agents.', t['ink-3'], t.surface); grid.text(area.x + 1, area.y + 4, '⏎ to start · /login to connect', t['ink-3'], t.surface); grid.text(area.x + 1, area.y + 6, 'Starting agents comes in v0.1.6', t['ink-3'], t.surface); }
+    if (!selected) { grid.text(area.x + 1, area.y + 2, 'Build with AI coding agents.', t['ink-3'], t.surface); grid.text(area.x + 1, area.y + 4, 'Type a task · ⏎ to start', t['ink-3'], t.surface); grid.text(area.x + 1, area.y + 6, 'Account logins · /model to choose', t['ink-3'], t.surface); }
     if (view.linesBack) { grid.fill(area.x, area.y, area.w, 1, t.surface); grid.text(area.x, area.y, `↑ ${view.linesBack} lines back · the agent keeps running  End follow live`, t['ink-2'], t.surface, false, area.w); }
     if (view.newLines) { grid.fill(area.x, area.y + area.h - 1, area.w, 1, t.surface); grid.text(area.x, area.y + area.h - 1, `● ${view.newLines} new lines below`, selected?.status === 'waiting' ? t['status-waiting'] : t.accent, t.surface); }
   } else if (!layout.compact) { grid.box(0, rows - 14, cols, 2, '▸ preview hidden · p'); }
@@ -69,7 +71,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const end = grid.text(4, rows - 3, view.input ? input.join('') : 'What do you want to build?', view.input ? t.ink : t['ink-3'], t.surface, false, cols - 6);
   grid.text(end, rows - 3, '█', t.cursor, t.surface, false, 1);
   const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;
-  grid.text(1, rows - 1, `shell · ${view.cwd}`, t['ink-3'], t.bg, false, Math.max(0, hintsX - 2)); grid.text(hintsX, rows - 1, hints, t['ink-3']);
+  grid.text(1, rows - 1, `${view.engine ? `${view.model ?? 'CLI default'} · ${view.engine === 'codex' ? 'codex' : 'claude code'}` : 'shell'} · ${view.cwd}${view.engine ? ' · ask' : ''}`, t['ink-3'], t.bg, false, Math.max(0, hintsX - 2)); grid.text(hintsX, rows - 1, hints, t['ink-3']);
   if (view.input.startsWith('/')) {
     const choices = filteredCommands(view.input), h = choices.length + 2, y = rows - 4 - h;
     grid.box(0, y, Math.min(64, cols), h, 'Commands', t.surface);

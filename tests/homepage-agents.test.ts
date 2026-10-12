@@ -22,9 +22,9 @@ async function fixture(){const tty=new TTY(),client=new Client(),home=new Homepa
 async function screen(tty:TTY){const terminal=new headless.Terminal({cols:130,rows:45,allowProposedApi:true});try{await new Promise<void>(r=>terminal.write(tty.output,r));return Array.from({length:45},(_,y)=>terminal.buffer.active.getLine(y)?.translateToString()??'').join('\n');}finally{terminal.dispose();}}
 it('text opens start box, tab toggles per-session mode, Esc restores editing, and enter selects new preview',async()=>{
  const {tty,client,home}=await fixture();try{
-  tty.emit('data',Buffer.from('reply with ok\r'));await expect.poll(()=>screen(tty)).toContain('Start a new agent');
+  tty.emit('data',Buffer.from('\x1b[200~reply with ok\x1b[201~\r'));await expect.poll(()=>screen(tty)).toContain('Start a new agent');
   expect(client.requests.some(r=>r.kind==='sessions.create')).toBe(false);tty.emit('data',Buffer.from('\t'));expect(await screen(tty)).toContain("! don't ask");
-  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,50));expect(await screen(tty)).not.toContain('Start a new agent');expect(await screen(tty)).toContain('reply with ok');
+  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,100));expect(await screen(tty)).not.toContain('Start a new agent');expect(await screen(tty)).toContain('reply with ok');
   tty.emit('data',Buffer.from('\r'));await expect.poll(()=>screen(tty)).toContain('Start a new agent');tty.emit('data',Buffer.from('\r'));
   await expect.poll(()=>client.requests.some(r=>r.kind==='sessions.create')).toBe(true);
   expect(client.requests.find(r=>r.kind==='sessions.create')).toMatchObject({engine:'claude-code',model:null,auth:{kind:'account'},cwd:'/tmp',permission:'ask',firstMessage:'reply with ok'});
@@ -37,8 +37,8 @@ it('/model offers account groups and custom id, /cd validates folder, and login 
   tty.emit('data',Buffer.from('custom-id\r'));await expect.poll(()=>screen(tty)).not.toContain('Select model');
   tty.emit('data',Buffer.from('/cd\r'));await expect.poll(()=>screen(tty)).toContain('Select folder');
   tty.emit('data',Buffer.from('/missing-ai-term-directory\r'));await expect.poll(()=>screen(tty)).toContain('existing directory');
-  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,50));
-  client.loggedIn=false;tty.emit('data',Buffer.from('hi\r'));await expect.poll(()=>screen(tty)).toContain('not logged in');tty.emit('data',Buffer.from('\r'));await new Promise(r=>setTimeout(r,50));expect(client.requests.some(r=>r.kind==='sessions.create')).toBe(false);
+  tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,100));
+  client.loggedIn=false;tty.emit('data',Buffer.from('hi\r'));await expect.poll(()=>screen(tty)).toContain('not logged in');tty.emit('data',Buffer.from('\r'));await new Promise(r=>setTimeout(r,100));expect(client.requests.some(r=>r.kind==='sessions.create')).toBe(false);
  }finally{await home.stop();}
 });
 it('cards show CLI default, engine, actual auth and red dontAsk marker',async()=>{
