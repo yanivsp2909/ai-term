@@ -1,11 +1,17 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: 3563e1d test: sampler failure words, unreadable output, counter resets, late failures, ps parent loops and the command runner
-Roadmap step: coverage chore, not a roadmap step (done: branch coverage 82.3%, goal 80%). Last roadmap step is still v0.1.8a done; v0.1.6 is still partial (its live checks need Yaniv).
-Branch: claude/coverage-chore-80-percent-lmfy2c, started from 7bf527a. Tests only: no file under src/, docs/, spikes/ or .claude/ changed. This handover is committed last; its own hash is in git log.
+Last commit: c1c41b6 test: client-signals holds the PTY slave open so Linux can't drop the restore bytes at exit
+Roadmap step: coverage chore plus B7 (the two flaky tests), not roadmap steps; both done. Last roadmap step is still v0.1.8a done; v0.1.6 is still partial (its live checks need Yaniv).
+Branch: claude/coverage-chore-80-percent-lmfy2c, started from 7bf527a. This handover is committed last; its own hash is in git log.
 
 ## What works
+- **B7, flaky tests (cloud session, Linux):** both had a real product race behind them; client-signals also had two test-side problems.
+  - **homepage-settings "resizing detached sessions…":** product. node-pty closes the PTY fd when the child hangs up but reports the exit later; a resize in between threw `ioctl(2) failed, EBADF` out of `previewSize` (and attach, detach, resize). Test d26b8fb (red), fix abfea66 in `src/daemon/pty-host.ts`: that one error is a no-op, any other resize error still throws. The scenario under CPU load failed 4/200 before, 0/400 after.
+  - **client-signals SIGTERM "exit 0":** product. Leaving a session, attach drops its signal listeners and awaits the detach reply before the homepage takes them back; with no listener Node restores the default action and SIGTERM/SIGHUP killed the client (node-pty shows exitCode 0, signal 15). Test 0c77a21 (red, deterministic: holds the daemon's detach reply), fix 5094d0b in `src/client/tui/homepage.ts`: guard listeners for SIGTERM/SIGHUP/SIGQUIT live as long as the homepage, keep a signal nobody else heard, and the homepage quits with its code when attach returns.
+  - **client-signals test side:** it waited for `SESSION_READY`, which the homepage preview also draws, so it could kill during the hand-off instead of while attached (cc04414: waits for the daemon's 130x45 attach resize instead). Linux also drops unread PTY output when the child hangs up, so the restore bytes could vanish (c1c41b6: the test holds the slave open).
+  - Under 8 CPU hogs the test file failed 3/25 before (1 exit 0, 1 missing restore bytes, 1 timeout), 0/25 after. Full suite: 2/15 runs had an extra flaky failure before, 0/15 after (only the two Linux-environment failures remain).
+  - SIGTERM before the homepage first draws kills `ai` by the signal itself (shell `$?` 143, terminal untouched because nothing was changed yet). That is the normal outcome, not a bug.
 - **Coverage chore (cloud session, Linux):** 128 new tests, 192 → 320 (1 todo). Coverage on Linux, before → after: statements 86.19 → 88.9, branches 78.21 → 82.3, functions 86.93 → 88.0, lines 92.34 → 94.26.
   - `tests/server-rejections.test.ts` (ebfcb89): invalid requests echo only a string id; output frames and bad lengths close the client; input before hello is dropped; switching attach detaches the first session; a disconnect during a queued attach leaves the session detached; warnings after hello and list; only known error messages pass through; failed preview refresh clears the preview; a client that stops reading is dropped at the queue cap; listen refuses a non-socket path and a live socket; socketAnswers rethrows ENOTDIR.
   - `tests/session-manager-lifecycle.test.ts` (c9ab2aa): bad state files are refused and left untouched; every operation on an unknown id; bad titles and sizes; agent preflight errors (not installed, not logged in, status unknown) leave no record and spawn nothing; default agent titles and authMethod; spawn failure becomes a saved error record; a failing mirror emits fatal; sampler roots and active count; attach during shutdown; detach and resize from a non-owner; warning dedup and two-source clearing.
@@ -52,6 +58,7 @@ Branch: claude/coverage-chore-80-percent-lmfy2c, started from 7bf527a. Tests onl
 - v0.1.8b: usage and cost (D45). Not started.
 
 ## Manual checks
+- B7: `kill -TERM <ai pid>` right after Ctrl+E from a session returns to your shell with `$?` 143 and a clean terminal: needs Yaniv (optional; the red/green test covers it headlessly).
 - Coverage chore: none needed (tests only). Optional: `npm test -- --coverage` on the Mac to see the Mac numbers: needs Yaniv.
 - This Mac numbers move with a busy shell session, temp `AI_TERM_HOME` (commands in the final report of this session): needs Yaniv.
 - Performance gate and no-subscriber spawn count: ran (numbers above).
@@ -71,9 +78,12 @@ Branch: claude/coverage-chore-80-percent-lmfy2c, started from 7bf527a. Tests onl
 - **Running the suite on Linux (cloud sessions):** two tests fail for platform reasons, not code:
   - `daemon-core` "recovers a stale lock whose PID now belongs to a process that started after the lock was written": the container runs as root, so `kill(1, 0)` succeeds instead of EPERM and the lock is (correctly) kept.
   - `system-stats` "real ps, vm_stat and netstat on this Mac": `/usr/bin/vm_stat` and `/usr/sbin/netstat` don't exist on Linux.
-  - Two older tests flake under full parallel load here and pass alone: `client-signals` SIGTERM (exit 0 instead of 143) and `homepage-settings` "resizing detached sessions broadcasts new preview dimensions once". Both also flaked in the baseline run before any new test existed.
+  - The two flaky tests from the coverage chore are fixed (B7). `homepage-terminal` "source CLI opens homepage…" failed once in 15 runs before B7 and not in 15 after; not investigated.
 - **vitest prints no coverage table when a test fails;** add `--coverage.reportOnFailure`.
 - **Node unlinks a Unix socket's path on `server.close()`,** whatever file is there by then (libuv `uv__pipe_close`).
+- **Linux drops unread PTY output when the child hangs up** (3/60 under load, even waiting after exit). A test that checks a child's last bytes must hold the slave open (`ptsName`, an untyped node-pty getter).
+- **node-pty closes the fd before it reports the exit.** Anything that touches `pty` after a hang-up can get EBADF until onExit runs.
+- **Removing a signal's last listener restores its default action.** Hand signals over by adding the new listener before removing the old one, or keep a guard installed. `ai debug attach` (attach without the homepage) still has the old gap while it awaits the detach reply; the terminal is already restored by then.
 - **A paused client socket never sees its own close.** To test that the daemon dropped a client, watch `server.clientCount()`.
 - **ps `%cpu` is a decaying average,** not an instant value, so per-agent and "agents" CPU lag a few seconds. They can briefly disagree with machine CPU, which comes from `os.cpus()` deltas.
 - **Network counts every non-loopback interface,** so VPN traffic is counted twice (on `utun*` and on the physical interface).
@@ -94,6 +104,8 @@ Branch: claude/coverage-chore-80-percent-lmfy2c, started from 7bf527a. Tests onl
 - None.
 
 ## Concepts introduced
+- **Signal disposition** (`src/client/tui/homepage.ts`, guards): each signal has a default action (SIGTERM: die). `process.on('SIGTERM')` replaces it with "call my listeners"; removing the last listener puts the default back. So two parts of a program that hand a signal to each other must never both be unsubscribed at once, even for one `await`.
+- **Hang-up vs. exit** (`src/daemon/pty-host.ts`): a PTY child's end shows up twice, as a hang-up on the terminal (the fd stops working) and as the process exit (waitpid). node-pty sees the hang-up first and reports the exit a moment later, so code that only checks "has it exited?" can still hit a dead fd.
 - **Branch coverage** (`npm test -- --coverage`): counts each way a decision can go (both sides of an `if`, each `||` operand, each `case`) and how many were run by a test. It finds untested error paths that line coverage hides, because a one-line `if (bad) throw` counts as a covered line even if `bad` was never true.
 - **Asserting the message, not just the throw** (`tests/validate-rejections.test.ts`): a validator with ten checks rejects a bad value at the first check that fails. A test that only says "throws" passes even if the check it meant to test is broken, so each case names the message it expects.
 - **Subscribe-to-sample** (`src/daemon/server.ts`, `src/daemon/sysstats.ts`): the daemon measures the machine only while a homepage is looking. Each connection has a flag, and the sampler runs while any flag is set. Closing a connection clears its flag, so a crashed client can't leave sampling on.
