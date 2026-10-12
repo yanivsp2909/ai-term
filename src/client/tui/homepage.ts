@@ -14,7 +14,7 @@ import { BACKGROUND_QUERY, BackgroundReplies, createTheme, type Theme } from './
 import { diffFrame, type Frame } from './grid.js';
 import { homepageLayout, renderHomepage, sortSessions, filteredCommands } from './layout.js';
 import { CredentialsPanel } from './credentials.js';
-import { modelChoices } from '../../shared/models.js';
+import { modelChoices, ownLoginLabel } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
@@ -251,7 +251,7 @@ export class Homepage {
       this.theme = createTheme(theme, this.background); this.previewCells = undefined; this.previous = null; this.forceRedraw = true; this.showNote(''); return;
     }
     if (text.startsWith('/theme')) { this.showNote('/theme graphite|slate|ink|auto|light'); return; }
-    if (text === '/model' || text === '/cd') { this.keys=(await this.connection.request({kind:'keys.list'})).keys??[]; this.openBox(text === '/model' ? 'model' : 'folder'); return; }
+    if (text === '/model' || text === '/cd') { this.engines=(await this.connection.request({kind:'engines.status'})).engines;this.keys=(await this.connection.request({kind:'keys.list'})).keys??[]; this.openBox(text === '/model' ? 'model' : 'folder'); return; }
     if (text==='/settings'||text==='/login') { await this.openCredentials(text==='/settings'?'settings':'login'); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
@@ -266,14 +266,14 @@ export class Homepage {
     });this.credentials=panel;this.draw(true);await panel.load();
   }
   private openBox(kind: AgentBox['kind'], message = ''): void {
-    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:'ask',message,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys),choice:0,path:'',completions:[],auth:this.auth};
-    this.returnToStart = false; this.draw(true);
+    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:'ask',message,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
+    this.returnToStart = false; this.resetModelTabs();this.draw(true);
   }
   private async checkSelectedEngine(): Promise<void> {
     const box = this.box; if (!box) return;
     box.checking = true; box.error = ''; this.draw(true);
     try {
-      this.engines = (await this.connection.request({kind:'engines.status'})).engines;
+      this.engines = (await this.connection.request({kind:'engines.status'})).engines;box.authLabel=this.nextAuthLabel();
       const status = box.engine === 'codex' ? this.engines?.codex : this.engines?.claudeCode;
       if (!status?.installed) box.error = `${box.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`;
       else if (box.auth?.kind!=='key' && status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
@@ -287,11 +287,30 @@ export class Homepage {
     else { b.filter = (b.filter + text).slice(0,80); this.modelChoices(); }
     b.error = ''; this.draw(true);
   }
+  private nextAuthLabel():string {
+    if(this.auth.kind==='key'){const id=this.auth.keyId;return `key ····${this.keys.find(k=>k.id===id)?.last4??''}`;}
+    return ownLoginLabel(this.engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod);
+  }
+  private allModelChoices():import('../../shared/models.js').ModelChoice[]{
+    const b=this.box,choices=modelChoices(this.keys,this.engines);if(!b)return choices;
+    const matches=choices.filter(c=>c.label.toLowerCase().includes(b.filter.toLowerCase()));
+    if(b.filter&&isValidModelId(b.filter)&&!matches.some(c=>c.model===b.filter)){
+      const engine=b.tab==='ANTHROPIC'?'claude-code':b.tab==='OPENAI'?'codex':null;
+      if(engine)matches.push({engine,model:b.filter,label:`${b.filter} (custom)`,auth:{kind:'account'},authLabel:ownLoginLabel(engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod),group:b.tab});
+    }
+    return matches;
+  }
+  private resetModelTabs():void {
+    const b=this.box;if(!b)return;const choices=modelChoices(this.keys,this.engines);
+    b.tabs=[...new Set(choices.map(c=>c.group??''))];
+    const current=choices.find(c=>c.engine===b.engine&&c.model===b.model&&(c.auth?.kind??'account')===(b.auth?.kind??'account')&&(c.auth?.kind!=='key'||b.auth?.kind==='key'&&c.auth.keyId===b.auth.keyId));
+    b.tab=current?.group??(b.engine==='codex'?'OPENAI':'ANTHROPIC');
+    b.choices=choices.filter(c=>c.group===b.tab);b.choice=Math.max(0,b.choices.indexOf(current as import('../../shared/models.js').ModelChoice));
+  }
   private modelChoices(): void {
-    const b = this.box; if (!b) return;
-    b.choices = modelChoices(this.keys).filter(choice => choice.label.toLowerCase().includes(b.filter.toLowerCase()));
-    if (b.filter && isValidModelId(b.filter) && !b.choices.some(c => c.model === b.filter)) b.choices.push({engine:b.engine,model:b.filter,label:`${b.filter} (custom)`});
-    b.choice = 0;
+    const b=this.box;if(!b)return;const matches=this.allModelChoices();
+    if(b.filter&&matches.length)b.tab=matches[0]?.group;
+    b.choices=matches.filter(c=>c.group===b.tab);b.choice=0;
   }
   private boxInput(key: string): void {
     const b = this.box; if (!b) return;
@@ -307,6 +326,10 @@ export class Homepage {
       else if (b.row === 3) b.message = [...b.message].slice(0,-1).join('');
       b.error = ''; this.draw(true); return;
     }
+    if(b.kind==='model'&&(key==='left'||key==='right')){
+      const tabs=b.tabs??[],index=tabs.indexOf(b.tab??'');b.tab=tabs[(index+(key==='left'?-1:1)+tabs.length)%tabs.length];
+      b.choices=this.allModelChoices().filter(c=>c.group===b.tab);b.choice=0;this.draw(true);return;
+    }
     if (key === 'up' || key === 'down') {
       const delta = key === 'up' ? -1 : 1;
       if (b.kind === 'start') b.row = Math.max(0,Math.min(3,b.row+delta));
@@ -315,16 +338,16 @@ export class Homepage {
     }
     if (key === 'tab') {
       if (b.kind === 'start') b.permission = b.permission === 'ask' ? 'dontAsk' : 'ask';
-      else if (b.kind === 'model') { b.engine = b.engine === 'codex' ? 'claude-code' : 'codex'; this.modelChoices(); }
+      else if (b.kind === 'model') { this.boxInput('right');return; }
       else this.enqueue(async () => { b.completions = await completeFolder(b.path || b.cwd, b.cwd); if (b.completions.length === 1) b.path = b.completions[0] ?? b.path; this.draw(true); });
       this.draw(true); return;
     }
-    if (b.kind === 'start' && b.row !== 3 && (key === 'm' || key === 'c')) { b.kind = key === 'm' ? 'model' : 'folder'; this.returnToStart = true; this.draw(true); return; }
+    if (b.kind === 'start' && b.row !== 3 && (key === 'm' || key === 'c')) { b.kind = key === 'm' ? 'model' : 'folder'; this.returnToStart = true;if(b.kind==='model')this.resetModelTabs();this.draw(true);return; }
     if (key === 'enter') {
       this.enqueue(async () => {
         if (b.kind === 'model') {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
-          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine; this.model = choice.model;
+          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine; this.model = choice.model;b.authLabel=this.nextAuthLabel();
           if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:choice.engine,defaultModel:choice.model}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
           else this.box = undefined;
@@ -493,7 +516,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,menuChoice:this.menuChoice }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;

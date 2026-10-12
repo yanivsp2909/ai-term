@@ -43,7 +43,7 @@ export class InputParser {
         // eslint-disable-next-line no-control-regex -- SGR mouse coordinates arrive in CSI.
         const mouse = sequence.match(/^\x1b\[<(\d{1,3});(\d{1,4});(\d{1,4})([Mm])$/);
         if (mouse) { this.emit({ kind: 'mouse', button: Number(mouse[1]), x: Number(mouse[2]) - 1, y: Number(mouse[3]) - 1, release: mouse[4] === 'm' }); continue; }
-        const key = ({ '\x1b[A': 'up', '\x1b[B': 'down', '\x1bOA': 'up', '\x1bOB': 'down', '\x1b[5~': 'page-up', '\x1b[6~': 'page-down', '\x1b[F': 'end', '\x1bOF': 'end', '\x1b[4~': 'end' } as Record<string, string>)[sequence];
+        const key = ({ '\x1b[A': 'up', '\x1b[B': 'down', '\x1bOA': 'up', '\x1bOB': 'down', '\x1b[C': 'right', '\x1b[D': 'left', '\x1bOC': 'right', '\x1bOD': 'left', '\x1b[5~': 'page-up', '\x1b[6~': 'page-down', '\x1b[F': 'end', '\x1bOF': 'end', '\x1b[4~': 'end' } as Record<string, string>)[sequence];
         if (key) this.emit({ kind: 'key', key });
         continue;
       }

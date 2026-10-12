@@ -2,6 +2,7 @@ import type { SessionInfo, Status, AgentEngine, SystemStats } from '../../shared
 import { Grid, graphemes, type Frame } from './grid.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { Theme, ColorName } from './theme.js';
+import { ownLoginLabel } from '../../shared/models.js';
 import { agentUsage, drawThisMac } from './this-mac.js';
 export interface Rect { x: number; y: number; w: number; h: number }
 export function homepageLayout(cols: number, rows: number, visible = true) {
@@ -19,7 +20,7 @@ export const commands = ['/model', '/cd', '/settings', '/login', '/theme', '/exi
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
 const marks: Record<Status, [string, ColorName, string]> = { starting: ['◐', 'status-running', 'starting'], running: ['◐', 'status-running', 'running'], waiting: ['●', 'status-waiting', 'waiting'], done: ['✓', 'status-done', 'to review'], idle: ['·', 'status-idle', 'idle'], exited: ['■', 'status-idle', 'exited'], error: ['✗', 'status-error', 'failed'] };
 function age(session: SessionInfo, now: number): string { const minutes = Math.max(0, Math.floor((now - Date.parse(session.statusSince)) / 60000)); return minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`; }
-export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number }
+export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string }
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
   if (layout.tiny) { const label = 'make the window bigger'; grid.text(Math.floor((cols - label.length) / 2), Math.floor(rows / 2), label, t['ink-3']); return grid.cells; }
@@ -42,10 +43,10 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     const status = `${glyph} ${age(session, view.now)}`;
     grid.text(7, y, session.title, t.ink, bg, selected, panel.w - status.length - 9);
     grid.text(panel.w - status.length - 2, y, status, color, bg);
-    grid.text(7, y + 1, session.engine === 'shell' ? 'shell' : `${session.model ?? 'CLI default'} · ${session.engine === 'codex' ? 'codex' : 'claude code'} · ${session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : 'unknown'}`, t['ink-2'], bg, false, panel.w - 9);
-    if (session.engine !== 'shell') { const authLabel = session.auth.kind==='key'?`····${session.auth.last4}`:session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : 'unknown'; grid.text(panel.w - authLabel.length - 2, y + 1, authLabel, t['ink-3'], bg); }
-    const auth = session.auth.kind==='key'?`API key ····${session.auth.last4}`:session.authMethod === 'subscription' ? 'sub' : session.authMethod === 'api-key' ? 'API key' : session.engine === 'shell' ? '' : 'auth unknown';
-    const detail = `${session.auth.kind==='key'?auth+' · ':''}${session.permission === 'dontAsk' ? "! don't ask · " : ''}${session.statusDetail === word ? word : `${word} · ${session.statusDetail}`}${auth && session.auth.kind!=='key' ? ' · ' + auth : ''}`;
+    grid.text(7, y + 1, session.engine === 'shell' ? 'shell' : `${session.model ?? 'CLI default'} · ${session.engine === 'codex' ? 'codex' : 'claude code'} · ${session.auth.kind==='key'?`key ····${session.auth.last4}`:ownLoginLabel(session.authMethod)}`, t['ink-2'], bg, false, panel.w - 9);
+    if (session.engine !== 'shell') { const authLabel = session.auth.kind==='key'?`····${session.auth.last4}`:ownLoginLabel(session.authMethod); grid.text(panel.w - authLabel.length - 2, y + 1, authLabel, t['ink-3'], bg); }
+    const auth = session.auth.kind==='key'?`API key ····${session.auth.last4}`:session.engine==='shell'?'':ownLoginLabel(session.authMethod);
+    const detail = `${auth?auth+' · ':''}${session.permission === 'dontAsk' ? "! don't ask · " : ''}${session.statusDetail === word ? word : `${word} · ${session.statusDetail}`}`;
     grid.text(7, y + 2, detail, session.permission === 'dontAsk' ? t['status-error'] : session.status === 'error' || session.status === 'waiting' ? color : t['ink-3'], bg, false, panel.w - 9);
   }
   if (!sessions.length) grid.text(3, 3, 'No sessions yet', t['ink-3']);
@@ -77,7 +78,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const end = grid.text(4, rows - 3, view.input ? input.join('') : 'What do you want to build?', view.input ? t.ink : t['ink-3'], t.surface, false, cols - 6);
   grid.text(end, rows - 3, '█', t.cursor, t.surface, false, 1);
   const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;
-  grid.text(1, rows - 1, `${view.engine ? `${view.model ?? 'CLI default'} · ${view.engine === 'codex' ? 'codex' : 'claude code'}` : 'shell'} · ${view.cwd}${view.engine ? ' · ask' : ''}`, t['ink-3'], t.bg, false, Math.max(0, hintsX - 2)); grid.text(hintsX, rows - 1, hints, t['ink-3']);
+  grid.text(1, rows - 1, `${view.engine ? `${view.model ?? 'CLI default'} · ${view.engine === 'codex' ? 'codex' : 'claude code'}` : 'shell'} · ${view.cwd}${view.engine ? ' · '+(view.authLabel??'own login')+' · ask' : ''}`, t['ink-3'], t.bg, false, Math.max(0, hintsX - 2)); grid.text(hintsX, rows - 1, hints, t['ink-3']);
   if (view.input.startsWith('/')) {
     const choices = filteredCommands(view.input), h = choices.length + 2, y = rows - 4 - h;
     grid.box(0, y, Math.min(64, cols), h, 'Commands', t.surface);
