@@ -1,5 +1,5 @@
 import {EventEmitter} from 'node:events';
-import type {UsageSummary,UsageDiagnostics,UsageDiagnostic,ModelPrice} from '../shared/protocol.js';
+import type {UsageSummary,UsageDiagnostics,UsageDiagnostic} from '../shared/protocol.js';
 import {UsageReceiver} from './usage-receiver.js';
 import {UsageParser,type UsageContext} from './usage-parse.js';
 import {UsageStore} from './usage.js';

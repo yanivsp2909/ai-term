@@ -46,3 +46,15 @@ export function buildArgs(request:{engine:AgentEngine;model:string|null;permissi
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return args;
 }
+
+export interface UsageTelemetry {port:number;credential:string}
+function validTelemetry(telemetry:UsageTelemetry):void{if(!Number.isInteger(telemetry.port)||telemetry.port<1||telemetry.port>65535||! /^[a-f0-9]{64}$/.test(telemetry.credential))throw new Error('Invalid usage telemetry');}
+export function buildUsageEnv(engine:AgentEngine,telemetry:UsageTelemetry):Record<string,string>{
+ validTelemetry(telemetry);if(engine!=='claude-code')return {};
+ return {CLAUDE_CODE_ENABLE_TELEMETRY:'1',OTEL_METRICS_EXPORTER:'otlp',OTEL_LOGS_EXPORTER:'none',OTEL_EXPORTER_OTLP_PROTOCOL:'http/json',OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:`http://127.0.0.1:${telemetry.port}/v1/metrics`,OTEL_EXPORTER_OTLP_METRICS_HEADERS:`x-ai-term-session=${telemetry.credential}`,OTEL_METRICS_INCLUDE_SESSION_ID:'true',OTEL_METRIC_EXPORT_INTERVAL:'10000'};
+}
+export function buildUsageArgs(engine:AgentEngine,telemetry:UsageTelemetry):string[]{
+ validTelemetry(telemetry);if(engine!=='codex')return [];
+ // rust-v0.160.1 explicitly configures HTTP log exporter headers; no env header route is documented.
+ return ['-c','otel.log_user_prompt=false','-c',`otel.exporter={otlp-http={endpoint="http://127.0.0.1:${telemetry.port}/v1/logs",protocol="json",headers={"x-ai-term-session"="${telemetry.credential}"}}}`];
+}

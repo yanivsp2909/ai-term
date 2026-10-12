@@ -1,7 +1,5 @@
 import {expect,it,vi} from 'vitest';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
-import {randomUUID} from 'node:crypto';
-import {join} from 'node:path';
 import pty from 'node-pty';
 import {getPaths,preparePaths} from '../src/shared/paths.js';
 import {Logger} from '../src/daemon/log.js';

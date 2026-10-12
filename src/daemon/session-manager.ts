@@ -7,9 +7,10 @@ import { atomicWrite, readState } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror } from './mirror.js';
-import { buildShellEnv, buildSpawnEnv, buildArgs } from './env.js';
+import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs } from './env.js';
 import { KeyStore, KeyError } from './keys.js';
 import { checkEngine } from './engines.js';
+import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
 interface Live {
     info: SessionInfo;
@@ -29,8 +30,8 @@ export class SessionManager extends EventEmitter {
     private warnings = new Map<string, string>();
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
-    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root)) {
-        super(); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService) {
+        super();usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
     private warning(source: string, text: string): void {
@@ -109,6 +110,8 @@ export class SessionManager extends EventEmitter {
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null };
+        const telemetry=agent&&!agent.login&&authMethod==='api-key'&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model}):undefined;
+        if(telemetry){const extra=buildUsageArgs(agent?.engine??'codex',telemetry),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);Object.assign(recipe.env,buildUsageEnv(agent?.engine??'codex',telemetry));}
         const replies = new ReplyBudget();
         let dropping = false;
         const reply = (data: string) => {
@@ -121,6 +124,7 @@ export class SessionManager extends EventEmitter {
         try {
             if(agent?.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,secret=>{
                 recipe.env=buildSpawnEnv(agent.engine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env);
+                if(telemetry)Object.assign(recipe.env,buildUsageEnv(agent.engine,telemetry));
                 try{live.host=new PtyHost(recipe,request.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
             });
             else live.host = new PtyHost(recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
@@ -145,6 +149,7 @@ export class SessionManager extends EventEmitter {
                 });
             });
             host.pty.onExit(event => {
+                this.usage?.revoke(info.id);
                 live.output = live.output.then(async () => {
                     // node-pty reports exitCode 0 for a killed child; only the signal tells a crash apart.
                     const crashed = Boolean(event.signal) && !live.host?.stopRequested;
@@ -158,6 +163,7 @@ export class SessionManager extends EventEmitter {
             });
         }
         catch (error) {
+            this.usage?.revoke(info.id);
             if(error instanceof KeyError){this.sessions.delete(info.id);live.mirror.dispose();throw error;}
             info.status = 'error';
             info.statusDetail = 'spawn failed';
