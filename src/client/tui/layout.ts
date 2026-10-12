@@ -1,7 +1,8 @@
-import type { SessionInfo, Status, AgentEngine, SystemStats } from '../../shared/protocol.js';
+import type { SessionInfo, Status, AgentEngine, SystemStats, UsageSummary, Budgets } from '../../shared/protocol.js';
 import { Grid, graphemes, type Frame } from './grid.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { Theme, ColorName } from './theme.js';
+import { drawUsage, budgetWarning } from './usage-panel.js';
 import { ownLoginLabel } from '../../shared/models.js';
 import { agentUsage, drawThisMac } from './this-mac.js';
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -20,12 +21,13 @@ export const commands = ['/model', '/cd', '/settings', '/login', '/theme', '/exi
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
 const marks: Record<Status, [string, ColorName, string]> = { starting: ['◐', 'status-running', 'starting'], running: ['◐', 'status-running', 'running'], waiting: ['●', 'status-waiting', 'waiting'], done: ['✓', 'status-done', 'to review'], idle: ['·', 'status-idle', 'idle'], exited: ['■', 'status-idle', 'exited'], error: ['✗', 'status-error', 'failed'] };
 function age(session: SessionInfo, now: number): string { const minutes = Math.max(0, Math.floor((now - Date.parse(session.statusSince)) / 60000)); return minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`; }
-export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string }
+export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string;usage?:UsageSummary|null;budgets?:Budgets }
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
   if (layout.tiny) { const label = 'make the window bigger'; grid.text(Math.floor((cols - label.length) / 2), Math.floor(rows / 2), label, t['ink-3']); return grid.cells; }
   grid.text(1, 0, 'AI Term', t.ink, t.bg, true); grid.text(8, 0, '_', t.accent);
-  const counts: [string, string][] = [];
+  const budget=budgetWarning(view.usage,view.budgets);
+  const counts: [string, string][] = budget?[[budget,t['status-waiting']]]:[];
   for (const status of ['waiting', 'running', 'done', 'error'] as const) {
     const count = view.sessions.filter(s => s.status === status || status === 'running' && s.status === 'starting').length;
     if (count) { const [glyph, color, word] = marks[status]; counts.push([`${glyph} ${count} ${word}`, t[color]]); }
@@ -69,7 +71,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   if (!layout.compact) {
     const w = layout.statsW, x = layout.statsX, macW = 36, usageW = w - macW - 2;
     grid.box(x, layout.statsY, usageW, 7, 'Usage'); grid.box(x + usageW + 2, layout.statsY, macW, 7, 'This Mac');
-    ['    today week month', 'spend   —    —    —', 'tokens  —    —    —', 'budget  —    —    —', 'v0.1.8'].forEach((s, i) => grid.text(x + 2, layout.statsY + i + 1, s, t['ink-3'], t.bg, false, usageW - 4, i === 4));
+    drawUsage(grid,x+2,layout.statsY+1,usageW-4,view.usage,view.budgets,theme);
     drawThisMac(grid, x + usageW + 4, layout.statsY + 1, macW - 4, view.stats, view.cpuHistory ?? [], theme);
     grid.text(x + usageW + 4, layout.statsY + 5, 'v0.1.8', t['ink-3'], t.bg, false, macW - 4, true);
   }
@@ -95,6 +97,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     });
   }
   if (view.note && !view.input.startsWith('/')) { grid.fill(0, rows - 5, cols, 1, view.copying ? t.accent : t.bg); grid.text(2, rows - 5, view.note, view.copying ? t['on-accent'] : t['ink-3'], view.copying ? t.accent : t.bg, false, cols - 4); }
+  if(budget&&!view.input.startsWith('/')){grid.fill(0,rows-5,cols,1,t.bg);grid.text(2,rows-5,budget,t['status-waiting'],t.bg,false,cols-4);}
   if (view.warning) { grid.fill(0, rows - 5, cols, 1, t.bg); grid.text(2, rows - 5, '✗ ' + view.warning, t['status-error'], t.bg, false, cols - 4); }
   return grid.cells;
 }
