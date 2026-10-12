@@ -26,8 +26,8 @@ export class UsageParser {
     // Missing timestamps cannot be safely deduplicated, so never count that point.
     if(!time||this.duplicate(`${context.sessionId}:${model}:${type}:${start}:${time}`))continue;
     if(sum.aggregationTemporality===2||sum.aggregationTemporality==='AGGREGATION_TEMPORALITY_CUMULATIVE'){
-     const key=`${context.sessionId}:${model}:${type}`,before=this.cumulative.get(key);this.cumulative.set(key,value);value=before!==undefined&&value>=before?value-before:value;
-    }else{const key=`${context.sessionId}:${model}:${type}`,before=this.cumulative.get(key);if(before!==undefined)this.cumulative.set(key,before+value);}
+     const key=`${context.sessionId}:${model}:${type}:${start}`,before=this.cumulative.get(key);this.cumulative.set(key,value);value=before!==undefined&&value>=before?value-before:value;
+    }else{const key=`${context.sessionId}:${model}:${type}:${start}`,before=this.cumulative.get(key);if(before!==undefined)this.cumulative.set(key,before+value);}
     const record=this.record(context,model);if(type==='cost')record.costUsd=value;else if(type==='output')record.outputTokens=value;else {record.inputTokens=value;if(type==='cacheRead')record.cachedTokens=value;}
     if(value>0)records.push(record);
    }
