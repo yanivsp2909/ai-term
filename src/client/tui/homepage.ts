@@ -385,7 +385,7 @@ export class Homepage {
         }
         if (b.kind === 'model') {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
-          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine;this.compatibleDefaults(choice.engine);b.effort=this.effort;b.permission=this.permission; this.model = choice.model;b.authLabel=this.nextAuthLabel();
+          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine;this.compatibleDefaults(choice.engine);if(!isEffortForEngine(choice.engine,b.effort??null))b.effort=null;if(!isPermissionForEngine(choice.engine,b.permission))b.permission='ask'; this.model = choice.model;b.authLabel=this.nextAuthLabel();
           if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:choice.engine,defaultModel:choice.model,defaultEffort:this.effort}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
           else this.box = undefined;
