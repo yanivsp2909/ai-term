@@ -83,6 +83,10 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if (!isUUID(v.sessionId) || (v.kind === 'sessions.rename' && !isTitle(v.title)))
                 throw new ValidationError('Invalid session UUID or title');
             break;
+        case 'system.subscribe':
+            fields = ['on'];
+            if (typeof v.on !== 'boolean') throw new ValidationError('system.subscribe needs on: boolean');
+            break;
         case 'layout.previewSize':
             fields = ['cols', 'rows'];
             if (!isSize(v.cols, v.rows))
@@ -166,4 +170,20 @@ export function validateSession(value: unknown): import('./protocol.js').Session
         !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod))) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }
-export function validateSystemStats(_value: unknown): import('./protocol.js').SystemStats { throw new Error('not implemented'); }
+// Exact keys only, so nothing but these numbers can ever ride along (no process names or users).
+const MAX_STATS_SESSIONS = 1000;
+function isAmount(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0; }
+function isShare(value: unknown): value is number { return isAmount(value) && value <= 100; }
+function hasOnly(value: Record<string, unknown>, keys: string[]): boolean { return Object.keys(value).every(key => keys.includes(key)) && keys.every(key => key in value); }
+export function validateSystemStats(value: unknown): import('./protocol.js').SystemStats {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid system stats');
+    const v = value as Record<string, unknown>;
+    if (!hasOnly(v, ['cpuPercent', 'memUsedBytes', 'memTotalBytes', 'netRxBytesPerSec', 'netTxBytesPerSec', 'sessions']) || !isShare(v.cpuPercent) || !isAmount(v.memUsedBytes) || !isAmount(v.memTotalBytes) || v.memUsedBytes > v.memTotalBytes ||
+        !isAmount(v.netRxBytesPerSec) || !isAmount(v.netTxBytesPerSec) || !Array.isArray(v.sessions) || v.sessions.length > MAX_STATS_SESSIONS) throw new ValidationError('Invalid system stats');
+    for (const session of v.sessions as unknown[]) {
+        if (!session || typeof session !== 'object' || Array.isArray(session)) throw new ValidationError('Invalid session stats');
+        const s = session as Record<string, unknown>;
+        if (!hasOnly(s, ['sessionId', 'cpuPercent', 'rssBytes']) || !isUUID(s.sessionId) || !isShare(s.cpuPercent) || !isAmount(s.rssBytes)) throw new ValidationError('Invalid session stats');
+    }
+    return v as unknown as import('./protocol.js').SystemStats;
+}

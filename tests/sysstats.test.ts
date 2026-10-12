@@ -74,7 +74,7 @@ describe('parsers', () => {
     expect(netRates(before, vpn, 2)).toEqual({ rx: 3000, tx: 500 });
   });
   it('cpuPercent is the busy share of all cores between two os.cpus() samples', () => {
-    expect(cpuPercent([cpu(100, 900), cpu(100, 900)], [cpu(400, 1600), cpu(200, 1800)])).toBe(25);
+    expect(cpuPercent([cpu(100, 900), cpu(100, 900)], [cpu(400, 1600), cpu(200, 1800)])).toBe(20);
     expect(cpuPercent([cpu(1, 1)], [cpu(1, 1)])).toBeNull();
     expect(cpuPercent([cpu(1, 1)], [cpu(1, 1), cpu(1, 1)])).toBeNull();
   });
@@ -109,7 +109,7 @@ describe('SystemSampler', () => {
     vi.useFakeTimers();
     let tick = 0, rx = 1000;
     const calls: string[] = [], logs: string[] = [];
-    const run = vi.fn(async (file: string) => {
+    const run = vi.fn<SamplerDeps['run']>(async (file: string) => {
       calls.push(file);
       if (file === SAMPLE_COMMANDS.ps.file) return ps;
       if (file === SAMPLE_COMMANDS.vmStat.file) return VM_STAT;
