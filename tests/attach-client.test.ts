@@ -62,14 +62,14 @@ it('reports an attach request timeout as an error rather than a daemon rejection
  connection.request=body=>body.kind==='sessions.attach'?Promise.reject(new Error('Daemon request timed out')):real(body);
  await expect(attach(connection,id,options)).rejects.toMatchObject({reason:'error'});expect(tty.isRaw).toBe(false);
 });
-it('debug logging captures at most 64 input bytes as hex and records the actual reason',async()=>{
+it('debug logging retains only input byte counts and the actual reason',async()=>{
  const root=await mkdtemp(join(tmpdir(),'ai-term-attach-debug-'));
  try{
  const {tty,connection,options}=fixture(),path=join(root,'daemon.log');
  const done=attach(connection,id,{...options,debugLog:new Logger(path)});await Promise.resolve();await Promise.resolve();
  const input=Buffer.from('generated-input-'.repeat(8));tty.emit('data',input);tty.emit('data',Buffer.from([5]));expect(await done).toBe('home key');
- const log=await readFile(path,'utf8');expect(log).toContain(`inputHex=${input.subarray(0,64).toString('hex')}`);expect(log).not.toContain('generated-input');expect(log).toContain('reason=home key');
- expect(log.match(/inputHex=([a-f0-9]*)/)?.[1]).toHaveLength(128);
+ const log=await readFile(path,'utf8');expect(log).toContain(`inputBytes=${input.length+1}`);expect(log).not.toContain(input.subarray(0,64).toString('hex'));expect(log).not.toContain('generated-input');expect(log).toContain('reason=home key');
+ expect(log).not.toContain('inputHex');
  }finally{await rm(root,{recursive:true,force:true});}
 });
 it('reports non-TTY stdin without changing terminal modes',async()=>{
