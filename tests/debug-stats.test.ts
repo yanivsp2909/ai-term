@@ -26,3 +26,14 @@ it('debug stats prints ten JSON number-only samples without socket or process-li
 it('debug stats failures print no raw command output',async()=>{
  const output:string[]=[];await expect(debugStats({sample:async()=>{throw new Error('PRIVATE raw stderr');},write:text=>{output.push(text);}})).rejects.toThrow('Stats diagnostic failed');expect(output).toEqual([]);
 });
+it('diagnostic CLI reads counters without creating an AI Term home or connecting a daemon',async()=>{
+ const {mkdtemp,rm,lstat}=await import('node:fs/promises');const {execFile}=await import('node:child_process');const {resolve,join}=await import('node:path');
+ const root=await mkdtemp('/tmp/ai-debug-stats-'),home=join(root,'unused');
+ try{const stdout=await new Promise<string>((resolveDone,reject)=>execFile(process.execPath,['--import','tsx',resolve('src/cli/index.ts'),'debug','stats'],{cwd:resolve('.'),timeout:20000,maxBuffer:65536,env:{PATH:'/usr/bin:/bin',HOME:root,AI_TERM_HOME:home}},(error,stdout)=>error?reject(new Error('Diagnostic CLI failed')):resolveDone(stdout)));
+ const lines=stdout.trim().split('\n');expect(lines).toHaveLength(10);for(const line of lines)expect(Object.values(JSON.parse(line)).every(value=>typeof value==='number'&&Number.isFinite(value))).toBe(true);await expect(lstat(home)).rejects.toMatchObject({code:'ENOENT'});
+ }finally{await rm(root,{recursive:true,force:true});}
+},20000);
+it('starts ten bounded diagnostic pairs one second apart instead of waiting for top startup each time',async()=>{
+ const {vi}=await import('vitest');vi.useFakeTimers();const starts:number[]=[],output:string[]=[];const memory=parseMemoryParts(vm);if(!memory)throw new Error('fixture');
+ try{const done=debugStats({sample:async()=>{starts.push(Date.now());await new Promise(r=>setTimeout(r,1500));return {...memory,cpuPercent:25,top:{userPercent:20,systemPercent:5,idlePercent:75,busyPercent:25}};},write:line=>{output.push(line);}});await vi.advanceTimersByTimeAsync(10500);expect(starts).toHaveLength(10);expect(starts.map((at,i)=>i?at-(starts[i-1]??at):0)).toEqual([0,1000,1000,1000,1000,1000,1000,1000,1000,1000]);expect(output).toHaveLength(10);await done;}finally{vi.useRealTimers();}
+});
