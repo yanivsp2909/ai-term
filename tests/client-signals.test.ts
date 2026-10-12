@@ -16,7 +16,7 @@ it.each(['SIGTERM','SIGHUP'] as const)('spawned client quits on %s from homepage
   await manager.load();await server.listen();const session=await manager.create({cwd:root});await expect.poll(()=>manager.get(session.id).status).toBe('running');
   client=await Connection.connect(paths,{entry:resolve('src/cli/index.ts'),autoStart:false});
   for(const attached of [false,true]){
-   const child=pty.spawn(process.execPath,['--import','tsx',resolve('src/cli/index.ts')],{cwd:root,cols:130,rows:45,env:{PATH:'/usr/bin:/bin',HOME:root,AI_TERM_HOME:root,TERM:'xterm-256color',COLORTERM:'truecolor'}});
+   const child=pty.spawn(process.execPath,['--import','tsx',resolve('src/cli/index.ts')],{cwd:resolve('.'),cols:130,rows:45,env:{PATH:'/usr/bin:/bin',HOME:root,AI_TERM_HOME:root,TERM:'xterm-256color',COLORTERM:'truecolor'}});
    let output='',finished=false;child.onData(data=>{output+=data;});const exited=new Promise<number>(r=>child.onExit(event=>{finished=true;r(event.exitCode);}));
    try{
     await expect.poll(()=>output).toContain('AI Term');
