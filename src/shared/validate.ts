@@ -149,7 +149,7 @@ export function validateSettings(value: unknown): import('./protocol.js').Settin
 export function validateEngineStatus(value:unknown): import('./protocol.js').EngineStatus {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid engine status');
     const v=value as Record<string,unknown>;
-    if (typeof v.installed !== 'boolean' || !(v.path === null || typeof v.path === 'string' && isAbsolute(v.path)) || !(v.version === null || typeof v.version === 'string' && /^[A-Za-z0-9.-]{1,80}$/.test(v.version)) || !(v.loggedIn === null || typeof v.loggedIn === 'boolean') || !['subscription','api-key','unknown'].includes(String(v.authMethod))) throw new ValidationError('Invalid engine status');
+    if (Object.keys(v).some(k=>!['installed','path','version','loggedIn','authMethod'].includes(k)) || typeof v.installed !== 'boolean' || !(v.path === null || typeof v.path === 'string' && isAbsolute(v.path)) || !(v.version === null || typeof v.version === 'string' && /^[A-Za-z0-9.-]{1,80}$/.test(v.version)) || !(v.loggedIn === null || typeof v.loggedIn === 'boolean') || !['subscription','api-key','unknown'].includes(String(v.authMethod))) throw new ValidationError('Invalid engine status');
     return {installed:v.installed,path:v.path as string|null,version:v.version as string|null,loggedIn:v.loggedIn as boolean|null,authMethod:v.authMethod as import('./protocol.js').AuthMethod};
 }
 export function validateSession(value: unknown): import('./protocol.js').SessionInfo {
@@ -158,7 +158,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
     if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
         !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
-        !s.auth || typeof s.auth !== 'object' || !('kind' in s.auth) || s.auth.kind !== 'account' || !isPermission(s.permission) ||
+        !isAccount(s.auth) || !isPermission(s.permission) ||
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'idle', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || s.ctxPercent !== null ||
