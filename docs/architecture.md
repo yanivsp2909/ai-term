@@ -427,7 +427,7 @@ Never logged, never stored, never sent to a client.
   - The first sample after a start is only the baseline for the deltas, so the first event arrives about 2 s after subscribing.
   - A failed, unreadable or reset sample is skipped. A sample still running when the next tick comes skips that tick rather than stacking.
   - A failure streak is logged once with fixed words (`System stats sample skipped (timed out)`), never the command's stderr. Recovery is logged once too.
-- **Cost (v0.1.8a gate, own daemon, 3 live sessions):** 0.18% of one core while subscribed, averaged over 60 s. With no subscriber, kqueue `NOTE_FORK` counted 0 spawns over 30 s.
+- **Cost (v0.1.8a gate, own daemon, 3 live sessions):** 0.13–0.32% of one core while subscribed, averaged over 60 s across three runs. With no subscriber, kqueue `NOTE_FORK` counted 0 spawns over 30 s (87 per 60 s while subscribed: 29 samples × 3 commands).
 
 ---
 
