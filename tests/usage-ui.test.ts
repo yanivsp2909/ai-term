@@ -14,3 +14,7 @@ it('deployment price form validates model id and numeric input output per millio
  const form=new PriceForm();form.paste('test');form.key('down');form.paste('2');form.key('down');form.paste('10');expect(form.values()).toEqual({model:'test',price:{input:2,output:10}});
  const bad=new PriceForm();bad.paste('-bad');expect(()=>bad.values()).toThrow();
 });
+it('Usage rendering is confined to its panel at the 100-column breakpoint',()=>{
+ const theme=createTheme('graphite'),frame=renderHomepage({cols:100,rows:30,sessions:[],selectedId:null,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0,usage:{today:period,week:period,month:period},budgets:{daily:10,weekly:20,monthly:30}},theme);
+ for(const y of [19,20,21,22]){expect(frame[y]?.[61]?.char).toBe('│');expect(frame[y]?.[64]?.char).toBe('│');}
+});
