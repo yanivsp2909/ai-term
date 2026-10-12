@@ -28,6 +28,7 @@ export class SessionManager extends EventEmitter {
     private saving: Promise<void> = Promise.resolve();
     private closing = false;
     private warnings = new Map<string, string>();
+    private resuming=new Set<string>();
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService) {
@@ -93,8 +94,10 @@ export class SessionManager extends EventEmitter {
         if(saved.engine==='shell')throw new Error('A shell has no AI conversation to resume');
         if(saved.engine==='claude-code'&&!saved.conversationId)throw new Error('This older Claude agent has no conversation ID');
         if(saved.conversationId&&this.list().some(s=>s.conversationId===saved.conversationId&&!['exited','error'].includes(s.status)))throw new Error('Conversation already running');
+        const identity=saved.conversationId??saved.id;if(this.resuming.has(identity))throw new Error('Conversation already starting');
         const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const};
-        return this.create({engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},{...(saved.conversationId?{conversationId:saved.conversationId}:{})});
+        this.resuming.add(identity);
+        try{return await this.create({engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},{...(saved.conversationId?{conversationId:saved.conversationId}:{})});}finally{this.resuming.delete(identity);}
     }
     async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{conversationId?:string}): Promise<SessionInfo> {
         const cwdValid=await validCwd(request.cwd);
