@@ -138,3 +138,11 @@ it('command field keeps both pasted newlines and small-paste tab spacing', () =>
   const field = new CommandField(); field.paste('small\ttab'); field.paste('\nsecond');
   expect(field.key('enter')).toMatchObject({ kind: 'submit', text: 'small tab\nsecond' });
 });
+it('a background-color reply sequence inside a multiline paste stays literal first-message data', async () => {
+  const f = await fixture(), text = 'intro\n\x1b]11;rgb:1111/2222/3333\x07\nend';
+  try {
+    paste(f.tty, text); send(f.tty, '\r'); await expect.poll(() => screen(f.tty)).toContain('Start a new agent');
+    send(f.tty, '\r'); await expect.poll(() => f.client.requests.some(r => r.kind === 'sessions.create')).toBe(true);
+    expect(f.client.requests.find(r => r.kind === 'sessions.create')).toMatchObject({ firstMessage: text });
+  } finally { await f.home.stop(); }
+});
