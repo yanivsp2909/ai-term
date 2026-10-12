@@ -101,3 +101,10 @@ describe('SettingsStore', () => {
     expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ theme: 'slate' });
   });
 });
+it('separate stores serialize patches and key metadata updates for the same file',async()=>{
+ const root=await mkdtemp('/tmp/ai-settings-shared-');try{
+  const a=new SettingsStore(root),b=new SettingsStore(root);let release:()=>void=()=>{};const gate=new Promise<void>(r=>{release=r;});
+  const first=a.update(async s=>{await gate;return {...s,keys:[]};});
+  const second=b.set({theme:'slate'});release();await Promise.all([first,second]);expect(await a.get()).toMatchObject({theme:'slate',keys:[]});
+ }finally{await rm(root,{recursive:true,force:true});}
+});
