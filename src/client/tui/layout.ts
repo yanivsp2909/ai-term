@@ -83,7 +83,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     grid.box(0, y, Math.min(64, cols), h, 'Commands', t.surface);
     choices.forEach((command, i) => grid.text(3, y + 1 + i, command === '/theme' ? '/theme graphite|slate|ink|auto|light' : command, t['ink-2'], t.surface));
   }
-  if (view.note) { grid.fill(0, rows - 5, cols, 1, view.copying ? t.accent : t.bg); grid.text(2, rows - 5, view.note, view.copying ? t['on-accent'] : t['ink-3'], view.copying ? t.accent : t.bg, false, cols - 4); }
+  if (view.note && !view.input.startsWith('/')) { grid.fill(0, rows - 5, cols, 1, view.copying ? t.accent : t.bg); grid.text(2, rows - 5, view.note, view.copying ? t['on-accent'] : t['ink-3'], view.copying ? t.accent : t.bg, false, cols - 4); }
   if (view.warning) { grid.fill(0, rows - 5, cols, 1, t.bg); grid.text(2, rows - 5, '✗ ' + view.warning, t['status-error'], t.bg, false, cols - 4); }
   return grid.cells;
 }
