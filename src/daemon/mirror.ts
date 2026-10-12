@@ -2,6 +2,8 @@ import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { MAX_FRAME_BYTES, MAX_COPY_BYTES, type TerminalModes } from '../shared/protocol.js';
 import { useUnicode11 } from '../shared/unicode-width.js';
+// eslint-disable-next-line no-control-regex -- C0/C1 controls never reach the clipboard.
+const COPY_STRIP=/[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/gu;
 export class Mirror {
     readonly terminal: headless.Terminal;
     private readonly addon: serialize.SerializeAddon;
@@ -41,8 +43,9 @@ export class Mirror {
             const next=buffer.getLine(row+1),last=line.getCell(this.terminal.cols-1);
             // xterm pads an empty last cell before a wide glyph wraps; explicit space cells stay.
             const end=next?.isWrapped&&next.getCell(0)?.getWidth()===2&&last?.getCode()===0&&last.getWidth()===1?this.terminal.cols-1:this.terminal.cols;
-            // eslint-disable-next-line no-control-regex -- Copy exports strip C0/C1 terminal controls.
-            logical+=line.translateToString(false,0,end).replace(/[\u0000-\u001f\u007f-\u009f]/gu,'');
+            // Copy exports strip C0/C1 controls and invisible format characters (bidi overrides, zero-width,
+            // tag characters) that make pasted text read differently from what it is; ZWJ only joins emoji.
+            logical+=line.translateToString(false,0,end).replace(COPY_STRIP,'');
         }
         lines.push(logical.trimEnd());while(lines.at(-1)==='')lines.pop();
         const bytes=Buffer.from(lines.join('\n'),'utf8');if(bytes.length<=MAX_COPY_BYTES)return {text:bytes.toString('utf8'),truncated:false};
