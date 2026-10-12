@@ -166,3 +166,4 @@ export function validateSession(value: unknown): import('./protocol.js').Session
         !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod))) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }
+export function validateSystemStats(_value: unknown): import('./protocol.js').SystemStats { throw new Error('not implemented'); }
