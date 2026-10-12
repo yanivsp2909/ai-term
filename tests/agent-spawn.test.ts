@@ -10,8 +10,8 @@ import { PtyHost } from '../src/daemon/pty-host.js';
 const canary='sk-ant-AITERMCANARY0000',azureCanary='AITERMAZURECANARY0000';
 it('creates account agents with fresh recipes, sanitized metadata, preview, and no canary in handlers/state/logs',async()=>{
  const root=await mkdtemp('/tmp/ai-spawn-'),paths=getPaths(root);await preparePaths(paths);
- // The stub reports only whether the Azure variable arrived (D41), never its value.
- const script='#!/bin/sh\nif [ "$1" = "--version" ]; then printf "2.1.295"; exit; fi\nif [ "$1" = "auth" ]; then printf \'{"loggedIn":true,"authMethod":"claude.ai","email":"PRIVATE"}\'; exit; fi\nif [ "$1" = "login" ]; then printf "Logged in using an API key - PRIVATE" >&2; exit; fi\nazure=; [ -n "$AZURE_OPENAI_API_KEY" ] && azure=" AZURE_SET"\nprintf "AGENT_READY%s" "$azure"\nread answer\n';
+ // The stub reports only whether the Azure variable arrived (D41), never its value, and whether its argv is exactly the Ask recipe (D40/D41).
+ const script='#!/bin/sh\nif [ "$1" = "--version" ]; then printf "2.1.295"; exit; fi\nif [ "$1" = "auth" ]; then printf \'{"loggedIn":true,"authMethod":"claude.ai","email":"PRIVATE"}\'; exit; fi\nif [ "$1" = "login" ]; then printf "Logged in using an API key - PRIVATE" >&2; exit; fi\nazure=; [ -n "$AZURE_OPENAI_API_KEY" ] && azure=" AZURE_SET"\nargv=; case "${0##*/} $*" in "codex --no-daemon --ask-for-approval=on-request --sandbox=workspace-write -- reply with ok"|"claude --permission-mode=default -- reply with ok") argv=" ARGV_ASK";; esac\nprintf "AGENT_READY%s%s" "$azure" "$argv"\nread answer\n';
  for(const name of ['claude','codex'])await writeFile(join(root,name),script,{mode:0o700});
  const oldPath=process.env.PATH,oldClaude=process.env.ANTHROPIC_API_KEY,oldCodex=process.env.OPENAI_API_KEY,oldAzure=process.env.AZURE_OPENAI_API_KEY;
  process.env.PATH=root+':/usr/bin:/bin';process.env.ANTHROPIC_API_KEY=canary;process.env.OPENAI_API_KEY=canary;process.env.AZURE_OPENAI_API_KEY=azureCanary;
@@ -25,7 +25,7 @@ it('creates account agents with fresh recipes, sanitized metadata, preview, and 
    const response=await client.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:root,permission:'ask',title:'agent',firstMessage:'reply with ok'});recipes.push(response);
    const id=response.session?.id;if(!id)throw new Error('No session');await expect.poll(()=>manager.get(id).status).toBe('running');
    expect(manager.get(id)).toMatchObject({engine,model:null,authMethod:engine==='claude-code'?'subscription':'api-key'});
-   const preview=await client.request({kind:'sessions.preview',sessionId:id});expect(preview.snapshot).toContain('AGENT_READY');expect(preview.snapshot,engine).toContain('AZURE_SET');recipes.push(preview);
+   const preview=await client.request({kind:'sessions.preview',sessionId:id});expect(preview.snapshot).toContain('AGENT_READY');expect(preview.snapshot,engine).toContain('AZURE_SET');expect(preview.snapshot,engine).toContain('ARGV_ASK');recipes.push(preview);
    recipes.push(await client.request({kind:'sessions.attach',sessionId:id,cols:80,rows:24}));
    recipes.push(await client.request({kind:'sessions.resize',sessionId:id,cols:90,rows:25}));
    recipes.push(await client.request({kind:'sessions.detach',sessionId:id}));
