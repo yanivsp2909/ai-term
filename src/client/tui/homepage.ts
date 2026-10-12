@@ -216,9 +216,9 @@ export class Homepage {
     if(this.cleanIds){
       const ids=this.cleanIds;
       if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{
-        let failure='';for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status)){
-          try{await this.connection.request({kind:'sessions.remove',sessionId:id});}catch(error){failure=error instanceof Error?error.message:'Record could not remove';}
-        }}this.showNote(failure);
+        let failure='',removed=0,failed=0;for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status)){
+          try{await this.connection.request({kind:'sessions.remove',sessionId:id});removed++;}catch(error){failed++;if(!failure)failure=error instanceof Error?error.message:'Record could not remove';}
+        }}this.showNote(`removed ${removed}, ${failed} failed${failure?' · '+failure:''}`);
       });}else if(event.key==='n'||event.key==='escape'){this.cleanIds=null;this.showNote('');}return;
     }
     if(this.usageForm){const form=this.usageForm;if(event.key==='escape'){this.usageForm=undefined;this.usageFormError='';}else if(event.key==='enter')this.enqueue(async()=>{try{if(form instanceof BudgetForm){const budgets=form.values();await this.connection.request({kind:'settings.set',patch:{budgets}});this.budgets=budgets;}else{const {model,price}=form.values(),settings=(await this.connection.request({kind:'settings.get'})).settings;await this.connection.request({kind:'settings.set',patch:{priceOverrides:{...settings?.priceOverrides,[model]:price}}});}this.usageForm=undefined;}catch(error){this.usageFormError=error instanceof Error?error.message:'Settings could not save';}this.draw(true);});else form.key(event.key);this.draw(true);return;}
