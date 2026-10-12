@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
 import type { SessionInfo, SessionEvent, TerminalModes } from '../shared/protocol.js';
-import { isUUID, isTitle, isSize, validCwd } from '../shared/validate.js';
+import { isUUID, isTitle, isSize, validCwd, validateSession } from '../shared/validate.js';
 import { atomicWrite, readState } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
@@ -36,7 +36,11 @@ export class SessionManager extends EventEmitter {
             if (!isUUID(r.id) || !isTitle(r.title) || r.engine !== 'shell' || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
             const now = new Date().toISOString();
-            const info: SessionInfo = { id: r.id, title: r.title, engine: 'shell', model: 'shell', auth: { kind: 'account' }, cwd: r.cwd, permission: 'ask', status: 'exited', statusDetail: 'background service restarted', statusSince: now, exitCode: null, createdAt: r.createdAt, lastOutputAt: null, ctxPercent: null };
+            const info = { ...validateSession(r) };
+            if (info.status === 'starting' || info.status === 'running') {
+                info.status = 'exited'; info.statusDetail = 'background service restarted';
+                info.statusSince = now; info.exitCode = null;
+            }
             this.sessions.set(info.id, { info, mirror: new Mirror(this.size.cols, this.size.rows, () => { }), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() });
         }
         await this.persist();
