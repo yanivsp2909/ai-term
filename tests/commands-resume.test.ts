@@ -1,0 +1,19 @@
+import {expect,it,vi} from 'vitest';
+import {mkdtemp,rm,readFile,writeFile} from 'node:fs/promises';
+import pty from 'node-pty';
+import {getPaths,preparePaths} from '../src/shared/paths.js';
+import {Logger} from '../src/daemon/log.js';
+import {SessionManager} from '../src/daemon/session-manager.js';
+import * as engines from '../src/daemon/engines.js';
+import {isUUID} from '../src/shared/validate.js';
+it('Claude UUID and effort survive restart and resume in the same recipe; Codex opens its picker',async()=>{
+ const root=await mkdtemp('/tmp/ai-command-resume-'),paths=getPaths(root);await preparePaths(paths);const log=new Logger(paths.log),manager=new SessionManager(paths,log),status=vi.spyOn(engines,'checkEngine').mockResolvedValue({installed:true,path:'/bin/sh',version:'1',loggedIn:true,authMethod:'subscription'});const real=pty.spawn;let args:string[]=[];const spawn=vi.spyOn(pty,'spawn').mockImplementation((_exe,argv,opts)=>{args=Array.isArray(argv)?[...argv]:[];return real('/bin/sh',['-c','printf ready; read done'],{...opts,env:{PATH:'/usr/bin:/bin'}});});
+ try{await manager.load();const session=await manager.create({engine:'claude-code',model:'sonnet',effort:'high',auth:{kind:'account'},cwd:root,permission:'auto',title:'keep me'});expect(isUUID(session.conversationId)).toBe(true);expect(args).toContain('--session-id='+session.conversationId);await expect.poll(()=>manager.get(session.id).status).toBe('running');await expect((manager as unknown as {resume(id:string):Promise<unknown>}).resume(session.id)).rejects.toThrow('finished');await manager.stop(session.id);
+ const next=new SessionManager(paths,log);try{await next.load();expect(next.get(session.id)).toMatchObject({effort:'high',conversationId:session.conversationId,permission:'auto'});const resumed=await (next as unknown as {resume(id:string):Promise<typeof session>}).resume(session.id);expect(resumed.id).not.toBe(session.id);expect(resumed).toMatchObject({cwd:root,model:'sonnet',effort:'high',permission:'auto',conversationId:session.conversationId,title:'keep me'});expect(args).toContain('--resume='+session.conversationId);expect(args).not.toContain('--session-id='+session.conversationId);await expect.poll(()=>next.get(resumed.id).status).toBe('running');await next.stop(resumed.id);}finally{await next.shutdown();}
+ const codex=await manager.create({engine:'codex',model:'test',effort:'xhigh',auth:{kind:'account'},cwd:root,permission:'ask'});await expect.poll(()=>manager.get(codex.id).status).toBe('running');await manager.stop(codex.id);await (manager as unknown as {resume(id:string):Promise<unknown>}).resume(codex.id);expect(args).toContain('resume');expect(args).toContain('model_reasoning_effort="xhigh"');expect(args[0]).toBe('--no-daemon');expect((await readFile(paths.state,'utf8'))).toContain('conversationId');
+ }finally{await manager.shutdown();spawn.mockRestore();status.mockRestore();await rm(root,{recursive:true,force:true});}
+});
+it('legacy Claude records and shells cannot resume and do not start a process',async()=>{
+ const root=await mkdtemp('/tmp/ai-command-legacy-'),p=getPaths(root);await preparePaths(p);const log=new Logger(p.log),m=new SessionManager(p,log,{executable:'/bin/sh',args:['-c','exit 0'],env:{PATH:'/usr/bin:/bin'}});
+ try{await m.load();const s=await m.create({cwd:root});await expect.poll(()=>m.get(s.id).status).toBe('exited');const saved=JSON.parse(await readFile(p.state,'utf8'));saved.sessions[0].engine='claude-code';saved.sessions[0].model=null;await writeFile(p.state,JSON.stringify(saved));const loaded=new SessionManager(p,log);try{await loaded.load();await expect((loaded as unknown as {resume(id:string):Promise<unknown>}).resume(s.id)).rejects.toThrow('conversation ID');}finally{await loaded.shutdown();}await expect((m as unknown as {resume(id:string):Promise<unknown>}).resume(s.id)).rejects.toThrow('shell');}finally{await m.shutdown();await rm(root,{recursive:true,force:true});}
+});
