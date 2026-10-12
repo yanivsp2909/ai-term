@@ -1,7 +1,8 @@
 import type { TerminalModes } from '../shared/protocol.js';
 const csi='\x1b[';
 // An attached CLI owns terminal appearance too; restore the terminal's defaults on every exit.
-export const RESET_MODES=[9,1000,1002,1003,1005,1006,1007,1015,2004,1004,1,66,6,45,2026].map(code=>`${csi}?${code}l`).join('')+`${csi}?7h${csi}4l${csi}>4;0m${csi}=0u${csi}<u\x1b>${csi}?25h${csi}0m${csi}r${csi}0 q`+[0,104,110,111,112].map(code=>`\x1b]${code}${code===0?';':''}\x1b\\`).join('');
+// 2031: Claude Code turns on dark/light theme-change reports; left on, the terminal keeps sending them to whatever runs next.
+export const RESET_MODES=[9,1000,1002,1003,1005,1006,1007,1015,2004,1004,1,66,6,45,2026,2031].map(code=>`${csi}?${code}l`).join('')+`${csi}?7h${csi}4l${csi}>4;0m${csi}=0u${csi}<u\x1b>${csi}?25h${csi}0m${csi}r${csi}0 q`+[0,104,110,111,112].map(code=>`\x1b]${code}${code===0?';':''}\x1b\\`).join('');
 export function enterModes(m:TerminalModes):string {
   const set=(code:number,on:boolean)=>`${csi}?${code}${on?'h':'l'}`;
   const mouse={none:0,x10:9,vt200:1000,drag:1002,any:1003}[m.mouseTracking];
