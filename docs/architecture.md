@@ -139,15 +139,16 @@ The daemon validates every control message at runtime with hand-written validato
 ```ts
 // src/shared/protocol.ts (v0.1 surface)
 type SessionId = string;            // crypto.randomUUID(), made by the daemon
-type Engine = 'claude-code' | 'codex';          // v0.4 adds 'ai-term'
-type AuthRef = { kind: 'account' } | { kind: 'key'; keyId: string };
+type Engine = 'claude-code' | 'codex' | 'shell';          // v0.4 adds 'ai-term'
+type AuthRef = { kind: 'account' };             // v0.1.6; keys from v0.1.7
 type Permission = 'ask' | 'dontAsk';
 type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 'error';
 
 // requests (client → daemon), each answered with {ok:true, ...} or {ok:false, error:{code, message}}
 hello            {protocol: 1, version}            → {protocol, version, daemonPid}
 sessions.list    {}                                  → {sessions: SessionInfo[]}
-sessions.create  {engine, model, auth, cwd, permission, title?, firstMessage?}  → {session}
+sessions.create  {engine, model: string | null, auth: {kind:'account'}, cwd, permission, title?, firstMessage?} → {session}
+                  // null = CLI default; debug shell keeps {engine:'shell', cwd, title?}
 sessions.attach  {sessionId, cols, rows}             → {snapshot, cols, rows, modes, session} then output frames stream
 sessions.detach  {sessionId}
 sessions.resize  {sessionId, cols, rows}             // attached client only
@@ -166,8 +167,9 @@ keys.test        {keyId}                             → {results: DeploymentTes
 keys.scanEnvFile {path}                              → {found: {name, provider}[]}   // names only, never values
 keys.importEnv   {path, names}                       → {keys: KeyView[]}
 usage.summary    {}                                  → {summary: UsageSummary}
-settings.get     {} → {settings: {theme}}
-settings.set     {patch: {theme}} → {settings: {theme}} // v0.1.5: graphite|slate|ink|auto|light only; settings.json 0600
+settings.get     {} → {settings}
+settings.set     {patch} → {settings} // merge theme/defaultEngine/defaultModel/defaultCwd/permission; default permission only ask
+                                    // unknown stored keys are preserved, unknown patch keys rejected; 16 KiB maximum, 0600
 system.subscribe {on: boolean}
 
 // events (daemon → client)
@@ -176,7 +178,7 @@ session.updated {session}   session.removed {sessionId}
 session.previewResized {sessionId, cols, rows}        // attach/detach/resize: previews request a fresh sized snapshot   usage.updated {summary}   system.stats {stats}
 ```
 
-`SessionInfo` = `{id, title, engine, model, auth: {kind, provider?, keyLabel?, last4?}, cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: number | null}`.
+`SessionInfo` in v0.1.6 = `{id, title, engine, model: string | null, auth: {kind:'account'}, authMethod?: 'subscription' | 'api-key' | 'unknown', cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth objects accept only kind. Key/usage/system requests below are later-version plans, not implemented handlers.
 
 `KeyView` = `{id, provider: 'anthropic' | 'foundry' | 'openai', label, last4, endpoint?, deployments?, lastTest?}`. There is **no** request that returns a secret. `keys.add` is the only message that carries one, client → daemon. The client drops its copy right after sending.
 
@@ -185,6 +187,8 @@ session.previewResized {sessionId, cols, rows}        // attach/detach/resize: p
 ## 5. Sessions: spawn, mirror, size, exit
 
 **Record** (in `state.json`): everything in `SessionInfo` plus `pid` and the spawn recipe *without* env or secrets (engine, model, auth ref, cwd, permission).
+
+**Create (v0.1.6).** The server validates every field, including existing-directory cwd, model id or null, account-only auth, permission, sanitized title, and firstMessage ≤ 16 KiB with no NUL. The manager checks the engine again before spawning, using the same own-provider env cleanup. Missing engine/login errors are allowlisted and shown inline; a rejected preflight creates no record. Each session gets a fresh recipe and env. Shell sessions remain available through `ai debug shell`.
 
 **Lifecycle** (owned by `session-manager.ts`):
 ```
@@ -286,9 +290,10 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 
 ### 7.2 Arguments (`buildArgs`, pure, unit-tested)
 - Executable: `resolveExecutable('claude' | 'codex', PATH)` walks PATH and returns the absolute path of the first regular, executable file. Not found → the session goes to `error` with "claude not found in PATH".
-- Model: one argv element `--model=<id>`, only if `isValidModelId(id)`: `/^[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,79}$/`. The leading-character rule plus the single-element form mean a "model" can never be read as another flag.
-- First message: the last argv elements are `--` and then the message as one element. Both CLIs take a positional prompt, and both accept `--` (help-level parsing verified in v0.1.1). If a live run shows the prompt isn't delivered, fall back to typing it into the PTY with bracketed paste after the first output.
+- Model: null ("CLI default") adds nothing; otherwise one argv element `--model=<id>`, only if `isValidModelId(id)`: `/^[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,79}$/`. The leading-character rule plus the single-element form mean a "model" can never be read as another flag.
+- First message: the last argv elements are `--` and then the message as one element. Both CLIs take a positional prompt and accept `--`. v0.1.6 keeps argv delivery: Codex displayed the exact prompt in live runs; Claude paused at folder trust before prompt execution. No paste fallback or automatic trust acceptance was added.
 - Foundry on Codex: `-c` overrides only, nothing written to `~/.codex` (from docs; the live test is pending in `docs/spikes/v0.1-cli-facts.md` #3 and #4). Each override is one argv element:
+  - `--no-daemon` (required for invocation-local config overrides)
   - `-c model_provider="aiterm_foundry"`
   - `-c model_providers.aiterm_foundry.name="AI Term Foundry"`
   - `-c model_providers.aiterm_foundry.base_url="<endpoint>"`, for example `https://narvis-resource.openai.azure.com/openai/v1` (no `api-version` on `/openai/v1`)
@@ -349,7 +354,9 @@ Why stripping matters: an exported `ANTHROPIC_API_KEY` overrides a logged-in Cla
 
 Never logged, never stored, never sent to a client.
 
-**Known limit.** Env hygiene controls the process env only. An `env` block or `apiKeyHelper` in your own `~/.claude/settings.json`, or `model_provider` in `~/.codex/config.toml`, still applies, exactly as in Terminal.app. AI Term never reads or edits those files.
+**Engine checks (v0.1.6).** `engines.ts` resolves the first regular executable in absolute PATH entries, checks version and login with execFile argv arrays, 5 s timeout and 64 KiB output cap, and keeps only installed/path/version/loggedIn/authMethod. Invalid schema, timeout or unavailable status remains null/unknown. Raw CLI output is never logged.
+
+**Known limit.** Env hygiene controls the process env only. Live v0.1.6 Codex showed inherited "YOLO mode" while AI Term passed no permission flags in Ask mode; a run reported missing AZURE_OPENAI_API_KEY after own-provider cleanup. AI Term does not override or inspect the user's routing or permission configuration, so successful replies and effective Ask permissions require the manual checks in `docs/testing/v0.1.6-agents.md`. An `env` block or `apiKeyHelper` in your own `~/.claude/settings.json`, or `model_provider` in `~/.codex/config.toml`, still applies, exactly as in Terminal.app. AI Term never reads or edits those files.
 
 ---
 

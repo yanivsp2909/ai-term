@@ -15,7 +15,7 @@ Agents keep running in a background service when you leave them or close the ter
 Personal and learning project. macOS first; Linux and Windows by v0.8.
 
 ## Status
-`ai` opens the v0.1.5 homepage with shell sessions, live read-only previews, attach/Ctrl+E home, scroll/copy, and saved themes. Create a shell with `ai debug shell [cwd]`. Agent starting comes in v0.1.6; login/keys in v0.1.7; usage and Mac stats in v0.1.8. See `PROGRESS.md` and `docs/testing/v0.1.5-homepage.md` for verification and manual checks.
+`ai` opens the v0.1.6 homepage with Claude Code/Codex account sessions, model and folder pickers, start confirmation, live previews, attach/Ctrl+E home, scroll/copy, and saved themes. Create a debug shell with `ai debug shell [cwd]`. Login/keys come in v0.1.7; usage and Mac stats in v0.1.8. Live agent UI transitions passed; successful replies and inherited CLI permission/routing behavior still need the checks in `docs/testing/v0.1.6-agents.md`. See `PROGRESS.md` and `docs/testing/v0.1.5-homepage.md` for verification and manual checks.
 
 ## Docs
 - `AGENTS.md`: rules for every coding agent working here
