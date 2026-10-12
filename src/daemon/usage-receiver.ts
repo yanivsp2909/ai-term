@@ -3,6 +3,10 @@ import {randomBytes,timingSafeEqual} from 'node:crypto';
 import type {AddressInfo} from 'node:net';
 import type {UsageContext} from './usage-parse.js';
 const MAX_BODY=1024*1024;
+// An oversized body is read and thrown away up to this bound before the 413, because closing with unread
+// bytes makes the kernel send a reset that destroys the 413 (B10), and OTLP exporters retry a reset but
+// not a 413. Past the bound the connection is cut. Nothing beyond MAX_BODY is ever kept.
+const MAX_DISCARD=4*MAX_BODY;
 export class UsageReceiver {
  private readonly server:Server;
  private credentials=new Map<string,UsageContext>();
@@ -28,13 +32,19 @@ export class UsageReceiver {
   if(req.method!=='POST'||!['/v1/metrics','/v1/logs'].includes(req.url??'')){this.answer(res,404);req.resume();return;}
   if(req.headers['content-type']!=='application/json'){this.answer(res,415);req.resume();return;}
   const context=this.authorize(req.headers['x-ai-term-session']);if(!context){this.answer(res,401);req.resume();return;}
-  const length=Number(req.headers['content-length']);if(Number.isFinite(length)&&length>MAX_BODY){this.answer(res,413);req.pause();return;}
+  const length=Number(req.headers['content-length']);if(Number.isFinite(length)&&length>MAX_DISCARD){this.answer(res,413);req.pause();return;}
   let bytes=0;const chunks:Buffer[]=[];
-  const body=await new Promise<Buffer|null>((resolve,reject)=>{
-   req.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>MAX_BODY){this.answer(res,413);req.pause();chunks.length=0;resolve(null);return;}chunks.push(chunk);});
-   req.on('end',()=>resolve(Buffer.concat(chunks)));req.on('error',reject);
+  const body=await new Promise<Buffer|'too large'|'cut'>((resolve,reject)=>{
+   req.on('data',(chunk:Buffer)=>{
+    bytes+=chunk.length;
+    if(bytes>MAX_DISCARD){req.destroy();resolve('cut');return;}
+    if(bytes>MAX_BODY){chunks.length=0;return;}
+    chunks.push(chunk);
+   });
+   req.on('end',()=>resolve(bytes>MAX_BODY?'too large':Buffer.concat(chunks)));req.on('error',reject);
   });
-  if(body===null)return;let raw:unknown;try{raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));}catch{this.answer(res,400);return;}
+  if(body==='cut')return;
+  if(body==='too large'){this.answer(res,413);return;}let raw:unknown;try{raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));}catch{this.answer(res,400);return;}
   // Credential may have been revoked while this body was being received.
   if(this.authorize(req.headers['x-ai-term-session'])!==context){this.answer(res,401);return;}
   await this.consume(req.url??'',raw,context);this.answer(res,200);
