@@ -87,3 +87,7 @@ it('S6 recipe in a real stub child exposes no own-provider auth variables and ke
   expect(stdout).toBe('[[],true]');
  }
 });
+it('OpenAI key sessions strip Codex routing credentials and use the OpenAI env key, never argv',()=>{
+ const env=buildSpawnEnv('codex',{kind:'key',secret:canary,provider:'openai'},{AZURE_OPENAI_API_KEY:'azure',AITERM_FOUNDRY_KEY:'foundry',OPENAI_BASE_URL:'https://other',OPENAI_API_KEY:'old'});
+ expect(env.OPENAI_API_KEY).toBe(canary);expect(env.AITERM_FOUNDRY_KEY).toBeUndefined();expect(env.AZURE_OPENAI_API_KEY).toBeUndefined();expect(env.OPENAI_BASE_URL).toBeUndefined();const args=buildArgs({engine:'codex',model:'gpt-6.1-sol',permission:'ask',openaiKey:true});expect(args).toContain('model_provider="openai"');expect(args.join(' ')).not.toContain(canary);
+});
