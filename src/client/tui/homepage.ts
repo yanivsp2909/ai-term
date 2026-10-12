@@ -12,6 +12,7 @@ import { CommandField, InputParser, type InputEvent } from './keys.js';
 import { MessageField, FIRST_MESSAGE_TOO_LONG } from './message-field.js';
 import { Preview, type Point } from './preview.js';
 import { copyText } from './clipboard.js';
+import { cleanSessionText } from './copy-clean.js';
 import { BACKGROUND_QUERY, BackgroundReplies, createTheme, type Theme } from './theme.js';
 import { diffFrame, type Frame } from './grid.js';
 import { homepageLayout, renderHomepage, sortSessions, filteredCommands } from './layout.js';
@@ -242,7 +243,7 @@ export class Homepage {
       if(event.key==='tab'){this.field.text=completeCommand(this.field.text,this.menuChoice,this.commandContext());this.menuChoice=0;this.draw(true);return;}
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
-        if(commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(command!=='/copy'&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -273,16 +274,17 @@ export class Homepage {
     try { await this.connection.request(body); this.showNote(''); }
     catch (error) { this.showNote(error instanceof Error ? error.message : 'Operation failed'); }
   }
-  private async copySelected(session:SessionInfo|null):Promise<void>{
+  private async copySelected(session:SessionInfo|null,all=false):Promise<void>{
     if(!session){this.showNote('select an agent first');return;}
     let copy:ReturnType<typeof validateSessionText>;
     try{const result=await this.connection.request({kind:'sessions.text',sessionId:session.id});copy=validateSessionText(result.copy);if(copy.sessionId!==session.id||copy.more===true)throw new Error('Invalid session text');}
     catch{this.showNote('Copy failed: session text unavailable');return;}
     if(this.ended)return;
-    try{await (this.options.copy??copyText)(copy.text);}
+    const text=cleanSessionText(copy.text);
+    try{await (this.options.copy??copyText)(text);}
     catch{(this.options.copyLog??new Logger(getPaths().log)).error('Clipboard copy failed');this.showNote('Copy failed: clipboard unavailable');return;}
-    const lines=copy.text?copy.text.split('\n').length:0;
-    if(!this.ended)this.showNote(`✓ copied ${lines} lines from ${session.title}${copy.truncated?' (oldest lines cut at 5 MB)':''}`,2000,true);
+    const lines=text?text.split('\n').length:0;
+    if(!this.ended)this.showNote(`✓ copied ${lines} lines from ${session.title}${copy.truncated?' (oldest lines cut at 5 MB)':''}${all?'':' · last reply only comes with v0.2'}`,2000,true);
   }
   private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title};}
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
@@ -290,7 +292,7 @@ export class Homepage {
   private async submit(text: string, copyTarget:SessionInfo|null=null,message?:MessageField): Promise<void> {
     if(message?.hasPastes){this.openBox('start',text,message);await this.checkSelectedEngine();return;}
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
-    if(command==='/copy'){if(argument){this.showNote('/copy uses the selected agent');return;}await this.copySelected(copyTarget);return;}
+    if(command==='/copy'){if(argument&&argument!=='all'){this.showNote('/copy or /copy all');return;}await this.copySelected(copyTarget,argument==='all');return;}
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
     if(command==='/clean'){if(argument){this.showNote('/clean takes no argument');return;}this.cleanIds=this.sessions.filter(s=>['exited','error'].includes(s.status)).map(s=>s.id);if(!this.cleanIds.length){this.cleanIds=null;this.showNote('No finished agents to remove');}else this.showNote(`remove ${this.cleanIds.length} finished agents? y/n`);return;}
     if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));}catch(error){this.showNote(error instanceof Error?error.message:'Shell could not start');}return;}

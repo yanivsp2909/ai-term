@@ -50,7 +50,8 @@ Homepage slash commands:
 | `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
 | `/resume` | Continue selected finished Claude conversation; Codex opens its own folder-filtered resume picker |
 | `/shell` | Start a plain login shell in the /cd folder |
-| `/copy` | Copy selected agent scrollback and screen as plain text; up to 5 MiB, oldest content cut if needed |
+| `/copy` | Copy last reply from v0.2; until then copy the same cleaned whole session as `/copy all`, with an explicit note |
+| `/copy all` | Copy cleaned selected-agent scrollback and screen; up to 5 MiB, oldest content cut if needed |
 | `/clean` | Confirm y/n before removing all exited/failed list records; running agents and files untouched |
 | `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
 | `/theme graphite\|slate\|ink\|auto\|light` | Save the theme |
@@ -70,7 +71,7 @@ Homepage slash commands:
 | PgUp / PgDn / End | Preview scroll / follow live |
 | Mouse wheel / drag-release | Preview scroll / copy selection; a click alone does not copy |
 | Esc | Close popup or clear command field; discards masked key input |
-| Backspace | Edit the current field |
+| Backspace | Edit the current field; delete a paste token whole |
 | Ctrl+C twice within one second | Quit client; sessions keep running |
 | Ctrl+E | Inside session returns home, keeping session running; inside pasted text it is pasted |
 | SIGTERM / SIGHUP / SIGQUIT | Client cleanup and exit 143 / 129 / 131; sessions keep running |
@@ -92,7 +93,9 @@ Claude effort: `CLI default`, `low`, `medium`, `high`, `xhigh`, `max`. Codex eff
 
 Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
 
-`/copy` or empty-field `c` copies the selected running/finished agent or shell from parsed mirror cells through the clipboard. Soft-wrapped rows join; trailing spaces/empty lines drop; no terminal escapes are copied. The 5 MiB UTF-8 cap keeps the newest text and the success note says when oldest content was cut. Copy text is never logged or saved. The mirror is in memory, so a daemon restart cannot restore previous terminal output.
+`/copy all` copies the selected running/finished agent or shell from parsed mirror cells through the clipboard. Soft-wrapped rows join; generic cleanup strips box-drawing borders at line edges, drops decoration-only box/rule/spinner lines, collapses blank runs and trims the ends. Code indentation and internal borders stay. The 5 MiB UTF-8 cap keeps the newest text; the note says `✓ copied N lines from <name>` and adds a warning when oldest content was cut. `/copy` and empty-field `c` copy the same cleaned whole session for now and add `· last reply only comes with v0.2`. Exact last reply awaits Claude's Stop hook and Codex notify; the screen is never used to guess it. Copy text is never logged or saved. The mirror is in memory, so a daemon restart cannot restore previous terminal output.
+
+Paste into the command bar or the start box's first-message row: more than one line or more than 200 characters appears as `[pasted · N lines]`. The start box also shows the first line, clipped to fit. Full pasted text and newlines become the first message; Backspace deletes the token whole, and typing before/after it works. Small pastes stay literal. Letter shortcuts stay off while the field has text. The combined first message is limited to 16 KB (16,384 UTF-8 bytes): an oversized insertion adds nothing and says `too long for a first message (16 KB): start the agent, then paste inside`. Pasted text stays in memory and is never logged or saved.
 
 The Usage panel marks estimates with `≈`. Unknown model prices show `price ?`; the spend row includes known costs only. Foundry overrides apply their input rate to all input tokens without assuming a cache discount. Historical estimates keep the price used at ingestion. Existing sessions need to be restarted to receive telemetry settings.
 

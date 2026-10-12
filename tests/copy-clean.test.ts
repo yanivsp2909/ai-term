@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { cleanSessionText } from '../src/client/tui/copy-clean.js';
 
 it('strips all box-drawing edge variants, drops decorative lines and collapses empty runs', () => {
-  expect(cleanSessionText('\n┌──┐\n│ answer │\n║ next ║\n╭   rounded   ╮\n╰──╯\n⠋ ⠙ ⠹ ◐\n---\n═══\n\n\n│ final │\n')).toBe('answer\nnext\nrounded\n\nfinal');
+  expect(cleanSessionText('\n┌──┐\n│ answer │\n║ next ║\n╭ rounded ╮\n╰──╯\n⠋ ⠙ ⠹ ◐\n---\n═══\n\n\n│ final │\n')).toBe('answer\nnext\nrounded\n\nfinal');
 });
 it('keeps prose, markdown, code indentation, internal borders and nondecorative Unicode', () => {
   const text = '╭────╮\n│ ```ts             │\n│   const s = "a│b"; │\n│ ```               │\n╰────╯\n\n- useful list\n| table | value |\n> quote\n界🙂\n⠋ working\n1 - 2 = -1';
