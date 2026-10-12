@@ -339,7 +339,7 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 - `AITERM_FOUNDRY_KEY`
 - plus anything v0.1.1 finds Codex reads
 
-`AZURE_OPENAI_API_KEY` is not on the list (D41): your Codex config may route Azure through it, so Codex account sessions keep it. A Codex key session still removes it, so a key session gets only its own key.
+`AZURE_OPENAI_API_KEY` is not on the list (D41): your Codex config may route Azure through it, so Codex account sessions keep it. Like any variable a session keeps, the agent and the commands it runs can read it, exactly as in Terminal.app. A Codex key session still removes it, so a key session gets only its own key.
 
 | Session | Env after base |
 |---|---|
@@ -424,7 +424,7 @@ How to verify each: **Unit** = vitest. **Grep** = must find nothing in `src/` (o
 | S3 | Keys only in the keychain | Manual: add canary key `sk-ant-AITERMCANARY0000`, then `grep -r AITERMCANARY ~/.ai-term` and the repo → nothing. |
 | S4 | Keys never leave the daemon except into a child env | Unit: no response or event contains a stored secret (canary test over every handler). Grep: no `getPassword` outside `src/daemon/keys.ts`. |
 | S5 | Keys and env never logged | Unit: the logger redacts values of keys matching `/(KEY|TOKEN|SECRET|PASSWORD)/i` and strings matching `sk-`, `sk-ant-`. Grep: no logging of `process.env` or a spawn env. |
-| S6 | Account sessions spawn without API keys | Unit: `buildSpawnEnv` for Claude account with every `CLAUDE_AUTH_VARS` entry in base → none present; same for Codex, whose account env keeps only `AZURE_OPENAI_API_KEY` from its provider (D41). Manual: inside an account session, `! env \| grep -iE 'anthropic\|oauth\|api_key'` → nothing. |
+| S6 | Account sessions spawn without API keys | Unit: `buildSpawnEnv` for Claude account with every `CLAUDE_AUTH_VARS` entry in base → none present; same for Codex, whose account env keeps only `AZURE_OPENAI_API_KEY` from its provider (D41). Manual: inside an account session, `! env \| grep -iE 'anthropic\|oauth\|api_key'` → nothing, except that a Codex session shows `AZURE_OPENAI_API_KEY` when you have it exported (D41). |
 | S7 | A key session sets only its own key | Unit: Claude key env has `ANTHROPIC_API_KEY` = keychain value and no other `CLAUDE_AUTH_VARS`; Foundry env has `AITERM_FOUNDRY_KEY` and no `OPENAI_API_KEY` from the keychain. |
 | S8 | No shell strings | Grep: no `exec(`, `execSync(`, `shell: true`, or a single-string command passed to `spawn`/`execFile`. |
 | S9 | Validated arguments | Unit: model validator rejects a leading `-` and spaces; cwd must exist and be a directory; deployment names follow the same pattern as model ids. |
