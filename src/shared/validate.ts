@@ -53,15 +53,17 @@ export async function validateRequest(value: unknown): Promise<Request> {
             break;
         case 'settings.set':
             fields = ['patch'];
-            validateSettings(v.patch);
+            validateSettingsPatch(v.patch);
             break;
+        case 'engines.status':
         case 'sessions.list':
             fields = [];
             break;
         case 'sessions.create':
-            fields = ['engine', 'cwd', 'title'];
-            if (v.engine !== 'shell' || !(await validCwd(v.cwd)) || (v.title !== undefined && !isTitle(v.title)))
-                throw new ValidationError('Only internal shell sessions with an existing absolute cwd are supported');
+            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','auth','cwd','permission','title','firstMessage'];
+            if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
+            if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAccount(v.auth) || !isPermission(v.permission) || (v.firstMessage !== undefined && (typeof v.firstMessage !== 'string' || Buffer.byteLength(v.firstMessage) > 16384 || v.firstMessage.includes('\0'))))) throw new ValidationError('Invalid account agent request');
+            if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
             break;
         case 'sessions.attach':
         case 'sessions.resize':
@@ -100,6 +102,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.kind!==undefined && (v.kind!=='hello'||v.protocol!==1||typeof v.version!=='string'||!/^[A-Za-z0-9._-]{1,40}$/.test(v.version)||!Number.isSafeInteger(v.daemonPid)||Number(v.daemonPid)<2))throw new ValidationError('Invalid daemon hello');
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
     if(v.settings!==undefined)validateSettings(v.settings);
+    if(v.engines!==undefined) { if (!v.engines || typeof v.engines !== 'object' || !('claudeCode' in v.engines) || !('codex' in v.engines)) throw new ValidationError('Invalid engines status'); validateEngineStatus(v.engines.claudeCode); validateEngineStatus(v.engines.codex); }
     if(v.modes!==undefined)validateModes(v.modes);
     const session=(x:unknown)=>{try{validateSession(x);return true;}catch{return false;}};
     if(v.session!==undefined&&!session(v.session))throw new ValidationError('Invalid daemon session');
@@ -124,22 +127,41 @@ export function validateExitCode(value:unknown):number|undefined {
 export function isThemeName(value: unknown): value is import('./protocol.js').ThemeName {
     return typeof value === 'string' && ['graphite', 'slate', 'ink', 'auto', 'light'].includes(value);
 }
+export function isAgentEngine(value: unknown): value is import('./protocol.js').AgentEngine { return value === 'claude-code' || value === 'codex'; }
+export function isModel(value: unknown): value is string | null { return value === null || typeof value === 'string' && isValidModelId(value); }
+export function isPermission(value: unknown): value is import('./protocol.js').Permission { return value === 'ask' || value === 'dontAsk'; }
+function isAccount(value: unknown): boolean { return !!value && typeof value === 'object' && Object.keys(value).length === 1 && 'kind' in value && value.kind === 'account'; }
+export function sanitizeTitle(value: string): string { return [...stripVTControlCharacters(value).replace(/[\p{C}]/gu, '').trim()].slice(0,60).join(''); }
+export function validateSettingsPatch(value: unknown): import('./protocol.js').SettingsPatch {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
+    const v = value as Record<string,unknown>;
+    if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
+        v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isAgentEngine(v.defaultEngine) ||
+        v.defaultModel !== undefined && !isModel(v.defaultModel) || v.permission !== undefined && v.permission !== 'ask' ||
+        v.defaultCwd !== undefined && (typeof v.defaultCwd !== 'string' || !isAbsolute(v.defaultCwd) || v.defaultCwd.includes('\0')) || JSON.stringify(v).length > 16384) throw new ValidationError('Invalid settings patch; permission default must be ask');
+    return {...v};
+}
 export function validateSettings(value: unknown): import('./protocol.js').Settings {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected theme settings');
-    const v = value as Record<string, unknown>;
-    if (Object.keys(v).length !== 1 || !isThemeName(v.theme)) throw new ValidationError('Settings accept only a theme');
-    return { theme: v.theme };
+    const v = validateSettingsPatch(value);
+    if (!isThemeName(v.theme)) throw new ValidationError('Invalid settings theme');
+    return {...v,theme:v.theme};
+}
+export function validateEngineStatus(value:unknown): import('./protocol.js').EngineStatus {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid engine status');
+    const v=value as Record<string,unknown>;
+    if (typeof v.installed !== 'boolean' || !(v.path === null || typeof v.path === 'string' && isAbsolute(v.path)) || !(v.version === null || typeof v.version === 'string' && /^[A-Za-z0-9.-]{1,80}$/.test(v.version)) || !(v.loggedIn === null || typeof v.loggedIn === 'boolean') || !['subscription','api-key','unknown'].includes(String(v.authMethod))) throw new ValidationError('Invalid engine status');
+    return {installed:v.installed,path:v.path as string|null,version:v.version as string|null,loggedIn:v.loggedIn as boolean|null,authMethod:v.authMethod as import('./protocol.js').AuthMethod};
 }
 export function validateSession(value: unknown): import('./protocol.js').SessionInfo {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid daemon session');
     const s = value as Record<string, unknown>;
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
     if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
-        typeof s.model !== 'string' || !isValidModelId(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
-        !s.auth || typeof s.auth !== 'object' || !('kind' in s.auth) || s.auth.kind !== 'account' || s.permission !== 'ask' ||
+        !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
+        !s.auth || typeof s.auth !== 'object' || !('kind' in s.auth) || s.auth.kind !== 'account' || !isPermission(s.permission) ||
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'idle', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || s.ctxPercent !== null ||
-        !(s.exitCode === null || Number.isSafeInteger(s.exitCode))) throw new ValidationError('Invalid daemon session');
+        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod))) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }

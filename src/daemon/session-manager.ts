@@ -47,11 +47,11 @@ export class SessionManager extends EventEmitter {
             if (!raw || typeof raw !== 'object')
                 throw new Error('Invalid session record');
             const r = raw as Record<string, unknown>;
-            if (!isUUID(r.id) || !isTitle(r.title) || r.engine !== 'shell' || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
+            if (!isUUID(r.id) || !isTitle(r.title) || !['shell','claude-code','codex'].includes(String(r.engine)) || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
             const now = new Date().toISOString();
             const saved = validateSession(r);
-            const info: SessionInfo = { id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent };
+            const info: SessionInfo = { id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}) };
             if (info.status === 'starting' || info.status === 'running') {
                 info.status = 'exited'; info.statusDetail = 'background service restarted';
                 info.statusSince = now; info.exitCode = null;

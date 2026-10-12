@@ -7,7 +7,7 @@ import { validateRequest, validateSuccess } from '../src/shared/validate.js';
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function temporary() { const root = await mkdtemp(join(tmpdir(), 'ai-term-settings-')); roots.push(root); return root; }
-it('S2 accepts theme-only settings patches and rejects unknown keys and themes', async () => {
+it('S2 accepts settings patches and rejects unsafe defaults and themes', async () => {
   for (const theme of ['graphite', 'slate', 'ink', 'auto', 'light']) {
     const request = { id: randomUUID(), kind: 'settings.set', patch: { theme } };
     expect(await validateRequest(request)).toEqual(request);

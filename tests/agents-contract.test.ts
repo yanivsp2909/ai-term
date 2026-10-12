@@ -30,7 +30,7 @@ it('merges settings patches, preserving unknown keys and rejecting a dontAsk def
  const p=await root(),store=new SettingsStore(p);await writeFile(join(p,'settings.json'),JSON.stringify({theme:'slate',future:{keep:true},defaultEngine:'codex',defaultModel:null}));
  expect(await store.set({theme:'ink'})).toMatchObject({theme:'ink',future:{keep:true},defaultEngine:'codex'});
  expect(JSON.parse(await readFile(join(p,'settings.json'),'utf8'))).toMatchObject({future:{keep:true}});
- await expect(store.set({permission:'dontAsk'})).rejects.toThrow();
+ expect(()=>store.set({permission:'dontAsk'} as unknown as import('../src/shared/protocol.js').SettingsPatch)).toThrow();
  expect(await validateRequest({id:randomUUID(),kind:'settings.set',patch:{defaultEngine:'claude-code',defaultModel:'sonnet'}})).toMatchObject({patch:{defaultModel:'sonnet'}});
  expect(()=>validateSuccess({id:randomUUID(),ok:true,engines:{claudeCode:{installed:true,path:'/bin/claude',version:'2.1.295',loggedIn:true,authMethod:'subscription'},codex:{installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown'}}})).not.toThrow();
 });

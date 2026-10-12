@@ -5,17 +5,25 @@ export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 export type Engine = 'claude-code' | 'codex' | 'shell'; // Shell spawning remains internal; the homepage can display it.
 export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 'error';
 export type ThemeName = 'graphite' | 'slate' | 'ink' | 'auto' | 'light';
-export interface Settings { theme: ThemeName }
+export type AgentEngine = 'claude-code' | 'codex';
+export type Permission = 'ask' | 'dontAsk';
+export type AuthMethod = 'subscription' | 'api-key' | 'unknown';
+export interface EngineStatus { installed: boolean; path: string | null; version: string | null; loggedIn: boolean | null; authMethod: AuthMethod }
+export interface EnginesStatus { claudeCode: EngineStatus; codex: EngineStatus }
+export interface Settings { theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultCwd?: string; permission?: 'ask'; [key: string]: unknown }
+export type SettingsPatch = Partial<Settings>;
+export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; auth: {kind:'account'}; cwd: string; permission: Permission; title?: string; firstMessage?: string };
 export interface SessionInfo {
     id: string;
     title: string;
     engine: Engine;
-    model: string;
+    model: string | null;
     auth: {
         kind: 'account';
     };
     cwd: string;
-    permission: 'ask';
+    permission: Permission;
+    authMethod?: AuthMethod;
     status: Status;
     statusDetail: string;
     statusSince: string;
@@ -35,15 +43,12 @@ export type Request = {
     kind: 'settings.get';
 } | {
     kind: 'settings.set';
-    patch: Settings;
+    patch: SettingsPatch;
 } | {
     kind: 'sessions.list';
 } | {
-    kind: 'sessions.create';
-    engine: 'shell';
-    cwd: string;
-    title?: string;
-} | {
+    kind: 'engines.status';
+} | ({ kind: 'sessions.create' } & CreateSession) | {
     kind: 'sessions.preview';
     sessionId: string | null;
 } | {
@@ -74,6 +79,7 @@ export interface SuccessResponse {
     version?: string;
     daemonPid?: number;
     settings?: Settings;
+    engines?: EnginesStatus;
     sessions?: SessionInfo[];
     session?: SessionInfo;
     snapshot?: string;

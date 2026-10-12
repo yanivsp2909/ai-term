@@ -13,7 +13,7 @@ class Client extends EventEmitter {
   input = vi.fn(); requests: RequestBody[] = []; snapshot = 'hello preview';
   async request(body: RequestBody): Promise<SuccessResponse> {
     this.requests.push(body);
-    return { id: randomUUID(), ok: true, ...(body.kind === 'sessions.list' ? { sessions: [session] } : {}), ...(body.kind.startsWith('settings.') ? { settings: { theme: body.kind === 'settings.set' ? body.patch.theme : 'graphite' } } : {}), ...(body.kind === 'sessions.preview' ? { snapshot: this.snapshot, sessionId: body.sessionId ?? undefined, cols: 88, rows: 27 } : {}) };
+    return { id: randomUUID(), ok: true, ...(body.kind === 'sessions.list' ? { sessions: [session] } : {}), ...(body.kind.startsWith('settings.') ? { settings: { theme: body.kind === 'settings.set' ? body.patch.theme ?? 'graphite' : 'graphite' } } : {}), ...(body.kind === 'sessions.preview' ? { snapshot: this.snapshot, sessionId: body.sessionId ?? undefined, cols: 88, rows: 27 } : {}) };
   }
 }
 afterEach(() => vi.restoreAllMocks());
