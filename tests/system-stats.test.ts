@@ -32,7 +32,7 @@ const fake = (interval: number): MakeSampler => (manager, log) => {
   const deps: SamplerDeps = {
     // A ps line that carries a command line must never reach a client.
     run: async file => file === SAMPLE_COMMANDS.ps.file ? manager.sessionRoots().map(r => `${r.pid} 1 2048 3.0`).join('\n') + '\n 77 1 10 1.0 /usr/bin/secret-tool --token=SECRET\n'
-      : file === SAMPLE_COMMANDS.vmStat.file ? 'Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages active: 10.\nPages wired down: 10.\nPages occupied by compressor: 10.\n'
+      : file === SAMPLE_COMMANDS.vmStat.file ? 'Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages active: 10.\nAnonymous pages: 12.\nPages purgeable: 2.\nPages wired down: 10.\nPages occupied by compressor: 10.\n'
         : `Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll\nen0 1500 <Link#1> 00:00:00:00:00:01 1 0 ${1000 * ++tick} 1 0 0 0\n`,
     cpus: () => [{ model: 'm', speed: 1, times: { user: 10 * ++tick, nice: 0, sys: 0, idle: 30 * tick, irq: 0 } }], totalmem: () => 8 * 1024 ** 3, now: () => performance.now(),
     sessions: () => manager.sessionRoots(), log,

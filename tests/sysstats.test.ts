@@ -14,6 +14,7 @@ Pages speculative:                             19979.
 Pages throttled:                                   0.
 Pages wired down:                             190882.
 Pages purgeable:                               11197.
+Anonymous pages:                              789302.
 "Translation faults":                     5559429999.
 Pages stored in compressor:                   953866.
 Pages occupied by compressor:                 464846.
@@ -49,11 +50,14 @@ describe('parsers', () => {
     expect(rows.find(r => r.pid === 201)).toEqual({ pid: 201, ppid: 200, rssKb: 20000, cpu: 30 });
     expect(JSON.stringify(rows)).not.toContain('secret');
   });
-  it('parseVmStat sums active, wired and compressor pages times the page size', () => {
-    expect(parseVmStat(VM_STAT)).toBe((659302 + 190882 + 464846) * 16384);
+  it('parseVmStat matches Memory Used: anonymous minus purgeable, plus wired and compressor pages', () => {
+    expect(parseVmStat(VM_STAT)).toBe((789302 - 11197 + 190882 + 464846) * 16384);
     expect(parseVmStat(VM_STAT.replace(/Pages wired down:.*\n/, ''))).toBeNull();
     expect(parseVmStat(VM_STAT.replace('page size of 16384 bytes', 'page size unknown'))).toBeNull();
-    expect(parseVmStat(VM_STAT.replace('659302.', 'abc.'))).toBeNull();
+    expect(parseVmStat(VM_STAT.replace('789302.', 'abc.'))).toBeNull();
+    expect(parseVmStat(VM_STAT.replace(/Anonymous pages:.*\n/, ''))).toBeNull();
+    expect(parseVmStat(VM_STAT.replace(/Pages purgeable:.*\n/, ''))).toBeNull();
+    expect(parseVmStat(VM_STAT.replace('11197.', '900000.'))).toBeNull();
     expect(parseVmStat('')).toBeNull();
   });
   it('parseNetstat reads link rows of non-loopback interfaces only, 10- and 11-field rows alike', () => {
