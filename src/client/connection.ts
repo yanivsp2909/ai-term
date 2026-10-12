@@ -109,7 +109,7 @@ export class Connection extends EventEmitter {
                     throw new Error('Unsafe daemon log', { cause: error });
                 await file.chmod(0o600);
                 const args = options.entry.endsWith('.ts') ? ['--import', 'tsx', options.entry, 'daemon'] : [options.entry, 'daemon'];
-                const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', file.fd, file.fd], env: { ...process.env, AI_TERM_HOME: paths.root } });
+                const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env: { ...process.env, AI_TERM_HOME: paths.root } });
                 child.on('error', error => { startupError = error; });
                 child.unref();
             }

@@ -30,10 +30,12 @@ export async function runDaemon(): Promise<void> {
                 try{await cleanup();}catch(cleanupError){try{log.error(`Shutdown failed: ${cleanupError instanceof Error?cleanupError.message:'unknown'}`);}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
             }
         } finally {
-            try{release();}catch{process.stderr.write('Daemon lock cleanup failed\n');process.exitCode=1;}finally{process.off('SIGTERM',onSignal);process.off('SIGINT',onSignal);resolveDone();}
+            try{release();}catch{process.stderr.write('Daemon lock cleanup failed\n');process.exitCode=1;}finally{process.off('SIGTERM',onSignal);process.off('SIGINT',onSignal);process.off('uncaughtException',onFailure);process.off('unhandledRejection',onFailure);resolveDone();}
         }
     };
     const onSignal = () => { void shutdown(); };
+    const onFailure = (error:unknown) => { void shutdown(error); };
+    process.on('uncaughtException',onFailure);process.on('unhandledRejection',onFailure);
     process.on('SIGTERM', onSignal);
     process.on('SIGINT', onSignal);
     manager.on('fatal', (error: unknown) => { void shutdown(error); });
