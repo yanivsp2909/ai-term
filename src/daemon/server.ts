@@ -265,7 +265,8 @@ export class DaemonServer {
         }
         catch (error) {
             this.log.error(`Operation failed: ${error instanceof Error ? error.message : 'unknown'}`);
-            this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message: 'Session operation failed' } });
+            const message = error instanceof Error && /^(claude not found in PATH|codex not found in PATH|Engine is not logged in|Engine login status unavailable|Current terminal screen exceeds snapshot frame limit)$/.test(error.message) ? error.message : 'Session operation failed';
+            this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });
         }
     }
     private async detach(peer:Peer):Promise<void> {
