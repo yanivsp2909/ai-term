@@ -198,7 +198,14 @@ export class Homepage {
       return;
     }
     if(this.helpOffset!==null){if(event.key==='escape')this.helpOffset=null;else{const page=Math.max(1,this.size().rows-8),delta=event.key==='up'?-1:event.key==='down'?1:event.key==='page-up'?-page:event.key==='page-down'?page:0;this.helpOffset=Math.max(0,Math.min(Math.max(0,wrapHelpLines(helpLines(this.commandContext()),Math.min(this.size().cols,110)-6).length-page),this.helpOffset+delta));}this.draw(true);return;}
-    if(this.cleanIds){const ids=this.cleanIds;if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status))await this.operation({kind:'sessions.remove',sessionId:id});}this.showNote('');});}else if(event.key==='n'||event.key==='escape'){this.cleanIds=null;this.showNote('');}return;}
+    if(this.cleanIds){
+      const ids=this.cleanIds;
+      if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{
+        let failure='';for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status)){
+          try{await this.connection.request({kind:'sessions.remove',sessionId:id});}catch(error){failure=error instanceof Error?error.message:'Record could not remove';}
+        }}this.showNote(failure);
+      });}else if(event.key==='n'||event.key==='escape'){this.cleanIds=null;this.showNote('');}return;
+    }
     if(this.usageForm){const form=this.usageForm;if(event.key==='escape'){this.usageForm=undefined;this.usageFormError='';}else if(event.key==='enter')this.enqueue(async()=>{try{if(form instanceof BudgetForm){const budgets=form.values();await this.connection.request({kind:'settings.set',patch:{budgets}});this.budgets=budgets;}else{const {model,price}=form.values(),settings=(await this.connection.request({kind:'settings.get'})).settings;await this.connection.request({kind:'settings.set',patch:{priceOverrides:{...settings?.priceOverrides,[model]:price}}});}this.usageForm=undefined;}catch(error){this.usageFormError=error instanceof Error?error.message:'Settings could not save';}this.draw(true);});else form.key(event.key);this.draw(true);return;}
     if(this.credentials){const panel=this.credentials;if(event.key==='escape'){panel.dispose();this.credentials=undefined;this.draw(true);}else this.enqueue(()=>panel.key(event.key));return;}
     if (this.box) { this.boxInput(event.key); return; }
