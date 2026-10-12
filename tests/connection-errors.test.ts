@@ -21,3 +21,22 @@ it('Foundry test waits for the bounded deployment probe budget, not the ordinary
  const server=createServer(socket=>{const decoder=new FrameDecoder();socket.on('data',data=>{for(const frame of decoder.push(data)){const r=decodeControl(frame) as {id:string;kind:string};if(r.kind==='hello')socket.write(encodeControl({id:r.id,ok:true,kind:'hello',protocol:1,version:'test',daemonPid:process.pid}));else reply=()=>socket.write(encodeControl({id:r.id,ok:true,results:[]}));}});});let client:Connection|undefined;
  try{await new Promise<void>(r=>server.listen(paths.socket,r));await chmod(paths.socket,0o600);client=await Connection.connect(paths,{entry:'/unused',autoStart:false});vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});const pending=client.request({kind:'keys.test',keyId:'550e8400-e29b-41d4-a716-446655440000'});let failed=false;void pending.catch(()=>{failed=true;});await new Promise(r=>setImmediate(r));await vi.advanceTimersByTimeAsync(5001);expect(failed).toBe(false);reply();await pending;}finally{vi.useRealTimers();client?.close();await new Promise<void>(r=>server.close(()=>r()));await rm(root,{recursive:true,force:true});}
 });
+// sessions.create can run two 5 s engine checks and wait on a macOS Keychain prompt before it spawns; a 5 s client
+// timeout reported failure while the daemon went on to start the agent anyway.
+it.each(['sessions.create','sessions.resume'] as const)('%s outlives the ordinary five-second timeout but stays bounded',async kind=>{
+ const {vi}=await import('vitest');const root=await mkdtemp('/tmp/ai-connection-create-'),paths=getPaths(root);await preparePaths(paths);
+ const server=createServer(socket=>{const decoder=new FrameDecoder();socket.on('data',data=>{for(const frame of decoder.push(data)){const r=decodeControl(frame) as {id:string;kind:string};if(r.kind==='hello')socket.write(encodeControl({id:r.id,ok:true,kind:'hello',protocol:1,version:'test',daemonPid:process.pid}));}});});let client:Connection|undefined;
+ try{await new Promise<void>(r=>server.listen(paths.socket,r));await chmod(paths.socket,0o600);client=await Connection.connect(paths,{entry:'/unused',autoStart:false});vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+  const body=kind==='sessions.create'?{kind,engine:'claude-code' as const,model:null,auth:{kind:'account' as const},cwd:root,permission:'ask' as const}:{kind,sessionId:'550e8400-e29b-41d4-a716-446655440000'};
+  const pending=client.request(body);let failed:unknown=null;void pending.catch((e:unknown)=>{failed=e;});await new Promise(r=>setImmediate(r));
+  await vi.advanceTimersByTimeAsync(5001);expect(failed).toBeNull();await vi.advanceTimersByTimeAsync(60_000);expect(failed).toBeInstanceOf(Error);
+ }finally{vi.useRealTimers();client?.close();await new Promise<void>((r,reject)=>server.close(error=>error?reject(error):r()));await rm(root,{recursive:true,force:true});}
+});
+// The auto-started daemon's stdio is ignored, so a startup failure (corrupt state.json, lock) is only in its log; say where.
+it('a daemon that never comes up names the log that holds the reason',async()=>{
+ const {vi}=await import('vitest');const {writeFile}=await import('node:fs/promises');const root=await mkdtemp('/tmp/ai-connection-start-'),paths=getPaths(root);await preparePaths(paths);const entry=join(root,'exit.mjs');await writeFile(entry,'process.exit(0);\n');
+ try{vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']});const pending=Connection.connect(paths,{entry});let failed:unknown=null;void pending.catch((e:unknown)=>{failed=e;});
+  for(let i=0;i<80&&failed===null;i++)await vi.advanceTimersByTimeAsync(50);
+  expect(failed).toBeInstanceOf(Error);expect((failed as Error).message).toContain(paths.log);
+ }finally{vi.useRealTimers();await rm(root,{recursive:true,force:true});}
+});
