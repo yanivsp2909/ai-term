@@ -40,14 +40,15 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     if (selected) for (let r = 0; r < 3; r++) grid.text(1, y + r, '▎', t.accent, bg);
     grid.text(2, y, ` ${session.engine === 'shell' ? 'SH' : session.engine === 'codex' ? 'GP' : 'CL'} `, t.ink, t['surface-2'], true);
     grid.text(2, y + 1, '    ', t.ink, t['surface-2']);
-    const status = `${glyph} ${age(session, view.now)}`;
+    const status = `${session.permission==='dontAsk'?'! ':''}${glyph} ${age(session, view.now)}`;
     grid.text(7, y, session.title, t.ink, bg, selected, panel.w - status.length - 9);
     grid.text(panel.w - status.length - 2, y, status, color, bg);
-    grid.text(7, y + 1, session.engine === 'shell' ? 'shell' : `${session.model ?? 'CLI default'} · ${session.engine === 'codex' ? 'codex' : 'claude code'} · ${session.auth.kind==='key'?`key ····${session.auth.last4}`:ownLoginLabel(session.authMethod)}`, t['ink-2'], bg, false, panel.w - 9);
-    if (session.engine !== 'shell') { const authLabel = session.auth.kind==='key'?`····${session.auth.last4}`:ownLoginLabel(session.authMethod); grid.text(panel.w - authLabel.length - 2, y + 1, authLabel, t['ink-3'], bg); }
+    if(session.permission==='dontAsk')grid.text(panel.w-status.length-2,y,'!',t['status-error'],bg);
+    grid.text(7, y + 1, session.engine === 'shell' ? 'shell' : `${session.model ?? 'CLI default'} · ${session.engine === 'codex' ? 'codex' : 'claude code'}`, t['ink-2'], bg, false, panel.w - 9);
     const auth = session.auth.kind==='key'?`API key ····${session.auth.last4}`:session.engine==='shell'?'':ownLoginLabel(session.authMethod);
-    const detail = `${auth?auth+' · ':''}${session.permission === 'dontAsk' ? "! don't ask · " : ''}${session.statusDetail === word ? word : `${word} · ${session.statusDetail}`}`;
-    grid.text(7, y + 2, detail, session.permission === 'dontAsk' ? t['status-error'] : session.status === 'error' || session.status === 'waiting' ? color : t['ink-3'], bg, false, panel.w - 9);
+    const detail = auth||`${session.statusDetail === word ? word : `${word} · ${session.statusDetail}`}`;
+    grid.text(7, y + 2, detail, session.status === 'error' || session.status === 'waiting' ? color : t['ink-3'], bg, false, panel.w - 9);
+    if(session.permission==='dontAsk'&&layout.preview&&view.selectedId===session.id)grid.text(layout.preview.x+2,2,"! don't ask",t['status-error'],t.surface);
   }
   if (!sessions.length) grid.text(3, 3, 'No sessions yet', t['ink-3']);
   const selected = sessions.find(s => s.id === view.selectedId);
@@ -60,6 +61,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     const usage = agentUsage(view.stats, selected?.id), usageW = usage ? textWidth(usage) + 2 : 0;
     grid.text(p.x + 2, 2, selected?.engine === 'shell' ? 'shell' : selected ? `${selected.engine} · ${selected.model ?? 'CLI default'}` : 'Your agents, together in one terminal', t['ink-2'], t.surface, false, p.w - 4 - usageW);
     if (usage) grid.text(p.x + p.w - 2 - textWidth(usage), 2, usage, t['ink-3'], t.surface);
+    if(selected?.permission==='dontAsk'){grid.text(p.x+2,p.y,"! don't ask · ",t['status-error'],t.surface);grid.text(p.x+15,p.y,selected.title,t['ink-2'],t.surface,true,p.w-35);}
     for (let y = 0; y < area.h; y++) for (let x = 0; x < area.w; x++) { const cell = view.previewCells?.[y]?.[x]; if (cell) grid.put(area.x + x, area.y + y, cell); }
     if (!selected) { grid.text(area.x + 1, area.y + 2, 'Build with AI coding agents.', t['ink-3'], t.surface); grid.text(area.x + 1, area.y + 4, 'Type a task · ⏎ to start', t['ink-3'], t.surface); grid.text(area.x + 1, area.y + 6, 'Account logins · /model to choose', t['ink-3'], t.surface); }
     if (view.linesBack) { grid.fill(area.x, area.y, area.w, 1, t.surface); grid.text(area.x, area.y, `↑ ${view.linesBack} lines back · the agent keeps running  End follow live`, t['ink-2'], t.surface, false, area.w); }
