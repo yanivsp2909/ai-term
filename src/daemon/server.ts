@@ -8,6 +8,8 @@ import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { enginesStatus } from './engines.js';
+import { KeyStore, KeyError } from './keys.js';
+import { testFoundry } from './providers/foundry.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
@@ -53,7 +55,7 @@ export class DaemonServer {
     } | undefined;
     private readonly sampler: SystemSampler;
     private closed = false;
-    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler) {
+    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root)) {
         this.settings = new SettingsStore(paths.root);
         this.sampler = sampler ?? new SystemSampler(defaultSamplerDeps(() => manager.sessionRoots(), log));
         this.sampler.on('stats', (stats: SystemStats) => { for (const peer of this.peers) if (peer.hello && peer.stats) this.control(peer, { kind: 'system.stats', stats }); });
@@ -200,6 +202,17 @@ export class DaemonServer {
         }
         try {
             switch (request.kind) {
+                case 'keys.list': this.control(peer,{id:request.id,ok:true,keys:await this.keys.list()}); break;
+                case 'keys.add': this.control(peer,{id:request.id,ok:true,key:await this.keys.add(request)}); break;
+                case 'keys.remove': await this.keys.remove(request.keyId); this.control(peer,{id:request.id,ok:true}); break;
+                case 'keys.scanEnvFile': this.control(peer,{id:request.id,ok:true,found:await this.keys.scanEnvFile(request.path)}); break;
+                case 'keys.importEnv': this.control(peer,{id:request.id,ok:true,keys:await this.keys.importEnv(request.path,request.names)}); break;
+                case 'keys.test': {
+                    const key=await this.keys.view(request.keyId);
+                    if(key.provider!=='foundry'||!key.endpoint||!key.deployments)throw new KeyError('Only Foundry keys have deployment tests');
+                    const results=await this.keys.withSecret(key.id,secret=>testFoundry(key.endpoint??'',key.deployments??[],secret));
+                    await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
+                }
                 case 'engines.status':
                     this.control(peer, { id: request.id, ok: true, engines: await enginesStatus() });
                     break;
@@ -276,7 +289,7 @@ export class DaemonServer {
         }
         catch (error) {
             this.log.error(`Operation failed: ${error instanceof Error ? error.message : 'unknown'}`);
-            const message = error instanceof Error && /^(claude not found in PATH|codex not found in PATH|Engine is not logged in|Engine login status unavailable|Current terminal screen exceeds snapshot frame limit)$/.test(error.message) ? error.message : 'Session operation failed';
+            const message = error instanceof KeyError ? error.message : error instanceof Error && /^(claude not found in PATH|codex not found in PATH|Engine is not logged in|Engine login status unavailable|Current terminal screen exceeds snapshot frame limit)$/.test(error.message) ? error.message : 'Session operation failed';
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });
         }
     }

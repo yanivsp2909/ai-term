@@ -8,6 +8,7 @@ import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror } from './mirror.js';
 import { buildShellEnv, buildSpawnEnv, buildArgs } from './env.js';
+import { KeyStore, KeyError } from './keys.js';
 import { checkEngine } from './engines.js';
 import { ReplyBudget } from './reply-budget.js';
 interface Live {
@@ -28,7 +29,7 @@ export class SessionManager extends EventEmitter {
     private warnings = new Map<string, string>();
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
-    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite) {
+    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root)) {
         super(); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -73,7 +74,7 @@ export class SessionManager extends EventEmitter {
     activeCount(): number { return this.list().filter(s => s.status === 'starting' || s.status === 'running').length; }
     private event(event: SessionEvent): void { this.emit('event', event); }
     private persist(): Promise<void> {
-        const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: s.info.engine, model: s.info.model, auth: { kind: 'account' }, cwd: s.info.cwd, permission: s.info.permission } })) };
+        const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: s.info.engine, model: s.info.model, auth: s.info.auth.kind==='key'?{kind:'key',keyId:s.info.auth.keyId}:{ kind: 'account' }, cwd: s.info.cwd, permission: s.info.permission } })) };
         this.saving = this.saving.then(async () => {
             try { await this.writeState(this.paths.state, data); }
             catch {
@@ -95,12 +96,19 @@ export class SessionManager extends EventEmitter {
         if (agent) {
             const status = await checkEngine(agent.engine);
             if (!status.installed || !status.path) throw new Error(`${agent.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`);
-            if (status.loggedIn !== true) throw new Error(status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable');
+            if (agent.auth.kind==='account' && !agent.login && status.loggedIn !== true) throw new Error(status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable');
             authMethod = status.authMethod;
-            recipe = { executable: status.path, args: buildArgs(agent), env: buildSpawnEnv(agent.engine, {kind:'account'}, process.env) };
+            if(agent.auth.kind==='key'){
+                const key=await this.keys.view(agent.auth.keyId);
+                if(agent.engine==='claude-code'&&key.provider!=='anthropic'||agent.engine==='codex'&&key.provider==='anthropic')throw new KeyError('Key provider does not match engine');
+                if(key.provider==='foundry'&&(!agent.model||!key.deployments?.includes(agent.model)||!key.lastTest?.some(r=>r.model===agent.model&&r.status==='ready')))throw new KeyError('Foundry deployment must pass its test first');
+                authMethod='api-key';
+                recipe={executable:status.path,args:buildArgs({...agent,...(key.provider==='foundry'?{foundryEndpoint:key.endpoint}:{}),...(key.provider==='openai'?{openaiKey:true}:{})}),env:{}};
+            }else recipe = { executable: status.path, args: agent.login ? (agent.engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false','login']:['auth','login']) : buildArgs(agent), env: buildSpawnEnv(agent.engine, {kind:'account'}, process.env) };
         } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
+        const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
-        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', auth: { kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null };
+        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null };
         const replies = new ReplyBudget();
         let dropping = false;
         const reply = (data: string) => {
@@ -111,8 +119,13 @@ export class SessionManager extends EventEmitter {
         const live: Live = { info, mirror: new Mirror(this.size.cols, this.size.rows, reply), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         this.sessions.set(info.id, live);
         try {
-            live.host = new PtyHost(recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
-            live.host.pty.onData(data => {
+            if(agent?.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,secret=>{
+                recipe.env=buildSpawnEnv(agent.engine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env);
+                try{live.host=new PtyHost(recipe,request.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
+            });
+            else live.host = new PtyHost(recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
+            const host=live.host;if(!host)throw new Error('Spawn did not return a PTY');
+            host.pty.onData(data => {
                 const bytes=Buffer.byteLength(data);live.queuedBytes+=bytes;
                 this.updatePause(live);
                 live.output = live.output.then(async () => {
@@ -131,7 +144,7 @@ export class SessionManager extends EventEmitter {
                     this.updatePause(live);
                 });
             });
-            live.host.pty.onExit(event => {
+            host.pty.onExit(event => {
                 live.output = live.output.then(async () => {
                     // node-pty reports exitCode 0 for a killed child; only the signal tells a crash apart.
                     const crashed = Boolean(event.signal) && !live.host?.stopRequested;

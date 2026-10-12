@@ -39,6 +39,7 @@ export class KeyStore {
   const key=await this.view(id);let secret:string|null;
   try{secret=await this.vault.read(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable');}
   if(!secret||!isSecret(secret))throw new KeyError('Key is missing from the OS keychain');
+  // eslint-disable-next-line no-useless-assignment -- Drop our reference after the one permitted use.
   try{return await use(secret);}finally{secret=null;}
  }
  async saveTest(id:string,results:DeploymentTest[]):Promise<void>{validateDeploymentTests(results);await this.serial(async()=>{await this.view(id);await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).map(k=>k.id===id?{...k,lastTest:results}:k)}));});}

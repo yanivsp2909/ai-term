@@ -18,10 +18,10 @@ export const CODEX_AUTH_VARS = ['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_UR
 // D41: a Codex account config may route Azure through AZURE_OPENAI_API_KEY, so account sessions keep it. A key session still gets only its own key (D16).
 const CODEX_KEY_EXTRA_VARS = ['AZURE_OPENAI_API_KEY'] as const;
 // Key rows are pure/tested only. No v0.1.6 handler accepts a key or invokes these rows.
-export function buildSpawnEnv(engine: AgentEngine, auth: {kind:'account'} | {kind:'key';secret:string}, base: NodeJS.ProcessEnv): Record<string,string> {
+export function buildSpawnEnv(engine: AgentEngine, auth: {kind:'account'} | {kind:'key';secret:string;provider?:'openai'}, base: NodeJS.ProcessEnv): Record<string,string> {
     const result=buildShellEnv(base), vars:readonly string[]=engine==='claude-code'?CLAUDE_AUTH_VARS:auth.kind==='key'?[...CODEX_AUTH_VARS,...CODEX_KEY_EXTRA_VARS]:CODEX_AUTH_VARS;
     for(const key of Object.keys(result))if(vars.some(pattern=>pattern.endsWith('*')?key.startsWith(pattern.slice(0,-1)):key===pattern))delete result[key];
-    if(auth.kind==='key')result[engine==='claude-code'?'ANTHROPIC_API_KEY':'AITERM_FOUNDRY_KEY']=auth.secret;
+    if(auth.kind==='key')result[engine==='claude-code'?'ANTHROPIC_API_KEY':auth.provider==='openai'?'OPENAI_API_KEY':'AITERM_FOUNDRY_KEY']=auth.secret;
     return result;
 }
 // D40: Ask passes explicit ask flags, or the user's own CLI config (e.g. Codex YOLO) silently turns Ask into Don't ask. Claude 2.1.296 help lists this mode as 'manual'; the CLI maps 'manual' to its canonical 'default'.
@@ -29,7 +29,7 @@ const PERMISSION_ARGS:Record<AgentEngine,Record<Permission,readonly string[]>>={
     'claude-code':{ask:['--permission-mode=default'],dontAsk:['--permission-mode=bypassPermissions']},
     codex:{ask:['--ask-for-approval=on-request','--sandbox=workspace-write'],dontAsk:['--ask-for-approval=never','--sandbox=workspace-write']},
 };
-export function buildArgs(request:{engine:AgentEngine;model:string|null;permission:Permission;firstMessage?:string;foundryEndpoint?:string}):string[] {
+export function buildArgs(request:{engine:AgentEngine;model:string|null;permission:Permission;firstMessage?:string;foundryEndpoint?:string;openaiKey?:boolean}):string[] {
     if(!isModel(request.model)||!isPermission(request.permission)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid spawn arguments');
     // D41: without --no-daemon the Codex TUI may join a shared background server started elsewhere, whose env and config win over this recipe's env and -c overrides. Codex rejects the flag twice, so only this line adds it.
     // B5: Codex's startup update menu takes Enter as "Update now"; its own check_for_update_on_startup (config_toml.rs, rust-v0.160.1) turns the check off for this session only.
@@ -40,6 +40,7 @@ export function buildArgs(request:{engine:AgentEngine;model:string|null;permissi
         if(request.engine!=='codex'||!request.model||url.protocol!=='https:'||!url.hostname||url.username||url.password||/[\s"'\\]/.test(endpoint))throw new Error('Invalid Foundry endpoint');
         for(const config of ['model_provider="aiterm_foundry"','model_providers.aiterm_foundry.name="AI Term Foundry"',`model_providers.aiterm_foundry.base_url="${endpoint}"`,'model_providers.aiterm_foundry.env_key="AITERM_FOUNDRY_KEY"','model_providers.aiterm_foundry.env_http_headers={"api-key"="AITERM_FOUNDRY_KEY"}','model_providers.aiterm_foundry.wire_api="responses"','model_providers.aiterm_foundry.requires_openai_auth=false'])args.push('-c',config);
     }
+    if(request.openaiKey){if(request.engine!=='codex')throw new Error('Invalid OpenAI engine');args.push('-c','model_provider="openai"');}
     if(request.model!==null)args.push(`--model=${request.model}`);
     args.push(...PERMISSION_ARGS[request.engine][request.permission]);
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
