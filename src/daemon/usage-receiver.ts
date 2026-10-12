@@ -17,7 +17,7 @@ export class UsageReceiver {
  revoke(sessionId:string):void{for(const [token,context]of this.credentials)if(context.sessionId===sessionId)this.credentials.delete(token);}
  revokeAll():void{this.credentials.clear();}
  private authorize(value:unknown):UsageContext|null{
-  if(typeof value!=='string'||value.length!==64)return null;const incoming=Buffer.from(value,'utf8');
+  if(typeof value!=='string'||value.length!==64)return null;const incoming=Buffer.from(value,'utf8');if(incoming.length!==64)return null;
   for(const [token,context]of this.credentials)if(timingSafeEqual(incoming,Buffer.from(token,'utf8')))return context;
   return null;
  }
