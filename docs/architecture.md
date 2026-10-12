@@ -132,6 +132,8 @@ Frames on the socket: `uint32 BE length` + `uint8 type` + payload. The length co
 | `0x02` output | 36-byte ASCII session id + raw PTY bytes (daemon → client) |
 | `0x03` input | 36-byte ASCII session id + raw bytes (client → daemon, attached sessions only) |
 
+`sessions.text` is one request returning at most 5 MiB of UTF-8 plain text. To preserve the 4 MiB frame limit, the wire sends one or more control responses with the same request `id` and `copy:{sessionId,text,truncated,more}`. Each text chunk is at most 1 MiB and ends at a complete Unicode code point. The client validates session identity, consistent truncation metadata, at most six chunks and the total byte cap, then joins them before resolving the request. Copy text never becomes a preview/output event and is neither logged nor written to disk.
+
 **Socket trust (D35).** Any process running as the user may use the private socket, like ssh-agent. No token: a same-user agent could read a token file too. This is an accepted risk; untrusted agents stay in Ask mode.
 
 The daemon validates every control message at runtime with hand-written validators in `src/shared/validate.ts`. Clients are treated as untrusted input even though they're local. Unknown `kind` → error response.
@@ -157,6 +159,7 @@ sessions.preview {sessionId | null}                  → {snapshot, cols, rows} 
 sessions.stop    {sessionId}
 sessions.remove  {sessionId}                         // exited/error only
 sessions.resume  {sessionId}                         → {session} // new record, original saved recipe; exited/error AI only
+sessions.text    {sessionId}                         → {copy:{sessionId,text,truncated}} // plain mirror cells, max 5 MiB
 sessions.rename  {sessionId, title}
 layout.previewSize {cols, rows}                      // size every detached session runs at
 engines.status   {}                                  → {claudeCode: EngineStatus, codex: EngineStatus}
@@ -473,7 +476,7 @@ How to verify each: **Unit** = vitest. **Grep** = must find nothing in `src/` (o
 | S12 | Local HTTP endpoints locked down: usage receiver (v0.1.8), status endpoint (v0.2) | Unit + manual curl: bound to `127.0.0.1` only, random port; per-session credential compared with `timingSafeEqual`; `Host` must equal `127.0.0.1:<port>` (else 421); any `Origin` → 403; non-JSON → 415; bodies never logged. Status endpoint: body > 64 KB → 413, success → 204 with an empty body (a hook response must never carry a decision). Usage receiver: only `POST /v1/metrics` and `/v1/logs`, body > 1 MB → 413, success → 200 with `{}` (what OTLP exporters expect), only usage numbers kept. |
 | S13 | .env import is read-only and value-blind | Unit: `scanEnvFile` returns names only; the file's mtime and content are unchanged afterwards. |
 | S14 | Deletion asks first (v0.3) | Unit (temp repo): removing a worktree with uncommitted, untracked or unmerged work is refused without explicit confirmation. |
-| S15 | Background sessions can't reach your terminal | Unit: the homepage preview renders from mirror cells only. No raw agent bytes reach your terminal unless you're attached, so a background agent can't set your clipboard (OSC 52), retitle your window or ring the bell. |
+| S15 | Background sessions can't reach your terminal | Unit: the homepage preview and explicit session text export render from mirror cells only. No raw agent bytes reach your terminal unless you're attached, so a background agent can't set your clipboard (OSC 52), retitle your window or ring the bell. `/copy` or empty-field c is an explicit user action: parsed scrollback/screen cells become plain text, soft wraps join, logical trailing spaces/empty tail drop, and oldest UTF-8 content is cut above 5 MiB; no raw escape payload survives. Clipboard stdin alone receives it, not logs/state/files. |
 | S16 | Keys go only where they belong | Unit: Foundry test requests refuse a non-`https://` endpoint and send the key only in the `api-key` header to that host. |
 
 ---

@@ -188,6 +188,10 @@ A path field with completion. It sets the folder for the next agent only. A fold
 
 ---
 
+### /copy
+- `/copy` and empty-field c copy the selected session's parsed scrollback and screen. Wrapped rows join into logical lines; trailing spaces/empty tail drop; no escape sequences. Running/finished agents and shells work while their mirror remains in memory.
+- Success note: `✓ copied N lines from <agent name>`, plus `(oldest lines cut at 5 MB)` when capped. No selection: `select an agent first`. Clipboard failure: `Copy failed: clipboard unavailable`, with fixed-text logging. Copied content is never drawn in a note.
+
 ### /effort and /mode
 - Both accept an argument from the selected engine's documented values or open a small ↑↓/Tab/Enter/Esc picker when submitted without one. Effort always includes `CLI default`, which passes no effort option. Defaults and the start box show effort and mode before starting.
 - Claude auto is its own permission mode. Codex has no distinct auto option in installed help; its menu row says auto unavailable. Don't ask uses the red `!` and remains per-session; saved permission is always Ask.
@@ -214,6 +218,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 | ↑ ↓ | slash menu: highlighted command; otherwise select agent (preview follows) |
 | ⏎ | empty field: go inside the selected agent · with text: start a new agent |
 | p | hide / show preview (only when the command field is empty) |
+| c / /copy | copy the selected agent's scrollback and screen as plain text; c is a shortcut only in an empty field |
 | PgUp PgDn · End | scroll the preview · follow live |
 | d / r / s | diff (v0.7) / rename / stop the selected agent (s asks first) |
 | x | remove an exited or failed agent from the list |

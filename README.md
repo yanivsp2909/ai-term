@@ -92,6 +92,8 @@ Claude effort: `CLI default`, `low`, `medium`, `high`, `xhigh`, `max`. Codex eff
 
 Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
 
+`/copy` or empty-field `c` copies the selected running/finished agent or shell from parsed mirror cells through the clipboard. Soft-wrapped rows join; trailing spaces/empty lines drop; no terminal escapes are copied. The 5 MiB UTF-8 cap keeps the newest text and the success note says when oldest content was cut. Copy text is never logged or saved. The mirror is in memory, so a daemon restart cannot restore previous terminal output.
+
 The Usage panel marks estimates with `≈`. Unknown model prices show `price ?`; the spend row includes known costs only. Foundry overrides apply their input rate to all input tokens without assuming a cache discount. Historical estimates keep the price used at ingestion. Existing sessions need to be restarted to receive telemetry settings.
 
 Native Keychain tests are opt-in: `AITERM_NATIVE_KEYCHAIN_TEST=1 npm test -- tests/keys-store.test.ts`. Normal `npm test` skips only those two native tests and prints the reason; fake-vault tests still run.
