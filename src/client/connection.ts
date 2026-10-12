@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { validateSuccess } from '../shared/validate.js';
 import type { Paths } from '../shared/paths.js';
 import { preparePaths, isFsError } from '../shared/paths.js';
-import { FrameDecoder, encodeControl, encodeData, decodeControl, PROTOCOL_VERSION, type Request, type SuccessResponse } from '../shared/protocol.js';
+import { FrameDecoder, encodeControl, encodeData, decodeControl, PROTOCOL_VERSION, MAX_COPY_BYTES, COPY_CHUNK_BYTES, type SessionText, type Request, type SuccessResponse } from '../shared/protocol.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 export type RequestBody = Request extends infer R ? R extends Request ? Omit<R, 'id'> : never : never;
 export class DaemonRequestError extends Error {}
@@ -16,6 +16,8 @@ export class Connection extends EventEmitter {
         resolve: (value: SuccessResponse) => void;
         reject: (error: Error) => void;
         timer: ReturnType<typeof setTimeout>;
+        textSession?:string;
+        copy?:{parts:string[];bytes:number;truncated:boolean};
     }>();
     readonly hello: Promise<SuccessResponse>;
     private constructor(readonly socket: Socket) {
@@ -39,6 +41,15 @@ export class Connection extends EventEmitter {
                     if (pending && typeof v.id === 'string') {
                         if(v.ok===true)validateSuccess(value);
                         else if(v.kind!=='helloMismatch'&&(v.ok!==false||!v.error||typeof v.error!=='object'||!('code' in v.error)||typeof v.error.code!=='string'||!('message' in v.error)||typeof v.error.message!=='string'))throw new Error('Invalid daemon response');
+                        if(v.ok===true&&v.copy!==undefined){
+                            const copy=validateSuccess(value).copy;if(!copy||copy.sessionId!==pending.textSession||Buffer.byteLength(copy.text)>COPY_CHUNK_BYTES)throw new Error('Invalid copy chunk');
+                            const combined=pending.copy??{parts:[],bytes:0,truncated:copy.truncated};if(combined.truncated!==copy.truncated)throw new Error('Inconsistent copy chunks');
+                            combined.bytes+=Buffer.byteLength(copy.text);if(combined.bytes>MAX_COPY_BYTES)throw new Error('Session text exceeds copy limit');combined.parts.push(copy.text);pending.copy=combined;
+                            if(copy.more===true)continue;
+                            const result=validateSuccess({...v,copy:{sessionId:copy.sessionId,text:combined.parts.join(''),truncated:copy.truncated} satisfies SessionText});
+                            clearTimeout(pending.timer);this.pending.delete(v.id);pending.resolve(result);continue;
+                        }
+                        if(v.ok===true&&pending.textSession)throw new Error('Missing session text');
                         clearTimeout(pending.timer);
                         this.pending.delete(v.id);
                         if (v.kind === 'helloMismatch')
@@ -69,7 +80,7 @@ export class Connection extends EventEmitter {
             // Up to forty deployments, each with a Responses and fallback probe (15 s each).
             const timeout=body.kind==='keys.test'?40*30_000+5000:body.kind==='keys.add'||body.kind==='keys.importEnv'?60_000:5000;
             const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Daemon request timed out')); }, timeout);
-            this.pending.set(id, { resolve, reject, timer });
+            this.pending.set(id, { resolve, reject, timer, ...(body.kind==='sessions.text'?{textSession:body.sessionId}:{}) });
             this.socket.write(encodeControl({ ...body, id }), error => { if (error) {
                 clearTimeout(timer);
                 this.pending.delete(id);

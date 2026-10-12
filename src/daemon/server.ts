@@ -2,7 +2,7 @@ import { createServer, createConnection, type Socket, type Server } from 'node:n
 import { lstat, unlink, chmod } from 'node:fs/promises';
 import type { Paths } from '../shared/paths.js';
 import { isFsError } from '../shared/paths.js';
-import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
+import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings.js';
@@ -123,6 +123,16 @@ export class DaemonServer {
         const stat = await lstat(this.paths.socket);
         this.socketIdentity = { ino: stat.ino, dev: stat.dev };
     }
+    private async sendText(peer:Peer,id:string,copy:SessionText):Promise<void>{
+        const bytes=Buffer.from(copy.text,'utf8');let start=0;
+        do{
+            let end=Math.min(bytes.length,start+COPY_CHUNK_BYTES);while(end<bytes.length&&((bytes[end]??0)&0xc0)===0x80)end--;
+            const more=end<bytes.length;
+            // Chunk JSON stays below 4 MiB even with quotes/newlines; respect the socket's backpressure.
+            const frame=encodeControl({id,ok:true,copy:{sessionId:copy.sessionId,text:bytes.subarray(start,end).toString('utf8'),truncated:copy.truncated,more}});
+            await new Promise<void>((resolve,reject)=>peer.socket.write(frame,error=>error?reject(error):resolve()));start=end;
+        }while(start<bytes.length);
+    }
     private accept(socket: Socket): void {
         const peer: Peer = { socket, closing:false, hello: false, attached:null, preview: null, refreshing: false, lagged: false, stats: false, usage:false, queue: Promise.resolve() };
         this.peers.add(peer);
@@ -237,6 +247,9 @@ export class DaemonServer {
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
+                case 'sessions.text':
+                    await this.sendText(peer,request.id,await this.manager.text(request.sessionId));
+                    break;
                 case 'sessions.attach':
                     if(peer.attached&&peer.attached!==request.sessionId)await this.detach(peer);
                     await this.manager.attach(request.sessionId,request.cols,request.rows,(snapshot,size,modes)=>{
@@ -296,7 +309,8 @@ export class DaemonServer {
             }
         }
         catch (error) {
-            this.log.error(`Operation failed: ${error instanceof Error ? error.message : 'unknown'}`);
+            if(request.kind==='sessions.text')this.log.error('Session text export failed');else this.log.error(`Operation failed: ${error instanceof Error ? error.message : 'unknown'}`);
+            if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const message = error instanceof KeyError ? error.message : error instanceof Error && /^(claude not found in PATH|codex not found in PATH|Engine is not logged in|Engine login status unavailable|Current terminal screen exceeds snapshot frame limit)$/.test(error.message) ? error.message : 'Session operation failed';
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });
         }

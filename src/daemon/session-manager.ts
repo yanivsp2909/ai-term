@@ -189,6 +189,10 @@ export class SessionManager extends EventEmitter {
     }
     async snapshot(id: string, publish?: (snapshot: string, size:{cols:number;rows:number}) => void): Promise<string> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); return live.output.then(() => { const snapshot = live.mirror.snapshot(); publish?.(snapshot,{cols:live.mirror.terminal.cols,rows:live.mirror.terminal.rows}); return snapshot; }); }
+    async text(id:string):Promise<import('../shared/protocol.js').SessionText>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        return live.output.then(()=>({sessionId:id,...live.mirror.plainText()}));
+    }
     async stop(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
     async remove(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
