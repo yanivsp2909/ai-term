@@ -24,6 +24,7 @@ Decisions in the decisions log are not reopened unless Yaniv asks.
 5. Never work while another agent (Codex or Claude) is working in this repo.
 
 ## Commands
+- README command list: README.md always holds the full, current list of ai commands (homepage / commands, ai subcommands) and keys. Any step that adds, removes or changes a command or key updates that list in the same session.
 Set up in v0.1.1. Until then, none exist.
 - `npm install`
 - `npm run dev`: run `ai` from source (tsx)

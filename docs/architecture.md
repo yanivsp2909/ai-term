@@ -140,14 +140,14 @@ The daemon validates every control message at runtime with hand-written validato
 // src/shared/protocol.ts (v0.1 surface)
 type SessionId = string;            // crypto.randomUUID(), made by the daemon
 type Engine = 'claude-code' | 'codex' | 'shell';          // v0.4 adds 'ai-term'
-type AuthRef = { kind: 'account' };             // v0.1.6; keys from v0.1.7
+type AuthRef = { kind: 'account' } | { kind:'key'; keyId:string }; // v0.1.7
 type Permission = 'ask' | 'dontAsk';
 type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 'error';
 
 // requests (client → daemon), each answered with {ok:true, ...} or {ok:false, error:{code, message}}
 hello            {protocol: 1, version}            → {protocol, version, daemonPid}
 sessions.list    {}                                  → {sessions: SessionInfo[]}
-sessions.create  {engine, model: string | null, auth: {kind:'account'}, cwd, permission, title?, firstMessage?} → {session}
+sessions.create  {engine, model: string | null, auth: AuthRef, cwd, permission, title?, firstMessage?, login?:true} → {session}
                   // null = CLI default; debug shell keeps {engine:'shell', cwd, title?}
 sessions.attach  {sessionId, cols, rows}             → {snapshot, cols, rows, modes, session} then output frames stream
 sessions.detach  {sessionId}
@@ -183,9 +183,9 @@ system.stats {stats}    // subscribed clients only, every 1 s
 
 `SystemStats` carries numbers only: no process name, command line, user or pid ever crosses the socket. `validateSystemStats` accepts exactly these keys (finite, non-negative, percentages ≤ 100, used ≤ total, at most 1,000 sessions). The daemon checks every sample with it before sending, and the homepage checks every event with it on arrival.
 
-`SessionInfo` in v0.1.6 = `{id, title, engine, model: string | null, auth: {kind:'account'}, authMethod?: 'subscription' | 'api-key' | 'unknown', cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth objects accept only kind. Key/usage requests below are later-version plans, not implemented handlers; `system.subscribe` is implemented (v0.1.8a).
+`SessionInfo` in v0.1.7 = `{id, title, engine, model: string | null, auth: {kind:'account'} | {kind:'key', keyId, provider, keyLabel, last4}, authMethod?: 'subscription' | 'api-key' | 'unknown', cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth views accept only documented metadata. Key requests are implemented; usage remains planned; `system.subscribe` is implemented (v0.1.8a).
 
-`KeyView` = `{id, provider: 'anthropic' | 'foundry' | 'openai', label, last4, endpoint?, deployments?, lastTest?}`. There is **no** request that returns a secret. `keys.add` is the only message that carries one, client → daemon. The client drops its copy right after sending.
+`KeyView` = `{id, provider: 'anthropic' | 'foundry' | 'openai', label, last4, endpoint?, deployments?, lastTest?}`. There is **no** request that returns a secret. `keys.add` is the only message that carries one, client → daemon. The masked form clears its field before handing the request to the connection and clears the request object immediately after synchronous serialization. No secret is drawn/echoed or captured by debug input logging.
 
 ---
 
@@ -193,7 +193,7 @@ system.stats {stats}    // subscribed clients only, every 1 s
 
 **Record** (in `state.json`): everything in `SessionInfo` plus `pid` and the spawn recipe *without* env or secrets (engine, model, auth ref, cwd, permission).
 
-**Create (v0.1.6).** The server validates every field, including existing-directory cwd, model id or null, account-only auth, permission, sanitized title, and firstMessage ≤ 16 KiB with no NUL. The manager checks the engine again before spawning, using the same own-provider env cleanup. Missing engine/login errors are allowlisted and shown inline; a rejected preflight creates no record. Each session gets a fresh recipe and env. Shell sessions remain available through `ai debug shell`.
+**Create (v0.1.7).** The server validates every field, including existing-directory cwd, model id or null, account or key reference auth, permission, sanitized title, and firstMessage ≤ 16 KiB with no NUL. The manager checks the engine again before spawning, using the same own-provider env cleanup. Missing engine/login errors are allowlisted and shown inline; a rejected preflight creates no record. Each session gets a fresh recipe and env. A key reference is checked against the engine/provider; Foundry model must be in a saved ready result. The secret is read only after all metadata/CLI/argv checks, immediately around spawning, and the env reference is cleared afterward. Missing Keychain credentials refuse creation with a clear error. Login uses account auth with `login:true`, Ask, no first message: Claude `auth login`, Codex `--no-daemon -c check_for_update_on_startup=false login`; no existing CLI credential files are read. Shell sessions remain available through `ai debug shell`.
 
 **Lifecycle** (owned by `session-manager.ts`):
 ```
@@ -282,6 +282,7 @@ On the home key the client sends `sessions.detach`. It then resets every mode th
 |---|---|---|
 | Claude model, account | Claude Code | your Claude login (Claude Code's own) |
 | Claude model, Anthropic key | Claude Code | `ANTHROPIC_API_KEY` from the keychain |
+| GPT model, OpenAI key | Codex with `model_provider="openai"` | `OPENAI_API_KEY` from the keychain |
 | GPT model, account | Codex | your ChatGPT login (Codex's own) |
 | Foundry deployment that passed its test through Codex | Codex with a Foundry provider | Foundry key from the keychain |
 
@@ -353,6 +354,7 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 | Claude Code · account | remove `CLAUDE_AUTH_VARS`. `CLAUDE_CONFIG_DIR` left as inherited (your normal `~/.claude`, with your skills and agents) |
 | Claude Code · Anthropic key | remove `CLAUDE_AUTH_VARS`; set `ANTHROPIC_API_KEY=<from keychain>`. Config dir: the normal one, so your skills and agents work (provisional; revisit after Yaniv's first-run approval test, `docs/spikes/v0.1-cli-facts.md` #1–2) |
 | Codex · account | remove `CODEX_AUTH_VARS`; `AZURE_OPENAI_API_KEY` passes through (D41). `CODEX_HOME` left as inherited |
+| Codex · OpenAI key | remove `CODEX_AUTH_VARS` and `AZURE_OPENAI_API_KEY`; set `OPENAI_API_KEY=<from keychain>`; `-c model_provider="openai"` |
 | Codex · Foundry key | remove `CODEX_AUTH_VARS` and `AZURE_OPENAI_API_KEY`; set `AITERM_FOUNDRY_KEY=<from keychain>`; provider via `-c` (7.2) |
 
 Why stripping matters: an exported `ANTHROPIC_API_KEY` overrides a logged-in Claude subscription, and `CLAUDE_CODE_OAUTH_TOKEN` silently switches accounts. Without the strip, an "account" session could bill your API key without telling you.
@@ -384,6 +386,11 @@ Never logged, never stored, never sent to a client.
   The file is never modified, and the UI suggests deleting it.
 - **Foundry test.** For each deployment, one `POST <endpoint>/responses` with `{model: <deployment>, input: "ping", max_output_tokens: 16}` and a 15 s timeout. On 404 or 400 it tries `chat/completions`. The result per deployment is ready / not a chat model / error (HTTP status + the provider's error code, never the key). Requests go only to the configured `https://` endpoint, with the key in the `api-key` header.
 - Removing a key deletes the keychain entry and its metadata. Sessions already running keep their env until they exit.
+- `keys.ts` is the only Keychain boundary, using AsyncEntry and service `ai-term`, account `<provider>:<UUID>`. Tests inject a vault or a unique `ai-term-test-*` service, never the production service. Native failure is a fixed clear error, with no file fallback; a failed metadata add rolls the new Keychain entry back.
+- Metadata writes serialize with settings patches by file path so a theme/default change cannot erase keys. Metadata is validated on load/response; no private fields accepted. Keys of four characters or less have an empty displayed suffix to avoid revealing the whole credential.
+- Env parsing accepts simple optional `export`, quoted/unquoted assignments from an owned, non-symlink regular file ≤1 MiB. Only recognized selected credential names are imported; no evaluation, expansion or source file writes. Foundry import additionally requires `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT` in that file; scan still returns credential names/providers only. Failed multi-key import rolls back entries it created. UI suggests deleting the source file.
+- Foundry transport uses HTTPS POST and does not follow redirects; 15 s whole-request deadline, 64 KiB reply cap. Only HTTP status and a validated provider code are returned, never body/error messages. Chat fallback success means “not a chat model” for Codex (not ready). Client request timeout covers the bounded number of sequential probes.
+- L10: `AI_TERM_DEBUG` logs input counts, never bytes or hex. L12: auto-started daemon stdout/stderr are ignored; uncaughtException/unhandledRejection run redacted logger plus clean shutdown. Startup diagnostics go through the CLI redactor.
 
 ---
 
