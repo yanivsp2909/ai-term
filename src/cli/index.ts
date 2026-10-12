@@ -68,7 +68,7 @@ async function main(): Promise<void> {
             process.stdout.write(`back in your shell (${reason})\n`);
             // Connection setup may have rejected these directories: never log through them.
             if(pathsReady&&process.env.AI_TERM_DEBUG==='1'){
-                try{new Logger(paths.log).info(`attach reason=${reason} inputHex=`);}
+                try{new Logger(paths.log).info(`attach reason=${reason} inputBytes=0`);}
                 catch(logError){process.stderr.write(`Attach debug log failed: ${redact(logError instanceof Error?logError.message:'Log failed')}\n`);}
             }
         }

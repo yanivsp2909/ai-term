@@ -31,6 +31,6 @@ it('debug attach logs a protocol mismatch only in validated directories and pres
   const result=await promisify(execFile)(process.execPath,['--import','tsx',resolve('src/cli/index.ts'),'debug','attach',randomUUID()],{env:{PATH:'/usr/bin:/bin',AI_TERM_HOME:root,AI_TERM_DEBUG:'1'},timeout:5000}).catch((error:unknown)=>{
    if(!(error instanceof Error)||!('stdout' in error)||!('stderr' in error))throw error;return {stdout:String(error.stdout),stderr:String(error.stderr)};
   });
-  expect(result.stdout).toContain('back in your shell (error)');expect(result.stderr).toContain('Daemon protocol mismatch');expect(await readFile(paths.log,'utf8')).toContain('attach reason=error inputHex=');
+  expect(result.stdout).toContain('back in your shell (error)');expect(result.stderr).toContain('Daemon protocol mismatch');expect(await readFile(paths.log,'utf8')).toContain('attach reason=error inputBytes=0');
  }finally{await new Promise<void>((r,reject)=>server.close(error=>error?reject(error):r()));await rm(root,{recursive:true,force:true});}
 });

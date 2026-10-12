@@ -20,11 +20,11 @@ interface Output extends EventEmitter {isTTY?:boolean;columns?:number;rows?:numb
 interface AttachConnection extends EventEmitter {request(body:RequestBody):Promise<SuccessResponse>;input(id:string,data:Buffer):void;pauseOutput?():void;resumeOutput?():void}
 export async function attach(connection:AttachConnection,id:string,options:{stdin?:Input;stdout?:Output;signals?:EventEmitter;debugLog?:Logger}={}):Promise<AttachReason> {
   const stdin:Input=options.stdin??process.stdin,stdout:Output=options.stdout??process.stdout,signals:EventEmitter=options.signals??process;
-  if(!stdin.isTTY){options.debugLog?.info('attach reason=stdin not a TTY inputHex=');throw new AttachError('stdin not a TTY',new Error('Attach requires an interactive stdin'));}
-  if(!isUUID(id)||!stdout.isTTY){options.debugLog?.info('attach reason=error inputHex=');throw new AttachError('error',new Error('Attach requires a session UUID and an interactive terminal'));}
+  if(!stdin.isTTY){options.debugLog?.info('attach reason=stdin not a TTY inputBytes=0');throw new AttachError('stdin not a TTY',new Error('Attach requires an interactive stdin'));}
+  if(!isUUID(id)||!stdout.isTTY){options.debugLog?.info('attach reason=error inputBytes=0');throw new AttachError('error',new Error('Attach requires a session UUID and an interactive terminal'));}
   const originalRaw=stdin.isRaw??false;
   const filter=new HomeKeyFilter();let active=false,ended=false,entered=false,exitCode:number|undefined,failure:Error|undefined;let sessionEnded=false;
-  let reason:AttachReason='error';let firstInput=Buffer.alloc(0),attachAccepted=false;
+  let reason:AttachReason='error';let inputBytes=0,attachAccepted=false;
   const currentReason=():AttachReason=>reason;
   let escapeTimer:ReturnType<typeof setTimeout>|undefined;
   const buffered:Buffer[]=[];let bufferedBytes=0;
@@ -37,7 +37,7 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
   const onData=(input:Buffer|string)=>{
     try{
       const data=typeof input==='string'?Buffer.from(input):input;
-      if(options.debugLog&&firstInput.length<64)firstInput=Buffer.concat([firstInput,data.subarray(0,64-firstInput.length)]);
+      inputBytes+=data.length;
       if(!active){if(data.includes(3))end();return;}
       if(escapeTimer)clearTimeout(escapeTimer);
       const result=filter.push(data);send(result.data);
@@ -104,7 +104,7 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
     try{stdin.setRawMode(originalRaw);stdin.pause();}catch(error){failure??=error instanceof Error?error:new Error('Raw mode reset failed');reason='error';}
     try{await connection.request({kind:'sessions.detach',sessionId:id});}catch(error){failure??=error instanceof Error?error:new Error('Detach failed');if(currentReason()!=='daemon gone')reason='error';}
   }
-  try{options.debugLog?.info(`attach sessionId=${id} reason=${reason} accepted=${attachAccepted} inputHex=${firstInput.toString('hex')}`);}catch(error){failure??=error instanceof Error?error:new Error('Debug log failed');reason='error';}
+  try{options.debugLog?.info(`attach sessionId=${id} reason=${reason} accepted=${attachAccepted} inputBytes=${inputBytes}`);}catch(error){failure??=error instanceof Error?error:new Error('Debug log failed');reason='error';}
   try{if(exitCode!==undefined)stdout.write(`[session exited with code ${exitCode}]\n`);}catch(error){throw new AttachError('error',error instanceof Error?error:new Error('Exit message failed'));}
   if(failure instanceof ClientSignal)throw failure;
   if(failure)throw new AttachError(reason,failure);
