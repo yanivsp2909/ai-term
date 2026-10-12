@@ -161,7 +161,7 @@ export class SessionManager extends EventEmitter {
             if(error instanceof KeyError){this.sessions.delete(info.id);live.mirror.dispose();throw error;}
             info.status = 'error';
             info.statusDetail = 'spawn failed';
-            this.log.error(`PTY spawn failed: ${error instanceof Error ? error.message : 'unknown'}`);
+            this.log.error(agent?.auth.kind==='key'?'PTY spawn failed for key session':`PTY spawn failed: ${error instanceof Error ? error.message : 'unknown'}`);
         }
         await this.persist();
         this.event({ kind: 'session.updated', session: { ...info } });
