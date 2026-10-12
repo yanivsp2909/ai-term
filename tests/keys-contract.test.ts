@@ -23,3 +23,7 @@ it('rejects malformed secrets providers endpoints deployments and import selecto
 it('key metadata in settings is validated and private fields never pass to clients',()=>{
  const key={id:keyId,provider:'anthropic',label:'test',last4:'0000',secret};expect(()=>validateSuccess({id,ok:true,settings:{theme:'graphite',keys:[key]}})).toThrow();
 });
+it('login sessions are account-only and model-less and Foundry metadata always has routing details',async()=>{
+ await expect(validateRequest({id,kind:'sessions.create',engine:'codex',model:'test',auth:{kind:'account'},cwd:'/tmp',permission:'ask',login:true})).rejects.toThrow();
+ expect(()=>validateSuccess({id,ok:true,key:{id:keyId,provider:'foundry',label:'Azure',last4:'0000'}})).toThrow();
+});
