@@ -1,0 +1,9 @@
+{
+  "shellStarted": true,
+  "loginShell": "/bin/sh -l",
+  "running": true,
+  "previewNonEmpty": true,
+  "stopped": true,
+  "homeMode": "700",
+  "stateMode": "600"
+}
