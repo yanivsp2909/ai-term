@@ -1,55 +1,45 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: 2396d9d docs: capture final command pass verification output
-Roadmap step: v0.1.8c done
+Last commit: 6208948 docs: record successful final suite rerun and baseline flake
+Roadmap step: v0.1.8d done
 Branch: main. This handover is the last commit; its own hash is in git log.
-Started at clean 139f876, v0.1.8b complete. Baseline 427 passed / 2 native Keychain skipped by opt-in / 1 existing TODO, 62 files. Final 455 passed / same 2 skipped / same TODO, 68 files. All requested commands and checks implemented; real CLI continuity/terminal checks remain for Yaniv.
+Started at clean 06f218a, v0.1.8c command registry/menu/effort/mode/resume/shell/clean/help already shipped. Baseline rerun 455 passed / 2 native Keychain opt-in skips / 1 existing TODO, 68 files. Final 477 passed / same skips/TODO, 73 files. /copy and c delivered; no v0.1.9 work.
 
 ## What works
-- One registry in src/client/tui/commands.ts owns slash names/descriptions/current values/argument hints. Menu, help, Tab completion derive from it. aiSubcommands feeds CLI usage/debug-action inventory; README coverage test lists every command/subcommand. Registry 9a2514e, CLI inventory 0213018, extra debug-stats args reject before daemon access 0fb3251.
-- Menu shows commands/hints/description with current value right in ink-3, selected-card fill/accent bar. ↑↓ wraps through filtered commands; typing resets first; Enter picks or inserts argument prefix; Esc closes; Tab completes highlighted command then cycles values. Short terminals keep selection visible. Menu 15bbac1, help wrapping c836875.
-- /effort accepts installed Claude levels low/medium/high/xhigh/max and Codex rust-v0.160.1 config enum none/minimal/low/medium/high/xhigh/max/ultra/persistent. CLI default null passes nothing. Engine-specific validation, defaults/start row/e picker, /settings effort/e saved default. Contract 208b81d, argv 2cb30df, UI c924599, failed saves/Tab 2b1a891.
-- /mode Ask/Auto/Don't ask for Claude, Ask/Don't ask for Codex with auto-unavailable note. Exact existing Ask/Don't ask flags remain, Claude auto uses its documented flag. Flags only in env.ts; no forbidden bypass flags. Modes per session/reset Ask after start/cancel; only Ask saveable. b96ae20, compatible box model choice d19d15e.
-- New Claude agents get validated AI Term conversation UUID through --session-id, persisted in record/recipe. sessions.resume takes only selected record ID, reuses saved folder/model/auth/effort/mode/title, sends --resume with conversation UUID; old Claude/shell/live records refuse with note. Codex uses its own cwd-filtered resume picker, original flags, no credential/session file reads. Resume a8c03d6, concurrent reservation a2f17ed, real socket/keyed privacy tests 451d59e/e8bc702.
-- /shell uses current /cd and existing debug-shell recipe ($SHELL -l), selected and previewed. Shell failures show a note without exiting homepage. /clean snapshots exited/error IDs, asks remove N finished agents? y/n, sends record removals only; running processes/files/folders untouched, failure notes retained. c924599, b96ae20, 0f683d3.
-- /help uses registry + key table + subcommands, arrow/page scroll and Esc; long hints wrap at narrow widths. Help overlay owns input; keys never reach an agent. c924599/c836875.
-- AGENTS.md changed exactly one local HTTP line: status 204 empty, usage 200 {} per OTLP/S12 (0e6cc3e). README full commands/keys, design/architecture updated (e38e4e7). D13 Auto extension reflects Yaniv's explicit request; Ask remains only saved default.
-- Required final checks all exit 0: typecheck tsc --noEmit, lint eslint ., 68 test files / 455 passed / 2 skipped / 1 TODO / 11.26s, build success 16ms. Final coverage statements 87.56%, branches 81.87%, functions 89.12%, lines 94.71%. Diff whitespace/security checks clean.
-- Detailed exact CLI help, local Codex source links, task/RED/GREEN mapping, security outputs, standalone smoke and manual checks: docs/testing/v0.1.8c-commands.md. Built shell smoke numbers: docs/testing/v0.1.8c-shell-smoke.json.
+- Protocol-first sessions.text accepts only a validated session UUID and returns {copy:{sessionId,text,truncated}} capped at 5 MiB UTF-8. Underlying control chunks ≤1 MiB echo one request id with more; client assembles ≤6 chunks/≤5 MiB, checks identity/metadata/controls and rejects malformed transfers. Existing 4 MiB frame cap unchanged. RED5914d5e → GREEN29b0f8e; socket REDbd92f70 → GREEN3c38f5e; malformed transfer RED9584a34 → GREEN1f401c9.
+- Mirror cells supply active scrollback+screen only, never raw PTY bytes. Softwrapped rows join, internal explicit spaces remain, trailing logical spaces and empty tail drop, C0/C1/escape payloads absent. Oldest bytes cut at complete UTF-8 boundary above cap. Running/exited agents/shells work while mirror remains in memory. RED8184ff3 → GREEN8b6debc; reviewer wide CJK/emoji padding regression REDb2f08ab → GREENef609ca.
+- /copy in registry and empty-field c use selected session's text through existing clipboard path (pbcopy absolute execFile/empty argv/stdin). c types normally with nonempty field. Notes show copied N lines/name/cap warning, no-selection select an agent first, fixed clipboard unavailable error. Failures log fixed Clipboard copy failed via log.ts, no text/error detail. REDd4d0a2e → GREEN18e3575; fixed error Logger proof0415501.
+- Copy target captured at action acceptance even if earlier UI request queues it and arrows change selection. Quit during pending export never invokes clipboard. Reviewer RED87bd549/3e52da3 → GREEN09a12d1; runtime shutdown regression included.
+- Canary shell prints AITERMCANARY: copied response includes it, recursive scan of test-home regular files including state/logs finds none. OSC52/title payloads not copied; no raw escapes. Large quote/backslash/CJK response, unknown/invalid UUID, malformed chunks, fake clipboard success/failure and isolation tests pass.
+- README /copy/c and help/key registry updated; architecture protocol/S15 and design notes describe explicit copy, runtime-only mirror and cap. Docs131977f; full evidence/review/commit mapping in docs/testing/v0.1.8d-copy.md.
+- Requested typescript-reviewer final approval on 06f218a..09a12d1: no remaining actionable findings; 22 copy tests pass. Primary code edits paused during review. Both initial MEDIUM findings fixed/tested; reviewer made no edits and used no real clipboard/home/network.
+- Final checks all exit0: typecheck tsc --noEmit, lint eslint ., 73 files / 477 passed / 2 skipped / 1 TODO / 10.95s, build success19ms. Coverage statements87.72%, branches82.07%, functions89.3%, lines94.82%. exec/execSync/shell:true grep no matches; protected paths and full diff whitespace clean.
 
 ## What's next
-- Yaniv checks physical command menu/Tab/help, effort per chosen model, Claude Auto and actual Claude conversation resume. Codex resume picker remains user-selected, as designed. Exact commands/check sequence in docs/testing/v0.1.8c-commands.md.
-- v0.1.9 is next, not started. Usage export/billing manual check from v0.1.8b still needs Yaniv. Existing replaced-socket-path TODO remains.
+- Yaniv performs actual c → paste into Notes and /copy manual check when safe to restart. Commands in docs/testing/v0.1.8d-copy.md. Real clipboard never touched in tests.
+- v0.1.9 next, not started. Prior real usage export/billing and command resume checks still need Yaniv. Existing socket-replacement TODO and unrelated oversized usage-body test flake remain.
 
 ## Manual checks
-- Installed claude --help, codex --help, codex resume --help in isolated temporary homes: ran, direct Claude effort/Auto/session UUID/resume documented; Codex config/resume documented, no distinct Auto or effort help flag. Matching locally available rust-v0.160.1 config/enum used offline.
-- Fake-vault/stub PTYs and real Unix socket resume: ran, UUID/recipe preserved, concurrent resumes at most one spawn, canary only in child env, never argv/state. No real engine or Keychain access.
-- Headless menu/picker/effort/mode/Tab/help/clean/input isolation/README tests: ran. Actual physical terminal polish and CLI effort acceptance: needs Yaniv.
-- Own built daemon/temp home plain shell: ran, /bin/sh -l running, nonempty preview, stopped/exited; home 0700/state 0600; own process/home cleaned.
-- Restart: needs Yaniv when stopping existing sessions is acceptable. cd ~/ai-term && ai daemon stop && ai
-- Claude effort/mode: needs Yaniv. cd ~/ai-term && ai; /model ANTHROPIC, /effort high, /mode auto or ask, inspect defaults/start box/Tab; only Ask needed for conversation check.
-- Codex effort/mode: needs Yaniv. cd ~/ai-term && ai; /model OPENAI, /effort high, /mode auto gives unavailable note, /mode ask works.
-- Claude continuation: needs Yaniv. cd ~/ai-term && ai; new Claude Ask agent remembers apricot, Ctrl+E, s/y stop, select exited record, /resume, Enter in, ask remembered word. Old agents lack conversation ID and show a note. Codex /resume uses own picker.
-- Shell/clean/help: needs Yaniv. cd ~/ai-term && ai; /shell in current /cd, inspect/stop; /clean n then y and verify only finished records; /help arrows/pages/Esc including narrow widths; /settings e saves effort only.
+- Mirror logical lines, wide wraps/spaces, ANSI/OSC dropping, 5 MiB UTF-8 cap, active alternate screen: ran in tests.
+- Own running/exited /bin/sh canary session via Unix socket, text present in response and absent every test-home regular file: ran. Own PTY stopped and temporary root removed; no real daemon touched.
+- Fake copier /copy/c, notes/no-selection/failure, Logger fixed-text failure, stable queued target and quitting mid-copy: ran. No real clipboard access.
+- Physical clipboard/Notes: needs Yaniv. cd ~/ai-term && ai daemon stop && ai (restart stops existing agents; use when acceptable). Start/select agent with output after restart, empty field c, expect copied N lines/name note. cd ~/ai-term && open -a Notes; Cmd+V and inspect text. Repeat /copy; nonempty field c types normally.
 
 ## Gotchas
-- Codex help exposes -c config overrides, not dedicated effort options. Exact supported finite effort enum comes from matching already available rust-v0.160.1 source; some models may accept fewer levels. Custom enum strings were intentionally not allowed. Claude direct effort flag needs no settings file.
-- Claude help still names Ask manual; existing tested D40 canonical --permission-mode=default remains. Codex's approve-for-me is not used as Auto. Codex stays workspace-write sandboxed in Don't ask. No dangerous shortcuts in src.
-- Public session effort/conversationId optional so old shell/agent states load; Claude legacy no-id cannot resume. Claude resume uses the stored UUID and no new-session UUID option. Codex supports specific UUID but AI Term has no documented way to learn one at spawn, so use picker without reading ~/.codex.
-- Mode selection resets Ask after start/cancel and never persists a non-Ask default; compatible choice inside box survives model picker. Incompatible engine mode resets Ask, effort resets CLI default. Effort default saves paired defaultEngine through validated settings.
-- New CLI inventory routing initially allowed debug stats extra to start a temporary daemon. RED reproduced it; fixed to reject before home creation. Only that own test daemon (confirmed socket path) was SIGTERMed; no own smoke/test daemon remains. Production daemon/home untouched.
-- Some first failing tests had fixture timing/type assumptions: legacy fixture now waits old manager shutdown; homepage session timestamps deterministic; private Connection constructor cannot use InstanceType. Corrective tests committed; no history rewrite.
-- Security greps no exec/execSync/shell:true; permission flags at env.ts:29–30 only; forbidden flags no matches; getPassword/setPassword outside keys.ts no matches. Direct serial diff review, no concurrent agents.
-- No usage code change, keys.ts, spikes/docs/spikes/docs/reviews/.claude/package manifests/lock unchanged. No dependencies. No real ~/.ai-term, CLI login dirs, keychain, .env access. Help-only CLI runs and local tests, no network except explicitly requested delivery push.
-- Final documentation includes needed manual UI actions alongside exact cd ~/ai-term && ai commands; no claim real conversation/permission/billing behavior was observed.
+- Initial baseline and one final plain-suite run hit existing usage-receiver oversized-body write ECONNRESET. Targeted baseline13/13 and unchanged full reruns passed; final coverage/full plain run pass. No usage code/test modification; flake explicitly recorded, do not claim deterministic usage guard testing.
+- Existing frame cap4MiB cannot carry up to5MiB text+JSON in one frame. sessions.text one logical request uses bounded UTF-8 chunks, then returns joined text; no frame limit bump or raw output event. Cap measured bytes, not characters. At most six1MiB chunks allow codepoint-boundary rounding.
+- Copy reads active mirror buffer. Normal has 5000 scrollback rows plus screen; alternate screen contains only its active cells. Daemon restart restores records but not terminal output, so old mirrors copy empty text. Never reconstruct from raw bytes/CLI files/disk.
+- Truncation keeps newest complete codepoints and may begin mid-oldest logical line; UI prescribed warning says oldest lines cut at5MB. Wide-glyph wrap padding removed only for empty last cell before wrapped2-cell glyph, preserving explicitly written spaces.
+- Clipboard failure fixed text only; copied canary/content intentionally unredacted because explicit user copy. No transcript stored/logged or drawn in note. Clipboard text goes stdin, not argv. Test failure logger injected/temporary home only.
+- First queued-target test used an unregistered resize event and failed before behavior; fixture corrected to actual previewResized event, reproduced wrong target RED, then fix passed. History kept, no rewrite.
+- No dependencies, env.ts/keys.ts/usage code/spikes/docs/spikes/docs/reviews/.claude/package manifests/lock unchanged. Real ~/.ai-term/CLI credential dirs/keychain/.env untouched; no real Claude/Codex sessions. No network except explicitly required final origin push.
+- Named TypeScript reviewer was the only agent delegated, explicitly requested; read-only review while parent paused writes satisfies repo serial-work rule.
 
 ## New dependencies
-- None. Existing typed protocol/validators, renderer, node-pty and vitest are sufficient.
+- None. Existing xterm mirror, socket protocol, pbcopy wrapper and vitest suffice.
 
 ## Concepts introduced
-- Command registry (src/client/tui/commands.ts): each command has one description, hint and current-value reader. The menu/help/completion share it so a new command cannot quietly differ across entry points; tests also compare the README and CLI inventory.
-- Engine-specific effort (src/shared/validate.ts and src/daemon/env.ts): CLIs support different reasoning values, so validate against the selected engine before building one argv element. Null means leave the CLI's own default alone; a supported CLI level may still be unsupported by a particular model.
-- Conversation versus process identity (src/daemon/session-manager.ts): AI Term's record ID identifies one PTY run, while Claude's conversation UUID identifies saved chat history across runs. Resume creates a new run with the same conversation and reserves it during spawn so concurrent requests cannot start duplicate writers.
-- Per-session modes (src/client/tui/homepage.ts): next-agent choices are visible before starting, but Auto/Don't ask are not persisted defaults. After starting or cancelling, Ask returns; compatible in-box choices survive a model change.
-- Help viewport (src/client/tui/help.ts): long text wraps to terminal-cell width before scroll offsets are clamped. Arrow/page keys move the viewport while the overlay owns input, keeping those keys out of agent sessions.
+- Cell-derived transcript (src/daemon/mirror.ts): a terminal parses raw bytes into displayed cells, so copying cells preserves visible output while dropping escape commands and hidden OSC payloads. Soft wraps join without adding a newline; wide-character padding needs special handling so copied text matches its logical line.
+- Bounded response chunks (src/shared/protocol.ts and src/client/connection.ts): the transcript cap is larger than a protocol frame. One request therefore returns small UTF-8 chunks with matching identity/metadata; the client validates and joins them before the clipboard sees any text.
+- Captured action target (src/client/tui/homepage.ts): queued UI work can run after selection changes. Copy stores the selected record when the key is accepted, so it copies that agent even if a later arrow moves the preview.
