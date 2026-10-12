@@ -66,7 +66,9 @@ export class Connection extends EventEmitter {
     request(body: RequestBody): Promise<SuccessResponse> {
         const id = randomUUID();
         return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Daemon request timed out')); }, 5000);
+            // Up to forty deployments, each with a Responses and fallback probe (15 s each).
+            const timeout=body.kind==='keys.test'?40*30_000+5000:body.kind==='keys.add'||body.kind==='keys.importEnv'?60_000:5000;
+            const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Daemon request timed out')); }, timeout);
             this.pending.set(id, { resolve, reject, timer });
             this.socket.write(encodeControl({ ...body, id }), error => { if (error) {
                 clearTimeout(timer);
