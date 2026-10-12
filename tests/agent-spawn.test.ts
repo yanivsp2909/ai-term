@@ -18,12 +18,18 @@ it('creates account agents with fresh recipes, sanitized metadata, preview, and 
  const log=new Logger(paths.log),manager=new SessionManager(paths,log),server=new DaemonServer(paths,manager,log);let client:Connection|undefined;
  try{
   await manager.load();await server.listen();client=await Connection.connect(paths,{entry:'/unused',autoStart:false});const events:unknown[]=[];client.on('event',e=>events.push(e));
+  recipes.push(await client.hello);
   const engines=await client.request({kind:'engines.status'});expect(engines.engines?.claudeCode.authMethod).toBe('subscription');
   for(const engine of ['claude-code','codex'] as const){
    const response=await client.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:root,permission:'ask',title:'agent',firstMessage:'reply with ok'});recipes.push(response);
    const id=response.session?.id;if(!id)throw new Error('No session');await expect.poll(()=>manager.get(id).status).toBe('running');
    expect(manager.get(id)).toMatchObject({engine,model:null,authMethod:engine==='claude-code'?'subscription':'api-key'});
    const preview=await client.request({kind:'sessions.preview',sessionId:id});expect(preview.snapshot).toContain('AGENT_READY');recipes.push(preview);
+   recipes.push(await client.request({kind:'sessions.attach',sessionId:id,cols:80,rows:24}));
+   recipes.push(await client.request({kind:'sessions.resize',sessionId:id,cols:90,rows:25}));
+   recipes.push(await client.request({kind:'sessions.detach',sessionId:id}));
+   recipes.push(await client.request({kind:'sessions.preview',sessionId:null}));
+   recipes.push(await client.request({kind:'layout.previewSize',cols:85,rows:30}));
    recipes.push(await client.request({kind:'sessions.list'}));recipes.push(await client.request({kind:'sessions.rename',sessionId:id,title:'renamed'}));
    recipes.push(await client.request({kind:'sessions.stop',sessionId:id}));recipes.push(await client.request({kind:'sessions.remove',sessionId:id}));
   }
