@@ -34,3 +34,9 @@ it('merges settings patches, preserving unknown keys and rejecting a dontAsk def
  expect(await validateRequest({id:randomUUID(),kind:'settings.set',patch:{defaultEngine:'claude-code',defaultModel:'sonnet'}})).toMatchObject({patch:{defaultModel:'sonnet'}});
  expect(()=>validateSuccess({id:randomUUID(),ok:true,engines:{claudeCode:{installed:true,path:'/bin/claude',version:'2.1.295',loggedIn:true,authMethod:'subscription'},codex:{installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown'}}})).not.toThrow();
 });
+it('rejects private auth and engine fields at response boundaries',()=>{
+ const now=new Date().toISOString();
+ const session={id:randomUUID(),title:'agent',engine:'codex',model:null,auth:{kind:'account',secret:'sk-ant-AITERMCANARY0000'},cwd:'/tmp',permission:'ask',status:'running',statusDetail:'running',statusSince:now,createdAt:now,lastOutputAt:null,exitCode:null,ctxPercent:null};
+ expect(()=>validateSession(session)).toThrow();
+ expect(()=>validateSuccess({id:randomUUID(),ok:true,engines:{claudeCode:{installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown',email:'PRIVATE'},codex:{installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown'}}})).toThrow();
+});
