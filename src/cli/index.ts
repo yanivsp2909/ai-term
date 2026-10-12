@@ -10,6 +10,7 @@ import { getPaths, preparePaths, isFsError } from '../shared/paths.js';
 import { isUUID, validCwd } from '../shared/validate.js';
 import { redact, Logger } from '../daemon/log.js';
 import { AttachError } from '../client/attach.js';
+import { ClientSignal } from '../client/signals.js';
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
 function usage(): void { process.stderr.write('Usage: ai [--version | daemon [stop] | doctor | debug ls|shell [cwd]|stop <id>|peek <id>|attach <id>]\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
@@ -149,4 +150,4 @@ async function main(): Promise<void> {
         client.close();
     }
 }
-await main().catch(error => { process.stderr.write(`${redact(error instanceof Error ? error.message : 'Command failed')}\n`); process.exitCode = 1; });
+await main().catch(error => { if (error instanceof ClientSignal) { process.exitCode = error.exitCode; return; } process.stderr.write(`${redact(error instanceof Error ? error.message : 'Command failed')}\n`); process.exitCode = 1; });
