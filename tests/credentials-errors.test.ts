@@ -18,7 +18,7 @@ it('a refused save shows the daemon reason, including an orphaned Keychain entry
 });
 it('a removed key whose list refresh fails is reported removed and leaves the list',async()=>{
  const k=key();let removed=false;
- const {p,text}=panel('settings',body=>body.kind==='keys.list'?(removed?new DaemonRequestError('OS keychain unavailable'):{keys:[k]}):body.kind==='keys.remove'?(removed=true,{}):body.kind==='engines.status'?{engines:{claudeCode:{installed:true,path:'/x',version:'1',loggedIn:true,authMethod:'subscription'},codex:{installed:true,path:'/y',version:'1',loggedIn:true,authMethod:'subscription'}}}:{settings:{}});
+ const {p,text}=panel('settings',body=>body.kind==='keys.list'?(removed?new DaemonRequestError('OS keychain unavailable'):{keys:[k]}):body.kind==='keys.remove'?(removed=true,{}):body.kind==='engines.status'?{engines:{claudeCode:{installed:true,path:'/x',version:'1',loggedIn:true,authMethod:'subscription'},codex:{installed:true,path:'/y',version:'1',loggedIn:true,authMethod:'subscription'}}}:{settings:{theme:'graphite' as const}});
  await p.load();expect(text()).toContain('key ····0000');await p.key('x');expect(text()).toContain('Key removed from the OS keychain');expect(text()).not.toContain('key ····0000');
 });
 it('a failed import shows the daemon reason',async()=>{
@@ -26,6 +26,6 @@ it('a failed import shows the daemon reason',async()=>{
  await p.key('i');p.paste('/tmp/x.env');await p.key('enter');await p.key('enter');expect(text()).toContain('OS keychain unavailable; key was not saved');
 });
 it('engine status failure does not claim the engines are missing, and keys still load',async()=>{
- const {p,text}=panel('settings',body=>body.kind==='engines.status'?new DaemonRequestError('Engine login status unavailable'):body.kind==='keys.list'?{keys:[key()]}:{settings:{}});
+ const {p,text}=panel('settings',body=>body.kind==='engines.status'?new DaemonRequestError('Engine login status unavailable'):body.kind==='keys.list'?{keys:[key()]}:{settings:{theme:'graphite' as const}});
  await p.load();expect(text()).toContain('key ····0000');expect(text()).not.toContain('✗ not installed');expect(text()).toContain('status unavailable');
 });
