@@ -12,14 +12,14 @@ const themes:ThemeName[]=['graphite','slate','ink','auto','light'];
 export class CredentialsPanel {
  private screen:'providers'|'method'|'form'|'settings'|'import'|'names'|'result';
  private choice=0;private row=0;private provider:KeyProvider='anthropic';private keys:KeyView[]=[];private engines?:EnginesStatus;private settings?:Settings;
- private label='';private endpoint='';private deployments='';private secret='';private path='';private names:{name:string;provider:KeyProvider}[]=[];private selected=new Set<string>();private message='';private busy=false;
+ private label='';private endpoint='';private deployments='';private secret='';private path='';private names:{name:string;provider:KeyProvider}[]=[];private selected=new Set<string>();private message='';private busy=false;private disposed=false;
  constructor(kind:'login'|'settings',private readonly actions:Actions){this.screen=kind==='login'?'providers':'settings';}
  containsSecret():boolean{return this.secret.length>0;}
- dispose():void{this.secret='';}
+ dispose():void{this.secret='';this.disposed=true;}
  async load():Promise<void>{this.busy=true;this.actions.changed();try{this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];this.engines=(await this.actions.request({kind:'engines.status'})).engines;this.settings=(await this.actions.request({kind:'settings.get'})).settings;}catch{this.message='Credentials status unavailable';}finally{this.busy=false;this.actions.changed();}}
  private fieldNames():string[]{return this.provider==='foundry'?['label','endpoint','secret','deployments']:['label','secret'];}
  private field():string{return this.screen==='import'?'path':this.fieldNames()[this.row]??'label';}
- paste(text:string):void{if(this.busy)return;const field=this.field();if(this.screen!=='form'&&this.screen!=='import')return;
+ paste(text:string):void{if(this.busy||this.disposed)return;const field=this.field();if(this.screen!=='form'&&this.screen!=='import')return;
   const safe=text.replace(/[\r\n]/g,'');if(field==='secret'){if(this.secret.length+safe.length>512){this.secret='';this.message='Key is too long; enter at most 512 characters';this.actions.changed();return;}this.secret+=safe;}
   else if(field==='path')this.path=(this.path+safe).slice(0,4096);else if(field==='label')this.label=(this.label+safe).slice(0,60);else if(field==='endpoint')this.endpoint=(this.endpoint+safe).slice(0,2048);else this.deployments=(this.deployments+safe).slice(0,3200);
   this.message='';this.actions.changed();
@@ -27,6 +27,7 @@ export class CredentialsPanel {
  private backspace():void{const f=this.field();if(f==='secret')this.secret=this.secret.slice(0,-1);else if(f==='path')this.path=this.path.slice(0,-1);else if(f==='label')this.label=this.label.slice(0,-1);else if(f==='endpoint')this.endpoint=this.endpoint.slice(0,-1);else this.deployments=this.deployments.slice(0,-1);}
  private form(provider:KeyProvider):void{this.provider=provider;this.screen='form';this.row=0;this.label=provider==='foundry'?'Foundry':provider==='openai'?'OpenAI':'Anthropic';this.endpoint='';this.deployments='';this.secret='';this.message='';}
  async key(key:string):Promise<void>{
+  if(this.disposed)return;
   if(key==='escape'){this.secret='';this.actions.close();return;}if(this.busy)return;
   if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?Math.max(1,this.keys.length):this.screen==='names'?this.names.length:this.screen==='providers'?3:2)-1,this.choice+delta));this.actions.changed();return;}
   if(key==='backspace'&&(this.screen==='form'||this.screen==='import')){this.backspace();this.actions.changed();return;}
