@@ -13,6 +13,7 @@ it.each(['SIGTERM','SIGHUP'] as const)('spawned client quits on %s from homepage
  const log=new Logger(paths.log),manager=new SessionManager(paths,log,{executable:'/bin/sh',args:['-c','printf SESSION_READY; read answer'],env:{PATH:'/usr/bin:/bin'}});
  const server=new DaemonServer(paths,manager,log);let client:Connection|undefined;
  try{
+  const events:unknown[]=[];manager.on('event',event=>events.push(event));
   await manager.load();await server.listen();const session=await manager.create({cwd:root});await expect.poll(()=>manager.get(session.id).status).toBe('running');
   client=await Connection.connect(paths,{entry:resolve('src/cli/index.ts'),autoStart:false});
   for(const attached of [false,true]){
@@ -20,9 +21,11 @@ it.each(['SIGTERM','SIGHUP'] as const)('spawned client quits on %s from homepage
    let output='',finished=false;child.onData(data=>{output+=data;});const exited=new Promise<number>(r=>child.onExit(event=>{finished=true;r(event.exitCode);}));
    try{
     await expect.poll(()=>output).toContain('AI Term');
-    if(attached){output='';child.write('\r');await expect.poll(()=>output).toContain('SESSION_READY');}
-    child.kill(signal);expect(await exited).toBe(signal==='SIGTERM'?143:129);
-    expect(output).toContain('\x1b[?1049l');expect(output).toContain('\x1b[?2004l');
+    // SESSION_READY can come from the homepage preview too; the daemon resizes to the client's 130x45 only once attached.
+    if(attached){child.write('\r');await expect.poll(()=>events).toContainEqual({kind:'session.previewResized',sessionId:session.id,cols:130,rows:45});}
+    output='';child.kill(signal);expect(await exited).toBe(signal==='SIGTERM'?143:129);
+    // node-pty can deliver the last bytes after the exit event.
+    await expect.poll(()=>output).toContain('\x1b[?1049l');expect(output).toContain('\x1b[?2004l');
     expect(manager.get(session.id).status).toBe('running');expect((await client.request({kind:'sessions.list'})).sessions).toHaveLength(1);
    }finally{if(!finished){child.kill();await exited;}}
   }
