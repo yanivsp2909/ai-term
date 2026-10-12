@@ -1,6 +1,6 @@
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
-import { MAX_FRAME_BYTES, type TerminalModes } from '../shared/protocol.js';
+import { MAX_FRAME_BYTES, MAX_COPY_BYTES, type TerminalModes } from '../shared/protocol.js';
 import { useUnicode11 } from '../shared/unicode-width.js';
 export class Mirror {
     readonly terminal: headless.Terminal;
@@ -32,6 +32,21 @@ export class Mirror {
     }
     setAttached(attached: boolean): void { this.attached = attached; }
     write(data: string): Promise<void> { return new Promise(resolve => this.terminal.write(data, resolve)); }
+    plainText():{text:string;truncated:boolean} {
+        const buffer=this.terminal.buffer.active,lines:string[]=[];let logical='';
+        for(let row=0;row<buffer.length;row++){
+            const line=buffer.getLine(row);if(!line)continue;
+            if(row>0&&!line.isWrapped){lines.push(logical.trimEnd());logical='';}
+            // Read parsed cells, including spaces inside soft wraps; OSC/CSI payloads are absent here.
+            logical+=line.translateToString(false).replace(/[\u0000-\u001f\u007f-\u009f]/gu,'');
+        }
+        lines.push(logical.trimEnd());while(lines.at(-1)==='')lines.pop();
+        const bytes=Buffer.from(lines.join('\n'),'utf8');if(bytes.length<=MAX_COPY_BYTES)return {text:bytes.toString('utf8'),truncated:false};
+        let start=bytes.length-MAX_COPY_BYTES;
+        // A byte cap can land inside a multibyte code point. Keep only its complete newer suffix.
+        while(start<bytes.length&&((bytes[start]??0)&0xc0)===0x80)start++;
+        return {text:bytes.subarray(start).toString('utf8'),truncated:true};
+    }
     snapshot(): string {
         // Reserve JSON escaping/envelope space; retain the screen before scrollback.
         const limit = MAX_FRAME_BYTES - 2048;
