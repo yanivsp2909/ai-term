@@ -1,63 +1,61 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: 3a876b5 docs: record v0.1.10 failure handling and command behavior
-Roadmap step: v0.1.10 done (B13–B20 bug pass; no v0.2 work)
+Last commit: eadd58c chore: add isolated Swift notifier spike and measurements
+Roadmap step: v0.2.1 partial (D36 notifier spike built and measured; physical permission/display/click checks blocked)
 Branch: main. This handover is the last commit; its own hash is in git log.
-Started clean at 97f0521 (v0.1.9 gate), baseline 81 files / 526 passed / 2 native Keychain opt-in skips, 7.47 s. Final 88 files / 547 passed / same 2 skips, twice consecutively (8.01 s, 7.64 s). No new dependencies, env.ts or Keychain storage format changes.
+Started clean at 9bacfae, v0.1.10 done, 547 passed / two native Keychain opt-in skips. Final same 88 files / 547 passed / two skips, 8.14 s. No product code/tests, daemon/protocol, README/architecture, dependencies or protected configuration changes. v0.2.2 not started.
 
 ## What works
-- B13 done — cause: settings.get rejected each export on corruption. RED 653beb5 → GREEN 86dcb73. Cache last validated settings for usage, fall back to bundled prices before any good read, continue recording, publish one persistent homepage warning and fixed log while failing, clear on recovery. Refresh reads remain so repaired settings/new prices take effect.
-- B14 done — cause: mirror errors emitted fatal and exposed raw exception text. RED ea25bd9 → GREEN b0e68d4. Only that session becomes error with `terminal mirror failed`; revoke usage, discard subsequent output, stop its child, preserve the failure across exit callbacks and log fixed text. Review RED b161481 → GREEN a2ea69a: removal must complete the stop, so failed stops keep the record for retry instead of orphaning a child.
-- B15 done — cause: Promise.all rejected before cleanup and the post-SIGKILL wait was unbounded. RED e14445a → GREEN 5afaf91. allSettled awaits every stop, disposes all mirrors, logs failed session IDs only, bounds both waits to 3 s, and uses a fixed signal failure. Correction to the prompt: Promise.all already starts all stops; its early rejection skipped subsequent cleanup, not invocation of the other stops.
-- B16 done — cause: a narrow server allowlist hid manager reasons and logs exposed unknown messages. RED eb98a31 → GREEN 4f0ec35. Exact fixed manager/key reasons pass, near-misses and arbitrary KeyError messages do not; socket, operation and lifecycle logs are fixed text. Canary tests cover responses and retained logs.
-- B17 done — cause: failure categories were discarded and whole-array metadata validation blocked good keys. RED 6d1e267 → GREEN 9e467d6. Fixed Foundry timeout/connection/reply-size/request reasons and engine executable/version/login reasons survive through validated protocol fields and existing notes. Keyring exceptions retain only fixed read/write/remove/cleanup causes. Unknown provider error codes are dropped. Malformed metadata warns once, good entries remain listable/removable. Review RED 1659858 → GREEN dd0acee: skipped metadata stays on disk across theme and key writes, excluded from client views, so cleanup information is preserved. Warning lasts until daemon restart; malformed entries require correction before they can be used or removed normally.
-- B18 done — cause: /clean overwrote each failure and showed no counts. RED fcf1236 → GREEN 3829ec8. Shows `removed N, M failed` and the first failure; continues attempts and preserves keyboard confirmation.
-- B19 done — cause: unlimited unique authorized records reached disk. Valid RED 95d7a0f (126 recorded versus expected 120) → GREEN f66a8c6. Cap 120 accepted unique records per session per 60-second window; excess records drop, one fixed log per window, independent sessions/windows and revoke cleanup. Judgment: 120 leaves room for 20 points per ordinary ten-second Claude export. Initial test commit 6959875 omitted required output tokens and is not valid RED evidence; corrected without rewriting history.
-- B20 done — cause: asynchronous stdout EPIPE had no handler. RED 225037b → GREEN 24dfb13. Review RED a8222ff → GREEN d9ed787 scoped the handler to debug stats, preserving interactive terminal cleanup. Stats exits 0 quietly on EPIPE; other stdout failures exit 1 with fixed text. The regression drives actual stats CLI routing with a fake sampler and separately confirms attach restores raw mode and alternate screen.
-- Gate assertion/lint alignment: fd500ec. README commands and architecture updated in 3a876b5.
-- typescript-reviewer, serial read-only review: initial HIGH B14/B20 and MEDIUM B17 findings all fixed with RED/GREEN pairs; re-review approved with no remaining findings. Parent did no edits while reviewer ran. Typecheck/lint and 30 affected tests passed in re-review.
-- Final verification (all exit 0):
+- `spikes/notifier/build.mjs` compiles a minimal AppKit/UserNotifications Swift 6 app without Xcode/SwiftPM, names it AI Term, bundle id local.aiterm.notifier, LSUIElement, signs ad-hoc and verifies strictly. No custom icon/provider branding. Generated binaries/cache ignored under spikes/notifier/build.
+- Toolchain: Swift 6.3.2, macOS 26.5.1 arm64, codesign available. First compile ~4.34 s, warm ~1.01–1.58 s; sign 7–10 ms, verify 3–4 ms.
+- `Notifier.swift`: argv-only UUID/text/path validation before APIs; alert+sound authorization, default sound/title/body/session userInfo/threadIdentifier, retained delegate, UUID-only Unix callback. Fixed failures, bounded lifetime and callback send; check/probe modes never request notifications.
+- `harness.mjs`: owns one private random temp root/socket (0700/0600), launches direct or open -n -a with argv arrays, prints approved callback UUIDs, tracks only spike helper executables, and prepares same/different-thread, warm-click and post-exit click replays. No ai/daemon/Terminal launch or networking.
+- `verify.mjs`: 26 argument/security boundaries plus exact UUID-only callback probe pass. A real probe took ~393 ms including startup. It is not notification click proof.
+- Both real launch modes ran. Direct app launch observed ~47–53 ms; a warm open launch ~102 ms (another ~0.56 s including polling). Both eventually failed authorization: numeric UNErrorDomain code 1, SDK NotificationsNotAllowed; no banner was posted. The first direct authorization call remained pending until its own tracked helper was stopped. Later direct failures exit 1; open returning 0 only means launch acceptance.
+- `docs/spikes/v0.2-notifier.md` lists every observation/unproved measurement, D43 comparison and v0.2.4 recommendation. Current verdict: no-go for claiming D36/D43 proved; permission/display/real click still need Yaniv. Stable retained helper via Launch Services is the provisional design; cold relaunch socket recovery is a separate gate.
+- D43 read-only evidence: local Terminal document roles and do-script dictionary inspected. Recommend evaluating private generated .command + Launch Services first to avoid Automation consent, but new-window vs tab behavior and possible OS warnings are unproved. No .command or AppleScript launch built/executed.
+- Requested security-reviewer: serial/read-only, no actionable findings. Independently strict-built/signed/verified, all 26 cases/probe passed, congested socket refused promptly (~7 ms), exit 1 and fixed stderr. Parent did no edits during review.
+- Optional swift-reviewer produced no code verdict: mandatory SwiftPM preflight failed because this script-only spike has no Package.swift, and SwiftLint unavailable. This is a tooling mismatch; no project/dependency was added.
+- Final checks, all exit 0:
   - `npm run typecheck`: `> tsc --noEmit`
-  - `npm run lint`: `> eslint .` (no diagnostics)
-  - `npm test`: `Test Files 88 passed (88)` / `Tests 547 passed | 2 skipped (549)` / `Duration 8.01s`
-  - `npm test` again: same counts / `Duration 7.64s`
-  - `npm run build`: `ESM ⚡️ Build success in 17ms`
-  - `npm test -- --coverage --maxWorkers=4`: same counts, 16.50 s; statements 87.58%, branches 82.03%, functions 89.51%, lines 92.25%.
-  - S8 grep: no exec(, execSync( or shell: true in src. S4 grep: no getPassword outside keys.ts. git diff --check clean; forbidden paths absent from the diff.
+  - `npm run lint`: `> eslint .`, no diagnostics
+  - `npm test`: `Test Files 88 passed (88)` / `Tests 547 passed | 2 skipped (549)` / `Duration 8.14s`
+  - `npm run build`: `ESM ⚡️ Build success in 18ms`
+  - Coverage: statements 87.58%, branches 82.03%, functions 89.51%, lines 92.25%.
+  - Node syntax checks, plist lint, codesign strict verify, spike verify.mjs and git diff --check pass.
 
 ## What's next
-- Next roadmap gate: Claude review/fixes for B12 and B21 before v0.2; neither belongs to v0.1.10.
-- B12 remains open: settings.json can repoint Foundry routing; bind endpoint/deployments to the secret through authenticated storage. env.ts and the Keychain format were untouched here.
-- B21 remains open: compare credential/routing env lists with current CLI docs. No external network/doc lookups in this pass.
-- v0.1 real-session exit criteria, physical paste/copy and Notes checks still need Yaniv (docs/testing/v0.1.7-keys-login.md, v0.1.8e-paste-copy.md). This bug pass does not establish those results.
+- Finish v0.2.1 with Yaniv's permission, banner name/icon/sound, warm/direct clicks, stacks/threads, Focus suppression and post-exit relaunch checks. Do not call it done from build, signing, socket probe or open's exit code.
+- v0.2.2 is the next roadmap step only after Yaniv directs it; nothing from it started here.
+- B12/B21 remain outside this spike and open for the Claude gate: Foundry endpoint authentication binding and current env scrub list review. v0.1.10 B13–B20 remain done; full evidence is in 9bacfae's checkpoint.
+- Earlier v0.1 real-session, physical paste/copy and Notes checks still need Yaniv; this spike did not run official agent sessions or billing checks.
 
 ## Manual checks
-- B13 cached prices, repeated corruption warning/recovery, B14 isolated failure/stop rejection/removal retry, B15 failed stop and bounded wait, B16 response/log canaries, B17 cause/metadata/socket recovery, B18 counts, B19 disk cap/windows, B20 pipe/attach cleanup: ran with own temp roots, fake vaults/transports/PTYs or headless TTYs. All passed.
-- Built stats process with own unused AI_TERM_HOME, consumer closed after first numeric sample: ran; exit 0, empty stderr, no home created. No daemon connected or stopped.
-- `cd ~/ai-term && node dist/cli/index.js debug stats | head -n 1` — needs Yaniv for physical shell observation; expect one numeric JSON line and no stack trace.
-- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv for physical UI: `/clean` then y on existing finished records shows removed/failed totals; `/settings` retains readable fixed failure notes. Running sessions/files stay untouched.
-- `cd ~/ai-term && npm test -- tests/usage-settings.test.ts tests/session-failures.test.ts tests/manager-errors.test.ts tests/credential-causes.test.ts` — needs Yaniv only to replay visible failure/warning scenarios with isolated fakes; no real settings/key edits required.
-- Native Keychain, real provider tests, real Claude/Codex sessions, subscription billing and actual daemon restart: not run; needs Yaniv under the earlier exit-criteria plan.
+- Build/sign/verify, 26 invalid/boundary argv cases, UUID-only probe, direct/open runtime launches, cleanup, congested socket refusal: ran with own temp roots; details above.
+- Notification permission UI and settings inspection: attempted, UI tool returned cgWindowNotFound. No permission accepted/reset by the agent. Both launch modes reported NotificationsNotAllowed.
+- Banner says AI Term / icon / heard default sound / live delegate callback / post-exit OS relaunch and callback / same-app grouping / Focus suppression: needs Yaniv; no notification posted here.
+- `cd ~/ai-term && node spikes/notifier/build.mjs` — build helper.
+- `cd ~/ai-term && node spikes/notifier/verify.mjs` — replay safe headless boundaries/probe.
+- `cd ~/ai-term && node spikes/notifier/harness.mjs` — type open, Allow AI Term if asked (or enable it in System Settings → Notifications after code 1), click banner; expect clicked UUID and record name/icon/sound. Type quit-helper then direct and compare. Type stack to inspect grouping. Type second, wait for exit-after-post, type quit-helper, then click the second notification; record relaunch/callback separately. Type quit to clean up. Use one harness at a time.
+- D43 .command vs AppleScript actual consent/new-window checks: needs Yaniv in a later explicitly authorized experiment; neither built.
 
 ## Gotchas
-- RTK.md remains referenced and absent. AGENTS.md and this prompt are the working instructions; no other agent edited this repo.
-- Normal tests skip exactly two native Keychain tests. Never enable AITERM_NATIVE_KEYCHAIN_TEST in an automated bug pass; use fake vaults and isolated roots.
-- Limit is a per-session fixed 60-second window from its first accepted record, not a sliding window. Over-cap usage is intentionally lost, including cumulative deltas already consumed by the parser; historical data is not repriced.
-- Settings fallback is usage-only. Other invalid settings still fail validation. Metadata recovery exposes only valid entries; malformed originals are preserved on disk and its warning lasts until restart. Correct those entries before normal key removal; never infer provider/routing from invalid fields.
-- Stop waits at most 3 s after TERM and 3 s after KILL. A signal failure can still leave a child alive, but mirror-failed removal refuses to forget it and shutdown reports its ID. No real stored PID is signalled after restart.
-- Serial final suites pass; earlier v0.1.9 stress tail under three concurrent suites remains (live vim attach, source CLI homepage and a client-signals Esc wait). Poll observable state rather than adding sleeps.
-- Receiver discards oversize bodies up to 4 MiB to deliver 413 without reset; never buffer past 1 MiB. Private temp socket rename prevents close from deleting a replacement socket.
-- validateRequest is async because cwd is checked on disk. D52's Codex telemetry credential remains visible in same-user argv; this step limits record writes, it does not change that pinned boundary.
-- User requested no network except the explicit final push. Tests use only local sockets/stubs; real ~/.ai-term, CLI credentials, Keychain and protected directories were untouched.
+- Architecture has D36/D42/D43 but no requested §12.1 Notifications or D51 entry. User brief supplied missing details; pinned decisions not reopened. RTK.md remains referenced and absent.
+- Current no-go is an authorization/observation limit, not proof macOS lacks the capability. Fallback requested by Yaniv is sound plus notification without click-through until v0.5, still contingent on permission/display proof; do not bypass Focus.
+- Cold notification clicks may relaunch with no original argv. Strict helper then exits 2 and cannot recover its socket; only session UUID is in userInfo. Do not add route persistence/product wiring as a workaround in the spike. Recommend long-lived stable helper and separately reviewed restart routing for v0.2.4.
+- `/private/tmp` is the macOS real temp path, but Foundation resolvingSymlinksInPath reports `/tmp`; canonical string equality wrongly rejected valid paths. Validation uses exact spike prefix/basename and lstat type/owner/modes instead. Reject nested, traversal and symlinked roots/sockets.
+- OS notification identity/authorization can persist after deleting runtime files. Scripts never reset OS permissions, identifiers or notification state. Rebuilding ad-hoc changes the designated code; stable identity permission/rebuild behavior still needs observation.
+- No custom icon means actual banner icon is unknown, not verified generic. Same app grouping also depends on OS preferences. Respect Do Not Disturb; homepage status remains authoritative.
+- open exit 0 is not helper exit or post success; inspect helper stage diagnostics. Launch logs are private temp files. Callback writes only the UUID, never title/body/raw errors.
+- Harness stops only tracked PIDs after checking the current executable path, then cleans only its own random root. The measurement harness and all tracked processes were closed; real ~/.ai-term and Yaniv's daemon untouched.
+- Native Keychain skips remain opt-in; no native tests, real CLIs, keychain, .env, ~/.claude, ~/.codex, ~/.ssh or network used except explicit final git push. No other agent edited this repo; reviews were serial/read-only.
 
 ## New dependencies
-- None.
+- None. Uses installed swiftc/codesign, Apple frameworks and Node standard library only.
 
 ## Concepts introduced
-- Safe error causes (src/daemon/keys.ts, providers/foundry.ts, engines.ts): retain the operation/category with a fixed string instead of attaching the original exception, which can contain secrets or child output. Protocol validators restrict the new reason fields to those same fixed values.
-- Settled fan-out and bounded waits (src/daemon/session-manager.ts, pty-host.ts): allSettled waits for every stop even when one rejects. Separate TERM and KILL deadlines prevent an exit callback that never arrives from hanging shutdown indefinitely.
-- Fault containment (src/daemon/session-manager.ts): a broken mirror invalidates one session rather than the whole daemon. Its failure marker suppresses later output/exit overwrites; removal confirms stopping before discarding the record.
-- Last-good cache and per-session window (src/daemon/usage-service.ts): a read failure uses the last validated prices while a warning tells the user estimates may be stale. Each session also has a count/reset time so unlimited unique exports cannot produce unlimited disk appends.
-- Recovering views without deleting originals (src/daemon/settings.ts): reads split validated metadata from skipped entries. Updates write both back but return only validated entries, keeping clients safe and preserving the information needed to clean up a malformed key later.
-- Asynchronous pipe errors (src/cli/index.ts): stdout.write can return before the stream reports EPIPE. The diagnostic command listens for that event and exits quietly, while interactive flows keep their own terminal cleanup handlers.
+- Bundle identity and ad-hoc signing (spikes/notifier/Info.plist, build.mjs): UserNotifications belongs to the app identity, not the Node launcher. A proper .app supplies its name/id and signed resources; ad-hoc signing has no developer team and proves local integrity, not distribution trust or notification delivery.
+- Notification delegate lifetime (spikes/notifier/Notifier.swift): UserNotifications delivers presentation and response callbacks to a delegate while the app event loop runs. Keeping the delegate strongly alive enables warm clicks; it does not guarantee macOS preserves argv when relaunching a terminated helper.
+- Private Unix callback (spikes/notifier/Notifier.swift, harness.mjs): the helper connects to a private local socket supplied by the harness and sends one validated UUID. It can prove transport safety without posting notifications, so that probe must not be mistaken for a click test.
+- Evidence levels and authorization (docs/spikes/v0.2-notifier.md): successful compilation/signing and launching only establish those stages. A failed authorization prevents the display/sound/click measurements, which remain needs Yaniv instead of being inferred from API structure.
