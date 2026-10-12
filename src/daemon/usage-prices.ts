@@ -11,8 +11,9 @@ export function estimateCost(price:ModelPrice|undefined,input:number,output:numb
  return ((input-cached)*price.input+output*price.output+cached*(price.cacheRead??0))/1e6;
 }
 export function findPrice(snapshot:PriceSnapshot,provider:KeyProvider,model:string,overrides:Record<string,ModelPrice>):ModelPrice|undefined{
- if(provider!=='foundry')return snapshot.providers[provider][model];
- const override=overrides[model];
+ const own=(table:Record<string,ModelPrice>)=>Object.hasOwn(table,model)?table[model]:undefined;
+ if(provider!=='foundry')return own(snapshot.providers[provider]);
+ const override=own(overrides);
  // An explicit two-rate override applies its input rate to every input token; no cache discount is guessed.
- return override?{...override,cacheRead:override.cacheRead??override.input}:snapshot.providers.azure[model]??snapshot.providers.openai[model];
+ return override?{...override,cacheRead:override.cacheRead??override.input}:own(snapshot.providers.azure)??own(snapshot.providers.openai);
 }
