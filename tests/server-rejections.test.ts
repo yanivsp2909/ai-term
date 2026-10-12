@@ -140,7 +140,7 @@ it('passes only known user-facing errors through; anything else becomes a fixed 
     await expect(failure).rejects.toThrow('Session operation failed');
     await expect(failure).rejects.not.toThrow(/private|SECRET/);
   }
-  expect(await readFile(paths.log, 'utf8')).toContain('Operation failed: unknown');
+  expect(await readFile(paths.log, 'utf8')).toContain('Operation failed');
 });
 
 it('a failed preview refresh clears the preview, so later output for that session is not streamed', async () => {
@@ -152,7 +152,7 @@ it('a failed preview refresh clears the preview, so later output for that sessio
   manager.emit('output', session.id, Buffer.from('late'));
   await viewer.request({ kind: 'sessions.list' });
   expect(outputs).toEqual([]);
-  await expect(viewer.request({ kind: 'sessions.preview', sessionId: randomUUID() })).rejects.toThrow('Session operation failed');
+  await expect(viewer.request({ kind: 'sessions.preview', sessionId: randomUUID() })).rejects.toThrow('Session not found');
 });
 
 it('disconnects a client that stops reading instead of queueing events without bound', async () => {

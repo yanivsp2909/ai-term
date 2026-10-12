@@ -64,7 +64,7 @@ export class DaemonServer {
         this.sampler = sampler ?? new SystemSampler(defaultSamplerDeps(() => manager.sessionRoots(), log));
         this.sampler.on('stats', (stats: SystemStats) => { for (const peer of this.peers) if (peer.hello && peer.stats) this.control(peer, { kind: 'system.stats', stats }); });
         this.server = createServer(socket => this.accept(socket));
-        this.server.on('error', error => { this.log.error(`Server failed: ${error.message}`); this.manager.emit('fatal', error); });
+        this.server.on('error', error => { this.log.error('Server failed'); this.manager.emit('fatal', error); });
         manager.on('event', (event: SessionEvent) => { for (const peer of this.peers)
             if (peer.hello)
                 this.control(peer, event); });
@@ -152,11 +152,11 @@ export class DaemonServer {
         let queued = 0;let queuedBytes=0;
         socket.setTimeout(5000, () => { if (!peer.hello)
             socket.destroy(); });
-        socket.on('error', error => this.log.error(`Client socket failed: ${error.message}`));
-        socket.on('close', () => {this.peers.delete(peer);this.updateSampling();void this.detach(peer).catch(error=>{this.log.error(`Disconnect detach failed: ${error instanceof Error?error.message:'unknown'}`);this.manager.emit('fatal',error);});});
+        socket.on('error', () => this.log.error('Client socket failed'));
+        socket.on('close', () => {this.peers.delete(peer);this.updateSampling();void this.detach(peer).catch(error=>{this.log.error('Disconnect detach failed');this.manager.emit('fatal',error);});});
         socket.on('drain', () => { if(peer.attached&&this.owners.get(peer.attached)===peer&&socket.writableLength<256*1024)this.manager.clientBackpressure(peer.attached,false);
             if (peer.lagged && peer.preview && !peer.refreshing)
-            void this.refresh(peer).catch(error => { this.log.error(`Preview refresh failed: ${error instanceof Error ? error.message : 'unknown'}`); socket.destroy(); }); });
+            void this.refresh(peer).catch(() => { this.log.error('Preview refresh failed'); socket.destroy(); }); });
         socket.on('data', data => {
             try {
                 for (const frame of decoder.push(data)) {
@@ -170,7 +170,7 @@ export class DaemonServer {
                             const id=frame.payload.subarray(0,36).toString('ascii');
                             if(peer.hello&&this.owners.get(id)===peer)this.manager.input(id,frame.payload.subarray(36));
                             else this.log.info('Dropped input from non-attached client');
-                        }else await this.handle(peer,value); }).catch(error => { this.log.error(`Request failed: ${error instanceof Error ? error.message : 'unknown'}`); this.control(peer, { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Request failed' } }); }).finally(() => { queued--;queuedBytes-=frame.payload.length; });
+                        }else await this.handle(peer,value); }).catch(() => { this.log.error('Request failed'); this.control(peer, { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Request failed' } }); }).finally(() => { queued--;queuedBytes-=frame.payload.length; });
                 }
             }
             catch (error) {
@@ -321,9 +321,24 @@ export class DaemonServer {
             }
         }
         catch (error) {
-            if(request.kind==='sessions.text')this.log.error('Session text export failed');else this.log.error(`Operation failed: ${error instanceof Error ? error.message : 'unknown'}`);
+            if(request.kind==='sessions.text')this.log.error('Session text export failed');else this.log.error('Operation failed');
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
-            const message = error instanceof KeyError ? error.message : error instanceof Error && /^(claude not found in PATH|codex not found in PATH|Engine is not logged in|Engine login status unavailable|Current terminal screen exceeds snapshot frame limit)$/.test(error.message) ? error.message : 'Session operation failed';
+            const fixed = new Set([
+                'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
+                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed',
+                'Resume needs a finished agent','A shell has no AI conversation to resume','This older Claude agent has no conversation ID',
+                'Conversation already running','Conversation already starting','Invalid session request','Invalid session or title',
+                'Invalid preview size','Invalid attach','Session unavailable','Invalid resize','Not attached',
+                'Session stop timed out','Session stop signal failed',
+                'Invalid key id','Key not found','Invalid key metadata','Invalid key details','Key details must not contain the secret',
+                'Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
+                'OS keychain unavailable; key was not saved','OS keychain unavailable; key was not removed','OS keychain unavailable',
+                'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
+                'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
+                'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
+                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT'
+            ]);
+            const message = error instanceof Error && (fixed.has(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });
         }
     }
