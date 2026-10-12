@@ -30,3 +30,11 @@ it('settings keeps its selected key and defaults visible with many saved keys',a
  const keys=Array.from({length:20},(_,i)=>({id:randomUUID(),provider:'anthropic' as const,label:'key-'+i,last4:'0000'}));
  const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='keys.list'?{keys}:body.kind==='settings.get'?{settings:{theme:'graphite'}}:{})}),changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});await panel.load();for(let i=0;i<19;i++)await panel.key('down');const lines=panel.lines();expect(lines.length).toBeLessThan(22);expect(lines.join('\n')).toContain('› key-19');expect(lines.join('\n')).toContain('DEFAULTS');
 });
+it('settings arrows and Enter reach action and defaults rows without letter shortcuts',async()=>{
+ const defaults:string[]=[];let closed=false;const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='keys.list'?{keys:[]}:body.kind==='settings.get'?{settings:{theme:'graphite'}}:{})}),changed:()=>{},close:()=>{closed=true;},login:async()=>{},defaults:kind=>{defaults.push(kind);},theme:async()=>{}});
+ await panel.load();await panel.key('down');await panel.key('down');await panel.key('down');await panel.key('enter');expect(defaults).toEqual(['model']);await panel.key('escape');expect(closed).toBe(true);
+});
+it('login method rows identify the CLI-owned auth without calling it account',async()=>{
+ const panel=new CredentialsPanel('login',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='keys.list'?{keys:[]}:body.kind==='settings.get'?{settings:{theme:'graphite'}}:{engines:{claudeCode:{installed:true,path:'/stub',version:'1',loggedIn:true,authMethod:'subscription'},codex:{installed:true,path:'/stub',version:'1',loggedIn:true,authMethod:'api-key'}}})}),changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});
+ await panel.load();await panel.key('down');await panel.key('enter');expect(panel.lines().join('\n')).toContain('own login · API key');expect(panel.lines().join('\n')).not.toContain('ChatGPT account');
+});
