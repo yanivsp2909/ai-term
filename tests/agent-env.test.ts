@@ -21,10 +21,21 @@ it('S7 key rows set only own secret and strip other own-provider credentials',()
 });
 it('S9/S10 builds argv only with validated model, positional first message and explicit per-session permissions',()=>{
  for(const engine of ['claude-code','codex'] as const){
-  expect(buildArgs({engine,model:null,permission:'ask'})).toEqual([]);
-  expect(buildArgs({engine,model:'test-model',permission:'ask',firstMessage:'$(touch nope) "hello"'})).toEqual(['--model=test-model','--','$(touch nope) "hello"']);
-  expect(buildArgs({engine,model:null,permission:'dontAsk'})).toEqual(engine==='claude-code'?['--permission-mode=bypassPermissions']:['--ask-for-approval=never','--sandbox=workspace-write']);
+  const daemon=engine==='codex'?['--no-daemon']:[];
+  expect(buildArgs({engine,model:null,permission:'ask'})).toEqual([...daemon]);
+  expect(buildArgs({engine,model:'test-model',permission:'ask',firstMessage:'$(touch nope) "hello"'})).toEqual([...daemon,'--model=test-model','--','$(touch nope) "hello"']);
+  expect(buildArgs({engine,model:null,permission:'dontAsk'})).toEqual([...daemon,...engine==='claude-code'?['--permission-mode=bypassPermissions']:['--ask-for-approval=never','--sandbox=workspace-write']]);
   for(const model of ['-x','a b','"x"'])expect(()=>buildArgs({engine,model,permission:'ask'})).toThrow();
+ }
+});
+it('B2/D41 every Codex argv starts with exactly one --no-daemon, which Codex rejects twice; Claude never gets it',()=>{
+ const foundryEndpoint='https://example.openai.azure.com/openai/v1';
+ for(const permission of ['ask','dontAsk'] as const)for(const model of [null,'deployment'])for(const firstMessage of [undefined,'reply with ok'])for(const foundry of [false,true]){
+  if(foundry&&model===null)continue;
+  const request={model,permission,...firstMessage===undefined?{}:{firstMessage},...foundry?{foundryEndpoint}:{}};
+  const codex=buildArgs({engine:'codex',...request});
+  expect(codex[0]).toBe('--no-daemon');expect(codex.filter(arg=>arg==='--no-daemon')).toHaveLength(1);
+  if(!foundry)expect(buildArgs({engine:'claude-code',...request})).not.toContain('--no-daemon');
  }
 });
 it('Foundry args carry validated endpoint and env variable name, never secret, and use no-daemon',()=>{
