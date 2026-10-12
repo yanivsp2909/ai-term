@@ -97,7 +97,9 @@ The daemon takes an exclusive lock (`run/daemon.pid`, created with `O_EXCL`) so 
 
 **Stop.** `ai daemon stop` stops all agents (SIGTERM, then SIGKILL after 3 s) and exits. With zero *live* sessions and zero clients for 10 minutes, the daemon exits on its own. Exited records don't keep it alive.
 
-**Daemon restart.** Sessions whose process is gone keep their record with status `exited` and the detail "background service restarted". The scrollback is lost; the record stays until you remove it.
+**Daemon restart (D32).** Finished sessions keep their real status, exitCode, statusDetail and statusSince. Only records that were starting or running become `exited` with null exitCode and detail "background service restarted". Saved PIDs are never signalled. The scrollback is lost; the record stays until you remove it.
+
+**Write failures (D33).** A failed log/state write, including ENOSPC, never stops the daemon or agents. State writes retry on the next change. The homepage shows a persistent error-colored warning with fixed text, and clears it after the affected writer succeeds; simultaneous log/state failures clear independently.
 
 **Files.** `~/.ai-term/` is mode 0700. The daemon refuses to start if it is a symlink or owned by another user.
 
@@ -129,6 +131,8 @@ Frames on the socket: `uint32 BE length` + `uint8 type` + payload. The length co
 | `0x01` control | UTF-8 JSON: `{id?, kind, ...}`. Requests carry `id`; responses echo it; events have no `id` |
 | `0x02` output | 36-byte ASCII session id + raw PTY bytes (daemon → client) |
 | `0x03` input | 36-byte ASCII session id + raw bytes (client → daemon, attached sessions only) |
+
+**Socket trust (D35).** Any process running as the user may use the private socket, like ssh-agent. No token: a same-user agent could read a token file too. This is an accepted risk; untrusted agents stay in Ask mode.
 
 The daemon validates every control message at runtime with hand-written validators in `src/shared/validate.ts`. Clients are treated as untrusted input even though they're local. Unknown `kind` → error response.
 
@@ -167,6 +171,7 @@ settings.set     {patch: {theme}} → {settings: {theme}} // v0.1.5: graphite|sl
 system.subscribe {on: boolean}
 
 // events (daemon → client)
+daemon.warning {text}    daemon.warningCleared {} // persistent log/state write warning; fixed plain text
 session.updated {session}   session.removed {sessionId}
 session.previewResized {sessionId, cols, rows}        // attach/detach/resize: previews request a fresh sized snapshot   usage.updated {summary}   system.stats {stats}
 ```
@@ -245,7 +250,9 @@ AI Term draws nothing over the session in v0.1 (the frame bar comes in v0.2).
 
 On the home key the client sends `sessions.detach`. It then resets every mode the agent may have turned on (mouse, bracketed paste, focus events, cursor keys, kitty keyboard, cursor visibility, colors), leaves the alt screen and raw mode, and redraws the homepage. The agent keeps running.
 
-**Cleanup is guaranteed** on every way out: home key, the session exiting (`[session exited with code N]`), the daemon dying, and an uncaught error in the client. SIGKILL skips it, and so do SIGHUP and SIGQUIT today (listed in `docs/reviews/2026-10-12-checkpoint-review.md`).
+**Cleanup is guaranteed** on every way out: home key, session exit, takeover, daemon death, uncaught client error, SIGTERM, SIGHUP and SIGQUIT. Reset includes mouse/paste/focus modes, alternate-scroll `?1007`, window title (empty default), palette (OSC 104), default foreground/background/cursor colors (OSC 110/111/112), and cursor shape (DECSCUSR 0), then leaves alt screen and raw mode and sends detach. SIGKILL cannot run cleanup.
+
+**Client signals (D34).** SIGTERM/SIGHUP quit the client with exit 143/129 after cleanup; SIGQUIT exits 131. The client sends no stop request and never signals a session process. Daemon and sessions keep running.
 
 **`/exit` chain.** The chain is: session → home → shell.
 - Typing `/exit` inside Claude Code or Codex is *their* command: the agent exits, the session becomes `exited`, and the client returns home.
@@ -474,3 +481,7 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D29 | Manager agent (goal → tasks → many agents) is a v2+ idea; nothing before v1.0 is built for it. | Pinned |
 | D30 | Foundry through Codex only for deployments whose Responses test passes; the rest wait for AI Term's agent (v0.4). | Pinned |
 | D31 | "Account" = whatever the CLI is logged in with. AI Term shows subscription vs API key from the CLI's own status command, and counts usage for API-key auth. | Pinned |
+| D32 | After a daemon restart, finished sessions keep their real result; only sessions live at the crash become "exited · background service restarted". | Pinned |
+| D33 | Log/state write failures and a full disk never stop the daemon or an agent; the homepage shows a warning instead. | Pinned |
+| D34 | SIGTERM / SIGHUP to ai quits the client after full terminal cleanup; daemon and agents keep running. | Pinned |
+| D35 | Socket trust: any process running as the user may use the daemon socket, like ssh-agent. No token, because an agent running as the user could read a token file anyway. Accepted risk; agents you don't trust stay in Ask mode. | Pinned |

@@ -9,6 +9,11 @@ import { Mirror } from '../src/daemon/mirror.js';
 import { PtyHost } from '../src/daemon/pty-host.js';
 import { MAX_FRAME_BYTES } from '../src/shared/protocol.js';
 import { atomicWrite } from '../src/daemon/store.js';
+import { warningText } from '../src/shared/validate.js';
+it('warning text strips ESC, C0 and C1 and caps at 200 characters',()=>{
+ const text=warningText('\x1b[31mred\x1b[0m\x00\x07\x9b'+ 'x'.repeat(300));
+ expect(text).not.toMatch(/[\p{C}]/u);expect([...text]).toHaveLength(200);expect(text).toMatch(/^redx/);
+});
 const roots:string[]=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
 async function paths(){const root=await mkdtemp(join(tmpdir(),'ai-term-failures-'));roots.push(root);const paths=getPaths(root);await preparePaths(paths);return paths;}
