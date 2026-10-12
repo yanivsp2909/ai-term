@@ -7,7 +7,8 @@ const sessionId=randomUUID();const record=(ts:string)=>({ts,sessionId,provider:'
 it('persists private usage records and rebuilds local today Monday-week month sums',async()=>{
  const root=await mkdtemp('/tmp/ai-usage-store-'),now=new Date(2026,9,14,12);const log={error:()=>{}};
  try{const store=new UsageStore(root,log,()=>now);await store.load();await store.add(record(new Date(2026,9,14,10).toISOString()));await store.add(record(new Date(2026,9,12,10).toISOString()));await store.add(record(new Date(2026,9,11,10).toISOString()));await store.add({...record(new Date(2026,9,2,10).toISOString()),costUsd:null});
- expect(store.summary().today).toMatchObject({tokens:1100,costUsd:0.2});expect(store.summary().week).toMatchObject({tokens:2200,costUsd:0.4});expect(store.summary().month).toMatchObject({tokens:4400,costUsd:0.6,unknownPrice:true});
+ expect(store.summary().today).toMatchObject({tokens:1100,costUsd:0.2});expect(store.summary().week).toMatchObject({tokens:2200,costUsd:0.4});expect(store.summary().month).toMatchObject({tokens:4400,unknownPrice:true});
+ expect(store.summary().month.costUsd).toBeCloseTo(0.6);
  expect((await lstat(join(root,'usage'))).mode&0o777).toBe(0o700);expect((await lstat(join(root,'usage/2026-10.jsonl'))).mode&0o777).toBe(0o600);
  const loaded=new UsageStore(root,log,()=>now);await loaded.load();expect(loaded.summary()).toEqual(store.summary());expect(await readFile(join(root,'usage/2026-10.jsonl'),'utf8')).not.toContain('credential');
  }finally{await rm(root,{recursive:true,force:true});}
