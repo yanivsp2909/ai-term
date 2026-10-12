@@ -23,3 +23,6 @@ it('settings shows actual defaults and provides separate model and folder contro
  const defaults:string[]=[];const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='settings.get'?{settings:{theme:'slate',defaultEngine:'codex',defaultModel:'gpt-6.1-sol',defaultCwd:'/tmp/project',permission:'ask'}}:body.kind==='keys.list'?{keys:[]}:{})}),changed:()=>{},close:()=>{},login:async()=>{},defaults:kind=>{defaults.push(kind);},theme:async()=>{}});
  await panel.load();expect(panel.lines().join('\n')).toContain('gpt-6.1-sol');expect(panel.lines().join('\n')).toContain('/tmp/project');await panel.key('d');await panel.key('f');expect(defaults).toEqual(['model','folder']);
 });
+it('queued input after disposal cannot restore a cancelled secret',async()=>{
+ const panel=new CredentialsPanel('login',{request:async()=>({id:randomUUID(),ok:true}),changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});await panel.key('enter');await panel.key('down');await panel.key('enter');await panel.key('enter');panel.dispose();await panel.key('s');panel.paste(secret);expect(panel.containsSecret()).toBe(false);
+});
