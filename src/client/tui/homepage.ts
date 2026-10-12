@@ -3,8 +3,8 @@ import { homedir } from 'node:os';
 import type { RequestBody } from '../connection.js';
 import { attach, type AttachReason } from '../attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
-import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId } from '../../shared/validate.js';
+import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, SystemStats } from '../../shared/protocol.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats } from '../../shared/validate.js';
 import { redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
 import { CommandField, InputParser, type InputEvent } from './keys.js';
@@ -16,6 +16,7 @@ import { homepageLayout, renderHomepage, sortSessions } from './layout.js';
 import { accountModels } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
+import { SPARKLINE_SAMPLES } from './this-mac.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
@@ -66,6 +67,10 @@ export class Homepage {
   private blocked = false;
   private forceRedraw = true;
   private drag: Point | null = null;
+  private stats: SystemStats | null = null;
+  private cpuHistory: number[] = [];
+  private statsOn = false;
+  private disconnected = false;
   private readonly parser: InputParser;
   private readonly replies: BackgroundReplies;
   constructor(private readonly connection: HomepageConnection, private readonly options: Options = {}) {
@@ -91,7 +96,7 @@ export class Homepage {
       const result = await this.connection.request({ kind: 'sessions.list' });
       if (!Array.isArray(result.sessions)) throw new Error('Missing daemon sessions');
       this.sessions = result.sessions.map(validateSession); this.selectedId = sortSessions(this.sessions)[0]?.id ?? null;
-      this.draw(true); await this.updatePreview(true);
+      this.draw(true); await this.updatePreview(true); await this.subscribeStats(true);
     } catch (error) { await this.stop(error instanceof Error ? error : new Error('Homepage failed')); throw error; }
   }
   private enter(): void {
@@ -120,6 +125,12 @@ export class Homepage {
     this.connection.off('event', this.onEvent); this.connection.off('output', this.onOutput); this.connection.off('disconnected', this.onDisconnect);
     try { this.leave(); } catch (cleanupError) { error ??= cleanupError instanceof Error ? cleanupError : new Error('Terminal restore failed'); }
     for (const preview of this.previews.values()) preview.dispose(); this.previews.clear();
+    // After the terminal is restored. A gone daemon has already dropped the subscription with the connection.
+    if (this.statsOn && !this.disconnected) {
+      this.statsOn = false;
+      try { await this.connection.request({ kind: 'system.subscribe', on: false }); }
+      catch (unsubscribeError) { error ??= unsubscribeError instanceof Error ? unsubscribeError : new Error('Stats unsubscribe failed'); }
+    }
     if (error) this.rejectDone(error); else this.resolveDone();
   }
   private onExit = () => { this.leave(); };
@@ -128,7 +139,7 @@ export class Homepage {
   private onTerm = () => { void this.stop(new ClientSignal(143)); };
   private onHup = () => { void this.stop(new ClientSignal(129)); };
   private onQuit = () => { void this.stop(new ClientSignal(131)); };
-  private onDisconnect = () => { void this.stop(new Error('Daemon connection closed')); };
+  private onDisconnect = () => { this.disconnected = true; void this.stop(new Error('Daemon connection closed')); };
   private onDrain = () => { this.blocked = false; this.draw(true); };
   private onResize = () => {
     try { this.previous = null; this.previewCells = undefined; this.forceRedraw = true; this.draw(true); this.enqueue(() => this.updatePreview(true)); }
@@ -302,6 +313,18 @@ export class Homepage {
       this.backgroundTimer = setTimeout(() => this.backgroundResolve?.(), 200); this.stdout.write(BACKGROUND_QUERY);
     });
   }
+  // This Mac samples run in the daemon only while someone subscribes (architecture §10).
+  private async subscribeStats(on: boolean): Promise<void> {
+    if (this.ended || this.statsOn === on) return;
+    this.statsOn = on;
+    await this.connection.request({ kind: 'system.subscribe', on });
+  }
+  private onStats(value: unknown): void {
+    const stats = validateSystemStats(value);
+    if (this.attached || !this.statsOn) return; // a sample already in flight when we unsubscribed
+    this.stats = stats; this.cpuHistory = [...this.cpuHistory, stats.cpuPercent].slice(-SPARKLINE_SAMPLES);
+    this.draw(true);
+  }
   private currentPreview(): Preview | undefined { return this.selectedId ? this.previews.get(this.selectedId) : undefined; }
   private async updatePreview(resize: boolean): Promise<void> {
     const { cols, rows } = this.size(), layout = homepageLayout(cols, rows, this.visible);
@@ -347,6 +370,7 @@ export class Homepage {
     try {
       if (!value || typeof value !== 'object') throw new Error('Invalid daemon event');
       const v = value as Record<string, unknown>;
+      if (v.kind === 'system.stats') { this.onStats(v.stats); return; }
       if (v.kind === 'session.updated') {
         const session = validateSession(v.session), index = this.sessions.findIndex(s => s.id === session.id);
         if (index >= 0) this.sessions[index] = session; else this.sessions.push(session);
@@ -371,6 +395,7 @@ export class Homepage {
   private async openSelected(): Promise<void> {
     const id = this.selectedId; if (!id || !this.options.attachSession) { this.showNote(id ? 'Attach unavailable' : 'No session selected'); return; }
     await this.connection.request({ kind: 'sessions.preview', sessionId: null }); this.previewId = null; this.loading = null;
+    await this.subscribeStats(false);
     this.attached = true; this.leave();
     let note = '';
     try { const reason = await this.options.attachSession(id); if (reason !== 'home key') note = reason; }
@@ -379,7 +404,7 @@ export class Homepage {
     if (this.ended) return;
     this.enter();
     const result = await this.connection.request({ kind: 'sessions.list' }); this.sessions = (result.sessions ?? []).map(validateSession);
-    await this.updatePreview(true); this.showNote(note);
+    await this.updatePreview(true); await this.subscribeStats(true); this.showNote(note);
   }
   private mouse(event: Extract<InputEvent, { kind: 'mouse' }>): void {
     const layout = homepageLayout(this.size().cols, this.size().rows, this.visible), area = layout.terminal, preview = this.currentPreview();
@@ -414,7 +439,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
       if (output) this.blocked = !this.stdout.write(output);

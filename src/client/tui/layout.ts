@@ -1,7 +1,8 @@
-import type { SessionInfo, Status, AgentEngine } from '../../shared/protocol.js';
+import type { SessionInfo, Status, AgentEngine, SystemStats } from '../../shared/protocol.js';
 import { Grid, graphemes, type Frame } from './grid.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { Theme, ColorName } from './theme.js';
+import { agentUsage, drawThisMac } from './this-mac.js';
 export interface Rect { x: number; y: number; w: number; h: number }
 export function homepageLayout(cols: number, rows: number, visible = true) {
   const tiny = cols < 60 || rows < 16, compact = cols < 100 || rows < 30;
@@ -18,7 +19,7 @@ export const commands = ['/model', '/cd', '/settings', '/login', '/theme', '/exi
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
 const marks: Record<Status, [string, ColorName, string]> = { starting: ['◐', 'status-running', 'starting'], running: ['◐', 'status-running', 'running'], waiting: ['●', 'status-waiting', 'waiting'], done: ['✓', 'status-done', 'to review'], idle: ['·', 'status-idle', 'idle'], exited: ['■', 'status-idle', 'exited'], error: ['✗', 'status-error', 'failed'] };
 function age(session: SessionInfo, now: number): string { const minutes = Math.max(0, Math.floor((now - Date.parse(session.statusSince)) / 60000)); return minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`; }
-export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean }
+export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[] }
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
   if (layout.tiny) { const label = 'make the window bigger'; grid.text(Math.floor((cols - label.length) / 2), Math.floor(rows / 2), label, t['ink-3']); return grid.cells; }
@@ -54,7 +55,10 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     grid.box(p.x, p.y, p.w, p.h, '', t.surface);
     grid.text(p.x + 2, p.y, ` ${selected?.title ?? 'Preview'} `, t['ink-2'], t.surface, true, p.w - 23);
     const label = view.linesBack ? '◌ scrolled back' : '◉ live'; grid.text(p.x + p.w - label.length - 3, p.y, ` ${label} `, t.accent, t.surface);
-    grid.text(p.x + 2, 2, selected?.engine === 'shell' ? 'shell' : selected ? `${selected.engine} · ${selected.model ?? 'CLI default'}` : 'Your agents, together in one terminal', t['ink-2'], t.surface, false, p.w - 4);
+    // Per-agent usage sits on the header's right, before any ctx/diff text (design.md is silent; calmest spot).
+    const usage = agentUsage(view.stats, selected?.id), usageW = usage ? textWidth(usage) + 2 : 0;
+    grid.text(p.x + 2, 2, selected?.engine === 'shell' ? 'shell' : selected ? `${selected.engine} · ${selected.model ?? 'CLI default'}` : 'Your agents, together in one terminal', t['ink-2'], t.surface, false, p.w - 4 - usageW);
+    if (usage) grid.text(p.x + p.w - 2 - textWidth(usage), 2, usage, t['ink-3'], t.surface);
     for (let y = 0; y < area.h; y++) for (let x = 0; x < area.w; x++) { const cell = view.previewCells?.[y]?.[x]; if (cell) grid.put(area.x + x, area.y + y, cell); }
     if (!selected) { grid.text(area.x + 1, area.y + 2, 'Build with AI coding agents.', t['ink-3'], t.surface); grid.text(area.x + 1, area.y + 4, 'Type a task · ⏎ to start', t['ink-3'], t.surface); grid.text(area.x + 1, area.y + 6, 'Account logins · /model to choose', t['ink-3'], t.surface); }
     if (view.linesBack) { grid.fill(area.x, area.y, area.w, 1, t.surface); grid.text(area.x, area.y, `↑ ${view.linesBack} lines back · the agent keeps running  End follow live`, t['ink-2'], t.surface, false, area.w); }
@@ -64,7 +68,8 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     const w = layout.statsW, x = layout.statsX, macW = 36, usageW = w - macW - 2;
     grid.box(x, layout.statsY, usageW, 7, 'Usage'); grid.box(x + usageW + 2, layout.statsY, macW, 7, 'This Mac');
     ['    today week month', 'spend   —    —    —', 'tokens  —    —    —', 'budget  —    —    —', 'v0.1.8'].forEach((s, i) => grid.text(x + 2, layout.statsY + i + 1, s, t['ink-3'], t.bg, false, usageW - 4, i === 4));
-    ['CPU —             agents —', 'RAM —             agents —', 'NET ↓ —  ↑ —', '', 'v0.1.8'].forEach((s, i) => grid.text(x + usageW + 4, layout.statsY + i + 1, s, t['ink-3'], t.bg, false, macW - 4, i === 4));
+    drawThisMac(grid, x + usageW + 4, layout.statsY + 1, macW - 4, view.stats, view.cpuHistory ?? [], theme);
+    grid.text(x + usageW + 4, layout.statsY + 5, 'v0.1.8', t['ink-3'], t.bg, false, macW - 4, true);
   }
   grid.box(0, rows - 4, cols, 3, '', t.surface); grid.text(2, rows - 3, '›', t.accent, t.surface);
   const input = graphemes(view.input); let width = textWidth(view.input);
