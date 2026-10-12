@@ -80,7 +80,8 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   grid.text(end, rows - 3, '█', t.cursor, t.surface, false, 1);
   const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;
   const defaultWidth=Math.max(0,hintsX-2),auth=view.engine?` · ${view.authLabel??'own login'} · ask`:'',model=view.engine?`${view.model??'CLI default'} · ${view.engine==='codex'?'codex':'claude code'}`:'shell';
-  const prefix=`${model} · `,folderWidth=Math.max(0,defaultWidth-textWidth(prefix)-textWidth(auth));
+  let clippedModel='';for(const char of graphemes(model)){if(textWidth(clippedModel+char)>Math.max(0,defaultWidth-textWidth(auth)-3))break;clippedModel+=char;}
+  const prefix=`${clippedModel} · `,folderWidth=Math.max(0,defaultWidth-textWidth(prefix)-textWidth(auth));
   let folder='';for(const char of graphemes(view.cwd)){if(textWidth(folder+char)>folderWidth)break;folder+=char;}
   grid.text(1, rows - 1, prefix+folder+auth, t['ink-3'], t.bg, false, defaultWidth); grid.text(hintsX, rows - 1, hints, t['ink-3']);
   if (view.input.startsWith('/')) {
