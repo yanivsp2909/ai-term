@@ -79,7 +79,10 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const end = grid.text(4, rows - 3, view.input ? input.join('') : 'What do you want to build?', view.input ? t.ink : t['ink-3'], t.surface, false, cols - 6);
   grid.text(end, rows - 3, '█', t.cursor, t.surface, false, 1);
   const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;
-  grid.text(1, rows - 1, `${view.engine ? `${view.model ?? 'CLI default'} · ${view.engine === 'codex' ? 'codex' : 'claude code'}` : 'shell'} · ${view.cwd}${view.engine ? ' · '+(view.authLabel??'own login')+' · ask' : ''}`, t['ink-3'], t.bg, false, Math.max(0, hintsX - 2)); grid.text(hintsX, rows - 1, hints, t['ink-3']);
+  const defaultWidth=Math.max(0,hintsX-2),auth=view.engine?` · ${view.authLabel??'own login'} · ask`:'',model=view.engine?`${view.model??'CLI default'} · ${view.engine==='codex'?'codex':'claude code'}`:'shell';
+  const prefix=`${model} · `,folderWidth=Math.max(0,defaultWidth-textWidth(prefix)-textWidth(auth));
+  let folder='';for(const char of graphemes(view.cwd)){if(textWidth(folder+char)>folderWidth)break;folder+=char;}
+  grid.text(1, rows - 1, prefix+folder+auth, t['ink-3'], t.bg, false, defaultWidth); grid.text(hintsX, rows - 1, hints, t['ink-3']);
   if (view.input.startsWith('/')) {
     const choices = filteredCommands(view.input), h = choices.length + 2, y = rows - 4 - h;
     grid.box(0, y, Math.min(64, cols), h, 'Commands', t.surface);
