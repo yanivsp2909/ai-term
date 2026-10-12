@@ -24,6 +24,25 @@ async function fixture() {
   await home.start();
   return { home, tty, client, signals };
 }
+it.each(['exited', 'error'] as const)('Enter on an %s agent shows a removal hint without attaching', async status => {
+  const { Homepage } = await import('../src/client/tui/homepage.js');
+  const tty = new TTY(), client = new Client(), attachSession = vi.fn(async () => 'home key' as const);
+  const home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp', attachSession });
+  const headless = (await import('@xterm/headless')).default;
+  const display = new headless.Terminal({ cols: 130, rows: 45, allowProposedApi: true });
+  try {
+    await home.start();
+    client.emit('event', { kind: 'session.updated', session: { ...session, status, exitCode: status === 'error' ? 3 : 0 } });
+    const requestCount = client.requests.length;
+    tty.emit('data', Buffer.from('\r'));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise<void>(resolve => display.write(tty.output, resolve));
+    const text = Array.from({ length: 45 }, (_, y) => display.buffer.active.getLine(y)?.translateToString() ?? '').join('\n');
+    expect(text).toContain('project shell has exited · x removes it');
+    expect(attachSession).not.toHaveBeenCalled(); expect(client.requests).toHaveLength(requestCount);
+    expect(tty.isRaw).toBe(true);
+  } finally { display.dispose(); await home.stop(); }
+});
 it('shows a persistent error-color warning with terminal controls stripped and a 200-character cap',async()=>{
  const {home,tty,client}=await fixture();
  const headless=(await import('@xterm/headless')).default;const display=new headless.Terminal({cols:130,rows:45,allowProposedApi:true});
