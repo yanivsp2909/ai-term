@@ -1,17 +1,18 @@
-import { request } from 'node:https';
+import { request, type Agent } from 'node:https';
 import type { DeploymentTest } from '../../shared/protocol.js';
 import { isEndpoint, isSecret, isValidModelId } from '../../shared/validate.js';
 export interface ProviderRequest {url:URL;path:string;model:string;headers:Record<string,string>;body:Record<string,unknown>;timeout:number}
 export interface ProviderReply {status:number;errorCode:string|null}
 export type ProviderTransport=(request:ProviderRequest)=>Promise<ProviderReply>;
 // No redirects: an auth header must never follow a server to another host.
-export const providerTransport:ProviderTransport=options=>new Promise((resolve,reject)=>{
- const req=request(options.url,{method:'POST',headers:options.headers},res=>{
+export const providerTransportWithAgent=(agent?:Agent):ProviderTransport=>options=>new Promise((resolve,reject)=>{
+ const req=request(options.url,{method:'POST',headers:options.headers,agent},res=>{
   let bytes=0,body='';res.setEncoding('utf8');res.on('data',(chunk:string)=>{bytes+=Buffer.byteLength(chunk);if(bytes>65536){req.destroy(new Error('Provider reply too large'));return;}body+=chunk;});
   res.on('error',reject);res.on('end',()=>{let code:string|null=null;if((res.statusCode??500)>=400){try{const value:unknown=JSON.parse(body);if(value&&typeof value==='object'&&'error'in value&&value.error&&typeof value.error==='object'&&'code'in value.error&&typeof value.error.code==='string')code=value.error.code;}catch{code=null;}}resolve({status:res.statusCode??500,errorCode:code});});
  });
  const timer=setTimeout(()=>req.destroy(new Error('Provider test timed out')),options.timeout);req.on('error',reject);req.on('close',()=>clearTimeout(timer));req.end(JSON.stringify(options.body));
 });
+export const providerTransport=providerTransportWithAgent();
 export async function testFoundry(endpoint:string,deployments:string[],secret:string,transport:ProviderTransport=providerTransport):Promise<DeploymentTest[]>{
  if(!isEndpoint(endpoint)||!isSecret(secret)||!deployments.length||deployments.length>40||deployments.some(m=>!isValidModelId(m)))throw new Error('Invalid Foundry test details');
  const results:DeploymentTest[]=[];
