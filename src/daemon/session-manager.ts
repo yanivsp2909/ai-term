@@ -50,7 +50,8 @@ export class SessionManager extends EventEmitter {
             if (!isUUID(r.id) || !isTitle(r.title) || r.engine !== 'shell' || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
             const now = new Date().toISOString();
-            const info = { ...validateSession(r) };
+            const saved = validateSession(r);
+            const info: SessionInfo = { id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent };
             if (info.status === 'starting' || info.status === 'running') {
                 info.status = 'exited'; info.statusDetail = 'background service restarted';
                 info.statusSince = now; info.exitCode = null;
