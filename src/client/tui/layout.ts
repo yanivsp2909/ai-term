@@ -40,7 +40,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     if (selected) for (let r = 0; r < 3; r++) grid.text(1, y + r, '▎', t.accent, bg);
     grid.text(2, y, ` ${session.engine === 'shell' ? 'SH' : session.engine === 'codex' ? 'GP' : 'CL'} `, t.ink, t['surface-2'], true);
     grid.text(2, y + 1, '    ', t.ink, t['surface-2']);
-    const status = `${session.permission==='dontAsk'?'! ':''}${glyph} ${age(session, view.now)}`;
+    const status = `${session.permission==='dontAsk'?'! ':''}${glyph} ${session.engine==='shell'?'':word+' '}${age(session, view.now)}`;
     grid.text(7, y, session.title, t.ink, bg, selected, panel.w - status.length - 9);
     grid.text(panel.w - status.length - 2, y, status, color, bg);
     if(session.permission==='dontAsk')grid.text(panel.w-status.length-2,y,'!',t['status-error'],bg);
