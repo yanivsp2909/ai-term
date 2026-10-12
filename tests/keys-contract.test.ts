@@ -20,3 +20,6 @@ it('rejects malformed secrets providers endpoints deployments and import selecto
  await expect(validateRequest({id,kind:'keys.importEnv',path:'/tmp/f',names:['PASSWORD']})).rejects.toThrow();
  await expect(validateRequest({id,kind:'keys.remove',keyId:'bad'})).rejects.toThrow();
 });
+it('key metadata in settings is validated and private fields never pass to clients',()=>{
+ const key={id:keyId,provider:'anthropic',label:'test',last4:'0000',secret};expect(()=>validateSuccess({id,ok:true,settings:{theme:'graphite',keys:[key]}})).toThrow();
+});
