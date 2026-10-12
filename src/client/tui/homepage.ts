@@ -86,14 +86,14 @@ export class Homepage {
     if (this.ended) return;
     this.showing = true; this.stdout.write(ENTER_HOME); this.stdin.setRawMode(true); this.stdin.resume();
     this.stdin.on('data', this.onData); this.stdin.on('error', this.onError); this.stdout.on('error', this.onError); this.stdout.on('drain', this.onDrain);
-    this.signals.on('SIGWINCH', this.onResize); this.signals.on('SIGINT', this.onSignal); this.signals.on('SIGTERM', this.onTerm); this.signals.on('SIGHUP', this.onHup); this.signals.on('uncaughtException', this.onError); this.signals.on('unhandledRejection', this.onError); this.signals.on('exit', this.onExit);
+    this.signals.on('SIGWINCH', this.onResize); this.signals.on('SIGINT', this.onSignal); this.signals.on('SIGTERM', this.onTerm); this.signals.on('SIGHUP', this.onHup); this.signals.on('SIGQUIT', this.onQuit); this.signals.on('uncaughtException', this.onError); this.signals.on('unhandledRejection', this.onError); this.signals.on('exit', this.onExit);
     this.previous = null; this.previewCells = undefined; this.forceRedraw = true; this.blocked = false;
   }
   private leave(): void {
     if (this.drawTimer) clearTimeout(this.drawTimer); if (this.inputTimer) clearTimeout(this.inputTimer);
     this.parser.dispose();
     this.stdin.off('data', this.onData); this.stdin.off('error', this.onError); this.stdout.off('error', this.onError); this.stdout.off('drain', this.onDrain);
-    this.signals.off('SIGWINCH', this.onResize); this.signals.off('SIGINT', this.onSignal); this.signals.off('SIGTERM', this.onTerm); this.signals.off('SIGHUP', this.onHup); this.signals.off('uncaughtException', this.onError); this.signals.off('unhandledRejection', this.onError); this.signals.off('exit', this.onExit);
+    this.signals.off('SIGWINCH', this.onResize); this.signals.off('SIGINT', this.onSignal); this.signals.off('SIGTERM', this.onTerm); this.signals.off('SIGHUP', this.onHup); this.signals.off('SIGQUIT', this.onQuit); this.signals.off('uncaughtException', this.onError); this.signals.off('unhandledRejection', this.onError); this.signals.off('exit', this.onExit);
     if (!this.showing) return;
     this.showing = false;
     this.drawTimer = undefined; this.inputTimer = undefined;
@@ -115,6 +115,7 @@ export class Homepage {
   private onSignal = () => { void this.stop(); };
   private onTerm = () => { void this.stop(new ClientSignal(143)); };
   private onHup = () => { void this.stop(new ClientSignal(129)); };
+  private onQuit = () => { void this.stop(new ClientSignal(131)); };
   private onDisconnect = () => { void this.stop(new Error('Daemon connection closed')); };
   private onDrain = () => { this.blocked = false; this.draw(true); };
   private onResize = () => {

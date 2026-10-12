@@ -71,11 +71,12 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
   const onSignal=()=>end();
   const onTerm=()=>end(new ClientSignal(143),'client interrupted');
   const onHup=()=>end(new ClientSignal(129),'client interrupted');
+  const onQuit=()=>end(new ClientSignal(131),'client interrupted');
   const size=()=>{const cols=stdout.columns??80,rows=stdout.rows??24;if(!isSize(cols,rows))throw new Error('Terminal size outside supported range');return {cols,rows};};
   const onResize=()=>{if(!active)return;try{void connection.request({kind:'sessions.resize',sessionId:id,...size()}).catch(onError);}catch(error){onError(error instanceof Error?error:new Error('Resize failed'));}};
   connection.on('output',onOutput);connection.on('event',onEvent);connection.on('disconnected',onDisconnect);
   stdin.on('data',onData);stdin.on('error',onError);stdout.on('error',onError);stdout.on('drain',onDrain);
-  signals.on('SIGWINCH',onResize);signals.on('SIGINT',onSignal);signals.on('SIGTERM',onTerm);signals.on('SIGHUP',onHup);signals.on('uncaughtException',onUncaught);signals.on('unhandledRejection',onUncaught);
+  signals.on('SIGWINCH',onResize);signals.on('SIGINT',onSignal);signals.on('SIGTERM',onTerm);signals.on('SIGHUP',onHup);signals.on('SIGQUIT',onQuit);signals.on('uncaughtException',onUncaught);signals.on('unhandledRejection',onUncaught);
   try{
     entered=true;stdout.write('\x1b[?1049h');stdin.setRawMode(true);stdin.resume();
     const dimensions=size();
@@ -97,7 +98,7 @@ export async function attach(connection:AttachConnection,id:string,options:{stdi
     active=false;ended=true;if(escapeTimer)clearTimeout(escapeTimer);
     connection.off('output',onOutput);connection.off('event',onEvent);connection.off('disconnected',onDisconnect);
     stdin.off('data',onData);stdin.off('error',onError);stdout.off('error',onError);stdout.off('drain',onDrain);connection.resumeOutput?.();
-    signals.off('SIGWINCH',onResize);signals.off('SIGINT',onSignal);signals.off('SIGTERM',onTerm);signals.off('SIGHUP',onHup);signals.off('uncaughtException',onUncaught);signals.off('unhandledRejection',onUncaught);
+    signals.off('SIGWINCH',onResize);signals.off('SIGINT',onSignal);signals.off('SIGTERM',onTerm);signals.off('SIGHUP',onHup);signals.off('SIGQUIT',onQuit);signals.off('uncaughtException',onUncaught);signals.off('unhandledRejection',onUncaught);
     // Restore locally before waiting for an unreachable daemon.
     try{if(entered)stdout.write(RESET_MODES+'\x1b[?1049l');}catch(error){failure??=error instanceof Error?error:new Error('Terminal reset failed');reason='error';}
     try{stdin.setRawMode(originalRaw);stdin.pause();}catch(error){failure??=error instanceof Error?error:new Error('Raw mode reset failed');reason='error';}
