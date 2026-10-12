@@ -47,9 +47,14 @@ it('subscribes on open, draws This Mac and the selected agent\'s usage from samp
     expect(text).toContain('CPU 31% ▃▃▄▅▆▇▇██▃');
     expect(text).toMatch(/CPU 31% ▃▃▄▅▆▇▇██▃\s+agents 19%/);
     expect(text).toMatch(/RAM 14\.2\/32 GB\s+agents 2\.3 GB/);
-    expect(text).toContain('NET ↓ 1.4 MB/s  ↑ 0.2 MB/s');
+    expect(text).toContain('NET ↓ 1.4 MB/s  ↑ 200.0 KB/s');
     expect(text).toMatch(/shell\s+cpu 4% · 310 MB/);
   } finally { done(); await home.stop(); }
+});
+it('formats network rates with one decimal in B/s, KB/s and MB/s', async () => {
+  const { formatNetworkRate } = await import('../src/client/tui/this-mac.js');
+  for (const [value, expected] of [[0, '0.0 B/s'], [42, '42.0 B/s'], [999, '999.0 B/s'], [1000, '1.0 KB/s'], [12500, '12.5 KB/s'], [1e6, '1.0 MB/s'], [1.45e6, '1.4 MB/s']] as const)
+    expect(formatNetworkRate(value)).toBe(expected);
 });
 it('redraws only when a new sample arrives', async () => {
   const { home, tty, client, done } = await fixture();
