@@ -4,8 +4,9 @@ import type { RequestBody } from '../connection.js';
 import { attach, type AttachReason } from '../attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
 import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine } from '../../shared/validate.js';
-import { redact } from '../../daemon/log.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText } from '../../shared/validate.js';
+import { getPaths } from '../../shared/paths.js';
+import { Logger, redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
 import { CommandField, InputParser, type InputEvent } from './keys.js';
 import { Preview, type Point } from './preview.js';
@@ -25,7 +26,7 @@ interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawM
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
 export interface HomepageConnection extends EventEmitter { request(body: RequestBody): Promise<SuccessResponse> }
-interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>; attachSession?: (id: string) => Promise<AttachReason> }
+interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason> }
 const ENTER_HOME = RESET_MODES + '\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1002h\x1b[?1006h\x1b[?2004h';
 export class Homepage {
   readonly done: Promise<void>;
@@ -254,6 +255,7 @@ export class Homepage {
       case 'end': this.currentPreview()?.follow(); break;
       case 'stop': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.confirmId = session.id; this.showNote(`stop ${session.title}? y/n`); } break; }
       case 'rename': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.renameId = session.id; this.field.text = session.title; this.showNote('rename: type a name, ⏎ save · Esc cancel'); } break; }
+      case 'copy': this.enqueue(()=>this.copySelected());break;
       case 'remove': { const session = this.sessions.find(s => s.id === this.selectedId); if (session && ['exited', 'error'].includes(session.status)) this.enqueue(() => this.operation({ kind: 'sessions.remove', sessionId: session.id })); break; }
     }
     this.draw(true);
@@ -262,10 +264,22 @@ export class Homepage {
     try { await this.connection.request(body); this.showNote(''); }
     catch (error) { this.showNote(error instanceof Error ? error.message : 'Operation failed'); }
   }
+  private async copySelected():Promise<void>{
+    const session=this.sessions.find(s=>s.id===this.selectedId);if(!session){this.showNote('select an agent first');return;}
+    let copy:import('../../shared/protocol.js').SessionText;
+    try{const result=await this.connection.request({kind:'sessions.text',sessionId:session.id});copy=validateSessionText(result.copy);if(copy.sessionId!==session.id||copy.more===true)throw new Error('Invalid session text');}
+    catch{this.showNote('Copy failed: session text unavailable');return;}
+    if(this.ended)return;
+    try{await (this.options.copy??copyText)(copy.text);}
+    catch{(this.options.copyLog??new Logger(getPaths().log)).error('Clipboard copy failed');this.showNote('Copy failed: clipboard unavailable');return;}
+    const lines=copy.text?copy.text.split('\n').length:0;
+    if(!this.ended)this.showNote(`✓ copied ${lines} lines from ${session.title}${copy.truncated?' (oldest lines cut at 5 MB)':''}`,2000,true);
+  }
   private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title};}
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
   private async submit(text: string): Promise<void> {
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
+    if(command==='/copy'){if(argument){this.showNote('/copy uses the selected agent');return;}await this.copySelected();return;}
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
     if(command==='/clean'){if(argument){this.showNote('/clean takes no argument');return;}this.cleanIds=this.sessions.filter(s=>['exited','error'].includes(s.status)).map(s=>s.id);if(!this.cleanIds.length){this.cleanIds=null;this.showNote('No finished agents to remove');}else this.showNote(`remove ${this.cleanIds.length} finished agents? y/n`);return;}
     if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));}catch(error){this.showNote(error instanceof Error?error.message:'Shell could not start');}return;}

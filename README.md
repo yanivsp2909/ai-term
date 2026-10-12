@@ -50,6 +50,7 @@ Homepage slash commands:
 | `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
 | `/resume` | Continue selected finished Claude conversation; Codex opens its own folder-filtered resume picker |
 | `/shell` | Start a plain login shell in the /cd folder |
+| `/copy` | Copy selected agent scrollback and screen as plain text; up to 5 MiB, oldest content cut if needed |
 | `/clean` | Confirm y/n before removing all exited/failed list records; running agents and files untouched |
 | `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
 | `/theme graphite\|slate\|ink\|auto\|light` | Save the theme |
@@ -61,6 +62,7 @@ Homepage slash commands:
 | Enter | Slash menu picks highlighted command (`/theme`, `/effort`, `/mode` insert argument prefixes); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
 | Tab | Complete the highlighted slash command; with an argument, cycle its values |
 | `p` | Empty field toggles preview |
+| `c` | Empty field copies selected agent text; with text in the field, types c normally |
 | `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |

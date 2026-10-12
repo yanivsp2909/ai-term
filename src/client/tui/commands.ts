@@ -16,6 +16,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/resume',description:'Continue the selected finished agent',current:c=>c.selectedTitle??''},
  {name:'/shell',description:'Start a plain login shell',current:c=>c.cwd},
  {name:'/clean',description:'Remove finished records after confirmation',current:none},
+ {name:'/copy',description:'Copy selected agent text',current:c=>c.selectedTitle??''},
  {name:'/help',description:'Commands and keyboard help',current:none},
  {name:'/theme',description:'Choose the saved theme',argumentHint:()=> 'graphite|slate|ink|auto|light',values:()=>['graphite','slate','ink','auto','light'],current:c=>c.theme},
  {name:'/exit',description:'Quit AI Term; agents keep running',current:none},
@@ -23,6 +24,7 @@ export const commandRegistry:readonly Command[]=[
 export const aiSubcommands=['ai','ai --version','ai doctor','ai daemon','ai daemon stop','ai debug stats','ai debug usage','ai debug ls','ai debug shell [cwd]','ai debug attach <id>','ai debug stop <id>','ai debug peek <id>'] as const;
 export const debugActions=aiSubcommands.filter(c=>c.startsWith('ai debug ')).map(c=>c.split(' ')[2]??'');
 export const keyTable:readonly [string,string][]=[
+ ['c','Empty field copies selected agent scrollback and screen'],
  ['↑↓','Menu/pickers/settings select rows; otherwise select agent'],['Enter','Pick command; attach selected agent; task opens start box'],['Tab','Complete command, cycle argument values; start box cycles mode'],['p','Empty field toggles preview'],['b','Empty field opens daily/weekly/monthly USD budgets'],['r','Empty field renames selected agent; Enter saves'],['s, then y/n','Stop selected agent with confirmation'],['x','Remove selected exited/failed record'],['PgUp/PgDn/End','Scroll preview; follow live'],['Mouse wheel/drag','Scroll preview; copy selection'],['Esc','Close popup, cancel form, or clear command field'],['Backspace','Edit current field'],['Ctrl+C twice','Quit client; agents keep running'],['Ctrl+E','Inside session, return home; session keeps running'],['SIGTERM/SIGHUP/SIGQUIT','Client cleanup; exit 143/129/131'],
  ['Start box ↑↓ / m / c / e','Select row / model / folder / effort; message row edits text'],['Model ←→ / ↑↓ / Enter / Esc','Provider / model / select / back; type searches tabs'],['Folder Tab/Enter','Complete directory / accept folder'],['Effort/mode ↑↓ / Enter / Esc','Choose value / apply / back'],['/login ↑↓ / Enter','Provider/method; masked form advances/saves'],['/settings a/+ / i / l','Add key / import env file / login'],['/settings ↑↓ / Enter / x / t','Select/activate row / remove key / test key'],['/settings d / f / e / Tab / p','Save model / folder / effort / theme / Foundry price'],['Import ↑↓ / Space / Enter','Select name / toggle / import'],['Budget/price ↑↓ / Enter / Esc','Fields / save / cancel'],['Help ↑↓ / PgUp/PgDn / Esc','Scroll / page / close'],
 ];

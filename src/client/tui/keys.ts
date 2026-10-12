@@ -1,6 +1,6 @@
 import { StringDecoder } from 'node:string_decoder';
 import { graphemes, safeText } from './grid.js';
-export type Action = { kind: 'draw' | 'preview' | 'up' | 'down' | 'page-up' | 'page-down' | 'end' | 'attach' | 'quit' | 'stop' | 'rename' | 'remove' } | { kind: 'note' | 'submit'; text: string };
+export type Action = { kind: 'draw' | 'preview' | 'up' | 'down' | 'page-up' | 'page-down' | 'end' | 'attach' | 'quit' | 'stop' | 'rename' | 'remove' | 'copy' } | { kind: 'note' | 'submit'; text: string };
 export class CommandField {
   text = '';
   private lastInterrupt = -Infinity;
@@ -15,7 +15,7 @@ export class CommandField {
     if (key === 'enter') { const text = this.text; this.text = ''; return text ? { kind: 'submit', text } : { kind: 'attach' }; }
     if (['page-up', 'page-down', 'end'].includes(key)) return { kind: key as 'page-up' | 'page-down' | 'end' };
     if (!this.text) {
-      const shortcut: Record<string, Action['kind']> = { p: 'preview', s: 'stop', r: 'rename', x: 'remove', up: 'up', down: 'down' };
+      const shortcut: Record<string, Action['kind']> = { c:'copy', p: 'preview', s: 'stop', r: 'rename', x: 'remove', up: 'up', down: 'down' };
       const action = shortcut[key]; if (action) return { kind: action } as Action;
     }
     if (graphemes(key).length === 1 && !/[\p{C}]/u.test(key)) this.paste(key);
