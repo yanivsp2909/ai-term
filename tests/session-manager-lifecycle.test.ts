@@ -80,6 +80,8 @@ describe('unknown sessions and bad arguments', () => {
     await m.attach(live.id, 80, 24, () => undefined);
     m.input(live.id, Buffer.from('attached\n'));
     expect(write.mock.calls.map(([data]) => String(data))).toEqual(['attached\n']);
+    // read exits after that line; wait for onExit before cleanup signals its vanished process group.
+    await expect.poll(() => m.get(live.id).status).toBe('exited');
   });
 });
 
