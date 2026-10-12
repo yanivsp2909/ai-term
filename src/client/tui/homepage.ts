@@ -125,11 +125,11 @@ export class Homepage {
     this.connection.off('event', this.onEvent); this.connection.off('output', this.onOutput); this.connection.off('disconnected', this.onDisconnect);
     try { this.leave(); } catch (cleanupError) { error ??= cleanupError instanceof Error ? cleanupError : new Error('Terminal restore failed'); }
     for (const preview of this.previews.values()) preview.dispose(); this.previews.clear();
-    // After the terminal is restored. A gone daemon has already dropped the subscription with the connection.
     if (this.statsOn && !this.disconnected) {
       this.statsOn = false;
-      try { await this.connection.request({ kind: 'system.subscribe', on: false }); }
-      catch (unsubscribeError) { error ??= unsubscribeError instanceof Error ? unsubscribeError : new Error('Stats unsubscribe failed'); }
+      // Not awaited: quitting never waits on a slow daemon. The CLI closes the connection right after, and the
+      // daemon drops a closed connection's subscription, so a failed request here leaves nothing behind.
+      void this.connection.request({ kind: 'system.subscribe', on: false }).catch(() => undefined);
     }
     if (error) this.rejectDone(error); else this.resolveDone();
   }
@@ -317,7 +317,14 @@ export class Homepage {
   private async subscribeStats(on: boolean): Promise<void> {
     if (this.ended || this.statsOn === on) return;
     this.statsOn = on;
-    await this.connection.request({ kind: 'system.subscribe', on });
+    // Old numbers are never shown as current: after a gap the panel waits for a fresh sample.
+    if (!on) { this.stats = null; this.cpuHistory = []; }
+    try { await this.connection.request({ kind: 'system.subscribe', on }); }
+    catch (error) {
+      if (!on) throw error;
+      // This Mac is not worth losing the homepage over; say so and carry on without it.
+      this.statsOn = false; this.showNote(`This Mac unavailable: ${error instanceof Error ? error.message : 'subscribe failed'}`);
+    }
   }
   private onStats(value: unknown): void {
     const stats = validateSystemStats(value);

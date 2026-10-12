@@ -141,7 +141,7 @@ export class SystemSampler extends EventEmitter {
     if (this.busy) return; // a slow sample never stacks a second one behind it
     this.busy = true;
     const generation = this.generation;
-    void this.sample().then(stats => {
+    void this.sample(generation).then(stats => {
       if (generation !== this.generation) return;
       if (this.failing) { this.failing = false; this.deps.log.info('System stats sampling recovered'); }
       if (stats) this.emit('stats', stats);
@@ -151,9 +151,11 @@ export class SystemSampler extends EventEmitter {
       if (!this.failing) { this.failing = true; this.deps.log.error(`System stats sample skipped (${reason(error)})`); }
     }).finally(() => { if (generation === this.generation) this.busy = false; });
   }
-  private async sample(): Promise<SystemStats | null> {
+  private async sample(generation: number): Promise<SystemStats | null> {
     const { ps, vmStat, netstat } = SAMPLE_COMMANDS;
     const [psText, vmText, netText] = await Promise.all([this.deps.run(ps.file, [...ps.args]), this.deps.run(vmStat.file, [...vmStat.args]), this.deps.run(netstat.file, [...netstat.args])]);
+    // Sampling stopped while the commands ran: leave no baseline, or the next run's first event would average over the gap.
+    if (generation !== this.generation) return null;
     const at = this.deps.now(), cpuList = this.deps.cpus(), net = parseNetstat(netText), memUsed = parseVmStat(vmText);
     if (!net) throw new SampleError('netstat output unreadable');
     if (memUsed === null) throw new SampleError('vm_stat output unreadable');

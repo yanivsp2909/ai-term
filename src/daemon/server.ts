@@ -52,6 +52,7 @@ export class DaemonServer {
         dev: number;
     } | undefined;
     private readonly sampler: SystemSampler;
+    private closed = false;
     constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler) {
         this.settings = new SettingsStore(paths.root);
         this.sampler = sampler ?? new SystemSampler(defaultSamplerDeps(() => manager.sessionRoots(), log));
@@ -280,7 +281,7 @@ export class DaemonServer {
         }
     }
     // Sampling runs only while some connected client wants it (architecture §10).
-    private updateSampling(): void { this.sampler.setSubscribers([...this.peers].filter(peer => peer.stats).length); }
+    private updateSampling(): void { if (this.closed) return; this.sampler.setSubscribers([...this.peers].filter(peer => peer.stats).length); }
     private async detach(peer:Peer):Promise<void> {
         const id=peer.attached;if(!id)return;
         await this.manager.detach(id,()=>{
@@ -289,6 +290,8 @@ export class DaemonServer {
         });
     }
     async close(): Promise<void> {
+        // Peers' close handlers run after this; they must not restart sampling during shutdown.
+        this.closed = true;
         this.sampler.setSubscribers(0);
         for (const peer of this.peers)
             peer.socket.destroy();
