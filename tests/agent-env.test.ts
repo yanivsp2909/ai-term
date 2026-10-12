@@ -32,10 +32,23 @@ it('S7 key rows set only own secret and strip other own-provider credentials',()
 it('S9/S10 builds argv only with validated model, positional first message and explicit per-session permissions',()=>{
  for(const engine of ['claude-code','codex'] as const){
   const daemon=engine==='codex'?['--no-daemon']:[];
-  expect(buildArgs({engine,model:null,permission:'ask'})).toEqual([...daemon]);
-  expect(buildArgs({engine,model:'test-model',permission:'ask',firstMessage:'$(touch nope) "hello"'})).toEqual([...daemon,'--model=test-model','--','$(touch nope) "hello"']);
-  expect(buildArgs({engine,model:null,permission:'dontAsk'})).toEqual([...daemon,...engine==='claude-code'?['--permission-mode=bypassPermissions']:['--ask-for-approval=never','--sandbox=workspace-write']]);
+  const ask=engine==='claude-code'?['--permission-mode=default']:['--ask-for-approval=on-request','--sandbox=workspace-write'];
+  const dontAsk=engine==='claude-code'?['--permission-mode=bypassPermissions']:['--ask-for-approval=never','--sandbox=workspace-write'];
+  expect(buildArgs({engine,model:null,permission:'ask'})).toEqual([...daemon,...ask]);
+  expect(buildArgs({engine,model:'test-model',permission:'ask',firstMessage:'$(touch nope) "hello"'})).toEqual([...daemon,'--model=test-model',...ask,'--','$(touch nope) "hello"']);
+  expect(buildArgs({engine,model:null,permission:'dontAsk'})).toEqual([...daemon,...dontAsk]);
+  expect(buildArgs({engine,model:'test-model',permission:'dontAsk',firstMessage:'reply with ok'})).toEqual([...daemon,'--model=test-model',...dontAsk,'--','reply with ok']);
   for(const model of ['-x','a b','"x"'])expect(()=>buildArgs({engine,model,permission:'ask'})).toThrow();
+ }
+});
+it('B3/D40 Ask passes explicit ask flags on every path, and no permission choice ever passes a bypass flag',()=>{
+ const forbidden=['--dangerously-skip-permissions','--yolo','--dangerously-bypass-approvals-and-sandbox','--full-auto','danger-full-access','--permission-mode=dontAsk'];
+ const foundryEndpoint='https://example.openai.azure.com/openai/v1';
+ for(const engine of ['claude-code','codex'] as const)for(const permission of ['ask','dontAsk'] as const)for(const foundry of [false,true]){
+  if(foundry&&engine!=='codex')continue;
+  const args=buildArgs({engine,model:'deployment',permission,...foundry?{foundryEndpoint}:{}});
+  expect(args.filter(arg=>forbidden.some(flag=>arg.includes(flag)))).toEqual([]);
+  if(permission==='ask')expect(args.slice(-(engine==='claude-code'?1:2))).toEqual(engine==='claude-code'?['--permission-mode=default']:['--ask-for-approval=on-request','--sandbox=workspace-write']);
  }
 });
 it('B2/D41 every Codex argv starts with exactly one --no-daemon, which Codex rejects twice; Claude never gets it',()=>{
