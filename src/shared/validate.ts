@@ -74,7 +74,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','auth','cwd','permission','title','firstMessage','login'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
             if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermission(v.permission) || (v.firstMessage !== undefined && (typeof v.firstMessage !== 'string' || Buffer.byteLength(v.firstMessage) > 16384 || v.firstMessage.includes('\0'))))) throw new ValidationError('Invalid account agent request');
-            if (v.login !== undefined && (v.login !== true || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined)) throw new ValidationError('Invalid login session');
+            if (v.login !== undefined && (v.login !== true || v.model!==null || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined)) throw new ValidationError('Invalid login session');
             if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
             break;
         case 'sessions.attach':
@@ -228,6 +228,7 @@ export function validateKeyView(v:unknown):import('./protocol.js').KeyView {
     if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid key metadata');
     const k=v as Record<string,unknown>;
     if(Object.keys(k).some(n=>!['id','provider','label','last4','endpoint','deployments','lastTest'].includes(n))||!isUUID(k.id)||!isKeyProvider(k.provider)||!isTitle(k.label)||typeof k.last4!=='string'||k.last4.length>4||/[\p{C}]/u.test(k.last4)||k.endpoint!==undefined&&!isEndpoint(k.endpoint)||k.deployments!==undefined&&!isDeployments(k.deployments))throw new ValidationError('Invalid key metadata');
+    if(k.provider==='foundry'&&(!isEndpoint(k.endpoint)||!isDeployments(k.deployments)||!k.deployments.length))throw new ValidationError('Invalid Foundry metadata');
     if(k.lastTest!==undefined)validateDeploymentTests(k.lastTest);
     return k as unknown as import('./protocol.js').KeyView;
 }

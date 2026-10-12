@@ -85,7 +85,7 @@ ai-term/
 ## 3. Daemon lifecycle and files
 
 **Start.** `ai` tries to connect to the socket. If that fails, it starts `process.execPath <path to cli> daemon`:
-- detached, with stdin ignored and stdout/stderr going to `~/.ai-term/logs/daemon.log`, then `unref()`
+- detached, with stdin/stdout/stderr ignored, then `unref()`; structured diagnostics use the daemon logger, never raw CLI/process streams
 - the client then retries the connection for up to 3 s
 
 The daemon takes an exclusive lock (`run/daemon.pid`, created with `O_EXCL`) so only one daemon runs. A stale pid is checked with `process.kill(pid, 0)`; a pid that belongs to another user, or to a process that started more than 2 s after the lock was written (`ps -o etime=`, pid reuse after a crash and reboot), is stale too.
