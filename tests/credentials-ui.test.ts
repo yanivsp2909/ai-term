@@ -19,3 +19,7 @@ it('cancelling clears secret and validation refuses oversized secret without tru
  const requests:RequestBody[]=[];const panel=new CredentialsPanel('login',{request:async body=>{requests.push(body);return {id:randomUUID(),ok:true};},changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});
  await panel.key('enter');await panel.key('down');await panel.key('enter');await panel.key('enter');panel.paste('x'.repeat(513));await panel.key('enter');expect(requests).toEqual([]);await panel.key('escape');expect(panel.containsSecret()).toBe(false);
 });
+it('settings shows actual defaults and provides separate model and folder controls',async()=>{
+ const defaults:string[]=[];const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='settings.get'?{settings:{theme:'slate',defaultEngine:'codex',defaultModel:'gpt-6.1-sol',defaultCwd:'/tmp/project',permission:'ask'}}:body.kind==='keys.list'?{keys:[]}:{})}),changed:()=>{},close:()=>{},login:async()=>{},defaults:kind=>{defaults.push(kind);},theme:async()=>{}});
+ await panel.load();expect(panel.lines().join('\n')).toContain('gpt-6.1-sol');expect(panel.lines().join('\n')).toContain('/tmp/project');await panel.key('d');await panel.key('f');expect(defaults).toEqual(['model','folder']);
+});
