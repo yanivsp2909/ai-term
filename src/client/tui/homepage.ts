@@ -408,7 +408,9 @@ export class Homepage {
     } catch (error) { this.onError(error); }
   };
   private async openSelected(): Promise<void> {
-    const id = this.selectedId; if (!id || !this.options.attachSession) { this.showNote(id ? 'Attach unavailable' : 'No session selected'); return; }
+    const id = this.selectedId, session = this.sessions.find(s => s.id === id);
+    if (session && (session.status === 'exited' || session.status === 'error')) { this.showNote(`${session.title} has exited · x removes it`); return; }
+    if (!id || !this.options.attachSession) { this.showNote(id ? 'Attach unavailable' : 'No session selected'); return; }
     await this.connection.request({ kind: 'sessions.preview', sessionId: null }); this.previewId = null; this.loading = null;
     await this.subscribeStats(false);
     this.attached = true; this.leave();
