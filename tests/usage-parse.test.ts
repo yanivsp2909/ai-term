@@ -22,3 +22,7 @@ it('Codex only accepts response.completed token fields and ignores private recor
  const raw={resourceLogs:[{scopeLogs:[{logRecords:[{timeUnixNano:'10',attributes,body:{stringValue:'PRIVATE'}},{timeUnixNano:'11',attributes:[{key:'event.name',value:{stringValue:'codex.tool_output'}},{key:'content',value:{stringValue:'AITERMCANARY'}}]}]}]}]};
  const records=p.parse('/v1/logs',raw,codex);expect(records).toHaveLength(1);expect(records[0]).toMatchObject({model:'test',inputTokens:1000,outputTokens:100,cachedTokens:500,costUsd:null,costSource:'price-table'});expect(JSON.stringify(records)).not.toMatch(/PRIVATE|AITERMCANARY|email/);expect(p.parse('/v1/logs',raw,codex)).toEqual([]);
 });
+it('does not double count cumulative input followed by delta then another cumulative sample',()=>{
+ const p=new UsageParser(()=>{});const first=p.parse('/v1/metrics',metric('claude_code.token.usage','input',100,'2',2),context);const delta=p.parse('/v1/metrics',metric('claude_code.token.usage','input',10,'3',1),context);const next=p.parse('/v1/metrics',metric('claude_code.token.usage','input',120,'4',2),context);
+ expect(first[0]?.inputTokens).toBe(100);expect(delta[0]?.inputTokens).toBe(10);expect(next[0]?.inputTokens).toBe(10);
+});
