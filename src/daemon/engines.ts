@@ -3,7 +3,7 @@ import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
-import type { AgentEngine, EngineStatus, EnginesStatus, AuthMethod } from '../shared/protocol.js';
+import type { AgentEngine, EngineStatus, EnginesStatus, AuthMethod, EngineCheckError } from '../shared/protocol.js';
 import { buildSpawnEnv } from './env.js';
 export async function resolveExecutable(name:string,path:string):Promise<string|null>{
     if(!/^[A-Za-z0-9._-]+$/.test(name))throw new Error('Invalid executable name');
@@ -20,12 +20,17 @@ export type EngineRunner=(file:string,args:string[],options:{env:NodeJS.ProcessE
 const run:EngineRunner=(file,args,options)=>new Promise(resolve=>execFile(file,args,options,(error,stdout,stderr)=>resolve({code:error?typeof error.code==='number'?error.code:null:0,stdout,stderr})));
 export async function checkEngine(engine:AgentEngine,base:NodeJS.ProcessEnv=process.env,runner:EngineRunner=run):Promise<EngineStatus>{
     const env=buildSpawnEnv(engine,{kind:'account'},base), name=engine==='claude-code'?'claude':'codex';
-    const path=await resolveExecutable(name,env.PATH??'');
+    let path:string|null;
+    try{path=await resolveExecutable(name,env.PATH??'');}catch{return {installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown',error:'Engine executable check failed'};}
     if(!path)return {installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown'};
     const options={env,timeout:5000,maxBuffer:64*1024};
-    const versionResult=await runner(path,['--version'],options);
+    let error:EngineCheckError|undefined;
+    let versionResult:EngineRunResult;
+    try{versionResult=await runner(path,['--version'],options);}catch{versionResult={code:null,stdout:'',stderr:''};}
+    if(versionResult.code!==0)error='Engine version check failed';
     const version=versionResult.code===0?(versionResult.stdout+versionResult.stderr).match(/\b\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?\b/)?.[0]??null:null;
-    const auth=await runner(path,engine==='claude-code'?['auth','status','--json']:['login','status'],options);
+    let auth:EngineRunResult;
+    try{auth=await runner(path,engine==='claude-code'?['auth','status','--json']:['login','status'],options);}catch{auth={code:null,stdout:'',stderr:''};}
     let loggedIn:boolean|null=null,authMethod:AuthMethod='unknown';
     if(engine==='claude-code'){
         let value:unknown;try{value=JSON.parse(auth.stdout) as unknown;}catch{value=null;}
@@ -39,7 +44,8 @@ export async function checkEngine(engine:AgentEngine,base:NodeJS.ProcessEnv=proc
         else if(auth.code===0&&/^Logged in using an API key\b/i.test(output.trim())){loggedIn=true;authMethod='api-key';}
         else if(auth.code===1&&/^Not logged in\b/i.test(output.trim()))loggedIn=false;
     }
-    return {installed:true,path,version,loggedIn,authMethod};
+    if(loggedIn===null)error='Engine login check failed';
+    return {installed:true,path,version,loggedIn,authMethod,...(error?{error}:{})};
 }
 export async function enginesStatus(base:NodeJS.ProcessEnv=process.env):Promise<EnginesStatus>{
     const [claudeCode,codex]=await Promise.all([checkEngine('claude-code',base),checkEngine('codex',base)]);

@@ -59,7 +59,8 @@ export class DaemonServer {
     private readonly sampler: SystemSampler;
     private closed = false;
     constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService) {
-        this.settings = new SettingsStore(paths.root);
+        this.settings = new SettingsStore(paths.root,()=>manager.keyMetadataWarning());
+        keys.on('warning',()=>manager.keyMetadataWarning());
         usage?.on('updated',summary=>{for(const peer of this.peers)if(peer.hello&&peer.usage)this.control(peer,{kind:'usage.updated',usage:summary});});
         this.sampler = sampler ?? new SystemSampler(defaultSamplerDeps(() => manager.sessionRoots(), log));
         this.sampler.on('stats', (stats: SystemStats) => { for (const peer of this.peers) if (peer.hello && peer.stats) this.control(peer, { kind: 'system.stats', stats }); });
@@ -331,7 +332,7 @@ export class DaemonServer {
                 'Invalid preview size','Invalid attach','Session unavailable','Invalid resize','Not attached',
                 'Session stop timed out','Session stop signal failed',
                 'Invalid key id','Key not found','Invalid key metadata','Invalid key details','Key details must not contain the secret',
-                'Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
+                'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
                 'OS keychain unavailable; key was not saved','OS keychain unavailable; key was not removed','OS keychain unavailable',
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',

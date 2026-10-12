@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { testFoundry } from '../src/daemon/providers/foundry.js';
 import { checkEngine } from '../src/daemon/engines.js';
 import { KeyStore, type KeyVault } from '../src/daemon/keys.js';
+import { getPaths, preparePaths } from '../src/shared/paths.js';
 import { validateDeploymentTests, validateEngineStatus } from '../src/shared/validate.js';
 
 afterEach(() => vi.restoreAllMocks());
@@ -47,7 +48,7 @@ it('B17 keyring failures wrap a fixed operation cause and never retain a raw cau
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 it('B17 skips and reports one malformed metadata entry, keeping other keys removable', async () => {
-  const root = await mkdtemp('/tmp/ai-b17-metadata-');
+  const root = await mkdtemp('/tmp/ai-b17-metadata-'); await preparePaths(getPaths(root));
   const vault: KeyVault = { read: async () => null, write: async () => {}, remove: vi.fn(async () => {}) };
   const store = new KeyStore(root, { vault });
   try {
@@ -57,4 +58,29 @@ it('B17 skips and reports one malformed metadata entry, keeping other keys remov
     await store.remove(key.id); expect(vault.remove).toHaveBeenCalledWith(`anthropic:${key.id}`); expect(await store.list()).toEqual([]);
     const text = await readFile(join(root, 'logs/daemon.log'), 'utf8'); expect(text.match(/Invalid key metadata entry skipped/g)).toHaveLength(1); expect(text).not.toContain('AITERMCANARY');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+it('B17 metadata warning reaches socket clients while valid keys remain removable', async () => {
+  const { Logger } = await import('../src/daemon/log.js');
+  const { SessionManager } = await import('../src/daemon/session-manager.js');
+  const { DaemonServer } = await import('../src/daemon/server.js');
+  const { Connection } = await import('../src/client/connection.js');
+  const root = await mkdtemp('/tmp/ai-b17-wire-'), paths = getPaths(root); await preparePaths(paths);
+  const vault: KeyVault = { read: async () => null, write: async () => {}, remove: async () => {} };
+  const keys = new KeyStore(root, { vault }), log = new Logger(paths.log), manager = new SessionManager(paths, log, undefined, undefined, undefined, keys), server = new DaemonServer(paths, manager, log, undefined, keys);
+  let client: import('../src/client/connection.js').Connection | undefined;
+  try {
+    const good = { id: randomUUID(), provider: 'anthropic', label: 'good', last4: '' };
+    await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', keys: [good, { id: randomUUID(), provider: 'bad', label: 'AITERMCANARY' }] }));
+    await manager.load(); await server.listen(); client = await Connection.connect(paths, { entry: '/unused', autoStart: false });
+    const events: unknown[] = []; client.on('event', e => events.push(e));
+    expect((await client.request({ kind: 'keys.list' })).keys).toEqual([good]);
+    await client.request({kind:'sessions.list'});
+    await expect.poll(() => events).toContainEqual({ kind: 'daemon.warning', text: 'Invalid key metadata entry skipped; other keys remain usable.' });
+    await client.request({ kind: 'keys.remove', keyId: good.id }); expect((await client.request({ kind: 'keys.list' })).keys).toEqual([]);
+    expect(JSON.stringify(events) + await readFile(paths.log, 'utf8')).not.toContain('AITERMCANARY');
+  } finally { client?.close(); await server.close(); await manager.shutdown(); await rm(root, { recursive: true, force: true }); }
+});
+it('B17 provider error codes accept only known fixed codes', async () => {
+  const results = await testFoundry('https://example.com', ['gpt'], 'fake-value', async () => ({ status: 401, errorCode: 'AITERMCANARY' }));
+  expect(results).toEqual([{ model: 'gpt', status: 'error', httpStatus: 401 }]);
 });

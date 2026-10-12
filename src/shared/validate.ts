@@ -194,8 +194,8 @@ export function validateSettings(value: unknown): import('./protocol.js').Settin
 export function validateEngineStatus(value:unknown): import('./protocol.js').EngineStatus {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid engine status');
     const v=value as Record<string,unknown>;
-    if (Object.keys(v).some(k=>!['installed','path','version','loggedIn','authMethod'].includes(k)) || typeof v.installed !== 'boolean' || !(v.path === null || typeof v.path === 'string' && isAbsolute(v.path)) || !(v.version === null || typeof v.version === 'string' && /^[A-Za-z0-9.-]{1,80}$/.test(v.version)) || !(v.loggedIn === null || typeof v.loggedIn === 'boolean') || !['subscription','api-key','unknown'].includes(String(v.authMethod))) throw new ValidationError('Invalid engine status');
-    return {installed:v.installed,path:v.path as string|null,version:v.version as string|null,loggedIn:v.loggedIn as boolean|null,authMethod:v.authMethod as import('./protocol.js').AuthMethod};
+    if (Object.keys(v).some(k=>!['installed','path','version','loggedIn','authMethod','error'].includes(k)) || typeof v.installed !== 'boolean' || !(v.path === null || typeof v.path === 'string' && isAbsolute(v.path)) || !(v.version === null || typeof v.version === 'string' && /^[A-Za-z0-9.-]{1,80}$/.test(v.version)) || !(v.loggedIn === null || typeof v.loggedIn === 'boolean') || !['subscription','api-key','unknown'].includes(String(v.authMethod)) || v.error!==undefined&&!['Engine executable check failed','Engine version check failed','Engine login check failed'].includes(String(v.error))) throw new ValidationError('Invalid engine status');
+    return {installed:v.installed,path:v.path as string|null,version:v.version as string|null,loggedIn:v.loggedIn as boolean|null,authMethod:v.authMethod as import('./protocol.js').AuthMethod,...(v.error!==undefined?{error:v.error as import('./protocol.js').EngineCheckError}:{})};
 }
 export function validateSession(value: unknown): import('./protocol.js').SessionInfo {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid daemon session');
@@ -244,7 +244,7 @@ function isAuthView(v:unknown):boolean {
     return Object.keys(a).length===5&&a.kind==='key'&&isUUID(a.keyId)&&isKeyProvider(a.provider)&&isTitle(a.keyLabel)&&typeof a.last4==='string'&&a.last4.length<=4&&!/[\p{C}]/u.test(a.last4);
 }
 export function validateDeploymentTests(v:unknown):import('./protocol.js').DeploymentTest[]{
-    if(!Array.isArray(v)||v.length>40||v.some(r=>!r||typeof r!=='object'||Object.keys(r).some(k=>!['model','status','httpStatus','errorCode'].includes(k))||typeof r.model!=='string'||!isValidModelId(r.model)||!['ready','not a chat model','error'].includes(r.status)||r.httpStatus!==undefined&&(!Number.isInteger(r.httpStatus)||r.httpStatus<100||r.httpStatus>599)||r.errorCode!==undefined&&(typeof r.errorCode!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(r.errorCode))))throw new ValidationError('Invalid deployment results');
+    if(!Array.isArray(v)||v.length>40||v.some(r=>!r||typeof r!=='object'||Object.keys(r).some(k=>!['model','status','httpStatus','errorCode','reason'].includes(k))||typeof r.model!=='string'||!isValidModelId(r.model)||!['ready','not a chat model','error'].includes(r.status)||r.httpStatus!==undefined&&(!Number.isInteger(r.httpStatus)||r.httpStatus<100||r.httpStatus>599)||r.errorCode!==undefined&&(typeof r.errorCode!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(r.errorCode))||r.reason!==undefined&&!['Provider request timed out','Provider connection failed','Provider reply too large','Provider request failed'].includes(r.reason)))throw new ValidationError('Invalid deployment results');
     return v as import('./protocol.js').DeploymentTest[];
 }
 export function validateKeyView(v:unknown):import('./protocol.js').KeyView {

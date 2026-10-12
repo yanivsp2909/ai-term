@@ -12,10 +12,12 @@ export type AgentEngine = 'claude-code' | 'codex';
 export type Permission = 'ask' | 'auto' | 'dontAsk';
 export type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'persistent';
 export type AuthMethod = 'subscription' | 'api-key' | 'unknown';
-export interface EngineStatus { installed: boolean; path: string | null; version: string | null; loggedIn: boolean | null; authMethod: AuthMethod }
+export type EngineCheckError = 'Engine executable check failed' | 'Engine version check failed' | 'Engine login check failed';
+export type ProviderFailureReason = 'Provider request timed out' | 'Provider connection failed' | 'Provider reply too large' | 'Provider request failed';
+export interface EngineStatus { installed: boolean; path: string | null; version: string | null; loggedIn: boolean | null; authMethod: AuthMethod; error?: EngineCheckError }
 export interface EnginesStatus { claudeCode: EngineStatus; codex: EngineStatus }
 export type KeyProvider = 'anthropic' | 'foundry' | 'openai';
-export interface DeploymentTest { model: string; status: 'ready' | 'not a chat model' | 'error'; httpStatus?: number; errorCode?: string }
+export interface DeploymentTest { model: string; status: 'ready' | 'not a chat model' | 'error'; httpStatus?: number; errorCode?: string; reason?: ProviderFailureReason }
 export interface KeyView { id: string; provider: KeyProvider; label: string; last4: string; endpoint?: string; deployments?: string[]; lastTest?: DeploymentTest[] }
 export type AuthRef = {kind:'account'} | {kind:'key';keyId:string};
 export type AuthView = {kind:'account'} | {kind:'key';keyId:string;provider:KeyProvider;keyLabel:string;last4:string};

@@ -51,7 +51,7 @@ export class CredentialsPanel {
    if(key==='p'){this.actions.price?.();return;}
    if(key==='d'||key==='f'||key==='e'){this.actions.defaults(key==='d'?'model':key==='e'?'effort':'folder');return;}
    if(key==='tab'){this.busy=true;try{const settings=(await this.actions.request({kind:'settings.get'})).settings;const index=themes.indexOf(settings?.theme??'graphite');await this.actions.theme(themes[(index+1)%themes.length]??'graphite');this.message='Theme saved';}catch{this.message='Theme could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
-   const selected=this.keys[this.choice];if(selected&&(key==='x'||key==='t'||key==='enter')){this.busy=true;try{if(key==='x'){await this.actions.request({kind:'keys.remove',keyId:selected.id});this.message='Key removed from the OS keychain';this.keys=this.keys.filter(k=>k.id!==selected.id);this.choice=Math.min(this.choice,Math.max(0,this.keys.length-1));}else{const r=await this.actions.request({kind:'keys.test',keyId:selected.id});this.message=(r.results??[]).map(r=>`${r.model}: ${r.status}${r.httpStatus?' '+r.httpStatus:''}${r.errorCode?' '+r.errorCode:''}`).join(' · ');}}catch(error){this.message=reason(error,'Key operation failed');this.busy=false;this.actions.changed();return;}
+   const selected=this.keys[this.choice];if(selected&&(key==='x'||key==='t'||key==='enter')){this.busy=true;try{if(key==='x'){await this.actions.request({kind:'keys.remove',keyId:selected.id});this.message='Key removed from the OS keychain';this.keys=this.keys.filter(k=>k.id!==selected.id);this.choice=Math.min(this.choice,Math.max(0,this.keys.length-1));}else{const r=await this.actions.request({kind:'keys.test',keyId:selected.id});this.message=(r.results??[]).map(r=>`${r.model}: ${r.status}${r.httpStatus?' '+r.httpStatus:''}${r.errorCode?' '+r.errorCode:''}${r.reason?' · '+r.reason:''}`).join(' · ');}}catch(error){this.message=reason(error,'Key operation failed');this.busy=false;this.actions.changed();return;}
     try{this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}catch(error){this.message+=' · list not refreshed: '+reason(error,'keys unavailable');}finally{this.busy=false;this.actions.changed();}return;}
   }
   if(this.screen==='import'&&key==='enter'){this.busy=true;try{this.names=(await this.actions.request({kind:'keys.scanEnvFile',path:this.path})).found??[];this.selected=new Set(this.names.map(n=>n.name));this.screen='names';this.choice=0;this.message='';}catch(error){this.message=reason(error,'Env file could not be scanned');}finally{this.busy=false;this.actions.changed();}return;}
@@ -69,7 +69,7 @@ export class CredentialsPanel {
   catch(error){this.message=reason(error,'Key could not be saved; check OS keychain access');this.busy=false;this.actions.changed();return;}
   // From here the key is saved: a failed test or refresh must say so, or a retry saves it twice.
   this.screen='result';this.message='✓ saved to the OS keychain';
-  try{if(saved){this.keys=[saved];if(saved.provider==='foundry'){const test=await this.actions.request({kind:'keys.test',keyId:saved.id});this.message+=' · '+(test.results??[]).map(r=>`${r.model}: ${r.status}`).join(' · ');this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}}}
+  try{if(saved){this.keys=[saved];if(saved.provider==='foundry'){const test=await this.actions.request({kind:'keys.test',keyId:saved.id});this.message+=' · '+(test.results??[]).map(r=>`${r.model}: ${r.status}${r.reason?' · '+r.reason:''}`).join(' · ');this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}}}
   catch(error){this.message+=' · test failed: '+reason(error,'try t in /settings');}finally{this.busy=false;this.actions.changed();}
  }
  lines():string[]{
@@ -83,12 +83,12 @@ export class CredentialsPanel {
    const keyStart=Math.max(0,Math.min(this.choice,this.keys.length-1)-2);
    for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${k.provider} · key ····${k.last4}${k.endpoint?' · '+k.endpoint:''}`);
    lines.push(action(0,'+ add key (a)'),action(1,'import from .env (i)'),action(2,'login (l)'),'ENGINES');
-   for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(status?`${name}: ${status.installed?'✓ installed':'✗ not installed'} · ${status.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status.authMethod)}`:`${name}: status unavailable`);
+   for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(status?`${name}: ${status.installed?'✓ installed':'✗ not installed'} · ${status.loggedIn===null?'status unavailable':status.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status.authMethod)}${status.error?' · '+status.error:''}`:`${name}: status unavailable`);
    lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'Foundry input/output price per 1M · p override'),'keys are never shown in full and never written to .env');
   }
   if(this.screen==='import')lines.push('Import from .env',`path: ${this.path}█`,'Names only are shown; source file is never modified');
   if(this.screen==='names')lines.push('Select names to import',...this.names.map((n,i)=>`${i===this.choice?'›':' '} [${this.selected.has(n.name)?'x':' '}] ${n.name} · ${n.provider}`),'↑↓ select · Space toggle · ⏎ import');
-  if(this.screen==='result')lines.push('Keys',...this.keys.map(k=>`${k.label} · key ····${k.last4}`),...this.keys.flatMap(k=>(k.lastTest??[]).map(r=>`${r.model} · ${r.status}`)));
+  if(this.screen==='result')lines.push('Keys',...this.keys.map(k=>`${k.label} · key ····${k.last4}`),...this.keys.flatMap(k=>(k.lastTest??[]).map(r=>`${r.model} · ${r.status}${r.reason?' · '+r.reason:''}`)));
   if(this.message)lines.push(this.message);if(this.busy)lines.push('◐ working');lines.push('Esc back');return lines;
  }
  draw(frame:Frame,theme:Theme):Frame{

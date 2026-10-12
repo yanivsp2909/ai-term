@@ -1,3 +1,6 @@
+import { EventEmitter } from 'node:events';
+import { join } from 'node:path';
+import { Logger } from './log.js';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
@@ -12,13 +15,16 @@ function nativeVault(service:string):KeyVault {
  const entry=async(account:string)=>{const {AsyncEntry}=await import('@napi-rs/keyring');return new AsyncEntry(service,account,{linux:{store:'secret-service'}});};
  return {read:async account=>(await entry(account)).getPassword(),write:async(account,secret)=>(await entry(account)).setPassword(secret),remove:async account=>{await(await entry(account)).deletePassword();}};
 }
-export class KeyStore {
+export class KeyStore extends EventEmitter {
+ private metadataWarning=false;
  private readonly settings:SettingsStore;
  private readonly vault:KeyVault;
  private queue:Promise<unknown>=Promise.resolve();
  constructor(root:string,options:{service?:string;vault?:KeyVault}={}){
+  super();
   if(options.service!==undefined&&!/^ai-term-test-[A-Za-z0-9-]+$/.test(options.service))throw new KeyError('Invalid test keychain service');
-  this.settings=new SettingsStore(root);this.vault=options.vault??nativeVault(options.service??'ai-term');
+  const log=new Logger(join(root,'logs','daemon.log'));
+  this.settings=new SettingsStore(root,()=>{if(!this.metadataWarning){this.metadataWarning=true;log.error('Invalid key metadata entry skipped');this.emit('warning','Invalid key metadata entry skipped; other keys remain usable.');}});this.vault=options.vault??nativeVault(options.service??'ai-term');
  }
  async list():Promise<KeyView[]>{const keys=(await this.settings.get()).keys??[];if(!Array.isArray(keys)||keys.length>100)throw new KeyError('Invalid key metadata');return keys.map(validateKeyView);}
  async view(id:string):Promise<KeyView>{if(!isUUID(id))throw new KeyError('Invalid key id');const key=(await this.list()).find(k=>k.id===id);if(!key)throw new KeyError('Key not found');return key;}
@@ -30,17 +36,17 @@ export class KeyStore {
   if(key.provider==='foundry'&&(!isEndpoint(key.endpoint)||!key.deployments?.length))throw new KeyError('Foundry needs an endpoint and deployments');
   const account=`${key.provider}:${key.id}`;
   return this.serial(async()=>{
-   try{await this.vault.write(account,request.secret);}catch{throw new KeyError('OS keychain unavailable; key was not saved');}
+   try{await this.vault.write(account,request.secret);}catch{throw new KeyError('OS keychain unavailable; key was not saved',{cause:new Error('Keychain write failed')});}
    try{await this.settings.update(async settings=>{const keys=Array.isArray(settings.keys)?settings.keys.map(validateKeyView):[];if(keys.length>=100)throw new Error('Too many keys');return {...settings,keys:[...keys,key]};});}
-   catch{try{await this.vault.remove(account);}catch{throw new KeyError('Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access');}throw new KeyError('Key metadata could not be saved');}
+   catch{try{await this.vault.remove(account);}catch{throw new KeyError('Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',{cause:new Error('Keychain cleanup failed')});}throw new KeyError('Key metadata could not be saved');}
    return key;
   });
  }
- async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);try{await this.vault.remove(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable; key was not removed');}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
- async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');try{return await this.vault.read(`${provider}:${id}`)!==null;}catch{throw new KeyError('OS keychain unavailable');}}
+ async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);try{await this.vault.remove(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable; key was not removed',{cause:new Error('Keychain remove failed')});}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
+ async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');try{return await this.vault.read(`${provider}:${id}`)!==null;}catch{throw new KeyError('OS keychain unavailable',{cause:new Error('Keychain read failed')});}}
  async withSecret<T>(id:string,use:(secret:string)=>T|Promise<T>):Promise<T>{
   const key=await this.view(id);let secret:string|null;
-  try{secret=await this.vault.read(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable');}
+  try{secret=await this.vault.read(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable',{cause:new Error('Keychain read failed')});}
   if(!secret||!isSecret(secret))throw new KeyError('Key is missing from the OS keychain');
   // eslint-disable-next-line no-useless-assignment -- Drop our reference after the one permitted use.
   try{return await use(secret);}finally{secret=null;}

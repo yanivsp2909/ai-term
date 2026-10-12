@@ -14,7 +14,7 @@ it('B14 mirror failure fails and stops only its session with fixed diagnostics',
     const t = { data: (_text: string) => {}, exit: (_event: { exitCode: number; signal?: number }) => {} };
     const exits: ((event: { exitCode: number; signal?: number }) => void)[] = [];
     t.exit = event => { for (const exit of exits) exit(event); }; terminals.push(t);
-    return { pid: 900000 + terminals.length, onData: cb => { t.data = cb; return { dispose() {} }; }, onExit: cb => { exits.push(cb); return { dispose() {} }; }, write() {}, pause() {}, resume() {}, resize() {} } as unknown as pty.IPty;
+    return { pid: 900000 + terminals.length, onData: (cb: (text: string) => void) => { t.data = cb; return { dispose() {} }; }, onExit: (cb: (event: { exitCode: number; signal?: number }) => void) => { exits.push(cb); return { dispose() {} }; }, write() {}, pause() {}, resume() {}, resize() {} } as unknown as pty.IPty;
   });
   const signals = vi.spyOn(process, 'kill').mockImplementation(pid => { terminals[-pid - 900001]?.exit({ exitCode: 0 }); return true; });
   const realWrite = Mirror.prototype.write;
