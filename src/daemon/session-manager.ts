@@ -68,6 +68,8 @@ export class SessionManager extends EventEmitter {
         cols: number;
         rows: number;
     } { return { ...this.size }; }
+    // Live PTY children only; the This Mac sampler sums each one's process tree.
+    sessionRoots(): { sessionId: string; pid: number }[] { return [...this.sessions.values()].flatMap(s => s.host && !['exited', 'error'].includes(s.info.status) ? [{ sessionId: s.info.id, pid: s.host.pty.pid }] : []); }
     activeCount(): number { return this.list().filter(s => s.status === 'starting' || s.status === 'running').length; }
     private event(event: SessionEvent): void { this.emit('event', event); }
     private persist(): Promise<void> {

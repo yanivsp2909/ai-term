@@ -56,7 +56,7 @@ it('streams validated numbers only to subscribed clients and stops when the last
   expect(sampler.running()).toBe(true);
   subscriber.close();
   await expect.poll(() => sampler.running()).toBe(false);
-  expect(await readFile(paths.log, 'utf8')).not.toMatch(/secret|SECRET/);
+  expect(await readFile(paths.log, 'utf8').catch(() => 'no log written')).not.toMatch(/secret|SECRET/);
 });
 
 it('validates system.subscribe like every other request', async () => {

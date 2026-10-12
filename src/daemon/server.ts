@@ -2,12 +2,13 @@ import { createServer, createConnection, type Socket, type Server } from 'node:n
 import { lstat, unlink, chmod } from 'node:fs/promises';
 import type { Paths } from '../shared/paths.js';
 import { isFsError } from '../shared/paths.js';
-import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, type Request, type SessionEvent } from '../shared/protocol.js';
+import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { enginesStatus } from './engines.js';
+import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
     socket: Socket;
@@ -17,6 +18,7 @@ interface Peer {
     attached:string|null;
     refreshing: boolean;
     lagged: boolean;
+    stats: boolean;
     queue: Promise<void>;
     snapshotId?: string;
 }
@@ -49,8 +51,11 @@ export class DaemonServer {
         ino: number;
         dev: number;
     } | undefined;
-    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger) {
+    private readonly sampler: SystemSampler;
+    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler) {
         this.settings = new SettingsStore(paths.root);
+        this.sampler = sampler ?? new SystemSampler(defaultSamplerDeps(() => manager.sessionRoots(), log));
+        this.sampler.on('stats', (stats: SystemStats) => { for (const peer of this.peers) if (peer.hello && peer.stats) this.control(peer, { kind: 'system.stats', stats }); });
         this.server = createServer(socket => this.accept(socket));
         this.server.on('error', error => { this.log.error(`Server failed: ${error.message}`); this.manager.emit('fatal', error); });
         manager.on('event', (event: SessionEvent) => { for (const peer of this.peers)
@@ -114,14 +119,14 @@ export class DaemonServer {
         this.socketIdentity = { ino: stat.ino, dev: stat.dev };
     }
     private accept(socket: Socket): void {
-        const peer: Peer = { socket, closing:false, hello: false, attached:null, preview: null, refreshing: false, lagged: false, queue: Promise.resolve() };
+        const peer: Peer = { socket, closing:false, hello: false, attached:null, preview: null, refreshing: false, lagged: false, stats: false, queue: Promise.resolve() };
         this.peers.add(peer);
         const decoder = new FrameDecoder();
         let queued = 0;let queuedBytes=0;
         socket.setTimeout(5000, () => { if (!peer.hello)
             socket.destroy(); });
         socket.on('error', error => this.log.error(`Client socket failed: ${error.message}`));
-        socket.on('close', () => {this.peers.delete(peer);void this.detach(peer).catch(error=>{this.log.error(`Disconnect detach failed: ${error instanceof Error?error.message:'unknown'}`);this.manager.emit('fatal',error);});});
+        socket.on('close', () => {this.peers.delete(peer);this.updateSampling();void this.detach(peer).catch(error=>{this.log.error(`Disconnect detach failed: ${error instanceof Error?error.message:'unknown'}`);this.manager.emit('fatal',error);});});
         socket.on('drain', () => { if(peer.attached&&this.owners.get(peer.attached)===peer&&socket.writableLength<256*1024)this.manager.clientBackpressure(peer.attached,false);
             if (peer.lagged && peer.preview && !peer.refreshing)
             void this.refresh(peer).catch(error => { this.log.error(`Preview refresh failed: ${error instanceof Error ? error.message : 'unknown'}`); socket.destroy(); }); });
@@ -257,6 +262,11 @@ export class DaemonServer {
                 case 'sessions.rename':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.rename(request.sessionId, request.title) });
                     break;
+                case 'system.subscribe':
+                    peer.stats = request.on;
+                    this.updateSampling();
+                    this.control(peer, { id: request.id, ok: true });
+                    break;
                 case 'layout.previewSize':
                     await this.manager.previewSize(request.cols, request.rows);
                     this.control(peer, { id: request.id, ok: true });
@@ -269,6 +279,8 @@ export class DaemonServer {
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });
         }
     }
+    // Sampling runs only while some connected client wants it (architecture §10).
+    private updateSampling(): void { this.sampler.setSubscribers([...this.peers].filter(peer => peer.stats).length); }
     private async detach(peer:Peer):Promise<void> {
         const id=peer.attached;if(!id)return;
         await this.manager.detach(id,()=>{
@@ -277,6 +289,7 @@ export class DaemonServer {
         });
     }
     async close(): Promise<void> {
+        this.sampler.setSubscribers(0);
         for (const peer of this.peers)
             peer.socket.destroy();
         if (this.server.listening)
