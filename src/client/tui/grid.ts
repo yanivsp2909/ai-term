@@ -1,5 +1,6 @@
 import type { Theme } from './theme.js';
 import { styleEscape } from './theme.js';
+import { textCells } from '../../shared/unicode-width.js';
 export interface Cell { char: string; fg: string; bg: string; bold: boolean; width: number; italic?: boolean; underline?: boolean; dim?: boolean }
 export type Frame = Cell[][];
 const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
@@ -12,10 +13,6 @@ export function graphemes(text: string): string[] {
     textCache.set(text, result);
   }
   return [...result];
-}
-export function cellWidth(text: string): number {
-  if (/^\p{Mark}/u.test(text)) return 0;
-  return /[\u1100-\u115f\u2329\u232a\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff01-\uff60\uffe0-\uffe6]|\p{Extended_Pictographic}|\uFE0F/u.test(text) ? 2 : 1;
 }
 export function safeText(text: string): string { return text.replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, ''); }
 export class Grid {
@@ -31,8 +28,8 @@ export class Grid {
   }
   text(x: number, y: number, value: string, fg = this.theme.colors.ink, bg = this.theme.colors.bg, bold = false, limit = this.cols - x, dim = false): number {
     const start = x;
-    for (const char of graphemes(safeText(value))) {
-      const width = cellWidth(char); if (!width || x + width > start + limit) break;
+    for (const { text: char, width } of textCells(safeText(value))) {
+      if (!width || x + width > start + limit) break;
       this.put(x, y, { char, fg, bg, bold, width, dim });
       if (width === 2) this.put(x + 1, y, { char: '', fg, bg, bold, width: 0, dim });
       x += width;

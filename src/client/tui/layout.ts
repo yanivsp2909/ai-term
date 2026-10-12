@@ -1,5 +1,6 @@
 import type { SessionInfo, Status, AgentEngine } from '../../shared/protocol.js';
-import { Grid, cellWidth, graphemes, type Frame } from './grid.js';
+import { Grid, graphemes, type Frame } from './grid.js';
+import { textWidth } from '../../shared/unicode-width.js';
 import type { Theme, ColorName } from './theme.js';
 export interface Rect { x: number; y: number; w: number; h: number }
 export function homepageLayout(cols: number, rows: number, visible = true) {
@@ -66,8 +67,8 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     ['CPU —             agents —', 'RAM —             agents —', 'NET ↓ —  ↑ —', '', 'v0.1.8'].forEach((s, i) => grid.text(x + usageW + 4, layout.statsY + i + 1, s, t['ink-3'], t.bg, false, macW - 4, i === 4));
   }
   grid.box(0, rows - 4, cols, 3, '', t.surface); grid.text(2, rows - 3, '›', t.accent, t.surface);
-  const input = graphemes(view.input); let width = input.reduce((n, c) => n + cellWidth(c), 0);
-  while (width > cols - 7) { const removed = input.shift(); if (removed) width -= cellWidth(removed); }
+  const input = graphemes(view.input); let width = textWidth(view.input);
+  while (width > cols - 7) { const removed = input.shift(); if (removed) width -= textWidth(removed); }
   const end = grid.text(4, rows - 3, view.input ? input.join('') : 'What do you want to build?', view.input ? t.ink : t['ink-3'], t.surface, false, cols - 6);
   grid.text(end, rows - 3, '█', t.cursor, t.surface, false, 1);
   const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;

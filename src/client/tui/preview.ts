@@ -1,6 +1,7 @@
 import headless, { type IMarker } from '@xterm/headless';
 import { cellColor, mix, type Theme } from './theme.js';
 import { safeText, type Frame } from './grid.js';
+import { useUnicode11 } from '../../shared/unicode-width.js';
 export interface Point { x: number; y: number }
 export class Preview {
   readonly terminal: headless.Terminal;
@@ -15,6 +16,7 @@ export class Preview {
   private clearScrollback = false;
   constructor(cols: number, rows: number, private readonly changed: () => void) {
     this.terminal = new headless.Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
+    useUnicode11(this.terminal);
     let previousBase = 0;
     this.terminal.onScroll(base => {
       if (this.terminal.buffer.active.type === 'normal' && base >= previousBase) this.scrollCount++;

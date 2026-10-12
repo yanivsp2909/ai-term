@@ -1,6 +1,7 @@
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { MAX_FRAME_BYTES, type TerminalModes } from '../shared/protocol.js';
+import { useUnicode11 } from '../shared/unicode-width.js';
 export class Mirror {
     readonly terminal: headless.Terminal;
     private readonly addon: serialize.SerializeAddon;
@@ -9,6 +10,7 @@ export class Mirror {
     private mouseEncoding:TerminalModes['mouseEncoding']='default';
     constructor(cols: number, rows: number, reply: (data: string) => void) {
         this.terminal = new headless.Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
+        useUnicode11(this.terminal);
         this.addon = new serialize.SerializeAddon();
         this.terminal.loadAddon(this.addon);
         // The public modes API omits cursor visibility and mouse encoding.
