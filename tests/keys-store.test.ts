@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+if(process.env.AITERM_NATIVE_KEYCHAIN_TEST!=='1')process.stdout.write('Native Keychain tests skipped: set AITERM_NATIVE_KEYCHAIN_TEST=1 to opt in.\n');
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, stat, rm } from 'node:fs/promises';
 import { join } from 'node:path';
