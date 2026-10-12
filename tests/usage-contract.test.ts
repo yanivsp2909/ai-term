@@ -13,3 +13,7 @@ it('budget and deployment price patches validate amounts and never save dontAsk'
  expect(await validateRequest({id,kind:'settings.set',patch:{budgets:{daily:10,weekly:null,monthly:50},priceOverrides:{'gpt-6.1-sol':{input:2,output:10}}}})).toMatchObject({patch:{budgets:{daily:10}}});
  for(const patch of [{budgets:{daily:-1}},{budgets:{daily:'10'}},{priceOverrides:{model:{input:Infinity,output:1}}},{priceOverrides:{'-bad':{input:1,output:2}}}])await expect(validateRequest({id,kind:'settings.set',patch})).rejects.toThrow();
 });
+it('debug attributes reject arbitrary names even when their values are numeric',()=>{
+ const usageDiagnostics={port:1234,sessions:[{sessionId:id,at:new Date().toISOString(),values:[{name:'AITERMCANARY',value:123}]}]};
+ expect(()=>validateSuccess({id,ok:true,usageDiagnostics})).toThrow();
+});
