@@ -234,7 +234,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         if(commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
-        this.field.text='';this.menuChoice=0;this.enqueue(()=>this.submit(command));return;
+        this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
     if(event.key==='b'&&!this.field.text){this.usageForm=new BudgetForm(this.budgets);this.draw(true);return;}
@@ -243,7 +243,7 @@ export class Homepage {
     switch (action.kind) {
       case 'quit': void this.stop(); return;
       case 'note': this.showNote(action.text, 1000); return;
-      case 'submit': this.enqueue(() => this.submit(action.text)); break;
+      case 'submit': this.queueSubmit(action.text); break;
       case 'attach': this.enqueue(() => this.openSelected()); break;
       case 'preview': this.visible = !this.visible; this.previewCells = undefined; this.enqueue(() => this.updatePreview(true)); break;
       case 'up': case 'down': {
@@ -255,7 +255,7 @@ export class Homepage {
       case 'end': this.currentPreview()?.follow(); break;
       case 'stop': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.confirmId = session.id; this.showNote(`stop ${session.title}? y/n`); } break; }
       case 'rename': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.renameId = session.id; this.field.text = session.title; this.showNote('rename: type a name, ⏎ save · Esc cancel'); } break; }
-      case 'copy': this.enqueue(()=>this.copySelected());break;
+      case 'copy': {const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.copySelected(selected));break;}
       case 'remove': { const session = this.sessions.find(s => s.id === this.selectedId); if (session && ['exited', 'error'].includes(session.status)) this.enqueue(() => this.operation({ kind: 'sessions.remove', sessionId: session.id })); break; }
     }
     this.draw(true);
@@ -264,8 +264,8 @@ export class Homepage {
     try { await this.connection.request(body); this.showNote(''); }
     catch (error) { this.showNote(error instanceof Error ? error.message : 'Operation failed'); }
   }
-  private async copySelected():Promise<void>{
-    const session=this.sessions.find(s=>s.id===this.selectedId);if(!session){this.showNote('select an agent first');return;}
+  private async copySelected(session:SessionInfo|null):Promise<void>{
+    if(!session){this.showNote('select an agent first');return;}
     let copy:ReturnType<typeof validateSessionText>;
     try{const result=await this.connection.request({kind:'sessions.text',sessionId:session.id});copy=validateSessionText(result.copy);if(copy.sessionId!==session.id||copy.more===true)throw new Error('Invalid session text');}
     catch{this.showNote('Copy failed: session text unavailable');return;}
@@ -277,9 +277,10 @@ export class Homepage {
   }
   private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title};}
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
-  private async submit(text: string): Promise<void> {
+  private queueSubmit(text:string):void{const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.submit(text,selected));}
+  private async submit(text: string, copyTarget:SessionInfo|null=null): Promise<void> {
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
-    if(command==='/copy'){if(argument){this.showNote('/copy uses the selected agent');return;}await this.copySelected();return;}
+    if(command==='/copy'){if(argument){this.showNote('/copy uses the selected agent');return;}await this.copySelected(copyTarget);return;}
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
     if(command==='/clean'){if(argument){this.showNote('/clean takes no argument');return;}this.cleanIds=this.sessions.filter(s=>['exited','error'].includes(s.status)).map(s=>s.id);if(!this.cleanIds.length){this.cleanIds=null;this.showNote('No finished agents to remove');}else this.showNote(`remove ${this.cleanIds.length} finished agents? y/n`);return;}
     if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));}catch(error){this.showNote(error instanceof Error?error.message:'Shell could not start');}return;}
