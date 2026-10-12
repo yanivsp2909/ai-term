@@ -6,8 +6,8 @@ import { validateSettings, validateSettingsPatch } from '../shared/validate.js';
 import type { Settings, SettingsPatch } from '../shared/protocol.js';
 import { atomicWrite } from './store.js';
 
+const queues = new Map<string, Promise<unknown>>();
 export class SettingsStore {
-  private queue: Promise<unknown> = Promise.resolve();
   private readonly path: string;
   constructor(root: string) { this.path = join(root, 'settings.json'); }
   async get(): Promise<Settings> {
@@ -27,8 +27,9 @@ export class SettingsStore {
     return this.update(async settings=>({...settings,...validated}));
   }
   update(transform:(settings:Settings)=>Promise<Settings>):Promise<Settings> {
-    const next = this.queue.then(async () => { const settings = validateSettings(await transform(await this.get())); await atomicWrite(this.path, settings); return settings; });
-    this.queue = next.then(() => undefined, () => undefined);
+    const next = (queues.get(this.path)??Promise.resolve()).then(async () => { const settings = validateSettings(await transform(await this.get())); await atomicWrite(this.path, settings); return settings; });
+    const settled=next.then(()=>undefined,()=>undefined);queues.set(this.path,settled);
+    void settled.then(()=>{if(queues.get(this.path)===settled)queues.delete(this.path);});
     return next;
   }
 }
