@@ -1,54 +1,52 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: 5ebb5fa test: verify official account login commands without live credentials
-Roadmap step: v0.1.7 done
+Last commit: 2581c51 docs: record provider tabs auth labels and stats calibration
+Roadmap step: v0.1.7f done
 Branch: main. This handover is committed last; its own hash is in git log.
-Baseline: 66618d8, clean, 328 passed / 1 existing TODO. Account agents and v0.1.8f working.
+Started at 97cca26, clean; baseline 361 passed / 1 existing TODO. Keys/login and v0.1.8f were present.
 
 ## What works
-- Secrets live only in OS Keychain through keys.ts; service ai-term, account provider:UUID. Settings contain validated metadata only. Unavailable Keychain refuses clearly; failed metadata add rolls back new entry. Tests use unique ai-term-test-* services only.
-- All six keys.* handlers and runtime contracts, keyed auth refs/views, metadata-only responses. Foundry models appear only after ready tests. Remove does not stop running sessions; restart keeps key metadata/results.
-- Foundry HTTPS Responses ping, 16-token cap, 15s deadline, bounded body, no redirects; 400/404 chat fallback labels unsupported. Result only status/provider code; no body/secret.
-- Read-only env import of selected known names from bounded owned regular files; no symlinks/FIFO/evaluation/writes, mtime/content unchanged. Foundry import requires endpoint/deployment fields; UI suggests deleting source. Multi-key failure rolls created entries back.
-- Keyed spawn reads the secret immediately around env build/PTY creation and clears recipe env. Anthropic normal config; Foundry overrides; OpenAI direct key route for required UI. Explicit Ask and Codex no-daemon/update flags retained.
-- /login provider/account/key flows and masked Foundry save/test; /settings keys/engines/default engine/model/folder/theme; /model keyed rows/resource groups; key cards display API key suffix. First-run login decision finishes before initial draw.
-- Masked form clears before sending; request cleared after serialization; cancelled/disposed input cannot revive it. Coalesced Enter/paste regression fixed so keys cannot appear in label. Oversized input refused; short credentials have empty suffix; metadata cannot contain full credential.
-- L10 debug retains input counts only. L12 auto-start raw stdout/stderr ignored; uncaught/rejection errors use redactor and clean shutdown. Opaque keyed spawn errors use fixed text.
-- README full command/key list and AGENTS.md upkeep rule added. No usage/hooks work.
-- Final required checks: typecheck tsc --noEmit exit 0; lint eslint . exit 0; tests 47 files, 361 passed / 1 existing TODO; build success in 14ms; diff check clean.
-- Latest coverage before final passing login argv assertion: statements 86.64%, branches 80.57%, functions 87.95%, lines 94.29%.
-- Security review and verification-loop completed. Evidence, TDD pairs, grep results and manual commands: docs/testing/v0.1.7-keys-login.md.
+- Slash menu ↑↓ moves selected-card highlight through filtered commands with wrapping; typing/paste resets first match; Enter picks, /theme inserts argument prefix; Esc closes. Outside arrows still select sessions. No input reaches agents.
+- /model opens current provider tab, ←→ switches provider (Tab also right), ↑↓ selects model, Enter chooses, Esc cancels. Typing searches across tabs and jumps to first matching provider. Foundry remains tested-ready deployments only.
+- CLI-managed auth says own login, with sub/API key when engine check knows it. Saved keys show last4 only. Cards separate model and auth, include status word plus red Don’t ask marker; defaults show auth before start, with long model/folder text clipped first.
+- /login providers already had arrows/Enter/Esc; method labels now own login. /settings keys/actions/defaults all reachable via arrows/Enter/Esc; letter shortcuts retained.
+- RAM investigation: current snapshot purgeable 7,430 × 16,384 = 121,733,120 bytes = 116.094 MiB / 0.113373 GiB. App+wired+compressed 27.995529 GiB versus anonymous+wired+compressed 28.108902 GiB. Ten samples purgeable 64.688–127.203 MiB; not close to reported ~1 GiB headline gap, so formula retained. Headline mismatch remains unproven.
+- CPU comparison: 30 aligned busy-machine intervals; ours mean 43.852536%, top 44.159667%, difference -0.307131 percentage points, mean absolute difference 0.311869. No CPU math change justified; normal homepage 1s sampler unchanged.
+- ai debug stats: independent of socket/daemon, ten bounded pairs started 1s apart; prints numeric JSON RAM parts/candidate sums and our/top CPU over same interval. First top startup delays initial output; ten readings complete around 11s. No process names/commands/users/PIDs or raw output.
+- README command/key list and docs/design.md updated; architecture calibration limitation documented. Numeric evidence: docs/testing/v0.1.7f-calibration.json; TDD/security/manual details: docs/testing/v0.1.7f-navigation-calibration.md.
+- Final checks: typecheck tsc --noEmit exit 0; lint eslint . exit 0; all 51 files, 380 passed / 1 existing TODO; build success 14ms; diff check clean. Coverage: statements 86.34%, branches 80.60%, functions 87.47%, lines 93.88%.
+- Final npm test invocation uses temporary config /tmp/ai-term-7f-verify/vitest.config.mts to alias native Keychain to memory; no tests skipped. This adapter honors the task no-Keychain limit; no persistent test config changed.
+- Security grep no exec( / execSync( / shell:true in src; top absolute execFile argv -l 2 -n 0 -s 1, bounded timeout/output, numeric parse only. Protected code/folders unchanged.
 
 ## What's next
-- Yaniv real Anthropic/Foundry Keychain approval, deployment test, session replies and production-home canary scan; exact commands in docs/testing/v0.1.7-keys-login.md. Implementation step done; real-key checks require Yaniv.
-- v0.1.8b usage/cost remains deferred. No further step started.
+- Yaniv checks new menu/tab/auth UI and debug stats alongside Activity Monitor. Commands in docs/testing/v0.1.7f-navigation-calibration.md. Activity Monitor RAM headline gap still needs simultaneous evidence.
+- v0.1.8b usage/cost deferred; no next step started. Existing socket-replacement TODO retained.
 
 ## Manual checks
-- Native Keychain test service: ran. Socket add, last4-only list, remove, native absent, recursive test-home/log scan clean. Every created test entry deleted.
-- Local HTTPS stub: ran. Five requests for ready, Responses 404 plus chat success, 401 code, 302 refused. Canary only api-key header to stub, never body/result or redirected host. Server/CA/temp files cleaned.
-- Account login argv: ran through real PTY stubs, Claude auth login and Codex no-daemon/update-off login, no prior login required.
-- Real keys, provider replies, browser login and macOS access prompt: needs Yaniv. /login masked input only; no keys in chat.
-- Real-home canary grep: needs Yaniv. Start with cd ~/ai-term, add fake canary via /login then rg -l AITERMCANARY ~/.ai-term; expect no output, remove in /settings.
-- Physical terminal settings/model/form: needs Yaniv; automated cell/PTY checks pass.
+- Thirty busy-machine CPU pairs: ran, close agreement, no math change. Own three Node CPU workers stopped afterward.
+- RAM vm_stat counters and both candidate sums: ran; purgeable far below 1 GiB. Activity Monitor simultaneous headline read: needs Yaniv.
+- Source diagnostic and real CLI isolated-home test: ran, ten number-only readings, no AI Term directory/socket created.
+- Menu arrows/wrap/filter/Enter, provider tabs/filter/Esc, auth/card/default line, settings rows: ran headlessly; physical UI feel needs Yaniv.
+- User restart command needs Yaniv: cd ~/ai-term, then ai daemon stop && ai (stops existing sessions; this agent never ran it). Then /model tabs and auth labels.
+- Calibration command needs Yaniv: cd ~/ai-term, open -a 'Activity Monitor', then ai debug stats. Memory headline and candidates at the same moment; CPU topBusyPercent vs cpuPercent.
 
 ## Gotchas
-- Running daemon keeps old code. Manual isolated /tmp setup provided; Yaniv chooses safe production restart. Real daemon untouched.
-- Whole-repo canary grep is deliberately nonempty in required fake tests/supplied docs; literal empty output is impossible. Production src, all test-home files/logs/state/settings and responses are clean; no real secrets read.
-- Short keys remain valid but have empty suffix. JS immutable strings cannot be securely zeroed; owned references are cleared after send/use/dispose.
-- Keychain tests use only unique ai-term-test-* service. keys.ts is sole native API boundary; no production-service enumeration.
-- Keychain and JSON are not an atomic OS transaction. Failed add rolls back; remove failure is explicit. Metadata/settings share per-file serialization.
-- Client keys.test timeout covers up to 40 sequential 15s probes plus fallbacks. Key add/import have 60s for OS prompts; ordinary operations 5s.
-- Env import handles simple assignments only, no expansion. Foundry requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT in file or use /login form.
-- Initial first-run check exposed a shell fixture startup race, fixed by checking before initial draw and dismissing no-CLI login popup where appropriate.
-- One existing replaced-socket-path TODO remains. .claude, spikes, docs/spikes, docs/reviews, real ~/.ai-term, CLI credential files and real .env untouched.
-- No concurrent agents used; full diff reviewed directly to honor AGENTS.md.
+- Execution mistake: initial plain full-suite runs executed existing native Keychain tests, contrary to the step no-Keychain limit. Fresh ai-term-test-* services only, entries removed; production service untouched. After discovering, all remaining full-suite runs used temporary in-memory dependency alias; every test still ran. No real .env read; inherited import tests used synthetic files.
+- Do not call the Activity Monitor RAM headline calibrated. Formula matches requested App/Wired/Compressed sum; purgeable amount here cannot explain its ~1 GiB gap. Both sums visible for investigation.
+- Our/top CPU windows align at top output lines; intervals about 1.09s, tiny output/capture delay and rounding explain sub-point differences. Diagnostic top costs do not affect normal sampler architecture.
+- debug stats starts staggered bounded pairs to avoid ~1.6s top startup serial delay; no recurring diagnostics beyond ten pairs. First line arrives later than 1s.
+- Auth refs remain protocol kind account/key; only human label changed to own login. No CLI credential/config inspection, no keychain product code edits.
+- Foundry selection tab inferred from active key ref; opens on current/default engine/model tab. Custom filter IDs in Anthropic/OpenAI use own login, Foundry only tested rows.
+- Narrow card layout puts auth on third row and status word on first, with red ! plus selected preview Don’t ask word; long defaults paths/models clipped before auth.
+- Running daemon keeps old code; Yaniv decides safe restart. Real ~/.ai-term untouched, no real daemon stopped. env.ts, keys.ts, spikes, docs/spikes, docs/reviews, .claude unchanged.
+- One pre-existing replaced-socket-path TODO remains. Direct diff review, no concurrent agents used.
 
 ## New dependencies
-- @napi-rs/keyring 2.1.1: Node and existing dependencies cannot access OS credential stores; D24 selected this native bridge. AsyncEntry used; Linux explicitly requires Secret Service without in-memory/plain-file fallback.
+- None.
 
 ## Concepts introduced
-- Keychain boundary (src/daemon/keys.ts): OS owns secrets; JSON owns public metadata. Provider plus UUID addresses exactly one item; tests use a separate service.
-- Secret lifetime (keys.ts, session-manager.ts, credentials.ts): read immediately around permitted request/spawn, pass only to that env/request, clear references afterward. Immutable runtime strings cannot be securely zeroed.
-- Cross-store rollback (keys.ts/settings.ts): Keychain and JSON cannot commit together. Native save then metadata; if metadata fails remove the new item. Shared queue prevents unrelated patches erasing metadata.
-- Probe classification (providers/foundry.ts): Codex requires Responses. Successful chat fallback is unsupported; redirects/error bodies never return credentials to client.
+- Provider tabs (src/client/tui/homepage.ts and agent-box.ts): provider selects a small model list; filtering searches every provider and moves to the first match. Keeping provider and row selection separate avoids scrolling past unrelated groups.
+- Own-login auth label (src/shared/models.ts): CLI-managed authentication can be subscription or API key. A public engine check chooses the wording; no credentials or provider config are read to infer it.
+- Aligned CPU windows (src/daemon/sysstats.ts): rates only compare meaningfully when measured over the same interval. Capturing os.cpus at top's two output samples aligns the before/after counters, avoiding comparisons taken at different moments.
+- Candidate RAM totals (src/cli/debug-stats.ts): a hypothesis should predict the observed gap. Printing purgeable and both formulas permits a test of that prediction; a small measured amount is evidence against changing the total blindly.
