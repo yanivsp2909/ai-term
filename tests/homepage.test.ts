@@ -105,7 +105,7 @@ it('decodes fragmented arrows, UTF-8, SGR mouse and bracketed paste without trea
   parser.push(Buffer.from('\x1b[200~p\r/exit\x1b[201~'));
   expect(events).toContainEqual({ kind: 'key', key: 'up' }); expect(events).toContainEqual({ kind: 'key', key: '界' });
   expect(events).toContainEqual({ kind: 'mouse', button: 0, x: 42, y: 4, release: true });
-  expect(events).toContainEqual({ kind: 'paste', text: 'p /exit' }); parser.dispose();
+  expect(events).toContainEqual({ kind: 'paste', text: 'p\r/exit' }); parser.dispose();
 });
 it('S15: OSC 52 / title / bell in a session never reaches homepage stdout', async () => {
   const { home, tty, client } = await fixture();
