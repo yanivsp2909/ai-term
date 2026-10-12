@@ -1,0 +1,22 @@
+{
+  "diagnostic": "receiver port 50955",
+  "checks": [
+    {
+      "name": "wrong Host",
+      "status": 421
+    },
+    {
+      "name": "Origin",
+      "status": 403
+    },
+    {
+      "name": "no credential",
+      "status": 401
+    }
+  ],
+  "homeModes": {
+    "root": "0o700",
+    "usage": "0o700"
+  },
+  "scope": "own built daemon in a temporary AI_TERM_HOME; no login, key, or existing daemon used"
+}

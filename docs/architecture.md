@@ -166,16 +166,19 @@ keys.remove      {keyId}
 keys.test        {keyId}                             → {results: DeploymentTest[]}
 keys.scanEnvFile {path}                              → {found: {name, provider}[]}   // names only, never values
 keys.importEnv   {path, names}                       → {keys: KeyView[]}
-usage.summary    {}                                  → {summary: UsageSummary}
+usage.subscribe  {on: boolean}                      → {}  // homepage only; receiver remains available to sessions
+usage.summary    {}                                  → {usage: UsageSummary}
+usage.diagnostics {}                                → {usageDiagnostics: {port, sessions:[{sessionId,at,values:[{name,value}]}]}}
 settings.get     {} → {settings}
-settings.set     {patch} → {settings} // merge theme/defaultEngine/defaultModel/defaultCwd/permission; default permission only ask
+settings.set     {patch} → {settings} // merge theme/defaultEngine/defaultModel/defaultCwd/permission/budgets/priceOverrides; default permission only ask
                                     // unknown stored keys are preserved, unknown patch keys rejected; 16 KiB maximum, 0600
 system.subscribe {on: boolean}                     → {}   // v0.1.8a; This Mac samples run only while ≥1 client is subscribed
 
 // events (daemon → client)
 daemon.warning {text}    daemon.warningCleared {} // persistent log/state write warning; fixed plain text
 session.updated {session}   session.removed {sessionId}
-session.previewResized {sessionId, cols, rows}        // attach/detach/resize: previews request a fresh sized snapshot   usage.updated {summary}
+session.previewResized {sessionId, cols, rows}        // attach/detach/resize: previews request a fresh sized snapshot
+usage.updated {usage}                               // usage subscribers only
 system.stats {stats}    // subscribed clients only, every 1 s
                         // SystemStats = {cpuPercent, memUsedBytes, memTotalBytes, netRxBytesPerSec, netTxBytesPerSec, sessions: SessionStats[]}
                         // SessionStats = {sessionId, cpuPercent, rssBytes}; cpuPercent is a 0–100 share of the whole machine
@@ -183,7 +186,9 @@ system.stats {stats}    // subscribed clients only, every 1 s
 
 `SystemStats` carries numbers only: no process name, command line, user or pid ever crosses the socket. `validateSystemStats` accepts exactly these keys (finite, non-negative, percentages ≤ 100, used ≤ total, at most 1,000 sessions). The daemon checks every sample with it before sending, and the homepage checks every event with it on arrival.
 
-`SessionInfo` in v0.1.7 = `{id, title, engine, model: string | null, auth: {kind:'account'} | {kind:'key', keyId, provider, keyLabel, last4}, authMethod?: 'subscription' | 'api-key' | 'unknown', cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth views accept only documented metadata. Key requests are implemented; usage remains planned; `system.subscribe` is implemented (v0.1.8a).
+`SessionInfo` in v0.1.7 = `{id, title, engine, model: string | null, auth: {kind:'account'} | {kind:'key', keyId, provider, keyLabel, last4}, authMethod?: 'subscription' | 'api-key' | 'unknown', cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth views accept only documented metadata. Key requests, usage (v0.1.8b), and `system.subscribe` (v0.1.8a) are implemented.
+
+`UsageSummary` has `today`, `week`, and `month` periods, each `{costUsd, tokens, unknownPrice, providers:[{provider,costUsd,tokens,unknownPrice}]}`. Cost is the sum of known estimates; `unknownPrice` preserves the fact that some usage is unpriced. Budget settings are `{daily,weekly,monthly}` in USD, with null meaning none. `priceOverrides` maps a deployment id to `{input,output,cacheRead?}` USD per million tokens. All amounts are finite and nonnegative; settings amounts are capped at one billion. Diagnostic names are a fixed usage allowlist and values are numeric only.
 
 `KeyView` = `{id, provider: 'anthropic' | 'foundry' | 'openai', label, last4, endpoint?, deployments?, lastTest?}`. There is **no** request that returns a secret. `keys.add` is the only message that carries one, client → daemon. The masked form clears its field before handing the request to the connection and clears the request object immediately after synchronous serialization. No secret is drawn/echoed or captured by debug input logging.
 
@@ -397,20 +402,23 @@ Never logged, never stored, never sent to a client.
 ## 9. Usage, cost, budget
 
 - **Scope:** every session whose effective auth is an API key. That's AI Term's keyed sessions, plus Claude Code or Codex when their own login is an API key (D31). Subscription sessions show `sub` and are not counted. AI Term never reads Claude Code's or Codex's own files to count anything.
-- **Source per engine:** OpenTelemetry the CLI exports itself, received by a local OTLP/HTTP receiver in the daemon. Payloads are JSON (`http/json`), never protobuf. Each session gets its own runtime-only receiver credential, sent as a header, never in argv or logs.
+- **Source per engine:** OpenTelemetry the CLI exports itself, received by a local OTLP/HTTP receiver in the daemon. Payloads are JSON (`http/json`), never protobuf. Each eligible session gets 32 random bytes encoded as hex, held in memory and revoked at exit or failed spawn. Claude receives the header through env; Codex uses an invocation-local exporter `-c` override (D52). Credentials and spawn env/argv are never logged or persisted.
   - **Claude Code (metrics only):**
     - env: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_LOGS_EXPORTER=none`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://127.0.0.1:<port>/v1/metrics`, `OTEL_EXPORTER_OTLP_METRICS_HEADERS=x-ai-term-session=<credential>`, `OTEL_METRICS_INCLUDE_SESSION_ID=true`, `OTEL_METRIC_EXPORT_INTERVAL=10000`
     - metrics read: `claude_code.token.usage` (input / output / cacheRead / cacheCreation) and `claude_code.cost.usage` (USD, Claude Code's own estimate)
-    - cumulative vs delta handling and restart de-duplication are specified before the receiver is written
+    - points are delta (live test #5). Cumulative points count the increase per session/model/type/start timestamp, or the full value after a counter drop/new series; interleaved deltas advance that baseline. Repeated exports dedupe by session/model/type/start/time. Numeric strings are accepted, invalid values are discarded, missing timestamps remain diagnostic-only. Cache creation and cache reads are input tokens, with cache reads also recorded separately.
   - **Codex (logs):**
     - `-c otel.log_user_prompt=false`, `-c otel.exporter={otlp-http={endpoint="http://127.0.0.1:<port>/v1/logs",protocol="json",headers={"x-ai-term-session"="<credential>"}}}`
-    - only the token counts of `codex.sse_event` / `response.completed` are kept; the rest of every event is dropped unread, because tool output in other events can contain your code
+    - only `input_token_count`, `output_token_count`, `cached_token_count`, `reasoning_token_count` from `codex.sse_event` / `response.completed` are read, plus model if present (otherwise selected model). rust-v0.160.1 emits input/output as strings, so numeric strings are accepted. Reasoning is already part of output and is diagnostic-only; it is never added twice. The rest of every event is dropped unread, because tool output in other events can contain your code.
     - cost is estimated from the price table
-  - The exact payload shapes are confirmed by live tests #5 and #6 in `docs/spikes/v0.1-cli-facts.md` before v0.1.8.
+  - Claude's live test #5 is confirmed; Codex live test #6 remains for Yaniv. Implementation matches the public rust-v0.160.1 source (`otel/src/events/session_telemetry.rs`, `sse_event_completed` and `otel/src/provider.rs`, HTTP exporter headers). `ai debug usage` shows the receiver port and last ten minutes of candidate allowlisted attribute names/numeric values; it shows neither string values nor bodies nor credentials. Diagnostics are bounded to 1,000 candidate entries and held in memory only.
+- **Receiver:** starts with the daemon on a random `127.0.0.1` port and follows S12: exact Host, no Origin, JSON only, POST metrics/logs only, 1 MiB limit, credential length check and `timingSafeEqual`, 200 `{}` on success. Malformed/oversize/auth failures have fixed responses; unexpected errors log fixed text. Header/body contents never reach logs. Same-user socket access remains the accepted D35 trust boundary.
 - **Event** (`usage/YYYY-MM.jsonl`): `{ts, sessionId, provider, model, inputTokens, outputTokens, cachedTokens?, costUsd, costSource: 'cli-estimate' | 'price-table'}`. Neither is a bill: both are estimates and the UI says so.
-- **Price** when the CLI doesn't report cost: a bundled snapshot of the Models.dev catalog, plus per-deployment price overrides for Foundry in settings. Shown as estimated.
-- **Summary:** today / this week (Monday start, local time) / this month, as cost and tokens, by provider, recomputed incrementally.
+- **Price** when the CLI doesn't report cost: `data/usage-prices.json`, fetched 2026-10-12, contains only Anthropic/OpenAI/Azure input/output/cache-read prices per million tokens. `scripts/update-prices.ts` trims an explicitly downloaded catalog offline. Foundry looks up the deployment id in overrides, Azure, then OpenAI. An explicit two-rate override charges its input rate to all input tokens without inventing a cache discount; a catalog missing a required cache rate leaves cost null. Unknown model prices remain null and the UI shows `price ?`. Historical estimates are not repriced. Own-login Codex API-key sessions are attributed to OpenAI because engine status does not reveal the configured provider; keyed Foundry sessions use Foundry/Azure.
+- **Summary:** today / this week (Monday start, local time) / this month, as cost and tokens, by provider. Incremental per-day buckets rebuild from private monthly JSONL files at startup; local midnight emits the newly selected periods. Dedupe lasts for each live session and is runtime-only; old credentials are revoked at restart, so stale sessions cannot replay into a new daemon.
+- **Write failure:** usage directories stay 0700 and files 0600. A failed append rolls back any partial line, warns on the homepage and retries unsaved records on the next export; agents and the daemon keep running (D33). Pending unsaved records are memory-only and can be lost if the daemon dies before recovery. Unsafe/unreadable history logs fixed text; an inaccessible history path also warns.
 - **Budget:** optional daily / weekly / monthly limit in settings.
+  - Empty-field `b` opens three USD fields; Enter saves, Esc cancels. `/settings` price row or `p` opens deployment/input/output prices per million. The Usage panel uses a single `≈` estimate marker, bold spend and compact tokens; subscriptions and unknown-auth sessions receive no AI Term telemetry settings. Login/debug-shell sessions are excluded. Existing sessions must be restarted to pick up telemetry.
   - **v0.1:** crossing a limit turns the top-bar count amber and shows a warning line. Nothing is blocked.
   - **v0.4:** AI Term's own agent stops *before* a request that would cross the limit.
   - **Claude Code and Codex:** AI Term can only stop the session after the fact, never block a request in flight.
@@ -534,3 +542,4 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D44 | Worktrees live outside the repo: ~/.ai-term/worktrees/<repo>/<agent>. | Pinned |
 | D45 | Usage cost uses public list prices (Models.dev), Azure included, marked estimated; per-deployment overrides optional in /settings. | Pinned |
 | D46 | This Mac refreshes every 1 s while the homepage is open (was 2 s). Not faster: sampling ps twice a second doubles the cost and makes the percentages jumpier, not more accurate. RAM matches Activity Monitor's "Memory Used". | Pinned |
+| D52 | Codex's runtime usage header goes in the invocation-local `-c` exporter config; use an env header only if the installed Codex documents support for it. Credentials never enter logs, responses or persisted recipes. | Pinned |

@@ -15,7 +15,7 @@ Agents keep running in a background service when you leave them or close the ter
 Personal and learning project. macOS first; Linux and Windows by v0.8.
 
 ## Status
-`ai` starts Claude Code and Codex on their own logins or saved API keys. `/login` connects an account or saves a key in the macOS Keychain; `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage numbers remain planned for v0.1.8b.
+`ai` starts Claude Code and Codex on their own logins or saved API keys. `/login` connects an account or saves a key in the macOS Keychain; `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage shows estimated API-key spend and tokens for today, this week and this month; subscriptions are excluded. `b` sets advisory budget limits; `/settings` offers Foundry deployment price overrides.
 
 Ask passes explicit ask flags. Every Codex session uses `--no-daemon` and disables the startup update check; key sessions get only their own provider credential. Real-key approval and billing checks are in `docs/testing/v0.1.7-keys-login.md`.
 
@@ -31,6 +31,7 @@ Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source
 | `ai daemon` | Internal background service entry point |
 | `ai daemon stop` | Stop the background service and all its sessions |
 | `ai debug stats` | Print ten one-second numeric RAM/CPU diagnostics; no daemon connection |
+| `ai debug usage` | Ask the running daemon for its receiver port and last ten minutes of allowlisted numeric telemetry; never headers, credentials or bodies |
 | `ai debug ls` | List session IDs, status and title |
 | `ai debug shell [cwd]` | Create a debug shell in the folder (current folder if omitted) |
 | `ai debug attach <id>` | Attach directly; Ctrl+E returns to the shell |
@@ -44,7 +45,7 @@ Homepage slash commands:
 | `/model` | Choose provider tab, then own-login/key model or tested Foundry deployment; filter searches across tabs |
 | `/cd` | Choose folder for the next session, with directory completion |
 | `/login` | Anthropic/OpenAI account login or API key; Microsoft Foundry endpoint/key/deployments and test |
-| `/settings` | KEYS, ENGINES, DEFAULTS; add/import/remove/test keys and edit saved defaults/theme |
+| `/settings` | KEYS, ENGINES, DEFAULTS; add/import/remove/test keys, edit saved defaults/theme, set Foundry input/output prices per 1M tokens |
 | `/theme graphite\|slate\|ink\|auto\|light` | Save the theme |
 | `/exit` | Quit client; sessions keep running |
 
@@ -53,6 +54,7 @@ Homepage slash commands:
 | ↑ / ↓ | Slash menu selects a command with wrapping; otherwise homepage selects session; pickers/settings select rows |
 | Enter | Slash menu picks highlighted command (`/theme` inserts argument prefix); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
 | `p` | Empty field toggles preview |
+| `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
 | `x` | Empty field removes an exited/failed session |
@@ -71,9 +73,16 @@ Homepage slash commands:
 | `/settings` `a` or `+` / `i` / `l` | Add key / import env file / open provider login |
 | `/settings` ↑↓ / Enter / `x` / `t` | Select key/action/default row / activate (key row tests) / remove selected key / test |
 | `/settings` `d` / `f` / Tab | Save default model+engine / folder / cycle theme; permission default is always Ask |
+| `/settings` `p` or price row Enter | Foundry deployment price override: deployment, input and output USD per 1M; ↑↓ fields, Enter saves, Esc cancels |
 | Import names ↑↓ / Space / Enter | Select name / toggle inclusion / import chosen keys |
 
 Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
+
+The Usage panel marks estimates with `≈`. Unknown model prices show `price ?`; the spend row includes known costs only. Foundry overrides apply their input rate to all input tokens without assuming a cache discount. Historical estimates keep the price used at ingestion. Existing sessions need to be restarted to receive telemetry settings.
+
+Native Keychain tests are opt-in: `AITERM_NATIVE_KEYCHAIN_TEST=1 npm test -- tests/keys-store.test.ts`. Normal `npm test` skips only those two native tests and prints the reason; fake-vault tests still run.
+
+The bundled price snapshot is trimmed from Models.dev to Anthropic, OpenAI and Azure. To regenerate after an intentional download: `curl -q --fail https://models.dev/api.json -o /tmp/ai-term-models.json`, then `npx tsx scripts/update-prices.ts /tmp/ai-term-models.json`.
 
 ## Docs
 - `AGENTS.md`: rules for every coding agent working here
