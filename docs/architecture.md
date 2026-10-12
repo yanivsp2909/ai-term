@@ -147,7 +147,7 @@ type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 
 // requests (client → daemon), each answered with {ok:true, ...} or {ok:false, error:{code, message}}
 hello            {protocol: 1, version}            → {protocol, version, daemonPid}
 sessions.list    {}                                  → {sessions: SessionInfo[]}
-sessions.create  {engine, model: string | null, auth: AuthRef, cwd, permission, title?, firstMessage?, login?:true} → {session}
+sessions.create  {engine, model: string | null, effort?: Effort | null, auth: AuthRef, cwd, permission, title?, firstMessage?, login?:true} → {session}
                   // null = CLI default; debug shell keeps {engine:'shell', cwd, title?}
 sessions.attach  {sessionId, cols, rows}             → {snapshot, cols, rows, modes, session} then output frames stream
 sessions.detach  {sessionId}
@@ -156,6 +156,7 @@ sessions.preview {sessionId | null}                  → {snapshot, cols, rows} 
                                                       // A subscriber that fell behind gets a catch-up snapshot response with the same request id
 sessions.stop    {sessionId}
 sessions.remove  {sessionId}                         // exited/error only
+sessions.resume  {sessionId}                         → {session} // new record, original saved recipe; exited/error AI only
 sessions.rename  {sessionId, title}
 layout.previewSize {cols, rows}                      // size every detached session runs at
 engines.status   {}                                  → {claudeCode: EngineStatus, codex: EngineStatus}
@@ -170,7 +171,7 @@ usage.subscribe  {on: boolean}                      → {}  // homepage only; re
 usage.summary    {}                                  → {usage: UsageSummary}
 usage.diagnostics {}                                → {usageDiagnostics: {port, sessions:[{sessionId,at,values:[{name,value}]}]}}
 settings.get     {} → {settings}
-settings.set     {patch} → {settings} // merge theme/defaultEngine/defaultModel/defaultCwd/permission/budgets/priceOverrides; default permission only ask
+settings.set     {patch} → {settings} // merge theme/defaultEngine/defaultModel/defaultEffort/defaultCwd/permission/budgets/priceOverrides; default permission only ask
                                     // unknown stored keys are preserved, unknown patch keys rejected; 16 KiB maximum, 0600
 system.subscribe {on: boolean}                     → {}   // v0.1.8a; This Mac samples run only while ≥1 client is subscribed
 
@@ -186,7 +187,7 @@ system.stats {stats}    // subscribed clients only, every 1 s
 
 `SystemStats` carries numbers only: no process name, command line, user or pid ever crosses the socket. `validateSystemStats` accepts exactly these keys (finite, non-negative, percentages ≤ 100, used ≤ total, at most 1,000 sessions). The daemon checks every sample with it before sending, and the homepage checks every event with it on arrival.
 
-`SessionInfo` in v0.1.7 = `{id, title, engine, model: string | null, auth: {kind:'account'} | {kind:'key', keyId, provider, keyLabel, last4}, authMethod?: 'subscription' | 'api-key' | 'unknown', cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth views accept only documented metadata. Key requests, usage (v0.1.8b), and `system.subscribe` (v0.1.8a) are implemented.
+`SessionInfo` in v0.1.7 = `{id, title, engine, model: string | null, auth: {kind:'account'} | {kind:'key', keyId, provider, keyLabel, last4}, authMethod?: 'subscription' | 'api-key' | 'unknown', effort?: Effort | null, conversationId?: UUID (Claude), cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth views accept only documented metadata. Key requests, usage (v0.1.8b), and `system.subscribe` (v0.1.8a) are implemented.
 
 `UsageSummary` has `today`, `week`, and `month` periods, each `{costUsd, tokens, unknownPrice, providers:[{provider,costUsd,tokens,unknownPrice}]}`. Cost is the sum of known estimates; `unknownPrice` preserves the fact that some usage is unpriced. Budget settings are `{daily,weekly,monthly}` in USD, with null meaning none. `priceOverrides` maps a deployment id to `{input,output,cacheRead?}` USD per million tokens. All amounts are finite and nonnegative; settings amounts are capped at one billion. Diagnostic names are a fixed usage allowlist and values are numeric only.
 
@@ -196,7 +197,7 @@ system.stats {stats}    // subscribed clients only, every 1 s
 
 ## 5. Sessions: spawn, mirror, size, exit
 
-**Record** (in `state.json`): everything in `SessionInfo` plus `pid` and the spawn recipe *without* env or secrets (engine, model, auth ref, cwd, permission).
+**Record** (in `state.json`): everything in `SessionInfo` plus `pid` and the spawn recipe *without* env or secrets (engine, model, auth ref, cwd, permission, effort, Claude conversationId).
 
 **Create (v0.1.7).** The server validates every field, including existing-directory cwd, model id or null, account or key reference auth, permission, sanitized title, and firstMessage ≤ 16 KiB with no NUL. The manager checks the engine again before spawning, using the same own-provider env cleanup. Missing engine/login errors are allowlisted and shown inline; a rejected preflight creates no record. Each session gets a fresh recipe and env. A key reference is checked against the engine/provider; Foundry model must be in a saved ready result. The secret is read only after all metadata/CLI/argv checks, immediately around spawning, and the env reference is cleared afterward. Missing Keychain credentials refuse creation with a clear error. Login uses account auth with `login:true`, Ask, no first message: Claude `auth login`, Codex `--no-daemon -c check_for_update_on_startup=false login`; no existing CLI credential files are read. Shell sessions remain available through `ai debug shell`.
 
@@ -304,6 +305,8 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 - Executable: `resolveExecutable('claude' | 'codex', PATH)` walks PATH and returns the absolute path of the first regular, executable file. Not found → the session goes to `error` with "claude not found in PATH".
 - Model: null ("CLI default") adds nothing; otherwise one argv element `--model=<id>`, only if `isValidModelId(id)`: `/^[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,79}$/`. The leading-character rule plus the single-element form mean a "model" can never be read as another flag.
 - First message: the last argv elements are `--` and then the message as one element. Both CLIs take a positional prompt and accept `--`. v0.1.6 keeps argv delivery: Codex displayed the exact prompt in live runs; Claude paused at folder trust before prompt execution. No paste fallback or automatic trust acceptance was added.
+- Effort: absent/null (`CLI default`) adds nothing. Claude's installed help documents `low`, `medium`, `high`, `xhigh`, `max`: one argv element `--effort=<level>`. Codex rust-v0.160.1's config and ReasoningEffort wire enum document `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`, `persistent`: `-c` followed by one argv element `model_reasoning_effort="<level>"`. Shared validation enforces engine-specific values before argv. Individual models may accept fewer CLI-supported levels. `/settings` may save `defaultEffort`; incompatible effort resets to CLI default when switching engines.
+- Conversation identity/resume: new Claude agents get an AI Term-made UUID in `--session-id=<uuid>` and the public record. A `sessions.resume` request identifies the selected exited/error AI Term record; the daemon uses that record's recipe, never client-supplied overrides. Claude uses `--resume=<conversationId>` without the new-session flag; older records without an id refuse with a note. Codex help documents `resume [SESSION_ID] [PROMPT]`, but AI Term cannot learn a new Codex id through documented spawn flags, so it launches `codex resume` with the original folder/options and lets the user choose. No CLI session files are read. Concurrent resumes reserve the conversation until the new record exists, preventing duplicate Claude spawns; shells/live records cannot resume.
 - Codex daemon: every Codex session's argv starts with `--no-daemon`, exactly once (D41). Without it the Codex TUI may join a shared background server started elsewhere, and that server's env and config win over this session's env and `-c` overrides. Codex rejects the flag when it appears twice.
 - Codex update check: right after `--no-daemon`, every Codex session passes `-c check_for_update_on_startup=false`, Codex's own setting (`codex-rs/config/src/config_toml.rs` at `rust-v0.160.1`). Otherwise a fresh session can open on the "Update available" menu, where Enter means "Update now".
 - Foundry on Codex: `-c` overrides only, nothing written to `~/.codex` (from docs; the live test is pending in `docs/spikes/v0.1-cli-facts.md` #3 and #4). Each override is one argv element:
@@ -320,6 +323,7 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
   The endpoint goes into a `-c` value, so it's validated first: `https://`, a hostname, no quotes or whitespace.
 - **Permission mode:**
   - `ask` (default) adds explicit ask flags (D40), so a bypass in your own CLI config can't turn Ask into Don't ask: Claude Code `--permission-mode=default`; Codex `--ask-for-approval=on-request` plus `--sandbox=workspace-write`. Claude Code 2.1.296's help lists this mode as `manual`; the CLI maps `manual` to its canonical `default`, which it accepts.
+  - `auto` is Claude-only and adds `--permission-mode=auto`, documented in installed help. Codex has no distinct documented auto option; validation rejects it. Auto is per session and cannot be saved as a default.
   - `dontAsk` is chosen per session only, never as a saved default, and is shown with a red `!`. It adds exactly one flag per engine: Claude Code `--permission-mode=bypassPermissions`; Codex `--ask-for-approval=never` plus `--sandbox=workspace-write`. Codex stays sandboxed: don't-ask never means `--dangerously-bypass-approvals-and-sandbox`.
   - Flag spellings verified in v0.1.1. Claude Code also has a mode literally named `dontAsk`, which denies tools that aren't pre-approved. That is not our Don't ask; we never use it.
 - Never passed: `--dangerously-skip-permissions`, `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `danger-full-access`, `--approve-for-me`.
@@ -508,7 +512,7 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D10 | `/cd` on the homepage sets the folder for the next agent; AI Term's agent supports `/cd` anytime. | Pinned |
 | D11 | Home key: Ctrl+E from inside any session goes to the homepage. On the homepage, ⏎ enters the selected agent and `/exit` quits `ai`. No other home keys. | Pinned |
 | D12 | v0.1 sessions are full screen; v0.2 adds the frame bar; v0.3 splits. | Pinned |
-| D13 | Permissions: Ask / Don't ask. Ask is the default and the only saveable default; Don't ask is per session with a red marker; Codex stays sandboxed. | Pinned |
+| D13 | Permissions: Ask / Don't ask, plus Claude's documented Auto from v0.1.8c. Ask is the default and the only saveable default; Auto and Don't ask are per session, Don't ask has a red marker; Codex stays sandboxed. | Pinned; Auto extension explicitly requested in v0.1.8c |
 | D14 | One instruction file, `AGENTS.md`; a one-line `CLAUDE.md` (`@AGENTS.md`) covers Claude Code. | Pinned |
 | D15 | Keys live only in the OS keychain; never `.env` or plain files. "Import from .env" reads, never writes. | Pinned |
 | D16 | Account sessions start with their provider's keys stripped; key sessions get only their own key. | Pinned |

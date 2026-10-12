@@ -147,14 +147,14 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 
 ### Command bar
 - **Field:** surface background with a line border. `›` in accent, your text, block cursor. Placeholder: `What do you want to build?` (ink-3).
-- **Line under it:** left, the defaults for the next agent: `model · engine   folder   auth   permission   worktree` (worktree appears from v0.3). Auth uses the next agent's `own login · sub/API key` or `key ····last4`; folder is clipped before auth. Right, the key hints. Keys appear only here, not repeated in panels.
+- **Line under it:** left, the defaults for the next agent: `model · engine   folder   auth   effort   permission   worktree` (worktree appears from v0.3). Auth uses the next agent's `own login · sub/API key` or `key ····last4`; folder is clipped before auth. Right, the key hints. Keys appear only here, not repeated in panels.
 - **⏎ with text:** opens the **Start a new agent** box (below).
 - **⏎ with an empty field:** goes inside the selected agent.
-- **`/` at the start:** opens the filtered command menu. ↑↓ moves the selected-card highlight through commands, wrapping; typing resets to the first match. ⏎ picks the highlighted command; `/theme` inserts `/theme ` for its argument. Esc closes. Outside the menu ↑↓ selects agents.
+- **`/` at the start:** opens the filtered command menu. ↑↓ moves the selected-card highlight through commands, wrapping; typing resets to the first match. Each row shows command and argument hint, a short description, and current value at the right in ink-3. ⏎ picks the highlighted command; `/theme`, `/effort` and `/mode` insert their argument prefix. Tab completes the highlighted command, then cycles supported argument values. Esc closes. Outside the menu ↑↓ selects agents.
 
 ### Start a new agent (box over the command bar)
-- **Box:** surface fill, accent border, title `Start a new agent`. Rows: model (+ `/model`), folder (+ `/cd`), branch (`auto` from v0.3), mode (`ask` · ⇥ toggles to `don't ask`, shown in status-error with `!`), first message ("your text above is its first message").
-- **Keys:** ⏎ starts, Esc returns to editing.
+- **Box:** surface fill, accent border, title `Start a new agent`. Rows: model (+ `/model`), folder (+ `/cd`), branch (`auto` from v0.3), mode (`ask` → `auto` → `don't ask` for Claude; Codex `ask` ↔ `don't ask`; Don't ask shown in status-error with `!`), effort (`CLI default` or the selected CLI's documented level), first message ("your text above is its first message").
+- **Keys:** ↑↓ selects rows; m model, c folder, e effort; Tab cycles the available modes. ⏎ starts, Esc returns to editing. Mode is per session and resets to Ask after start/cancel.
 - **After starting:** the new agent is selected and the preview shows it starting.
 
 ### /model picker
@@ -172,7 +172,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - **Popup** with sections:
   - **KEYS** (OS keychain): label, endpoint, `key ····last4`, plus `+ add key` (paste, or import from .env).
   - **ENGINES:** Claude Code / Codex, each with `✓ installed` and `✓ logged in` (or `✗ not logged in` with `/login`).
-  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, copy on select, budget.
+  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget. Permissions remain Ask-only as saved defaults.
 - **Footer:** `keys are never shown in full and never written to .env`.
 
 ### /login
@@ -187,6 +187,16 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - **First run:** `ai` opens /login when no engine is logged in and no key exists.
 
 ---
+
+### /effort and /mode
+- Both accept an argument from the selected engine's documented values or open a small ↑↓/Tab/Enter/Esc picker when submitted without one. Effort always includes `CLI default`, which passes no effort option. Defaults and the start box show effort and mode before starting.
+- Claude auto is its own permission mode. Codex has no distinct auto option in installed help; its menu row says auto unavailable. Don't ask uses the red `!` and remains per-session; saved permission is always Ask.
+
+### /resume, /shell, /clean and /help
+- `/resume` acts on the selected exited/failed AI agent, preserving its folder, model, auth, effort and mode. Claude continues the stored conversation UUID; older records without it show a note. Codex opens its own resume picker in that folder. A running agent or shell gets a note.
+- `/shell` starts a plain login shell in the current `/cd` folder, selected with a preview afterward.
+- `/clean` asks `remove N finished agents? y/n`; y removes only those exited/failed list records. n or Esc cancels. Running sessions and project files are untouched.
+- `/help` lists registry commands and the key table in a calm surface overlay. ↑↓ scrolls, PgUp/PgDn pages, Esc closes; long lines wrap at narrow widths. Homepage keys remain isolated from agents.
 
 ## Inside a session
 
@@ -208,7 +218,8 @@ A path field with completion. It sets the folder for the next agent only. A fold
 | d / r / s | diff (v0.7) / rename / stop the selected agent (s asks first) |
 | x | remove an exited or failed agent from the list |
 | b / u | budget / usage details |
-| / | command menu |
+| / / Tab | command menu / complete selected command and cycle argument values |
+| /help ↑↓ / PgUp / PgDn / Esc | scroll / page up / page down / close |
 | Esc | close a popup; clear the field |
 | Ctrl+C twice | quit `ai` (agents keep running) |
 

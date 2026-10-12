@@ -17,7 +17,7 @@ Personal and learning project. macOS first; Linux and Windows by v0.8.
 ## Status
 `ai` starts Claude Code and Codex on their own logins or saved API keys. `/login` connects an account or saves a key in the macOS Keychain; `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage shows estimated API-key spend and tokens for today, this week and this month; subscriptions are excluded. `b` sets advisory budget limits; `/settings` offers Foundry deployment price overrides.
 
-Ask passes explicit ask flags. Every Codex session uses `--no-daemon` and disables the startup update check; key sessions get only their own provider credential. Real-key approval and billing checks are in `docs/testing/v0.1.7-keys-login.md`.
+Ask passes explicit ask flags. New Claude agents keep a conversation UUID for `/resume`; Codex `/resume` opens its own picker in the saved folder. `/effort` chooses next-agent reasoning; Claude offers auto permission mode through `/mode`. Every Codex session uses `--no-daemon` and disables the startup update check; key sessions get only their own provider credential. Real-key approval and billing checks are in `docs/testing/v0.1.7-keys-login.md`.
 
 ## Commands and keys
 
@@ -58,7 +58,8 @@ Homepage slash commands:
 | Keys / action | Where and behavior |
 |---|---|
 | ↑ / ↓ | Slash menu selects a command with wrapping; otherwise homepage selects session; pickers/settings select rows |
-| Enter | Slash menu picks highlighted command (`/theme` inserts argument prefix); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
+| Enter | Slash menu picks highlighted command (`/theme`, `/effort`, `/mode` insert argument prefixes); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
+| Tab | Complete the highlighted slash command; with an argument, cycle its values |
 | `p` | Empty field toggles preview |
 | `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
@@ -71,16 +72,21 @@ Homepage slash commands:
 | Ctrl+C twice within one second | Quit client; sessions keep running |
 | Ctrl+E | Inside session returns home, keeping session running; inside pasted text it is pasted |
 | SIGTERM / SIGHUP / SIGQUIT | Client cleanup and exit 143 / 129 / 131; sessions keep running |
-| Start box ↑↓ / `m` / `c` / Tab / Enter | Select row / model picker / folder picker / toggle Ask ↔ Don't ask / start |
+| Start box ↑↓ / `m` / `c` / `e` / Tab / Enter | Select row / model / folder / effort / cycle Ask → auto → Don't ask (Claude) or Ask ↔ Don't ask (Codex) / start |
 | Start box message row | Type/paste to edit first message |
 | Model picker ←→ / ↑↓ / Enter / Esc | Switch provider tab (Tab also goes right) / choose model / select / back; typing searches all tabs |
+| Effort or mode picker ↑↓ / Tab / Enter / Esc | Select / cycle / apply / back; CLI default effort passes nothing |
+| Help ↑↓ / PgUp / PgDn / Esc | Scroll lines / previous page / next page / close |
+| `/clean` y / n / Esc | Confirm finished-record removal / cancel / cancel |
 | Folder picker Tab / Enter | Complete directory / accept existing folder |
 | `/login` ↑↓ / Enter | Choose provider, then account or API key; key form Enter advances/saves; secret field is masked |
 | `/settings` `a` or `+` / `i` / `l` | Add key / import env file / open provider login |
 | `/settings` ↑↓ / Enter / `x` / `t` | Select key/action/default row / activate (key row tests) / remove selected key / test |
-| `/settings` `d` / `f` / Tab | Save default model+engine / folder / cycle theme; permission default is always Ask |
+| `/settings` `d` / `f` / `e` / Tab | Save default model+engine / folder / effort / cycle theme; permission default is always Ask |
 | `/settings` `p` or price row Enter | Foundry deployment price override: deployment, input and output USD per 1M; ↑↓ fields, Enter saves, Esc cancels |
 | Import names ↑↓ / Space / Enter | Select name / toggle inclusion / import chosen keys |
+
+Claude effort: `CLI default`, `low`, `medium`, `high`, `xhigh`, `max`. Codex effort: `CLI default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`, `persistent`. These are CLI-supported values; individual models may accept fewer. `/settings` can save effort. Mode is per session and resets to Ask after start/cancel; auto and Don't ask cannot be saved as defaults. Older Claude records without a conversation UUID show a note instead of resuming.
 
 Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
 
