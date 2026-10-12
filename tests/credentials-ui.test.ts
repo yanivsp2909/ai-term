@@ -15,3 +15,7 @@ it('settings has keys engines defaults and imports names only',async()=>{
  const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='keys.list'?{keys:[]}:{found:[{name:'ANTHROPIC_API_KEY',provider:'anthropic'}]})}),changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});await panel.load();const text=panel.lines().join('\n');for(const label of ['KEYS','ENGINES','DEFAULTS','keys are never shown in full'])expect(text).toContain(label);
  await panel.key('i');panel.paste('/tmp/input.env');await panel.key('enter');expect(panel.lines().join('\n')).toContain('ANTHROPIC_API_KEY');
 });
+it('cancelling clears secret and validation refuses oversized secret without truncating it into another key',async()=>{
+ const requests:RequestBody[]=[];const panel=new CredentialsPanel('login',{request:async body=>{requests.push(body);return {id:randomUUID(),ok:true};},changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});
+ await panel.key('enter');await panel.key('down');await panel.key('enter');await panel.key('enter');panel.paste('x'.repeat(513));await panel.key('enter');expect(requests).toEqual([]);await panel.key('escape');expect(panel.containsSecret()).toBe(false);
+});
