@@ -1,11 +1,18 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: 2849af6 docs: record the This Mac gate range across runs
-Roadmap step: v0.1.8a done (This Mac panel: machine CPU, RAM, network, plus per-agent CPU and RAM). v0.1.6 is still partial: its live checks need Yaniv.
-Branch: main, started from 3fb93e3 (clean, 168 tests). This handover is committed last; its own hash is in git log.
+Last commit: 3563e1d test: sampler failure words, unreadable output, counter resets, late failures, ps parent loops and the command runner
+Roadmap step: coverage chore, not a roadmap step (done: branch coverage 82.3%, goal 80%). Last roadmap step is still v0.1.8a done; v0.1.6 is still partial (its live checks need Yaniv).
+Branch: claude/coverage-chore-80-percent-lmfy2c, started from 7bf527a. Tests only: no file under src/, docs/, spikes/ or .claude/ changed. This handover is committed last; its own hash is in git log.
 
 ## What works
+- **Coverage chore (cloud session, Linux):** 128 new tests, 192 → 320 (1 todo). Coverage on Linux, before → after: statements 86.19 → 88.9, branches 78.21 → 82.3, functions 86.93 → 88.0, lines 92.34 → 94.26.
+  - `tests/server-rejections.test.ts` (ebfcb89): invalid requests echo only a string id; output frames and bad lengths close the client; input before hello is dropped; switching attach detaches the first session; a disconnect during a queued attach leaves the session detached; warnings after hello and list; only known error messages pass through; failed preview refresh clears the preview; a client that stops reading is dropped at the queue cap; listen refuses a non-socket path and a live socket; socketAnswers rethrows ENOTDIR.
+  - `tests/session-manager-lifecycle.test.ts` (c9ab2aa): bad state files are refused and left untouched; every operation on an unknown id; bad titles and sizes; agent preflight errors (not installed, not logged in, status unknown) leave no record and spawn nothing; default agent titles and authMethod; spawn failure becomes a saved error record; a failing mirror emits fatal; sampler roots and active count; attach during shutdown; detach and resize from a non-owner; warning dedup and two-source clearing.
+  - `tests/store-settings.test.ts` (276e7b8): directory and oversized state/settings refused; loose files tightened to 0600 on read; failed serialize and failed rename leave no temp file; a symlink at the target is replaced, never written through; a failed settings write doesn't block the next one.
+  - `tests/validate-rejections.test.ts` and `tests/protocol.test.ts` (b1be597): every validator rejection branch, each asserting its own message; frame encode limit, non-control decode, unknown types, data frames without a UUID.
+  - `tests/sysstats.test.ts` (3563e1d): sampler failure reasons logged in fixed words only; unreadable netstat/vm_stat restarts the baseline; counter reset skips one event; a late failure after stop isn't logged; ps parent loops end; runCommand and defaultSamplerDeps.
+- **Checks (Linux):** build success; typecheck exit 0; lint exit 0, no output; tests 320: 317 passed, 1 todo, 2 failed (both Linux/root-only, listed in Gotchas).
 - **Contract:** `system.subscribe {on}` → `{ok}` and the event `system.stats {stats}`, numbers only (`src/shared/protocol.ts`, eb61fd1).
   - `stats` = `{cpuPercent, memUsedBytes, memTotalBytes, netRxBytesPerSec, netTxBytesPerSec, sessions: [{sessionId, cpuPercent, rssBytes}]}`.
   - `validateSystemStats` accepts exact keys only. The daemon checks every sample with it before sending, and the homepage checks every event on arrival.
@@ -39,10 +46,13 @@ Branch: main, started from 3fb93e3 (clean, 168 tests). This handover is committe
 - **Checks:** build success; typecheck exit 0; lint "No issues found"; tests 34 files, 192 passed. Coverage: statements 86.16%, branches 78.08%, functions 87.15%, lines 92.28%.
 
 ## What's next
+- Decide on the todo in `tests/server-rejections.test.ts`: Node's pipe server unlinks its bound path on `close()` whatever is there, so `DaemonServer.close()`'s inode check can't spare a replaced socket path. A fix would bind to a unique temp name and rename it to `daemon.sock` (touches S1 startup). Low impact: the lock stops a second daemon from replacing it.
+- Re-run `npm test -- --coverage` on the Mac to confirm branches stay ≥ 80% there (the Linux-failing Mac tests cover a few extra branches, so the Mac number should be a little higher).
 - Yaniv runs the manual checks below. When the v0.1.6f ones pass, mark v0.1.6 done and go on to v0.1.7 (login/keys).
 - v0.1.8b: usage and cost (D45). Not started.
 
 ## Manual checks
+- Coverage chore: none needed (tests only). Optional: `npm test -- --coverage` on the Mac to see the Mac numbers: needs Yaniv.
 - This Mac numbers move with a busy shell session, temp `AI_TERM_HOME` (commands in the final report of this session): needs Yaniv.
 - Performance gate and no-subscriber spawn count: ran (numbers above).
 - Carried from v0.1.6g, all need Yaniv:
@@ -58,6 +68,13 @@ Branch: main, started from 3fb93e3 (clean, 168 tests). This handover is committe
   - title, palette and cursor after Ctrl+E and `/exit`
 
 ## Gotchas
+- **Running the suite on Linux (cloud sessions):** two tests fail for platform reasons, not code:
+  - `daemon-core` "recovers a stale lock whose PID now belongs to a process that started after the lock was written": the container runs as root, so `kill(1, 0)` succeeds instead of EPERM and the lock is (correctly) kept.
+  - `system-stats` "real ps, vm_stat and netstat on this Mac": `/usr/bin/vm_stat` and `/usr/sbin/netstat` don't exist on Linux.
+  - Two older tests flake under full parallel load here and pass alone: `client-signals` SIGTERM (exit 0 instead of 143) and `homepage-settings` "resizing detached sessions broadcasts new preview dimensions once". Both also flaked in the baseline run before any new test existed.
+- **vitest prints no coverage table when a test fails;** add `--coverage.reportOnFailure`.
+- **Node unlinks a Unix socket's path on `server.close()`,** whatever file is there by then (libuv `uv__pipe_close`).
+- **A paused client socket never sees its own close.** To test that the daemon dropped a client, watch `server.clientCount()`.
 - **ps `%cpu` is a decaying average,** not an instant value, so per-agent and "agents" CPU lag a few seconds. They can briefly disagree with machine CPU, which comes from `os.cpus()` deltas.
 - **Network counts every non-loopback interface,** so VPN traffic is counted twice (on `utun*` and on the physical interface).
 - **The first event comes about 2 s after subscribing:** the first sample is only a baseline. The panel shows `—` until then, including after returning from a session.
@@ -71,12 +88,14 @@ Branch: main, started from 3fb93e3 (clean, 168 tests). This handover is committe
   - Claude's `--permission-mode=default` alias.
   - Never script Enter into Codex or Claude.
   - Unicode 11 isn't grapheme-aware: skin tones, ZWJ families and flags count per code point.
-- **Branch coverage** is still below 80% (78.08%, up from 77.09%).
+- **Branch coverage** reached 82.3% on Linux in the coverage chore (was 78.08% on the Mac).
 
 ## New dependencies
 - None.
 
 ## Concepts introduced
+- **Branch coverage** (`npm test -- --coverage`): counts each way a decision can go (both sides of an `if`, each `||` operand, each `case`) and how many were run by a test. It finds untested error paths that line coverage hides, because a one-line `if (bad) throw` counts as a covered line even if `bad` was never true.
+- **Asserting the message, not just the throw** (`tests/validate-rejections.test.ts`): a validator with ten checks rejects a bad value at the first check that fails. A test that only says "throws" passes even if the check it meant to test is broken, so each case names the message it expects.
 - **Subscribe-to-sample** (`src/daemon/server.ts`, `src/daemon/sysstats.ts`): the daemon measures the machine only while a homepage is looking. Each connection has a flag, and the sampler runs while any flag is set. Closing a connection clears its flag, so a crashed client can't leave sampling on.
 - **Process-tree sums** (`sessionUsage`): an agent is a tree of processes (shell → claude → node → tools). ps lists each process with its parent, so the daemon walks down from each session's PTY child and adds up CPU and memory for the whole tree.
 - **Counters vs. rates** (`cpuPercent`, `netRates`): the OS reports running totals (CPU ticks, bytes since boot). A rate is the difference between two samples divided by the time between them. That's why the first sample is only a baseline, and why a counter that goes backwards (reset) voids a sample instead of showing a negative speed.
