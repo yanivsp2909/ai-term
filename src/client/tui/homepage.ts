@@ -180,7 +180,7 @@ export class Homepage {
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
     if (event.kind === 'mouse') { this.mouse(event); return; }
-    if (event.kind === 'paste') { if(this.credentials)this.credentials.paste(event.text); else if (this.box) this.boxText(event.text); else this.field.paste(event.text); this.draw(true); return; }
+    if (event.kind === 'paste') { if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});} else if (this.box) this.boxText(event.text); else this.field.paste(event.text); this.draw(true); return; }
     if (event.key === 'ctrl-c') {
       const action = this.field.key('ctrl-c');
       if (action.kind === 'quit') void this.stop();
