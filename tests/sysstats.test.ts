@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { CpuInfo } from 'node:os';
-import { parsePs, parseVmStat, parseNetstat, netRates, cpuPercent, sessionUsage, SystemSampler, SAMPLE_COMMANDS, type SamplerDeps } from '../src/daemon/sysstats.js';
+import { parsePs, parseVmStat, parseNetstat, netRates, cpuPercent, sessionUsage, SystemSampler, SAMPLE_COMMANDS, runCommand, defaultSamplerDeps, type SamplerDeps } from '../src/daemon/sysstats.js';
 import { validateRequest, validateSystemStats } from '../src/shared/validate.js';
 import type { SystemStats } from '../src/shared/protocol.js';
 
@@ -195,5 +195,109 @@ describe('SystemSampler', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(events).toHaveLength(2);
     sampler.setSubscribers(0);
+  });
+  it.each([
+    ['a missing command', Object.assign(new Error('spawn /usr/bin/vm_stat ENOENT SECRET'), { code: 'ENOENT' }), 'command missing'],
+    ['output over the cap', Object.assign(new RangeError('stdout maxBuffer length exceeded SECRET'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' }), 'output too large'],
+    ['a non-zero exit', Object.assign(new Error('Command failed: SECRET stderr'), { code: 2 }), 'exit 2'],
+    ['a plain error', new Error('SECRET'), 'failed'],
+    ['a thrown string', 'SECRET', 'failed'],
+  ])('logs %s in fixed words only, never the error text', async (_name, error, words) => {
+    const { sampler, run, logs, events } = fixture();
+    run.mockRejectedValue(error);
+    sampler.setSubscribers(1);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(logs).toEqual([`System stats sample skipped (${words})`]);
+    expect(events).toEqual([]);
+    sampler.setSubscribers(0);
+  });
+  it.each([
+    ['netstat', SAMPLE_COMMANDS.netstat.file, 'netstat output unreadable'],
+    ['vm_stat', SAMPLE_COMMANDS.vmStat.file, 'vm_stat output unreadable'],
+  ])('unreadable %s output skips the sample and restarts the baseline', async (_name, file, words) => {
+    const { sampler, run, logs, events } = fixture();
+    const base = run.getMockImplementation();
+    let broken = false;
+    run.mockImplementation(async (command: string, args: string[]) => {
+      if (broken && command === file) return 'Something else entirely\n';
+      if (!base) throw new Error('fixture');
+      return base(command, args);
+    });
+    sampler.setSubscribers(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(events).toHaveLength(1);
+    broken = true;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(events).toHaveLength(1);
+    expect(logs).toEqual([`System stats sample skipped (${words})`]);
+    broken = false;
+    // The first good sample after a failure is a fresh baseline, never a delta across the gap.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(events).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(events).toHaveLength(2);
+    sampler.setSubscribers(0);
+  });
+  it('a network counter that went backwards skips one event, then deltas resume from the new values', async () => {
+    const { sampler, run, events, logs } = fixture();
+    const base = run.getMockImplementation();
+    let rx = 1000;
+    run.mockImplementation(async (command: string, args: string[]) => {
+      if (command === SAMPLE_COMMANDS.netstat.file) return NETSTAT(rx, 500);
+      if (!base) throw new Error('fixture');
+      return base(command, args);
+    });
+    sampler.setSubscribers(1); // baseline at rx 1000
+    await vi.advanceTimersByTimeAsync(0);
+    rx = 5000; await vi.advanceTimersByTimeAsync(2000);
+    expect(events.map(e => e.netRxBytesPerSec)).toEqual([2000]);
+    rx = 10; await vi.advanceTimersByTimeAsync(2000); // interface reset
+    expect(events).toHaveLength(1);
+    rx = 4010; await vi.advanceTimersByTimeAsync(2000);
+    expect(events.map(e => e.netRxBytesPerSec)).toEqual([2000, 2000]);
+    expect(logs).toEqual([]); // a reset is normal, not a failure
+    sampler.setSubscribers(0);
+  });
+  it('a sample that fails after sampling stopped is not logged, and a restart samples again at once', async () => {
+    const { sampler, run, logs } = fixture();
+    let fail: ((error: Error) => void) | null = null;
+    run.mockImplementation(() => new Promise<string>((_resolve, reject) => { fail ??= reject; }));
+    sampler.setSubscribers(1);
+    await vi.advanceTimersByTimeAsync(0);
+    sampler.setSubscribers(0);
+    (fail as ((error: Error) => void) | null)?.(new Error('late SECRET'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(logs).toEqual([]);
+    expect(sampler.running()).toBe(false);
+    const before = run.mock.calls.length;
+    sampler.setSubscribers(1);
+    expect(run.mock.calls.length).toBe(before + 3);
+    sampler.setSubscribers(0);
+  });
+});
+
+describe('process tree', () => {
+  it('a parent loop in ps output ends the walk and counts each process once', () => {
+    const id = randomUUID();
+    expect(sessionUsage(parsePs('10 11 100 1.0\n11 10 200 2.0\n12 11 300 3.0\n'), [{ sessionId: id, pid: 10 }], 1)).toEqual([{ sessionId: id, cpuPercent: 6, rssBytes: 600 * 1024 }]);
+  });
+  it('a zero core count is treated as one core rather than dividing by zero', () => {
+    const id = randomUUID();
+    expect(sessionUsage(parsePs('10 1 100 25.0\n'), [{ sessionId: id, pid: 10 }], 0)).toEqual([{ sessionId: id, cpuPercent: 25, rssBytes: 100 * 1024 }]);
+  });
+});
+
+describe('runCommand', () => {
+  it('returns stdout for an argv call and rejects a missing command with ENOENT', async () => {
+    expect(await runCommand('/bin/echo', ['a b', '$HOME'])).toBe('a b $HOME\n');
+    await expect(runCommand('/nonexistent/ai-term-command', [])).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('defaultSamplerDeps wires the real command runner and the given session list', () => {
+    const roots = [{ sessionId: randomUUID(), pid: 1 }];
+    const deps = defaultSamplerDeps(() => roots, { info: () => undefined, error: () => undefined });
+    expect(deps.run).toBe(runCommand);
+    expect(deps.sessions()).toBe(roots);
+    expect(deps.totalmem()).toBeGreaterThan(0);
+    expect(deps.cpus().length).toBeGreaterThan(0);
   });
 });
