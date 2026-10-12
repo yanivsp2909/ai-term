@@ -282,6 +282,7 @@ export function validateUsageDiagnostics(v:unknown):import('./protocol.js').Usag
 export function validateSessionText(value:unknown):import('./protocol.js').SessionText & {more?:boolean}{
  if(!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid session text');const v=value as Record<string,unknown>;
  // Only newline survives among C0/C1 controls; terminal escape sequences cannot reach the clipboard.
+ // eslint-disable-next-line no-control-regex -- Newlines alone are allowed in clipboard text.
  if(Object.keys(v).some(k=>!['sessionId','text','truncated','more'].includes(k))||!isUUID(v.sessionId)||typeof v.text!=='string'||Buffer.byteLength(v.text)>5*1024*1024||/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/u.test(v.text)||typeof v.truncated!=='boolean'||v.more!==undefined&&typeof v.more!=='boolean')throw new ValidationError('Invalid session text');
  return v as unknown as import('./protocol.js').SessionText & {more?:boolean};
 }

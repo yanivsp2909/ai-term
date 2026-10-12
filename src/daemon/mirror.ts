@@ -38,6 +38,7 @@ export class Mirror {
             const line=buffer.getLine(row);if(!line)continue;
             if(row>0&&!line.isWrapped){lines.push(logical.trimEnd());logical='';}
             // Read parsed cells, including spaces inside soft wraps; OSC/CSI payloads are absent here.
+            // eslint-disable-next-line no-control-regex -- Copy exports strip C0/C1 terminal controls.
             logical+=line.translateToString(false).replace(/[\u0000-\u001f\u007f-\u009f]/gu,'');
         }
         lines.push(logical.trimEnd());while(lines.at(-1)==='')lines.pop();
