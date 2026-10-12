@@ -164,6 +164,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
 }
 export function validateSettings(value: unknown): import('./protocol.js').Settings {
     const v = validateSettingsPatch(value);
+    if(v.keys!==undefined){if(!Array.isArray(v.keys)||v.keys.length>100)throw new ValidationError('Invalid key metadata');v.keys.forEach(validateKeyView);}
     if (!isThemeName(v.theme)) throw new ValidationError('Invalid settings theme');
     return {...v,theme:v.theme};
 }
