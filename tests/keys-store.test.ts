@@ -32,3 +32,6 @@ it('native Keychain key added through socket has last4 only and leaves no canary
  const contents:string[]=[];async function files(folder:string):Promise<void>{for(const e of await readdir(folder,{withFileTypes:true})){const path=join(folder,e.name);if(e.isDirectory())await files(path);else if(e.isFile())contents.push(await readFile(path,'utf8'));}}await files(root);expect(contents.join('\n')).not.toContain('AITERMCANARY');
  }finally{if(id)await keys.remove(id);client?.close();await server.close();await m.shutdown();await rm(root,{recursive:true,force:true});}
 },15000);
+it('refuses a secret duplicated into public metadata before touching the Keychain',async()=>{
+ const root=await mkdtemp('/tmp/ai-key-meta-'),native=vault(),store=new KeyStore(root,{vault:native});try{await expect(store.add({provider:'anthropic',label:canary,secret:canary})).rejects.toThrow('Key details must not contain the secret');expect(native.values.size).toBe(0);}finally{await rm(root,{recursive:true,force:true});}
+});
