@@ -60,7 +60,7 @@ describe('homepage layout and cards', () => {
     const view = { cols: 130, rows: 45, sessions: [session], selectedId: session.id, input: '/', note: 'session exited', previewVisible: true, cwd: '/tmp', now: Date.now() };
     const menu = plainText(renderHomepage(view, createTheme('graphite')));
     expect(menu).toContain('Commands'); expect(menu).not.toContain('session exited');
-    expect(menu.split('\n')[40]?.slice(0,64)).toBe('╰' + '─'.repeat(62) + '╯');
+    expect(menu.split('\n')[40]?.slice(0,130)).toBe('╰' + '─'.repeat(128) + '╯');
     expect(plainText(renderHomepage({ ...view, input: '' }, createTheme('graphite')))).toContain('session exited');
   });
   it.each([[130, 45], [100, 30], [99, 29], [59, 15]])('plain grid at %sx%s matches the approved breakpoints', async (cols, rows) => {

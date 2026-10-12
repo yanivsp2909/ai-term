@@ -23,7 +23,7 @@ async function screen(tty:TTY){const terminal=new headless.Terminal({cols:130,ro
 it('text opens start box, tab toggles per-session mode, Esc restores editing, and enter selects new preview',async()=>{
  const {tty,client,home}=await fixture();try{
   tty.emit('data',Buffer.from('\x1b[200~reply with ok\x1b[201~\r'));await expect.poll(()=>screen(tty)).toContain('Start a new agent');
-  expect(client.requests.some(r=>r.kind==='sessions.create')).toBe(false);tty.emit('data',Buffer.from('\t'));expect(await screen(tty)).toContain("! don't ask");
+  expect(client.requests.some(r=>r.kind==='sessions.create')).toBe(false);tty.emit('data',Buffer.from('\t'));expect(await screen(tty)).toContain('mode           auto');tty.emit('data',Buffer.from('\t'));expect(await screen(tty)).toContain("! don't ask");tty.emit('data',Buffer.from('\t'));
   tty.emit('data',Buffer.from('\x1b'));await new Promise(r=>setTimeout(r,100));expect(await screen(tty)).not.toContain('Start a new agent');expect(await screen(tty)).toContain('reply with ok');
   tty.emit('data',Buffer.from('\r'));await expect.poll(()=>screen(tty)).toContain('Start a new agent');tty.emit('data',Buffer.from('\r'));
   await expect.poll(()=>client.requests.some(r=>r.kind==='sessions.create')).toBe(true);

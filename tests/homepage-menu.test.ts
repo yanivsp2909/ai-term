@@ -35,6 +35,6 @@ it('menu wraps, typing resets to first filtered match, and argument command fill
 });
 it('selected command uses selected-card fill, accent bar and bold text',()=>{
  const theme=createTheme('graphite');const grid=renderHomepage({cols:130,rows:45,sessions:[],selectedId:null,input:'/',note:'',previewVisible:true,cwd:'/tmp',now:0,menuChoice:1},theme);
- const selected=grid[34]; // /cd: menu begins at row 33, content rows 34..39
- expect(grid[35]?.[1]?.bg).toBe(theme.colors['surface-2']);expect(grid[35]?.[1]?.char).toBe('▎');expect(grid[35]?.[1]?.fg).toBe(theme.colors.accent);expect(grid[35]?.[3]?.bold).toBe(true);expect(selected?.[1]?.bg).toBe(theme.colors.surface);
+ const content=grid.findIndex(row=>row[3]?.char==='/'&&row[4]?.char==='m'),selected=grid[content];
+ expect(grid[content+1]?.[1]?.bg).toBe(theme.colors['surface-2']);expect(grid[content+1]?.[1]?.char).toBe('▎');expect(grid[content+1]?.[1]?.fg).toBe(theme.colors.accent);expect(grid[content+1]?.[3]?.bold).toBe(true);expect(selected?.[1]?.bg).toBe(theme.colors.surface);
 });
