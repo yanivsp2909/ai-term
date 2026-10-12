@@ -20,7 +20,8 @@ export function drawAgentBox(frame:Frame,box:AgentBox,theme:Theme):Frame{
   line(7,box.error?`✗ ${box.error}`:box.checking?'◐ checking engine': '⏎ starts · Esc returns to editing',box.error?t['status-error']:t['ink-3']);
   line(8,'↑↓ rows · m model · c folder · e effort · message row edits text',t['ink-3']);
  }else if(box.kind==='effort'||box.kind==='mode'){
-  for(const [i,value]of(box.values??[]).entries())if(i<h-4)line(i+1,`${box.choice===i?'›':' '} ${value}`,box.choice===i?t.accent:t['ink-2']);
+  const capacity=h-4,start=Math.max(0,box.choice-capacity+1);
+  for(const [i,value]of(box.values??[]).slice(start,start+capacity).entries())line(i+1,`${box.choice===start+i?'›':' '} ${value}`,box.choice===start+i?t.accent:t['ink-2']);
   line(h-2,box.error||'↑↓ choose · ⏎ select · Esc back',box.error?t['status-error']:t['ink-3']);
  }else if(box.kind==='model'){
   let tabX=x+3;
