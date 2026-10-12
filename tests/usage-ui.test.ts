@@ -1,0 +1,16 @@
+import {expect,it} from 'vitest';
+import {renderHomepage} from '../src/client/tui/layout.js';
+import {plainText} from '../src/client/tui/grid.js';
+import {createTheme} from '../src/client/tui/theme.js';
+import {BudgetForm,PriceForm} from '../src/client/tui/usage-forms.js';
+const period={costUsd:2.76,tokens:1900000,unknownPrice:false,providers:[]};
+it('renders estimated spend compact tokens and budget warning without blocking',()=>{
+ const theme=createTheme('graphite');const frame=renderHomepage({cols:130,rows:45,sessions:[],selectedId:null,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0,usage:{today:period,week:period,month:{...period,unknownPrice:true}},budgets:{daily:2,weekly:null,monthly:50}},theme);const text=plainText(frame);expect(text).toContain('≈ spend');expect(text).toContain('$2.76');expect(text).toContain('1.9M');expect(text).toContain('price ?');expect(text).toContain('b add');expect(text).toContain('budget: today');expect(frame[0]?.some(c=>c.fg===theme.colors['status-waiting'])).toBe(true);
+});
+it('budget form accepts only nonnegative USD limits with empty values meaning none',()=>{
+ const form=new BudgetForm({daily:null,weekly:null,monthly:null});form.paste('10');form.key('down');form.paste('-1');expect(()=>form.values()).toThrow();form.key('backspace');form.key('backspace');expect(form.values()).toEqual({daily:10,weekly:null,monthly:null});
+});
+it('deployment price form validates model id and numeric input output per million',()=>{
+ const form=new PriceForm();form.paste('test');form.key('down');form.paste('2');form.key('down');form.paste('10');expect(form.values()).toEqual({model:'test',price:{input:2,output:10}});
+ const bad=new PriceForm();bad.paste('-bad');expect(()=>bad.values()).toThrow();
+});
