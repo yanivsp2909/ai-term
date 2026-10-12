@@ -38,8 +38,11 @@ export class Mirror {
             const line=buffer.getLine(row);if(!line)continue;
             if(row>0&&!line.isWrapped){lines.push(logical.trimEnd());logical='';}
             // Read parsed cells, including spaces inside soft wraps; OSC/CSI payloads are absent here.
+            const next=buffer.getLine(row+1),last=line.getCell(this.terminal.cols-1);
+            // xterm pads an empty last cell before a wide glyph wraps; explicit space cells stay.
+            const end=next?.isWrapped&&next.getCell(0)?.getWidth()===2&&last?.getCode()===0&&last.getWidth()===1?this.terminal.cols-1:this.terminal.cols;
             // eslint-disable-next-line no-control-regex -- Copy exports strip C0/C1 terminal controls.
-            logical+=line.translateToString(false).replace(/[\u0000-\u001f\u007f-\u009f]/gu,'');
+            logical+=line.translateToString(false,0,end).replace(/[\u0000-\u001f\u007f-\u009f]/gu,'');
         }
         lines.push(logical.trimEnd());while(lines.at(-1)==='')lines.pop();
         const bytes=Buffer.from(lines.join('\n'),'utf8');if(bytes.length<=MAX_COPY_BYTES)return {text:bytes.toString('utf8'),truncated:false};
