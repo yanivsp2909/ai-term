@@ -63,7 +63,7 @@ Homepage slash commands:
 | Enter | Slash menu picks highlighted command (`/theme`, `/effort`, `/mode` insert argument prefixes); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
 | Tab | Complete the highlighted slash command; with an argument, cycle its values |
 | `p` | Empty field toggles preview |
-| `c` | Empty field copies selected agent text; with text in the field, types c normally |
+| `c` | Empty field copies last reply from v0.2; until then the cleaned whole session with a note; with field text, types c |
 | `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
@@ -76,7 +76,7 @@ Homepage slash commands:
 | Ctrl+E | Inside session returns home, keeping session running; inside pasted text it is pasted |
 | SIGTERM / SIGHUP / SIGQUIT | Client cleanup and exit 143 / 129 / 131; sessions keep running |
 | Start box ↑↓ / `m` / `c` / `e` / Tab / Enter | Select row / model / folder / effort / cycle Ask → auto → Don't ask (Claude) or Ask ↔ Don't ask (Codex) / start |
-| Start box message row | Type/paste to edit first message |
+| Start box message row | Type/paste to edit first message; multiline or over 200 chars becomes `[pasted · N lines]` |
 | Model picker ←→ / ↑↓ / Enter / Esc | Switch provider tab (Tab also goes right) / choose model / select / back; typing searches all tabs |
 | Effort or mode picker ↑↓ / Tab / Enter / Esc | Select / cycle / apply / back; CLI default effort passes nothing |
 | Help ↑↓ / PgUp / PgDn / Esc | Scroll lines / previous page / next page / close |

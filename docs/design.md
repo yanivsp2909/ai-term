@@ -149,12 +149,14 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 - **Field:** surface background with a line border. `›` in accent, your text, block cursor. Placeholder: `What do you want to build?` (ink-3).
 - **Line under it:** left, the defaults for the next agent: `model · engine   folder   auth   effort   permission   worktree` (worktree appears from v0.3). Auth uses the next agent's `own login · sub/API key` or `key ····last4`; folder is clipped before auth. Right, the key hints. Keys appear only here, not repeated in panels.
 - **⏎ with text:** opens the **Start a new agent** box (below).
+- **Paste:** more than one line or 200 characters renders as one `[pasted · N lines]` token. Its exact contents and newlines stay in memory. Backspace removes a token whole; typed text can surround it. The combined first message is limited to 16,384 UTF-8 bytes; an insertion over the limit adds nothing and notes `too long for a first message (16 KB): start the agent, then paste inside`. Small pastes stay literal.
 - **⏎ with an empty field:** goes inside the selected agent.
 - **`/` at the start:** opens the filtered command menu. ↑↓ moves the selected-card highlight through commands, wrapping; typing resets to the first match. Each row shows command and argument hint, a short description, and current value at the right in ink-3. ⏎ picks the highlighted command; `/theme`, `/effort` and `/mode` insert their argument prefix. Tab completes the highlighted command, then cycles supported argument values. Esc closes. Outside the menu ↑↓ selects agents.
 
 ### Start a new agent (box over the command bar)
 - **Box:** surface fill, accent border, title `Start a new agent`. Rows: model (+ `/model`), folder (+ `/cd`), branch (`auto` from v0.3), mode (`ask` → `auto` → `don't ask` for Claude; Codex `ask` ↔ `don't ask`; Don't ask shown in status-error with `!`), effort (`CLI default` or the selected CLI's documented level), first message ("your text above is its first message").
 - **Keys:** ↑↓ selects rows; m model, c folder, e effort; Tab cycles the available modes. ⏎ starts, Esc returns to editing. Mode is per session and resets to Ask after start/cancel.
+- **First-message row:** paste tokens carry over from the command bar and can be inserted here too. Show the token plus its first line, clipped by the row width; never flatten or truncate its stored contents. Esc restores the draft with tokens intact.
 - **After starting:** the new agent is selected and the preview shows it starting.
 
 ### /model picker
@@ -188,9 +190,10 @@ A path field with completion. It sets the folder for the next agent only. A fold
 
 ---
 
-### /copy
-- `/copy` and empty-field c copy the selected session's parsed scrollback and screen. Wrapped rows join into logical lines; trailing spaces/empty tail drop; no escape sequences. Running/finished agents and shells work while their mirror remains in memory.
-- Success note: `✓ copied N lines from <agent name>`, plus `(oldest lines cut at 5 MB)` when capped. No selection: `select an agent first`. Clipboard failure: `Copy failed: clipboard unavailable`, with fixed-text logging. Copied content is never drawn in a note.
+### /copy and /copy all
+- `/copy all` copies the selected session's parsed scrollback and screen. Wrapped rows join into logical lines. Generic cleanup removes box-drawing borders at line edges and decoration-only box/rule/spinner lines, collapses blank runs, and trims the ends. Internal borders and code indentation remain. Running/finished agents and shells work while their mirror remains in memory.
+- `/copy` and empty-field c copy the same cleaned whole session until exact last reply comes from Claude's Stop hook and Codex notify in v0.2. Never guess last reply from the screen.
+- Success note: `✓ copied N lines from <agent name>`, plus `(oldest lines cut at 5 MB)` when capped. `/copy` and c also add `· last reply only comes with v0.2`. No selection: `select an agent first`. Clipboard failure: `Copy failed: clipboard unavailable`, with fixed-text logging. Copied content is never drawn in a note.
 
 ### /effort and /mode
 - Both accept an argument from the selected engine's documented values or open a small ↑↓/Tab/Enter/Esc picker when submitted without one. Effort always includes `CLI default`, which passes no effort option. Defaults and the start box show effort and mode before starting.
@@ -218,7 +221,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 | ↑ ↓ | slash menu: highlighted command; otherwise select agent (preview follows) |
 | ⏎ | empty field: go inside the selected agent · with text: start a new agent |
 | p | hide / show preview (only when the command field is empty) |
-| c / /copy | copy the selected agent's scrollback and screen as plain text; c is a shortcut only in an empty field |
+| c / /copy / /copy all | cleaned whole session; c and /copy disclose last reply comes with v0.2; c only shortcuts in an empty field |
 | PgUp PgDn · End | scroll the preview · follow live |
 | d / r / s | diff (v0.7) / rename / stop the selected agent (s asks first) |
 | x | remove an exited or failed agent from the list |
