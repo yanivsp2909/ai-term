@@ -1,113 +1,57 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: c1c41b6 test: client-signals holds the PTY slave open so Linux can't drop the restore bytes at exit
-Roadmap step: coverage chore plus B7 (the two flaky tests), not roadmap steps; both done. Last roadmap step is still v0.1.8a done; v0.1.6 is still partial (its live checks need Yaniv).
-Branch: claude/coverage-chore-80-percent-lmfy2c, started from 7bf527a. This handover is committed last; its own hash is in git log.
+Last commit: 11e9da6 docs: record This Mac formula D46 and accuracy measurements
+Roadmap step: v0.1.8f done
+Branch: main. This handover is committed last; its own hash is in git log.
+Started at a5e2cb1 (coverage chore + B7 merged), clean. v0.1.6 closed after Yaniv's live check, per this session's prompt; v0.1.8a This Mac shipped. Prior handover's v0.1.6 partial label was stale.
 
 ## What works
-- **B7, flaky tests (cloud session, Linux):** both had a real product race behind them; client-signals also had two test-side problems.
-  - **homepage-settings "resizing detached sessions…":** product. node-pty closes the PTY fd when the child hangs up but reports the exit later; a resize in between threw `ioctl(2) failed, EBADF` out of `previewSize` (and attach, detach, resize). Test d26b8fb (red), fix abfea66 in `src/daemon/pty-host.ts`: that one error is a no-op, any other resize error still throws. The scenario under CPU load failed 4/200 before, 0/400 after.
-  - **client-signals SIGTERM "exit 0":** product. Leaving a session, attach drops its signal listeners and awaits the detach reply before the homepage takes them back; with no listener Node restores the default action and SIGTERM/SIGHUP killed the client (node-pty shows exitCode 0, signal 15). Test 0c77a21 (red, deterministic: holds the daemon's detach reply), fix 5094d0b in `src/client/tui/homepage.ts`: guard listeners for SIGTERM/SIGHUP/SIGQUIT live as long as the homepage, keep a signal nobody else heard, and the homepage quits with its code when attach returns.
-  - **client-signals test side:** it waited for `SESSION_READY`, which the homepage preview also draws, so it could kill during the hand-off instead of while attached (cc04414: waits for the daemon's 130x45 attach resize instead). Linux also drops unread PTY output when the child hangs up, so the restore bytes could vanish (c1c41b6: the test holds the slave open).
-  - Under 8 CPU hogs the test file failed 3/25 before (1 exit 0, 1 missing restore bytes, 1 timeout), 0/25 after. Full suite: 2/15 runs had an extra flaky failure before, 0/15 after (only the two Linux-environment failures remain).
-  - SIGTERM before the homepage first draws kills `ai` by the signal itself (shell `$?` 143, terminal untouched because nothing was changed yet). That is the normal outcome, not a bug.
-- **Coverage chore (cloud session, Linux):** 128 new tests, 192 → 320 (1 todo). Coverage on Linux, before → after: statements 86.19 → 88.9, branches 78.21 → 82.3, functions 86.93 → 88.0, lines 92.34 → 94.26.
-  - `tests/server-rejections.test.ts` (ebfcb89): invalid requests echo only a string id; output frames and bad lengths close the client; input before hello is dropped; switching attach detaches the first session; a disconnect during a queued attach leaves the session detached; warnings after hello and list; only known error messages pass through; failed preview refresh clears the preview; a client that stops reading is dropped at the queue cap; listen refuses a non-socket path and a live socket; socketAnswers rethrows ENOTDIR.
-  - `tests/session-manager-lifecycle.test.ts` (c9ab2aa): bad state files are refused and left untouched; every operation on an unknown id; bad titles and sizes; agent preflight errors (not installed, not logged in, status unknown) leave no record and spawn nothing; default agent titles and authMethod; spawn failure becomes a saved error record; a failing mirror emits fatal; sampler roots and active count; attach during shutdown; detach and resize from a non-owner; warning dedup and two-source clearing.
-  - `tests/store-settings.test.ts` (276e7b8): directory and oversized state/settings refused; loose files tightened to 0600 on read; failed serialize and failed rename leave no temp file; a symlink at the target is replaced, never written through; a failed settings write doesn't block the next one.
-  - `tests/validate-rejections.test.ts` and `tests/protocol.test.ts` (b1be597): every validator rejection branch, each asserting its own message; frame encode limit, non-control decode, unknown types, data frames without a UUID.
-  - `tests/sysstats.test.ts` (3563e1d): sampler failure reasons logged in fixed words only; unreadable netstat/vm_stat restarts the baseline; counter reset skips one event; a late failure after stop isn't logged; ps parent loops end; runCommand and defaultSamplerDeps.
-- **Checks (Linux):** build success; typecheck exit 0; lint exit 0, no output; tests 320: 317 passed, 1 todo, 2 failed (both Linux/root-only, listed in Gotchas).
-- **Contract:** `system.subscribe {on}` → `{ok}` and the event `system.stats {stats}`, numbers only (`src/shared/protocol.ts`, eb61fd1).
-  - `stats` = `{cpuPercent, memUsedBytes, memTotalBytes, netRxBytesPerSec, netTxBytesPerSec, sessions: [{sessionId, cpuPercent, rssBytes}]}`.
-  - `validateSystemStats` accepts exact keys only. The daemon checks every sample with it before sending, and the homepage checks every event on arrival.
-- **Sampler (`src/daemon/sysstats.ts`, 192a2a1):**
-  - Every 2 s, only while at least one client is subscribed. It stops on the last unsubscribe or disconnect.
-  - Three commands, run with `execFile`: absolute paths, argv arrays, 2 s timeout, 1 MiB output cap.
-  - Per session: `ps` process tree, PTY child plus all descendants, as a share of the whole machine.
-  - Machine CPU from `os.cpus()` deltas.
-  - RAM from `vm_stat` (active + wired + compressor) out of `os.totalmem()`.
-  - Network from `netstat -ibn` link-row deltas (non-loopback, never negative).
-  - Pure parsers with tests on recorded output, including malformed lines and a ps line carrying a command line.
-- **Daemon wiring (e02bd33):** per-peer subscription flag; events go only to subscribed peers; `SessionManager.sessionRoots()` gives the live PTY pids.
-- **Homepage (044e066):**
-  - This Mac, exactly per design.md: `CPU 31% ▃▃▄▅▆▇▇██▃  agents 19%`, `RAM 14.2/32 GB  agents 2.3 GB`, `NET ↓ 1.4 MB/s  ↑ 0.2 MB/s`. The client keeps 10 samples for the sparkline.
-  - Per-agent usage `cpu 4% · 310 MB` (ink-3) sits at the right of the selected agent's preview header. design.md is silent on where, so this is the choice; it's recorded in design.md. Cards are unchanged.
-  - Subscribes on open; unsubscribes before attach and on quit; resubscribes on return.
-  - Redraws only when a sample arrives.
-- **Review fixes (08b7046):**
-  - A sample still running when sampling stops leaves no baseline.
-  - `server.close()` can't restart sampling.
-  - Numbers clear on unsubscribe, so no stale values show after attach.
-  - A failed subscribe shows a note instead of closing the homepage.
-  - Quit doesn't await the unsubscribe.
-- **Performance gate:** own daemon from `dist`, temp home under /tmp, 3 live shell sessions.
-  - Subscribed for 60 s: 0.32% of one core on the final code. Earlier runs gave 0.13% and 0.18%. The gate is under 1%.
-  - No subscriber for 30 s: kqueue `NOTE_FORK` on the daemon pid counted 0 spawns. While subscribed it counted 87 per 60 s (29 samples × 3 commands), which shows the detector works.
-- **Security checks:**
-  - The only new spawn is `src/daemon/sysstats.ts:118`: `execFile`, absolute path from `SAMPLE_COMMANDS`, argv array. There are no `exec(`, `execSync(` or `shell: true` in `src`.
-  - Fake ps output with a command line never reaches events, logs or responses (unit and server tests). Real ps against a live `sleep` session never shows "sleep".
-  - `system.subscribe` is validated (non-boolean, missing or extra fields are rejected).
-- **Checks:** build success; typecheck exit 0; lint "No issues found"; tests 34 files, 192 passed. Coverage: statements 86.16%, branches 78.08%, functions 87.15%, lines 92.28%.
+- RAM now uses Activity Monitor's Memory Used formula: (Anonymous pages − Pages purgeable + Pages wired down + Pages occupied by compressor) × page size. It includes inactive anonymous memory omitted by the old active-pages formula. Uses existing vm_stat output, no extra sampling command.
+- RAM real snapshot: App 7.3024 GB + Wired 3.4660 GB + Compressed 8.9355 GB = 19.7039 GB; old formula 18.2698 GB. Raw counters and immediate sysctl cross-check are in docs/testing/v0.1.8f-measurements.json.
+- NET parser proved working by a 20 MB HTTPS download, curl 2,102,371 B/s over 9.513 s. Samples Rx 1.6–5.5 MB/s during the download, then 6.6–10.0 KB/s. Units now scale B/s, KB/s, MB/s with one decimal so light traffic stays visible.
+- D46 pinned exactly: one-second sampling, only with subscribers. Same three absolute execFile argv calls; no overlaps, numeric fields only.
+- Cost gate: own built daemon, 3 live shell sessions, 60.007 s subscribed, 0.27 CPU s = 0.449944% of one core (<1%). Without subscriber for 30.004 s: 0 stats events, 0 observed fork notifications.
+- B8: slash menu hides notes and keeps its border intact; note returns after menu closes.
+- Enter on exited/error agent shows `<name> has exited · x removes it`, with no attach or subscription change.
+- All five fixes have RED/GREEN commits in docs/testing/v0.1.8f-accuracy.md. No new dependencies, no features outside this step.
+- Final required output:
+  - npm run typecheck: tsc --noEmit, exit 0
+  - npm run lint: eslint ., exit 0 (no issues)
+  - npm test: Test Files 40 passed (40); Tests 328 passed | 1 todo (329); Duration 4.90s
+  - npm run build: ESM Build success in 12ms, exit 0
+  - git diff --check: no output, exit 0
+- Coverage verification: statements 88.87%, branches 82.34%, functions 88.08%, lines 94.27%. One pre-existing TODO retained (replaced socket path on Node close).
+- Security grep: no exec(, execSync( or shell:true in src. sysstats execFile at line 123 uses absolute SAMPLE_COMMANDS paths and argv; ps requests exactly pid/ppid/rss/%cpu. Existing names/command-line exclusion tests pass.
 
 ## What's next
-- Decide on the todo in `tests/server-rejections.test.ts`: Node's pipe server unlinks its bound path on `close()` whatever is there, so `DaemonServer.close()`'s inode check can't spare a replaced socket path. A fix would bind to a unique temp name and rename it to `daemon.sock` (touches S1 startup). Low impact: the lock stops a second daemon from replacing it.
-- Re-run `npm test -- --coverage` on the Mac to confirm branches stay ≥ 80% there (the Linux-failing Mac tests cover a few extra branches, so the Mac number should be a little higher).
-- Yaniv runs the manual checks below. When the v0.1.6f ones pass, mark v0.1.6 done and go on to v0.1.7 (login/keys).
-- v0.1.8b: usage and cost (D45). Not started.
+- v0.1.8b usage/cost remains the deferred next This Mac roadmap item; not started. v0.1.7 not started by this session.
+- Yaniv's side-by-side Activity Monitor Memory/Network comparison, commands in docs/testing/v0.1.8f-accuracy.md.
+- Existing socket replacement TODO and carried v0.2/emoji/bar checks remain outside this step.
 
 ## Manual checks
-- B7: `kill -TERM <ai pid>` right after Ctrl+E from a session returns to your shell with `$?` 143 and a clean terminal: needs Yaniv (optional; the red/green test covers it headlessly).
-- Coverage chore: none needed (tests only). Optional: `npm test -- --coverage` on the Mac to see the Mac numbers: needs Yaniv.
-- This Mac numbers move with a busy shell session, temp `AI_TERM_HOME` (commands in the final report of this session): needs Yaniv.
-- Performance gate and no-subscriber spawn count: ran (numbers above).
-- Carried from v0.1.6g, all need Yaniv:
-  - emoji line in a session preview lines up
-  - B4: after Ctrl+E from Claude Code, switching dark/light sends nothing into the shell
-- Carried from v0.2.1b, all need Yaniv: bar feel test; htop; kitty keyboard in Ghostty/iTerm2; real-terminal emoji widths.
-- Carried from v0.1.6f, all need Yaniv (commands in `docs/testing/v0.1.6f-fixes.md`):
-  - Codex account reply with no Azure error
-  - Codex `/status` shows on-request + workspace-write
-  - Claude Ask mode and its `ok` reply
-  - S6 names-only env check
-  - optional: Don't ask unchanged
-  - title, palette and cursor after Ctrl+E and `/exit`
+- Raw RAM counters and App/Wired/Compressed total versus vm_stat/sysctl: ran (numbers above). Activity Monitor simultaneous visual comparison: needs Yaniv.
+- Real HTTPS download sampled network rates: ran; HTTP 200, 20 MB, positive rates with visible low-rate KB/s values.
+- Daemon 1-second CPU with 3 live sessions: ran, 0.45% of one core. No-subscriber 30 s: ran, no samples/forks.
+- B8 note/menu and finished-session Enter: ran in cell-renderer/headless tests. Physical terminal feel: needs Yaniv.
+- Exact isolated manual command starts `cd ~/ai-term`, then `open -a 'Activity Monitor'`, create a /tmp home, and run `AI_TERM_HOME="$AITERM_STATS_HOME" node dist/cli/index.js`. Full setup/cleanup commands in docs/testing/v0.1.8f-accuracy.md; don't stop the real daemon.
 
 ## Gotchas
-- **Running the suite on Linux (cloud sessions):** two tests fail for platform reasons, not code:
-  - `daemon-core` "recovers a stale lock whose PID now belongs to a process that started after the lock was written": the container runs as root, so `kill(1, 0)` succeeds instead of EPERM and the lock is (correctly) kept.
-  - `system-stats` "real ps, vm_stat and netstat on this Mac": `/usr/bin/vm_stat` and `/usr/sbin/netstat` don't exist on Linux.
-  - The two flaky tests from the coverage chore are fixed (B7). `homepage-terminal` "source CLI opens homepage…" failed once in 15 runs before B7 and not in 15 after; not investigated.
-- **vitest prints no coverage table when a test fails;** add `--coverage.reportOnFailure`.
-- **Node unlinks a Unix socket's path on `server.close()`,** whatever file is there by then (libuv `uv__pipe_close`).
-- **Linux drops unread PTY output when the child hangs up** (3/60 under load, even waiting after exit). A test that checks a child's last bytes must hold the slave open (`ptsName`, an untyped node-pty getter).
-- **node-pty closes the fd before it reports the exit.** Anything that touches `pty` after a hang-up can get EBADF until onExit runs.
-- **Removing a signal's last listener restores its default action.** Hand signals over by adding the new listener before removing the old one, or keep a guard installed. `ai debug attach` (attach without the homepage) still has the old gap while it awaits the detach reply; the terminal is already restored by then.
-- **A paused client socket never sees its own close.** To test that the daemon dropped a client, watch `server.clientCount()`.
-- **ps `%cpu` is a decaying average,** not an instant value, so per-agent and "agents" CPU lag a few seconds. They can briefly disagree with machine CPU, which comes from `os.cpus()` deltas.
-- **Network counts every non-loopback interface,** so VPN traffic is counted twice (on `utun*` and on the physical interface).
-- **The first event comes about 2 s after subscribing:** the first sample is only a baseline. The panel shows `—` until then, including after returning from a session.
-- **A running daemon keeps its old code.** Test This Mac with a temp `AI_TERM_HOME`, or restart the daemon.
-- **Interactive shells ignore SIGTERM.** Stopping a daemon with live shell sessions takes about 3 s (SIGKILL after the timeout), so test scripts must wait for it.
-- **A 25 ms `ps` poller can't see sampler children:** each one exits in a few ms. kqueue `NOTE_FORK` on the daemon pid is exact and needs no root (python3 `select.kqueue`).
-- **ESLint bans any `.exec` property,** including `RegExp.exec`. Use `String.match`.
-- **Earlier gotchas still apply:**
-  - The Bash tool runs zsh (no `timeout`).
-  - Always filter `codex login status`.
-  - Claude's `--permission-mode=default` alias.
-  - Never script Enter into Codex or Claude.
-  - Unicode 11 isn't grapheme-aware: skin tones, ZWJ families and flags count per code point.
-- **Branch coverage** reached 82.3% on Linux in the coverage chore (was 78.08% on the Mac).
+- Initial baseline consistently failed the coverage chore input fixture with kill EPERM during cleanup. Test-only 651cc0f waits for the exited fixture; production stop handling unchanged. Then baseline 324 passed / 1 todo.
+- Yaniv's earlier RAM parts 7.55 + 3.33 + 9.75 sum to 20.63 GB, not 21.59 GB. Fresh same-moment readings are needed. This run did not see Activity Monitor itself.
+- Sequential vm_stat/sysctl snapshots differ by 950 pages (~14.84 MiB) because allocation continues. Product computes all RAM parts from one vm_stat snapshot.
+- Network measures all non-loopback interfaces; VPN traffic still counts tunnel and physical bytes separately. Parser unchanged because real download established correct counters.
+- First sample is baseline, so initial stats arrive about 1 s after subscription. Long samples skip ticks rather than stack.
+- CPU gate uses cumulative ps time divided by elapsed wall time; ps %cpu is smoothed/rounded and much lower here. Sampler-command/harness CPU excluded, same v0.1.8a daemon gate.
+- kqueue fork notifications may coalesce; subscribed detector observed forks, unsubscribed observed zero. Unit tests independently prove no runner calls with no subscribers.
+- Running daemon keeps old code. Test with a fresh /tmp AI_TERM_HOME; do not restart Yaniv's daemon for this check.
+- Only own temporary daemons/processes stopped. Real ~/.ai-term, credentials, env.ts, spikes, docs/spikes, docs/reviews, .claude untouched.
+- Code/security diff reviewed directly; no concurrent agents used, honoring AGENTS.md.
 
 ## New dependencies
 - None.
 
 ## Concepts introduced
-- **Signal disposition** (`src/client/tui/homepage.ts`, guards): each signal has a default action (SIGTERM: die). `process.on('SIGTERM')` replaces it with "call my listeners"; removing the last listener puts the default back. So two parts of a program that hand a signal to each other must never both be unsubscribed at once, even for one `await`.
-- **Hang-up vs. exit** (`src/daemon/pty-host.ts`): a PTY child's end shows up twice, as a hang-up on the terminal (the fd stops working) and as the process exit (waitpid). node-pty sees the hang-up first and reports the exit a moment later, so code that only checks "has it exited?" can still hit a dead fd.
-- **Branch coverage** (`npm test -- --coverage`): counts each way a decision can go (both sides of an `if`, each `||` operand, each `case`) and how many were run by a test. It finds untested error paths that line coverage hides, because a one-line `if (bad) throw` counts as a covered line even if `bad` was never true.
-- **Asserting the message, not just the throw** (`tests/validate-rejections.test.ts`): a validator with ten checks rejects a bad value at the first check that fails. A test that only says "throws" passes even if the check it meant to test is broken, so each case names the message it expects.
-- **Subscribe-to-sample** (`src/daemon/server.ts`, `src/daemon/sysstats.ts`): the daemon measures the machine only while a homepage is looking. Each connection has a flag, and the sampler runs while any flag is set. Closing a connection clears its flag, so a crashed client can't leave sampling on.
-- **Process-tree sums** (`sessionUsage`): an agent is a tree of processes (shell → claude → node → tools). ps lists each process with its parent, so the daemon walks down from each session's PTY child and adds up CPU and memory for the whole tree.
-- **Counters vs. rates** (`cpuPercent`, `netRates`): the OS reports running totals (CPU ticks, bytes since boot). A rate is the difference between two samples divided by the time between them. That's why the first sample is only a baseline, and why a counter that goes backwards (reset) voids a sample instead of showing a negative speed.
+- Anonymous vs. active memory (src/daemon/sysstats.ts): anonymous pages represent app allocations whether active or inactive. Active pages are a queue, so they omit inactive app memory and aren't App Memory; subtract purgeable and add wired/physical compressed pages for Memory Used.
+- Scaled rates (src/client/tui/this-mac.ts): cumulative network bytes become bytes per elapsed second. The display chooses decimal B, KB or MB so formatting does not turn a real light rate into 0.0 MB/s.
+- Popup ownership (src/client/tui/layout.ts): a popup owns the cells it covers. Hiding the note while the menu is open keeps its border readable and restores the note without changing its state.
