@@ -23,7 +23,7 @@ export class KeyStore {
  private serial<T>(work:()=>Promise<T>):Promise<T>{const next=this.queue.then(work);this.queue=next.then(()=>undefined,()=>undefined);return next;}
  async add(request:{provider:KeyProvider;label:string;secret:string;endpoint?:string;deployments?:string[]}):Promise<KeyView>{
   if(!isSecret(request.secret))throw new KeyError('Invalid key details');
-  const key=validateKeyView({id:randomUUID(),provider:request.provider,label:request.label,last4:request.secret.slice(-4),...(request.endpoint!==undefined?{endpoint:request.endpoint}:{}),...(request.deployments!==undefined?{deployments:request.deployments}: {})});
+  const key=validateKeyView({id:randomUUID(),provider:request.provider,label:request.label,last4:request.secret.length>4?request.secret.slice(-4):'',...(request.endpoint!==undefined?{endpoint:request.endpoint}:{}),...(request.deployments!==undefined?{deployments:request.deployments}: {})});
   if(key.provider==='foundry'&&(!isEndpoint(key.endpoint)||!key.deployments?.length))throw new KeyError('Foundry needs an endpoint and deployments');
   const account=`${key.provider}:${key.id}`;
   return this.serial(async()=>{
