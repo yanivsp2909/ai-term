@@ -54,6 +54,7 @@ export class Homepage {
   private box?: AgentBox;
   private returnToStart = false;
   private credentials?:CredentialsPanel;
+  private savingDefault=false;
   private keys:KeyView[]=[];
   private auth:AuthRef={kind:'account'};
   private copying = false;
@@ -95,6 +96,7 @@ export class Homepage {
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
+      if(settings.defaultCwd && await validCwd(settings.defaultCwd))this.folder=settings.defaultCwd;
       if (settings.theme === 'auto') await this.detectBackground();
       if (this.ended) return;
       this.theme = createTheme(settings.theme, this.background);
@@ -245,7 +247,7 @@ export class Homepage {
     const panel=new CredentialsPanel(kind,{
       request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.draw(true);},
       login:async engine=>{const response=await this.connection.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:this.folder,permission:'ask',login:true,title:engine==='codex'?'Codex login':'Claude login'});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.credentials=undefined;await this.openSelected();},
-      defaults:()=>{this.credentials=undefined;this.openBox('model');},
+      defaults:kind=>{this.credentials=undefined;this.openBox(kind);this.savingDefault=true;},
       theme:async theme=>{await this.submit('/theme '+theme);},
     });this.credentials=panel;this.draw(true);await panel.load();
   }
@@ -280,6 +282,7 @@ export class Homepage {
   private boxInput(key: string): void {
     const b = this.box; if (!b) return;
     if (key === 'escape') {
+      this.savingDefault=false;
       if (b.kind !== 'start' && this.returnToStart) { b.kind = 'start'; this.returnToStart = false; this.enqueue(() => this.checkSelectedEngine()); }
       else { if (b.kind === 'start') this.field.text = b.message; this.box = undefined; }
       this.draw(true); return;
@@ -308,6 +311,7 @@ export class Homepage {
         if (b.kind === 'model') {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
           b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine; this.model = choice.model;
+          if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:choice.engine,defaultModel:choice.model}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
           else this.box = undefined;
           this.draw(true); return;
@@ -317,6 +321,7 @@ export class Homepage {
           try { if (!(await validCwd(path))) { b.error = 'Folder must be an existing directory'; this.draw(true); return; } }
           catch { b.error = 'Cannot access folder'; this.draw(true); return; }
           b.cwd = path; this.folder = path;
+          if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultCwd:path}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; } else this.box = undefined;
           this.draw(true); return;
         }
