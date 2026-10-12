@@ -26,3 +26,7 @@ it('settings shows actual defaults and provides separate model and folder contro
 it('queued input after disposal cannot restore a cancelled secret',async()=>{
  const panel=new CredentialsPanel('login',{request:async()=>({id:randomUUID(),ok:true}),changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});await panel.key('enter');await panel.key('down');await panel.key('enter');await panel.key('enter');panel.dispose();await panel.key('s');panel.paste(secret);expect(panel.containsSecret()).toBe(false);
 });
+it('settings keeps its selected key and defaults visible with many saved keys',async()=>{
+ const keys=Array.from({length:20},(_,i)=>({id:randomUUID(),provider:'anthropic' as const,label:'key-'+i,last4:'0000'}));
+ const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='keys.list'?{keys}:body.kind==='settings.get'?{settings:{theme:'graphite'}}:{})}),changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});await panel.load();for(let i=0;i<19;i++)await panel.key('down');const lines=panel.lines();expect(lines.length).toBeLessThan(22);expect(lines.join('\n')).toContain('› key-19');expect(lines.join('\n')).toContain('DEFAULTS');
+});
