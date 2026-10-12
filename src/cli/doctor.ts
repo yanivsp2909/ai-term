@@ -5,6 +5,7 @@ import { delimiter, isAbsolute, join } from 'node:path';
 import { Connection } from '../client/connection.js';
 import { getPaths, isFsError } from '../shared/paths.js';
 import { redact } from '../daemon/log.js';
+import { buildSpawnEnv } from '../daemon/env.js';
 export function versionNumber(output: string): string { return output.match(/\b\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\b/)?.[0] ?? 'unavailable'; }
 export function claudeAuth(output: string): string {
     let value: unknown;
@@ -40,11 +41,11 @@ async function executable(name: string): Promise<string | null> {
     }
     return null;
 }
-function run(file: string, args: string[]): Promise<{
+function run(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<{
     code: number | null;
     output: string;
 }> {
-    return new Promise(resolve => execFile(file, args, { timeout: 3000, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => {
+    return new Promise(resolve => execFile(file, args, { env, timeout: 3000, maxBuffer: 64 * 1024 }, (error, stdout, stderr) => {
         const code = error ? typeof error.code === 'number' ? error.code : null : 0;
         resolve({ code, output: stdout + stderr }); // Only the parsers' allowlisted fields ever reach stdout.
     }));
@@ -85,9 +86,11 @@ export async function doctor(entry: string): Promise<void> {
             print(`${name}: not found`);
             continue;
         }
-        const version = await run(path, ['--version']);
+        // Same own-provider cleanup as engine checks and account sessions (§7.3), so doctor reports what sessions see.
+        const env = buildSpawnEnv(name === 'claude' ? 'claude-code' : 'codex', { kind: 'account' }, process.env);
+        const version = await run(path, ['--version'], env);
         print(`${name}: ${path}; version ${versionNumber(version.output)}`);
-        const auth = await run(path, name === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status']);
+        const auth = await run(path, name === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'], env);
         print(`${name} auth: ${name === 'claude' ? claudeAuth(auth.output) : codexAuth(auth.code, auth.output)}`);
     }
 }
