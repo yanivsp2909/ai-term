@@ -66,6 +66,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=v.kind==='keys.scanEnvFile'?['path']:['path','names'];
             if (typeof v.path !== 'string' || !isAbsolute(v.path) || v.path.includes('\0') || v.path.length>4096 || v.kind==='keys.importEnv' && (!Array.isArray(v.names) || !v.names.length || v.names.length>Object.keys(ENV_KEY_NAMES).length || v.names.some(n=>typeof n!=='string'||!Object.hasOwn(ENV_KEY_NAMES,n)) || new Set(v.names).size!==v.names.length)) throw new ValidationError('Invalid env import selection');
             break;
+        case 'usage.summary':case 'usage.diagnostics':
         case 'engines.status':
         case 'sessions.list':
             fields = [];
@@ -95,6 +96,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if (!isUUID(v.sessionId) || (v.kind === 'sessions.rename' && !isTitle(v.title)))
                 throw new ValidationError('Invalid session UUID or title');
             break;
+        case 'usage.subscribe':
         case 'system.subscribe':
             fields = ['on'];
             if (typeof v.on !== 'boolean') throw new ValidationError('system.subscribe needs on: boolean');
@@ -117,6 +119,8 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(!isUUID(v.id)||v.ok!==true)throw new ValidationError('Invalid daemon response');
     if(v.kind!==undefined && (v.kind!=='hello'||v.protocol!==1||typeof v.version!=='string'||!/^[A-Za-z0-9._-]{1,40}$/.test(v.version)||!Number.isSafeInteger(v.daemonPid)||Number(v.daemonPid)<2))throw new ValidationError('Invalid daemon hello');
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
+    if(v.usage!==undefined)validateUsageSummary(v.usage);
+    if(v.usageDiagnostics!==undefined)validateUsageDiagnostics(v.usageDiagnostics);
     if(v.key!==undefined)validateKeyView(v.key);
     if(v.keys!==undefined){if(!Array.isArray(v.keys)||v.keys.length>100)throw new ValidationError('Invalid keys');v.keys.forEach(validateKeyView);}
     if(v.results!==undefined)validateDeploymentTests(v.results);
@@ -155,11 +159,13 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultCwd','permission'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultCwd','permission','budgets','priceOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isAgentEngine(v.defaultEngine) ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.permission !== undefined && v.permission !== 'ask' ||
         v.defaultCwd !== undefined && (typeof v.defaultCwd !== 'string' || !isAbsolute(v.defaultCwd) || v.defaultCwd.includes('\0')) || JSON.stringify(v).length > 16384) throw new ValidationError('Invalid settings patch; permission default must be ask');
+    if(v.budgets!==undefined)validateBudgets(v.budgets);
+    if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
     return {...v};
 }
 export function validateSettings(value: unknown): import('./protocol.js').Settings {
@@ -231,4 +237,31 @@ export function validateKeyView(v:unknown):import('./protocol.js').KeyView {
     if(k.provider==='foundry'&&(!isEndpoint(k.endpoint)||!isDeployments(k.deployments)||!k.deployments.length))throw new ValidationError('Invalid Foundry metadata');
     if(k.lastTest!==undefined)validateDeploymentTests(k.lastTest);
     return k as unknown as import('./protocol.js').KeyView;
+}
+
+export function validateBudgets(v:unknown):import('./protocol.js').Budgets{
+ if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(k=>!['daily','weekly','monthly'].includes(k)))throw new ValidationError('Invalid budgets');
+ const b=v as Record<string,unknown>;for(const amount of Object.values(b))if(amount!==null&&(!isAmount(amount)||amount>1e9))throw new ValidationError('Invalid budget amount');
+ return {daily:b.daily as number|null??null,weekly:b.weekly as number|null??null,monthly:b.monthly as number|null??null};
+}
+export function validatePriceOverrides(v:unknown):Record<string,import('./protocol.js').ModelPrice>{
+ if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).length>100)throw new ValidationError('Invalid price overrides');
+ for(const [model,value]of Object.entries(v)){if(!isValidModelId(model)||!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid model price');const p=value as Record<string,unknown>;if(Object.keys(p).some(k=>!['input','output','cacheRead'].includes(k))||!isAmount(p.input)||!isAmount(p.output)||p.cacheRead!==undefined&&!isAmount(p.cacheRead)||Object.values(p).some(n=>typeof n==='number'&&n>1e9))throw new ValidationError('Invalid model price');}
+ return v as Record<string,import('./protocol.js').ModelPrice>;
+}
+export function validateUsageRecord(v:unknown):import('./protocol.js').UsageRecord{
+ if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid usage record');const r=v as Record<string,unknown>;
+ if(Object.keys(r).some(k=>!['ts','sessionId','provider','model','inputTokens','outputTokens','cachedTokens','costUsd','costSource'].includes(k))||typeof r.ts!=='string'||!Number.isFinite(Date.parse(r.ts))||!isUUID(r.sessionId)||!isKeyProvider(r.provider)||typeof r.model!=='string'||!isValidModelId(r.model)||!Number.isSafeInteger(r.inputTokens)||!isAmount(r.inputTokens)||!Number.isSafeInteger(r.outputTokens)||!isAmount(r.outputTokens)||r.cachedTokens!==undefined&&(!Number.isSafeInteger(r.cachedTokens)||!isAmount(r.cachedTokens))||r.costUsd!==null&&!isAmount(r.costUsd)||!['cli-estimate','price-table'].includes(String(r.costSource)))throw new ValidationError('Invalid usage record');
+ return r as unknown as import('./protocol.js').UsageRecord;
+}
+export function validateUsageSummary(v:unknown):import('./protocol.js').UsageSummary{
+ if(!v||typeof v!=='object'||Array.isArray(v)||!hasOnly(v as Record<string,unknown>,['today','week','month']))throw new ValidationError('Invalid usage summary');
+ const total=(t:unknown,provider=false)=>{if(!t||typeof t!=='object'||Array.isArray(t))throw new ValidationError('Invalid usage total');const r=t as Record<string,unknown>;if(!hasOnly(r,provider?['provider','costUsd','tokens','unknownPrice']:['costUsd','tokens','unknownPrice','providers'])||!isAmount(r.costUsd)||!Number.isSafeInteger(r.tokens)||!isAmount(r.tokens)||typeof r.unknownPrice!=='boolean'||provider&&!isKeyProvider(r.provider))throw new ValidationError('Invalid usage total');};
+ for(const p of Object.values(v)){total(p);const providers=(p as {providers:unknown}).providers;if(!Array.isArray(providers)||providers.length>3)throw new ValidationError('Invalid usage providers');for(const entry of providers)total(entry,true);}
+ return v as import('./protocol.js').UsageSummary;
+}
+export function validateUsageDiagnostics(v:unknown):import('./protocol.js').UsageDiagnostics{
+ if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid usage diagnostics');const d=v as Record<string,unknown>;if(!hasOnly(d,['port','sessions'])||!Number.isInteger(d.port)||Number(d.port)<1||Number(d.port)>65535||!Array.isArray(d.sessions)||d.sessions.length>1000)throw new ValidationError('Invalid usage diagnostics');
+ for(const raw of d.sessions){if(!raw||typeof raw!=='object'||!hasOnly(raw,['sessionId','at','values'])||!isUUID(raw.sessionId)||typeof raw.at!=='string'||!Number.isFinite(Date.parse(raw.at))||!Array.isArray(raw.values)||raw.values.length>20)throw new ValidationError('Invalid usage diagnostic');for(const val of raw.values)if(!val||typeof val!=='object'||!hasOnly(val,['name','value'])||typeof val.name!=='string'||!/^[a-zA-Z0-9_.]{1,80}$/.test(val.name)||!isAmount(val.value))throw new ValidationError('Invalid usage attribute');}
+ return v as unknown as import('./protocol.js').UsageDiagnostics;
 }

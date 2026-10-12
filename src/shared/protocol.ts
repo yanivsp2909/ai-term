@@ -15,7 +15,15 @@ export interface DeploymentTest { model: string; status: 'ready' | 'not a chat m
 export interface KeyView { id: string; provider: KeyProvider; label: string; last4: string; endpoint?: string; deployments?: string[]; lastTest?: DeploymentTest[] }
 export type AuthRef = {kind:'account'} | {kind:'key';keyId:string};
 export type AuthView = {kind:'account'} | {kind:'key';keyId:string;provider:KeyProvider;keyLabel:string;last4:string};
-export interface Settings { theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultCwd?: string; permission?: 'ask'; [key: string]: unknown }
+export interface Budgets {daily:number|null;weekly:number|null;monthly:number|null}
+export interface ModelPrice {input:number;output:number;cacheRead?:number}
+export interface UsageTotal {costUsd:number;tokens:number;unknownPrice:boolean}
+export interface UsagePeriod extends UsageTotal {providers:({provider:KeyProvider}&UsageTotal)[]}
+export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePeriod}
+export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
+export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
+export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'}
+export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultCwd?: string; permission?: 'ask'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean };
 export interface SessionInfo {
@@ -83,6 +91,8 @@ export type Request = {
     cols: number;
     rows: number;
 } | {
+    kind: 'usage.subscribe'; on:boolean;
+} | {kind:'usage.summary'|'usage.diagnostics'} | {
     kind: 'system.subscribe';
     on: boolean;
 });
@@ -93,6 +103,7 @@ export interface SuccessResponse {
     protocol?: number;
     version?: string;
     daemonPid?: number;
+    usage?:UsageSummary;usageDiagnostics?:UsageDiagnostics;
     settings?: Settings;
     engines?: EnginesStatus;
     keys?: KeyView[];
@@ -138,6 +149,8 @@ export type SessionEvent = {
 } | {
     kind: 'session.removed';
     sessionId: string;
+} | {
+    kind: 'usage.updated'; usage:UsageSummary;
 } | {
     kind: 'system.stats';
     stats: SystemStats;
