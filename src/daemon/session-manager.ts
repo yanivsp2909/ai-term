@@ -211,7 +211,7 @@ export class SessionManager extends EventEmitter {
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
     async remove(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
-        throw new Error('Only exited sessions can be removed'); await live.output; live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
+        throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
     async rename(id: string, title: string): Promise<SessionInfo> { const live = this.sessions.get(id); if (!live || !isTitle(title))
         throw new Error('Invalid session or title'); live.info.title = title; await this.persist(); this.event({ kind: 'session.updated', session: { ...live.info } }); return { ...live.info }; }
     async previewSize(cols: number, rows: number): Promise<void> { if (!isSize(cols, rows))
