@@ -123,6 +123,7 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 ### Preview panel (right, top)
 - **Border title:** the agent's name (bold). Top-right on the border: `◉ live` (or `◌ scrolled back`).
 - **Header line:** `engine · model` (ink-2) left; right `ctx NN%  +N −M`.
+  - From v0.1.8a, the selected agent's own usage sits at the right end of this line as `cpu 4% · 310 MB` (ink-3), before any ctx/diff text. This Mac only shows totals, and the cards stay unchanged.
 - **Terminal area:** surface background. Shows the selected agent's mirror, cell for cell, with its colors.
 - **Read-only:** nothing you type on the homepage ever reaches an agent.
 - **`p`** hides or shows the preview. Hidden: the Agents panel and the Usage + This Mac row take the space; the preview border shows `▸ preview hidden · p`.

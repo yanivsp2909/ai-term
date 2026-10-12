@@ -170,15 +170,20 @@ usage.summary    {}                                  → {summary: UsageSummary}
 settings.get     {} → {settings}
 settings.set     {patch} → {settings} // merge theme/defaultEngine/defaultModel/defaultCwd/permission; default permission only ask
                                     // unknown stored keys are preserved, unknown patch keys rejected; 16 KiB maximum, 0600
-system.subscribe {on: boolean}
+system.subscribe {on: boolean}                     → {}   // v0.1.8a; This Mac samples run only while ≥1 client is subscribed
 
 // events (daemon → client)
 daemon.warning {text}    daemon.warningCleared {} // persistent log/state write warning; fixed plain text
 session.updated {session}   session.removed {sessionId}
-session.previewResized {sessionId, cols, rows}        // attach/detach/resize: previews request a fresh sized snapshot   usage.updated {summary}   system.stats {stats}
+session.previewResized {sessionId, cols, rows}        // attach/detach/resize: previews request a fresh sized snapshot   usage.updated {summary}
+system.stats {stats}    // subscribed clients only, every 2 s
+                        // SystemStats = {cpuPercent, memUsedBytes, memTotalBytes, netRxBytesPerSec, netTxBytesPerSec, sessions: SessionStats[]}
+                        // SessionStats = {sessionId, cpuPercent, rssBytes}; cpuPercent is a 0–100 share of the whole machine
 ```
 
-`SessionInfo` in v0.1.6 = `{id, title, engine, model: string | null, auth: {kind:'account'}, authMethod?: 'subscription' | 'api-key' | 'unknown', cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth objects accept only kind. Key/usage/system requests below are later-version plans, not implemented handlers.
+`SystemStats` carries numbers only: no process name, command line, user or pid ever crosses the socket. `validateSystemStats` accepts exactly these keys (finite, non-negative, percentages ≤ 100, used ≤ total, at most 1,000 sessions). The daemon checks every sample with it before sending, and the homepage checks every event with it on arrival.
+
+`SessionInfo` in v0.1.6 = `{id, title, engine, model: string | null, auth: {kind:'account'}, authMethod?: 'subscription' | 'api-key' | 'unknown', cwd, permission, status, statusDetail, statusSince, exitCode, createdAt, lastOutputAt, ctxPercent: null}`. Old shell records without authMethod load unchanged. Null model means CLI default and adds no model argument. Engine status responses carry only the five listed fields; auth objects accept only kind. Key/usage requests below are later-version plans, not implemented handlers; `system.subscribe` is implemented (v0.1.8a).
 
 `KeyView` = `{id, provider: 'anthropic' | 'foundry' | 'openai', label, last4, endpoint?, deployments?, lastTest?}`. There is **no** request that returns a secret. `keys.add` is the only message that carries one, client → daemon. The client drops its copy right after sending.
 
@@ -407,11 +412,22 @@ Never logged, never stored, never sent to a client.
 
 ## 10. This Mac (system stats)
 
-These run only while a client subscribes, sampled every 2 s:
-- **Per session:** `ps -axo pid=,ppid=,rss=,%cpu=` (execFile, no shell). The daemon builds the process tree and sums each session's PTY child and all its descendants into CPU % (share of the whole machine) and RSS.
-- **Machine CPU:** deltas of `os.cpus()` times. The client keeps the last 10 samples for the sparkline.
-- **Machine RAM:** macOS uses `vm_stat` (active + wired + compressed pages × page size), because `os.freemem()` under-reports on macOS. Linux uses `/proc/meminfo`.
-- **Network:** deltas of `netstat -ibn` byte counters on non-loopback interfaces (macOS), `/proc/net/dev` on Linux. Machine-wide only: per-process network isn't reliable on macOS.
+`src/daemon/sysstats.ts`, macOS only until v0.8. It samples every 2 s, and only while at least one connected client is subscribed (`system.subscribe {on: true}`). Sampling stops when the last subscriber unsubscribes or disconnects, and no process is spawned while nobody is subscribed. Each sample runs three commands in parallel with `execFile`: absolute path, argv array, 2 s timeout, 1 MiB output cap.
+- **Per session:** `/bin/ps -axo pid=,ppid=,rss=,%cpu=`.
+  - The daemon builds the process tree. For each live session it sums the PTY child (`node-pty`'s pid) and all its descendants.
+  - ps reports %cpu per core, so the sum is divided by the core count to give a share of the whole machine (clamped to 0–100). RSS comes in KiB and is converted to bytes.
+  - Only lines of exactly four numbers are read. Anything else, including a line carrying a command, is dropped whole.
+- **Machine CPU:** deltas of `os.cpus()` times (busy ÷ total over all cores). The client keeps the last 10 samples for the sparkline.
+- **Machine RAM:** `/usr/bin/vm_stat`: (active + wired + occupied-by-compressor pages) × page size, capped at `os.totalmem()`. `vm_stat` is used because `os.freemem()` under-reports on macOS. Linux will use `/proc/meminfo`.
+- **Network:** deltas of `/usr/sbin/netstat -ibn` byte counters on non-loopback interfaces. Machine-wide only, because per-process network isn't reliable on macOS.
+  - Only the `<Link#N>` rows are read. They carry each interface's totals once; address rows repeat them. Rows without a hardware address have 10 fields instead of 11, so the byte columns are read from the end.
+  - Only interfaces present in both samples count. A counter that went backwards voids that sample, so a rate is never negative.
+  - VPN traffic is counted on both `utun*` and the physical interface.
+- **First sample and failures:**
+  - The first sample after a start is only the baseline for the deltas, so the first event arrives about 2 s after subscribing.
+  - A failed, unreadable or reset sample is skipped. A sample still running when the next tick comes skips that tick rather than stacking.
+  - A failure streak is logged once with fixed words (`System stats sample skipped (timed out)`), never the command's stderr. Recovery is logged once too.
+- **Cost (v0.1.8a gate, own daemon, 3 live sessions):** 0.18% of one core while subscribed, averaged over 60 s. With no subscriber, kqueue `NOTE_FORK` counted 0 spawns over 30 s.
 
 ---
 
