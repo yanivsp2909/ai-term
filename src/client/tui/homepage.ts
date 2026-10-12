@@ -366,13 +366,23 @@ export class Homepage {
     if (key === 'tab') {
       if (b.kind === 'start'){const modes=modeValues(b.engine);b.permission=modes[(modes.indexOf(b.permission)+1)%modes.length]??'ask';}
       else if (b.kind === 'model') { this.boxInput('right');return; }
+      else if(b.kind==='effort'||b.kind==='mode'){b.choice=(b.choice+1)%(b.values?.length??1);}
       else this.enqueue(async () => { b.completions = await completeFolder(b.path || b.cwd, b.cwd); if (b.completions.length === 1) b.path = b.completions[0] ?? b.path; this.draw(true); });
       this.draw(true); return;
     }
     if (b.kind === 'start' && b.row !== 4 && (key === 'm' || key === 'c' || key==='e')) { b.kind = key === 'm' ? 'model' : key==='e'?'effort':'folder'; this.returnToStart = true;if(b.kind==='model')this.resetModelTabs();else if(b.kind==='effort')this.valueChoices();this.draw(true);return; }
     if (key === 'enter') {
       this.enqueue(async () => {
-        if(b.kind==='effort'||b.kind==='mode'){const value=b.values?.[b.choice];if(value===undefined)return;if(b.kind==='effort'){const effort=value==='CLI default'?null:value;if(!isEffortForEngine(b.engine,effort))return;b.effort=effort;this.effort=effort;if(this.savingDefault)await this.connection.request({kind:'settings.set',patch:{defaultEngine:b.engine,defaultEffort:effort}});}else{const modes=modeValues(b.engine);b.permission=modes[b.choice]??'ask';this.permission=b.permission;}this.savingDefault=false;if(this.returnToStart){b.kind='start';this.returnToStart=false;}else this.box=undefined;this.draw(true);return;}
+        if(b.kind==='effort'||b.kind==='mode'){
+          const value=b.values?.[b.choice];if(value===undefined)return;
+          try{
+            if(b.kind==='effort'){const effort=value==='CLI default'?null:value;if(!isEffortForEngine(b.engine,effort))return;
+              if(this.savingDefault)await this.connection.request({kind:'settings.set',patch:{defaultEngine:b.engine,defaultEffort:effort}});
+              b.effort=effort;this.effort=effort;
+            }else{b.permission=modeValues(b.engine)[b.choice]??'ask';this.permission=b.permission;}
+            this.savingDefault=false;if(this.returnToStart){b.kind='start';this.returnToStart=false;}else this.box=undefined;
+          }catch(error){b.error=error instanceof Error?error.message:'Effort could not save';}this.draw(true);return;
+        }
         if (b.kind === 'model') {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
           b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine;this.compatibleDefaults(choice.engine);b.effort=this.effort;b.permission=this.permission; this.model = choice.model;b.authLabel=this.nextAuthLabel();
