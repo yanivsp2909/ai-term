@@ -200,6 +200,7 @@ A process exit always wins over a late status event.
 
 **Mirror.**
 - Every output chunk goes to the session's `@xterm/headless` terminal (scrollback 5,000 lines) before it goes to any client.
+- Cell widths come from `@xterm/addon-unicode11` (`src/shared/unicode-width.ts`), in this mirror, the homepage preview mirror and the homepage grid alike. xterm's built-in Unicode 6 table counts most emoji as 1 cell, which misaligns every cell after one.
 - On attach or preview, the daemon sends `@xterm/addon-serialize`'s snapshot first, then live output. The snapshot carries the cols × rows it was captured at.
 - **Snapshot size:** a snapshot must fit one 4 MiB frame. The daemon trims old scrollback until it fits. If the visible screen alone doesn't fit (pathological styling), the request fails with a clear error. Chunked snapshots are a later protocol change, only if that ever happens in practice.
 
@@ -293,6 +294,7 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 - Model: null ("CLI default") adds nothing; otherwise one argv element `--model=<id>`, only if `isValidModelId(id)`: `/^[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,79}$/`. The leading-character rule plus the single-element form mean a "model" can never be read as another flag.
 - First message: the last argv elements are `--` and then the message as one element. Both CLIs take a positional prompt and accept `--`. v0.1.6 keeps argv delivery: Codex displayed the exact prompt in live runs; Claude paused at folder trust before prompt execution. No paste fallback or automatic trust acceptance was added.
 - Codex daemon: every Codex session's argv starts with `--no-daemon`, exactly once (D41). Without it the Codex TUI may join a shared background server started elsewhere, and that server's env and config win over this session's env and `-c` overrides. Codex rejects the flag when it appears twice.
+- Codex update check: right after `--no-daemon`, every Codex session passes `-c check_for_update_on_startup=false`, Codex's own setting (`codex-rs/config/src/config_toml.rs` at `rust-v0.160.1`). Otherwise a fresh session can open on the "Update available" menu, where Enter means "Update now".
 - Foundry on Codex: `-c` overrides only, nothing written to `~/.codex` (from docs; the live test is pending in `docs/spikes/v0.1-cli-facts.md` #3 and #4). Each override is one argv element:
   - `--no-daemon` (the same single flag every Codex session starts with; also required for invocation-local config overrides)
   - `-c model_provider="aiterm_foundry"`
@@ -309,7 +311,7 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
   - `ask` (default) adds explicit ask flags (D40), so a bypass in your own CLI config can't turn Ask into Don't ask: Claude Code `--permission-mode=default`; Codex `--ask-for-approval=on-request` plus `--sandbox=workspace-write`. Claude Code 2.1.296's help lists this mode as `manual`; the CLI maps `manual` to its canonical `default`, which it accepts.
   - `dontAsk` is chosen per session only, never as a saved default, and is shown with a red `!`. It adds exactly one flag per engine: Claude Code `--permission-mode=bypassPermissions`; Codex `--ask-for-approval=never` plus `--sandbox=workspace-write`. Codex stays sandboxed: don't-ask never means `--dangerously-bypass-approvals-and-sandbox`.
   - Flag spellings verified in v0.1.1. Claude Code also has a mode literally named `dontAsk`, which denies tools that aren't pre-approved. That is not our Don't ask; we never use it.
-- Never passed: `--dangerously-skip-permissions`, `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `danger-full-access`.
+- Never passed: `--dangerously-skip-permissions`, `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, `--full-auto`, `danger-full-access`, `--approve-for-me`.
 
 ### 7.3 Environment (`buildSpawnEnv`, pure, unit-tested)
 **Base** = the daemon's own env. That's the env of the shell that first started `ai`. `ai daemon stop` and a restart pick up a changed shell env.
@@ -495,5 +497,13 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D33 | Log/state write failures and a full disk never stop the daemon or an agent; the homepage shows a warning instead. | Pinned |
 | D34 | SIGTERM / SIGHUP to ai quits the client after full terminal cleanup; daemon and agents keep running. | Pinned |
 | D35 | Socket trust: any process running as the user may use the daemon socket, like ssh-agent. No token, because an agent running as the user could read a token file anyway. Accepted risk; agents you don't trust stay in Ask mode. | Pinned |
+| D36 | macOS notifications through AI Term's own small Swift helper app (identity "AI Term", click opens that agent), proved by a spike first. | Pinned |
+| D37 | Claude context % comes from AI Term's own Claude status line (model · ctx N%), which replaces the user's status line inside AI Term sessions only. | Pinned |
+| D38 | A failed Claude turn with the process alive shows as waiting with the reason; ✗ error is only for processes that died. | Pinned |
+| D39 | One-row AI Term bar on top of an attached session, drawn by redrawing the agent's screen client-side (tmux model). The v0.2.1b spike passed; fallback is the window title until the v0.5 app. | Pinned |
 | D40 | Ask means ask: an Ask session passes explicit ask flags (Claude Code `--permission-mode=default`; Codex `--ask-for-approval=on-request --sandbox=workspace-write`), so your own CLI config can't turn Ask into Don't ask. | Pinned |
 | D41 | Every Codex session starts with `--no-daemon`, and `AZURE_OPENAI_API_KEY` passes through to Codex account sessions. | Pinned |
+| D42 | Notifications: always when an agent starts waiting (or a turn fails); "done" only when you aren't attached to that agent. | Pinned |
+| D43 | Clicking a notification with no ai open starts ai in a new Terminal window, inside that agent. | Pinned |
+| D44 | Worktrees live outside the repo: ~/.ai-term/worktrees/<repo>/<agent>. | Pinned |
+| D45 | Usage cost uses public list prices (Models.dev), Azure included, marked estimated; per-deployment overrides optional in /settings. | Pinned |
