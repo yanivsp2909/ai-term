@@ -1,0 +1,31 @@
+{
+ "scenario": "patterns",
+ "reference": "program run directly in a terminal one row shorter",
+ "rawExit": 0,
+ "redrawExit": 0,
+ "redrawReason": "program exited",
+ "dropped": {
+  "OSC 8 hyperlink": 2
+ },
+ "mouseDropped": 0,
+ "results": [
+  {
+   "label": "patterns",
+   "rawPassthroughAtRowsMinus1DifferingCells": 0,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "12,20",
+    "redraw": "12,20"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":false,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":false,\"focus\":false}"
+   },
+   "title": {
+    "raw": "patterns title",
+    "redraw": "patterns title"
+   }
+  }
+ ]
+}

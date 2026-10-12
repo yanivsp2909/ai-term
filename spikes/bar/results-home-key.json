@@ -1,0 +1,38 @@
+[
+ {
+  "form": "raw 0x05",
+  "aliveBeforeLastChunk": true,
+  "exitedWithin2s": true,
+  "reason": "home key"
+ },
+ {
+  "form": "kitty CSI 101;5u",
+  "aliveBeforeLastChunk": true,
+  "exitedWithin2s": true,
+  "reason": "home key"
+ },
+ {
+  "form": "kitty with event type",
+  "aliveBeforeLastChunk": true,
+  "exitedWithin2s": true,
+  "reason": "home key"
+ },
+ {
+  "form": "modifyOtherKeys",
+  "aliveBeforeLastChunk": true,
+  "exitedWithin2s": true,
+  "reason": "home key"
+ },
+ {
+  "form": "split kitty",
+  "aliveBeforeLastChunk": true,
+  "exitedWithin2s": true,
+  "reason": "home key"
+ },
+ {
+  "form": "inside paste is text, then 0x05",
+  "aliveBeforeLastChunk": true,
+  "exitedWithin2s": true,
+  "reason": "home key"
+ }
+]

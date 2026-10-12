@@ -1,0 +1,14 @@
+{
+ "mode": "redraw",
+ "source": "yes",
+ "seconds": 15,
+ "homeExitMs": 25.49,
+ "programMBPerSec": 70.66,
+ "psAvg": 91.63,
+ "psMax": 92,
+ "processCpuPercentOfOneCore": 91.88,
+ "outBytesPerSec": 13445,
+ "frames": 2071,
+ "renderP50": 0.06,
+ "renderP95": 0.07
+}

@@ -1,0 +1,14 @@
+{
+ "program": "echo",
+ "mode": "raw",
+ "keys": 500,
+ "measured": 500,
+ "timeouts": 0,
+ "p50": 0.52,
+ "p95": 0.75,
+ "p99": 1.05,
+ "max": 3.77,
+ "mean": 0.54,
+ "renderP50": null,
+ "renderP95": null
+}

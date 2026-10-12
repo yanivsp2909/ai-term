@@ -1,0 +1,47 @@
+{
+ "scenario": "escape",
+ "reference": "program run directly in a terminal one row shorter",
+ "rawExit": 0,
+ "redrawExit": 0,
+ "redrawReason": "program exited",
+ "dropped": {},
+ "mouseDropped": 0,
+ "results": [
+  {
+   "label": "lone Esc",
+   "rawPassthroughAtRowsMinus1DifferingCells": 0,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "3,1",
+    "redraw": "3,1"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":true,\"cursorKeys\":false,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":true,\"cursorKeys\":false,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  },
+  {
+   "label": "Esc then [A after 100 ms",
+   "rawPassthroughAtRowsMinus1DifferingCells": 0,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "5,1",
+    "redraw": "5,1"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":true,\"cursorKeys\":false,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":true,\"cursorKeys\":false,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  }
+ ]
+}

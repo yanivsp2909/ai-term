@@ -1,0 +1,47 @@
+{
+ "scenario": "resize",
+ "reference": "program run directly in a terminal one row shorter",
+ "rawExit": 0,
+ "redrawExit": 0,
+ "redrawReason": "program exited",
+ "dropped": {},
+ "mouseDropped": 0,
+ "results": [
+  {
+   "label": "opened",
+   "rawPassthroughAtRowsMinus1DifferingCells": 0,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "17,12",
+    "redraw": "17,12"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"drag\",\"encoding\":\"sgr\",\"paste\":true,\"cursorKeys\":true,\"focus\":true}",
+    "redraw": "{\"mouse\":\"drag\",\"encoding\":\"sgr\",\"paste\":true,\"cursorKeys\":true,\"focus\":true}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  },
+  {
+   "label": "resized to 100x30",
+   "rawPassthroughAtRowsMinus1DifferingCells": 0,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "17,12",
+    "redraw": "17,12"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"drag\",\"encoding\":\"sgr\",\"paste\":true,\"cursorKeys\":true,\"focus\":true}",
+    "redraw": "{\"mouse\":\"drag\",\"encoding\":\"sgr\",\"paste\":true,\"cursorKeys\":true,\"focus\":true}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "program": "echo",
+ "mode": "redraw",
+ "keys": 500,
+ "measured": 500,
+ "timeouts": 0,
+ "p50": 0.91,
+ "p95": 1.24,
+ "p99": 1.71,
+ "max": 4.53,
+ "mean": 0.93,
+ "renderP50": 0.37,
+ "renderP95": 0.47
+}

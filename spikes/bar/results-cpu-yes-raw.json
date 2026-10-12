@@ -1,0 +1,14 @@
+{
+ "mode": "raw",
+ "source": "yes",
+ "seconds": 15,
+ "homeExitMs": 25.79,
+ "programMBPerSec": 80.64,
+ "psAvg": 78.07,
+ "psMax": 80,
+ "processCpuPercentOfOneCore": 79.44,
+ "outBytesPerSec": 84784353,
+ "frames": 0,
+ "renderP50": null,
+ "renderP95": null
+}

@@ -1,0 +1,14 @@
+{
+ "program": "vim",
+ "mode": "redraw",
+ "keys": 500,
+ "measured": 500,
+ "timeouts": 0,
+ "p50": 1.12,
+ "p95": 1.45,
+ "p99": 1.64,
+ "max": 1.86,
+ "mean": 1.11,
+ "renderP50": 0.47,
+ "renderP95": 0.57
+}

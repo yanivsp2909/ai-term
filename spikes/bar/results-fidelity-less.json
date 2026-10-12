@@ -1,0 +1,101 @@
+{
+ "scenario": "less",
+ "reference": "program run directly in a terminal one row shorter",
+ "rawExit": 0,
+ "redrawExit": 0,
+ "redrawReason": "program exited",
+ "dropped": {},
+ "mouseDropped": 0,
+ "results": [
+  {
+   "label": "opened",
+   "rawPassthroughAtRowsMinus1DifferingCells": 1130,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "39,78",
+    "redraw": "39,78"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  },
+  {
+   "label": "space x2",
+   "rawPassthroughAtRowsMinus1DifferingCells": 1146,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "39,2",
+    "redraw": "39,2"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  },
+  {
+   "label": "search needle",
+   "rawPassthroughAtRowsMinus1DifferingCells": 1181,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "39,2",
+    "redraw": "39,2"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  },
+  {
+   "label": "n",
+   "rawPassthroughAtRowsMinus1DifferingCells": 1183,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "39,34",
+    "redraw": "39,34"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  },
+  {
+   "label": "G",
+   "rawPassthroughAtRowsMinus1DifferingCells": 1201,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "39,6",
+    "redraw": "39,6"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  }
+ ]
+}

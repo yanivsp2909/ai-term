@@ -1,0 +1,79 @@
+{
+ "scenario": "mouse-urxvt",
+ "reference": "program run directly in a terminal one row shorter",
+ "rawExit": 0,
+ "redrawExit": 0,
+ "redrawReason": "program exited",
+ "dropped": {},
+ "mouseDropped": 3,
+ "results": [
+  {
+   "label": "click 10,5 and 100,30",
+   "rawPassthroughAtRowsMinus1DifferingCells": 0,
+   "differingCells": 0,
+   "examples": [],
+   "cursor": {
+    "raw": "6,1",
+    "redraw": "6,1"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"drag\",\"encoding\":\"urxvt\",\"paste\":false,\"cursorKeys\":false,\"focus\":false}",
+    "redraw": "{\"mouse\":\"drag\",\"encoding\":\"urxvt\",\"paste\":false,\"cursorKeys\":false,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  },
+  {
+   "label": "drag from row 3 up onto the bar, release there",
+   "rawPassthroughAtRowsMinus1DifferingCells": 0,
+   "differingCells": 25,
+   "examples": [
+    "row 6 col 1: raw \" |1|-1|-1|000000000\" vs redraw \"e|1|-1|-1|000000000\"",
+    "row 6 col 2: raw \" |1|-1|-1|000000000\" vs redraw \"v|1|-1|-1|000000000\"",
+    "row 6 col 3: raw \" |1|-1|-1|000000000\" vs redraw \"e|1|-1|-1|000000000\"",
+    "row 6 col 4: raw \" |1|-1|-1|000000000\" vs redraw \"n|1|-1|-1|000000000\"",
+    "row 6 col 5: raw \" |1|-1|-1|000000000\" vs redraw \"t|1|-1|-1|000000000\"",
+    "row 6 col 7: raw \" |1|-1|-1|000000000\" vs redraw \"0|1|-1|-1|000000000\""
+   ],
+   "cursor": {
+    "raw": "6,1",
+    "redraw": "9,1"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"drag\",\"encoding\":\"urxvt\",\"paste\":false,\"cursorKeys\":false,\"focus\":false}",
+    "redraw": "{\"mouse\":\"drag\",\"encoding\":\"urxvt\",\"paste\":false,\"cursorKeys\":false,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  },
+  {
+   "label": "click and wheel on the bar (dropped)",
+   "rawPassthroughAtRowsMinus1DifferingCells": 0,
+   "differingCells": 25,
+   "examples": [
+    "row 6 col 1: raw \" |1|-1|-1|000000000\" vs redraw \"e|1|-1|-1|000000000\"",
+    "row 6 col 2: raw \" |1|-1|-1|000000000\" vs redraw \"v|1|-1|-1|000000000\"",
+    "row 6 col 3: raw \" |1|-1|-1|000000000\" vs redraw \"e|1|-1|-1|000000000\"",
+    "row 6 col 4: raw \" |1|-1|-1|000000000\" vs redraw \"n|1|-1|-1|000000000\"",
+    "row 6 col 5: raw \" |1|-1|-1|000000000\" vs redraw \"t|1|-1|-1|000000000\"",
+    "row 6 col 7: raw \" |1|-1|-1|000000000\" vs redraw \"0|1|-1|-1|000000000\""
+   ],
+   "cursor": {
+    "raw": "6,1",
+    "redraw": "9,1"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"drag\",\"encoding\":\"urxvt\",\"paste\":false,\"cursorKeys\":false,\"focus\":false}",
+    "redraw": "{\"mouse\":\"drag\",\"encoding\":\"urxvt\",\"paste\":false,\"cursorKeys\":false,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  }
+ ]
+}

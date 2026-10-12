@@ -1,0 +1,36 @@
+{
+ "scenario": "top",
+ "reference": "program run directly in a terminal one row shorter",
+ "rawExit": 0,
+ "redrawExit": 0,
+ "redrawReason": "program exited",
+ "dropped": {},
+ "mouseDropped": 0,
+ "results": [
+  {
+   "label": "top running",
+   "rawPassthroughAtRowsMinus1DifferingCells": 999,
+   "differingCells": 911,
+   "examples": [
+    "row 1 col 14: raw \"0|1|-1|-1|000000000\" vs redraw \"1|1|-1|-1|000000000\"",
+    "row 1 col 23: raw \"3|1|-1|-1|000000000\" vs redraw \"2|1|-1|-1|000000000\"",
+    "row 1 col 36: raw \"7|1|-1|-1|000000000\" vs redraw \"9|1|-1|-1|000000000\"",
+    "row 1 col 50: raw \"5|1|-1|-1|000000000\" vs redraw \"7|1|-1|-1|000000000\"",
+    "row 1 col 51: raw \"8|1|-1|-1|000000000\" vs redraw \"6|1|-1|-1|000000000\"",
+    "row 1 col 119: raw \"2|1|-1|-1|000000000\" vs redraw \"5|1|-1|-1|000000000\""
+   ],
+   "cursor": {
+    "raw": "29,111",
+    "redraw": "29,111"
+   },
+   "modes": {
+    "raw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}",
+    "redraw": "{\"mouse\":\"none\",\"encoding\":\"default\",\"paste\":false,\"cursorKeys\":true,\"focus\":false}"
+   },
+   "title": {
+    "raw": "",
+    "redraw": ""
+   }
+  }
+ ]
+}
