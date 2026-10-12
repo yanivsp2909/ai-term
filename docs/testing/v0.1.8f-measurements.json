@@ -1,0 +1,235 @@
+{
+  "ram": {
+    "pageSize": 16384,
+    "rawPages": {
+      "Anonymous pages": 488942,
+      "Pages purgeable": 10373,
+      "Pages wired down": 227150,
+      "Pages occupied by compressor": 585595,
+      "Pages active": 384582
+    },
+    "sysctl": [
+      "vm.page_pageable_internal_count: 487992",
+      "vm.page_purgeable_count: 10373"
+    ],
+    "bytes": {
+      "app": 7840874496,
+      "wired": 3721625600,
+      "compressed": 9594388480
+    },
+    "GiB": {
+      "app": 7.3024,
+      "wired": 3.466,
+      "compressed": 8.9355
+    },
+    "totalGiB": 19.703887939453125,
+    "oldGiB": 18.269760131835938
+  },
+  "network": {
+    "download": {
+      "ok": true,
+      "numbers": "200 20000000 2102371 9.513068"
+    },
+    "samples": [
+      {
+        "second": 1,
+        "rx": 5485291.434975821,
+        "tx": 29016.992463943407,
+        "displayRx": "5.5 MB/s",
+        "displayTx": "29.0 KB/s"
+      },
+      {
+        "second": 2,
+        "rx": 2358425.096836542,
+        "tx": 83603.78435783152,
+        "displayRx": "2.4 MB/s",
+        "displayTx": "83.6 KB/s"
+      },
+      {
+        "second": 3,
+        "rx": 2331604.724123149,
+        "tx": 160576.0990429284,
+        "displayRx": "2.3 MB/s",
+        "displayTx": "160.6 KB/s"
+      },
+      {
+        "second": 4,
+        "rx": 2272293.561630442,
+        "tx": 73838.94855270049,
+        "displayRx": "2.3 MB/s",
+        "displayTx": "73.8 KB/s"
+      },
+      {
+        "second": 5,
+        "rx": 1593063.1223554618,
+        "tx": 277668.59574475227,
+        "displayRx": "1.6 MB/s",
+        "displayTx": "277.7 KB/s"
+      },
+      {
+        "second": 6,
+        "rx": 2864304.750489656,
+        "tx": 123169.62575928665,
+        "displayRx": "2.9 MB/s",
+        "displayTx": "123.2 KB/s"
+      },
+      {
+        "second": 7,
+        "rx": 2310976.523166488,
+        "tx": 175902.22029037648,
+        "displayRx": "2.3 MB/s",
+        "displayTx": "175.9 KB/s"
+      },
+      {
+        "second": 8,
+        "rx": 2080097.3443433326,
+        "tx": 129629.35586691844,
+        "displayRx": "2.1 MB/s",
+        "displayTx": "129.6 KB/s"
+      },
+      {
+        "second": 9,
+        "rx": 10002.080255911354,
+        "tx": 110100.34903088838,
+        "displayRx": "10.0 KB/s",
+        "displayTx": "110.1 KB/s"
+      },
+      {
+        "second": 10,
+        "rx": 6602.26471546877,
+        "tx": 116654.55823287099,
+        "displayRx": "6.6 KB/s",
+        "displayTx": "116.7 KB/s"
+      },
+      {
+        "second": 11,
+        "rx": 6561.536937094211,
+        "tx": 169147.7107339852,
+        "displayRx": "6.6 KB/s",
+        "displayTx": "169.1 KB/s"
+      },
+      {
+        "second": 12,
+        "rx": 7408.925932473061,
+        "tx": 113025.7417275552,
+        "displayRx": "7.4 KB/s",
+        "displayTx": "113.0 KB/s"
+      }
+    ]
+  },
+  "performance": {
+    "liveSessions": 3,
+    "subscribed": {
+      "seconds": 60.007460959022865,
+      "cpuSeconds": 0.27,
+      "cpuPercentOfOneCore": 0.44994404976470204,
+      "meanPsCpu": 0.0016666666666666668,
+      "maxPsCpu": 0.1,
+      "sampleEvents": 61,
+      "forkNotifications": 164,
+      "psSamples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.1,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "unsubscribed": {
+      "seconds": 30.003715416998602,
+      "cpuSeconds": 0.010000000000000009,
+      "cpuPercentOfOneCore": 0.033329205603431736,
+      "meanPsCpu": 0.0033333333333333335,
+      "maxPsCpu": 0.1,
+      "sampleEvents": 0,
+      "forkNotifications": 0,
+      "psSamples": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.1,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  }
+}

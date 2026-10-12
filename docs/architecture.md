@@ -176,7 +176,7 @@ system.subscribe {on: boolean}                     → {}   // v0.1.8a; This Mac
 daemon.warning {text}    daemon.warningCleared {} // persistent log/state write warning; fixed plain text
 session.updated {session}   session.removed {sessionId}
 session.previewResized {sessionId, cols, rows}        // attach/detach/resize: previews request a fresh sized snapshot   usage.updated {summary}
-system.stats {stats}    // subscribed clients only, every 2 s
+system.stats {stats}    // subscribed clients only, every 1 s
                         // SystemStats = {cpuPercent, memUsedBytes, memTotalBytes, netRxBytesPerSec, netTxBytesPerSec, sessions: SessionStats[]}
                         // SessionStats = {sessionId, cpuPercent, rssBytes}; cpuPercent is a 0–100 share of the whole machine
 ```
@@ -412,22 +412,23 @@ Never logged, never stored, never sent to a client.
 
 ## 10. This Mac (system stats)
 
-`src/daemon/sysstats.ts`, macOS only until v0.8. It samples every 2 s, and only while at least one connected client is subscribed (`system.subscribe {on: true}`). Sampling stops when the last subscriber unsubscribes or disconnects, and no process is spawned while nobody is subscribed. Each sample runs three commands in parallel with `execFile`: absolute path, argv array, 2 s timeout, 1 MiB output cap.
+`src/daemon/sysstats.ts`, macOS only until v0.8. It samples every 1 s, and only while at least one connected client is subscribed (`system.subscribe {on: true}`). Sampling stops when the last subscriber unsubscribes or disconnects, and no process is spawned while nobody is subscribed. Each sample runs three commands in parallel with `execFile`: absolute path, argv array, 2 s timeout, 1 MiB output cap.
 - **Per session:** `/bin/ps -axo pid=,ppid=,rss=,%cpu=`.
   - The daemon builds the process tree. For each live session it sums the PTY child (`node-pty`'s pid) and all its descendants.
   - ps reports %cpu per core, so the sum is divided by the core count to give a share of the whole machine (clamped to 0–100). RSS comes in KiB and is converted to bytes.
   - Only lines of exactly four numbers are read. Anything else, including a line carrying a command, is dropped whole.
 - **Machine CPU:** deltas of `os.cpus()` times (busy ÷ total over all cores). The client keeps the last 10 samples for the sparkline.
-- **Machine RAM:** `/usr/bin/vm_stat`: (active + wired + occupied-by-compressor pages) × page size, capped at `os.totalmem()`. `vm_stat` is used because `os.freemem()` under-reports on macOS. Linux will use `/proc/meminfo`.
-- **Network:** deltas of `/usr/sbin/netstat -ibn` byte counters on non-loopback interfaces. Machine-wide only, because per-process network isn't reliable on macOS.
+- **Machine RAM:** Activity Monitor's "Memory Used" = App Memory + Wired + Compressed. `/usr/bin/vm_stat` exposes App Memory as (`Anonymous pages` − `Pages purgeable`) × page size, Wired as `Pages wired down` × page size, and Compressed as `Pages occupied by compressor` × page size. Anonymous pages match the kernel's pageable internal count; active pages alone omit inactive anonymous memory. The sum is capped at `os.totalmem()`. Missing/malformed counters or purgeable exceeding anonymous invalidate the sample. Linux will use `/proc/meminfo`.
+- **Network:** deltas of `/usr/sbin/netstat -ibn` byte counters on non-loopback interfaces. Each direction uses decimal B/s, KB/s or MB/s with one decimal, so light traffic remains visible. Machine-wide only, because per-process network isn't reliable on macOS.
   - Only the `<Link#N>` rows are read. They carry each interface's totals once; address rows repeat them. Rows without a hardware address have 10 fields instead of 11, so the byte columns are read from the end.
   - Only interfaces present in both samples count. A counter that went backwards voids that sample, so a rate is never negative.
   - VPN traffic is counted on both `utun*` and the physical interface.
 - **First sample and failures:**
-  - The first sample after a start is only the baseline for the deltas, so the first event arrives about 2 s after subscribing.
+  - The first sample after a start is only the baseline for the deltas, so the first event arrives about 1 s after subscribing.
   - A failed, unreadable or reset sample is skipped. A sample still running when the next tick comes skips that tick rather than stacking.
   - A failure streak is logged once with fixed words (`System stats sample skipped (timed out)`), never the command's stderr. Recovery is logged once too.
-- **Cost (v0.1.8a gate, own daemon, 3 live sessions):** 0.13–0.32% of one core while subscribed, averaged over 60 s across three runs. With no subscriber, kqueue `NOTE_FORK` counted 0 spawns over 30 s (87 per 60 s while subscribed: 29 samples × 3 commands).
+- **Cost (v0.1.8f, 1 s interval, own built daemon, 3 live sessions):** 0.45% of one core (0.27 CPU s / 60.007 wall s). After unsubscribe, 0 stats events and 0 kqueue fork notifications over 30.004 s. Raw numbers: `docs/testing/v0.1.8f-measurements.json`.
+- **Earlier cost (v0.1.8a gate, 2 s interval, own daemon, 3 live sessions):** 0.13–0.32% of one core while subscribed, averaged over 60 s across three runs. With no subscriber, kqueue `NOTE_FORK` counted 0 spawns over 30 s (87 per 60 s while subscribed: 29 samples × 3 commands).
 
 ---
 
@@ -523,3 +524,4 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D43 | Clicking a notification with no ai open starts ai in a new Terminal window, inside that agent. | Pinned |
 | D44 | Worktrees live outside the repo: ~/.ai-term/worktrees/<repo>/<agent>. | Pinned |
 | D45 | Usage cost uses public list prices (Models.dev), Azure included, marked estimated; per-deployment overrides optional in /settings. | Pinned |
+| D46 | This Mac refreshes every 1 s while the homepage is open (was 2 s). Not faster: sampling ps twice a second doubles the cost and makes the percentages jumpier, not more accurate. RAM matches Activity Monitor's "Memory Used". | Pinned |

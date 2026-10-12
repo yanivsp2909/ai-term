@@ -142,8 +142,8 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 ### This Mac panel (under the preview, right, 36 cols)
 - **CPU:** `CPU 31%` (bold value), a 10-sample sparkline in accent (`▁▂▃▄▅▆▇█`), right `agents 19%`.
 - **RAM:** `RAM 14.2/32 GB`, right `agents 2.3 GB`.
-- **NET:** `NET ↓ 1.4 MB/s  ↑ 0.2 MB/s` (machine-wide).
-- Updated every 2 s, and only while the homepage is open.
+- **NET:** `NET ↓ 1.4 MB/s  ↑ 200.0 KB/s` (machine-wide). Each rate uses B/s, KB/s or MB/s with one decimal.
+- Updated every 1 s, and only while the homepage is open (D46).
 
 ### Command bar
 - **Field:** surface background with a line border. `›` in accent, your text, block cursor. Placeholder: `What do you want to build?` (ink-3).
@@ -220,5 +220,5 @@ Letter keys act as shortcuts only while the command field is empty; otherwise th
 - Nothing animates.
 - Redraws happen only on change, and the preview at most 30 times a second.
 - No spinners: `◐` is static.
-- The sparkline moves because the data moves, every 2 s.
+- The sparkline moves because the data moves, every 1 s (D46).
 - If an effect costs redraw time, it goes.
