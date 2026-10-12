@@ -163,3 +163,9 @@ it('an oversize-paste note takes precedence over a crossed budget warning', asyn
   const text = plainText(renderHomepage({ cols: 130, rows: 45, sessions: [], selectedId: null, input: 'keep', note: tooLong, notePriority: true, previewVisible: true, cwd: '/tmp', now: Date.now(), budgets: { daily: 0, weekly: null, monthly: null }, usage: { today: { costUsd: 1, tokens: 0, unknownPrice: false, providers: [] }, week: { costUsd: 1, tokens: 0, unknownPrice: false, providers: [] }, month: { costUsd: 1, tokens: 0, unknownPrice: false, providers: [] } } }, createTheme('graphite')));
   expect(text).toContain(tooLong);
 });
+it('an oversize-paste note temporarily takes precedence over a retained daemon warning', async () => {
+  const { renderHomepage } = await import('../src/client/tui/layout.js'), { createTheme } = await import('../src/client/tui/theme.js'), { plainText } = await import('../src/client/tui/grid.js');
+  const view = { cols: 130, rows: 45, sessions: [], selectedId: null, input: 'keep', note: tooLong, notePriority: true, warning: 'State write failed; will retry on the next change', previewVisible: true, cwd: '/tmp', now: Date.now() };
+  expect(plainText(renderHomepage(view, createTheme('graphite')))).toContain(tooLong);
+  expect(plainText(renderHomepage({ ...view, note: '', notePriority: false }, createTheme('graphite')))).toContain(view.warning);
+});
