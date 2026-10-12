@@ -42,7 +42,7 @@ it('S9/S10 builds argv only with validated model, positional first message and e
  }
 });
 it('B3/D40 Ask passes explicit ask flags on every path, and no permission choice ever passes a bypass flag',()=>{
- const forbidden=['--dangerously-skip-permissions','--yolo','--dangerously-bypass-approvals-and-sandbox','--full-auto','danger-full-access','--permission-mode=dontAsk'];
+ const forbidden=['--dangerously-skip-permissions','--yolo','--dangerously-bypass-approvals-and-sandbox','--full-auto','danger-full-access','--approve-for-me','--permission-mode=dontAsk'];
  const foundryEndpoint='https://example.openai.azure.com/openai/v1';
  for(const engine of ['claude-code','codex'] as const)for(const permission of ['ask','dontAsk'] as const)for(const foundry of [false,true]){
   if(foundry&&engine!=='codex')continue;
