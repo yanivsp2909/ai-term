@@ -32,3 +32,4 @@ it('never reads private attribute values or the body of a dropped Codex event',(
  const codex={...context,engine:'codex' as const,provider:'openai' as const};expect(p.parse('/v1/logs',{resourceLogs:[{scopeLogs:[{logRecords:[{attributes:[{key:'event.name',value:{stringValue:'codex.tool_output'}},privateValue],get body():never{throw new Error('Private body was read');}}]}]}]},codex)).toEqual([]);
  const raw=metric('claude_code.token.usage','input',1,'10');raw.resourceMetrics[0]?.scopeMetrics[0]?.metrics[0]?.sum.dataPoints[0]?.attributes.push(privateValue as never);expect(()=>p.parse('/v1/metrics',raw,context)).not.toThrow();
 });
+it('unknown Claude token types cannot be interpreted as cost points',()=>{const diagnostics:unknown[]=[],p=new UsageParser(d=>diagnostics.push(d));expect(p.parse('/v1/metrics',metric('claude_code.token.usage','cost',100),context)).toEqual([]);expect(diagnostics).toEqual([]);});
