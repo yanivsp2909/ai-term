@@ -55,14 +55,26 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields = ['patch'];
             validateSettingsPatch(v.patch, true);
             break;
+        case 'keys.list': fields=[]; break;
+        case 'keys.add':
+            fields=['provider','label','secret','endpoint','deployments'];
+            if (!isKeyProvider(v.provider) || !isTitle(v.label) || !isSecret(v.secret) || v.endpoint !== undefined && !isEndpoint(v.endpoint) || v.deployments !== undefined && !isDeployments(v.deployments) || v.provider === 'foundry' && (!isEndpoint(v.endpoint) || !isDeployments(v.deployments) || !v.deployments.length)) throw new ValidationError('Invalid key details');
+            break;
+        case 'keys.remove': case 'keys.test':
+            fields=['keyId']; if (!isUUID(v.keyId)) throw new ValidationError('Invalid key id'); break;
+        case 'keys.scanEnvFile': case 'keys.importEnv':
+            fields=v.kind==='keys.scanEnvFile'?['path']:['path','names'];
+            if (typeof v.path !== 'string' || !isAbsolute(v.path) || v.path.includes('\0') || v.path.length>4096 || v.kind==='keys.importEnv' && (!Array.isArray(v.names) || !v.names.length || v.names.length>Object.keys(ENV_KEY_NAMES).length || v.names.some(n=>typeof n!=='string'||!Object.hasOwn(ENV_KEY_NAMES,n)) || new Set(v.names).size!==v.names.length)) throw new ValidationError('Invalid env import selection');
+            break;
         case 'engines.status':
         case 'sessions.list':
             fields = [];
             break;
         case 'sessions.create':
-            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','auth','cwd','permission','title','firstMessage'];
+            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','auth','cwd','permission','title','firstMessage','login'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
-            if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAccount(v.auth) || !isPermission(v.permission) || (v.firstMessage !== undefined && (typeof v.firstMessage !== 'string' || Buffer.byteLength(v.firstMessage) > 16384 || v.firstMessage.includes('\0'))))) throw new ValidationError('Invalid account agent request');
+            if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermission(v.permission) || (v.firstMessage !== undefined && (typeof v.firstMessage !== 'string' || Buffer.byteLength(v.firstMessage) > 16384 || v.firstMessage.includes('\0'))))) throw new ValidationError('Invalid account agent request');
+            if (v.login !== undefined && (v.login !== true || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined)) throw new ValidationError('Invalid login session');
             if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
             break;
         case 'sessions.attach':
@@ -105,6 +117,10 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(!isUUID(v.id)||v.ok!==true)throw new ValidationError('Invalid daemon response');
     if(v.kind!==undefined && (v.kind!=='hello'||v.protocol!==1||typeof v.version!=='string'||!/^[A-Za-z0-9._-]{1,40}$/.test(v.version)||!Number.isSafeInteger(v.daemonPid)||Number(v.daemonPid)<2))throw new ValidationError('Invalid daemon hello');
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
+    if(v.key!==undefined)validateKeyView(v.key);
+    if(v.keys!==undefined){if(!Array.isArray(v.keys)||v.keys.length>100)throw new ValidationError('Invalid keys');v.keys.forEach(validateKeyView);}
+    if(v.results!==undefined)validateDeploymentTests(v.results);
+    if(v.found!==undefined){if(!Array.isArray(v.found)||v.found.some(f=>!f||typeof f!=='object'||Object.keys(f).some(k=>!['name','provider'].includes(k))||!Object.hasOwn(ENV_KEY_NAMES,String(f.name))||ENV_KEY_NAMES[f.name as string]!==f.provider))throw new ValidationError('Invalid env names');}
     if(v.settings!==undefined)validateSettings(v.settings);
     if(v.engines!==undefined) { if (!v.engines || typeof v.engines !== 'object' || !('claudeCode' in v.engines) || !('codex' in v.engines)) throw new ValidationError('Invalid engines status'); validateEngineStatus(v.engines.claudeCode); validateEngineStatus(v.engines.codex); }
     if(v.modes!==undefined)validateModes(v.modes);
@@ -163,7 +179,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
     if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
         !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
-        !isAccount(s.auth) || !isPermission(s.permission) ||
+        !isAuthView(s.auth) || !isPermission(s.permission) ||
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'idle', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || s.ctxPercent !== null ||
@@ -186,4 +202,31 @@ export function validateSystemStats(value: unknown): import('./protocol.js').Sys
         if (!hasOnly(s, ['sessionId', 'cpuPercent', 'rssBytes']) || !isUUID(s.sessionId) || !isShare(s.cpuPercent) || !isAmount(s.rssBytes)) throw new ValidationError('Invalid session stats');
     }
     return v as unknown as import('./protocol.js').SystemStats;
+}
+
+export const ENV_KEY_NAMES: Record<string, import('./protocol.js').KeyProvider> = {ANTHROPIC_API_KEY:'anthropic',OPENAI_API_KEY:'openai',AZURE_OPENAI_API_KEY:'foundry',AITERM_FOUNDRY_KEY:'foundry'};
+export function isKeyProvider(v:unknown): v is import('./protocol.js').KeyProvider {return v==='anthropic'||v==='foundry'||v==='openai';}
+export function isSecret(v:unknown): v is string {return typeof v==='string' && v.length>0 && v.length<=512 && !/[\s\p{C}]/u.test(v);}
+export function isEndpoint(v:unknown): v is string {
+    if(typeof v!=='string'||v.length>2048||/[\s"'\\\p{C}]/u.test(v))return false;
+    try{const u=new URL(v);return u.protocol==='https:'&&!!u.hostname&&!u.username&&!u.password&&!u.search&&!u.hash;}catch{return false;}
+}
+function isDeployments(v:unknown):v is string[]{return Array.isArray(v)&&v.length<=40&&v.every(m=>typeof m==='string'&&isValidModelId(m))&&new Set(v).size===v.length;}
+export function isAuthRef(v:unknown):v is import('./protocol.js').AuthRef {return isAccount(v)||!!v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===2&&'kind'in v&&v.kind==='key'&&'keyId'in v&&isUUID(v.keyId);}
+function isAuthView(v:unknown):boolean {
+    if(isAccount(v))return true;
+    if(!v||typeof v!=='object'||Array.isArray(v))return false;
+    const a=v as Record<string,unknown>;
+    return Object.keys(a).length===5&&a.kind==='key'&&isUUID(a.keyId)&&isKeyProvider(a.provider)&&isTitle(a.keyLabel)&&typeof a.last4==='string'&&a.last4.length<=4&&!/[\p{C}]/u.test(a.last4);
+}
+export function validateDeploymentTests(v:unknown):import('./protocol.js').DeploymentTest[]{
+    if(!Array.isArray(v)||v.length>40||v.some(r=>!r||typeof r!=='object'||Object.keys(r).some(k=>!['model','status','httpStatus','errorCode'].includes(k))||typeof r.model!=='string'||!isValidModelId(r.model)||!['ready','not a chat model','error'].includes(r.status)||r.httpStatus!==undefined&&(!Number.isInteger(r.httpStatus)||r.httpStatus<100||r.httpStatus>599)||r.errorCode!==undefined&&(typeof r.errorCode!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(r.errorCode))))throw new ValidationError('Invalid deployment results');
+    return v as import('./protocol.js').DeploymentTest[];
+}
+export function validateKeyView(v:unknown):import('./protocol.js').KeyView {
+    if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid key metadata');
+    const k=v as Record<string,unknown>;
+    if(Object.keys(k).some(n=>!['id','provider','label','last4','endpoint','deployments','lastTest'].includes(n))||!isUUID(k.id)||!isKeyProvider(k.provider)||!isTitle(k.label)||typeof k.last4!=='string'||k.last4.length>4||/[\p{C}]/u.test(k.last4)||k.endpoint!==undefined&&!isEndpoint(k.endpoint)||k.deployments!==undefined&&!isDeployments(k.deployments))throw new ValidationError('Invalid key metadata');
+    if(k.lastTest!==undefined)validateDeploymentTests(k.lastTest);
+    return k as unknown as import('./protocol.js').KeyView;
 }

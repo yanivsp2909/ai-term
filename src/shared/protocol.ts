@@ -10,17 +10,20 @@ export type Permission = 'ask' | 'dontAsk';
 export type AuthMethod = 'subscription' | 'api-key' | 'unknown';
 export interface EngineStatus { installed: boolean; path: string | null; version: string | null; loggedIn: boolean | null; authMethod: AuthMethod }
 export interface EnginesStatus { claudeCode: EngineStatus; codex: EngineStatus }
+export type KeyProvider = 'anthropic' | 'foundry' | 'openai';
+export interface DeploymentTest { model: string; status: 'ready' | 'not a chat model' | 'error'; httpStatus?: number; errorCode?: string }
+export interface KeyView { id: string; provider: KeyProvider; label: string; last4: string; endpoint?: string; deployments?: string[]; lastTest?: DeploymentTest[] }
+export type AuthRef = {kind:'account'} | {kind:'key';keyId:string};
+export type AuthView = {kind:'account'} | {kind:'key';keyId:string;provider:KeyProvider;keyLabel:string;last4:string};
 export interface Settings { theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultCwd?: string; permission?: 'ask'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
-export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; auth: {kind:'account'}; cwd: string; permission: Permission; title?: string; firstMessage?: string };
+export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean };
 export interface SessionInfo {
     id: string;
     title: string;
     engine: Engine;
     model: string | null;
-    auth: {
-        kind: 'account';
-    };
+    auth: AuthView;
     cwd: string;
     permission: Permission;
     authMethod?: AuthMethod;
@@ -52,7 +55,12 @@ export type Request = {
     kind: 'sessions.list';
 } | {
     kind: 'engines.status';
-} | ({ kind: 'sessions.create' } & CreateSession) | {
+} | { kind: 'keys.list' }
+  | { kind: 'keys.add'; provider: KeyProvider; label: string; secret: string; endpoint?: string; deployments?: string[] }
+  | { kind: 'keys.remove' | 'keys.test'; keyId: string }
+  | { kind: 'keys.scanEnvFile'; path: string }
+  | { kind: 'keys.importEnv'; path: string; names: string[] }
+  | ({ kind: 'sessions.create' } & CreateSession) | {
     kind: 'sessions.preview';
     sessionId: string | null;
 } | {
@@ -87,6 +95,10 @@ export interface SuccessResponse {
     daemonPid?: number;
     settings?: Settings;
     engines?: EnginesStatus;
+    keys?: KeyView[];
+    key?: KeyView;
+    results?: DeploymentTest[];
+    found?: {name:string;provider:KeyProvider}[];
     sessions?: SessionInfo[];
     session?: SessionInfo;
     snapshot?: string;
