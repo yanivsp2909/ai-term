@@ -30,6 +30,7 @@ Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source
 | `ai doctor` | Report Node, daemon, file modes, CLI installation/version and login method |
 | `ai daemon` | Internal background service entry point |
 | `ai daemon stop` | Stop the background service and all its sessions |
+| `ai debug stats` | Print ten one-second numeric RAM/CPU diagnostics; no daemon connection |
 | `ai debug ls` | List session IDs, status and title |
 | `ai debug shell [cwd]` | Create a debug shell in the folder (current folder if omitted) |
 | `ai debug attach <id>` | Attach directly; Ctrl+E returns to the shell |
@@ -40,7 +41,7 @@ Homepage slash commands:
 
 | Command | Action |
 |---|---|
-| `/model` | Choose account/key model or tested Foundry deployment; filter accepts a custom ID |
+| `/model` | Choose provider tab, then own-login/key model or tested Foundry deployment; filter searches across tabs |
 | `/cd` | Choose folder for the next session, with directory completion |
 | `/login` | Anthropic/OpenAI account login or API key; Microsoft Foundry endpoint/key/deployments and test |
 | `/settings` | KEYS, ENGINES, DEFAULTS; add/import/remove/test keys and edit saved defaults/theme |
@@ -49,8 +50,8 @@ Homepage slash commands:
 
 | Keys / action | Where and behavior |
 |---|---|
-| ↑ / ↓ | Homepage selects session; picker selects model/key/provider; key form selects field |
-| Enter | Empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
+| ↑ / ↓ | Slash menu selects a command with wrapping; otherwise homepage selects session; pickers/settings select rows |
+| Enter | Slash menu picks highlighted command (`/theme` inserts argument prefix); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
 | `p` | Empty field toggles preview |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
@@ -64,15 +65,15 @@ Homepage slash commands:
 | SIGTERM / SIGHUP / SIGQUIT | Client cleanup and exit 143 / 129 / 131; sessions keep running |
 | Start box ↑↓ / `m` / `c` / Tab / Enter | Select row / model picker / folder picker / toggle Ask ↔ Don't ask / start |
 | Start box message row | Type/paste to edit first message |
-| Model picker ↑↓ / Tab / Enter | Select / choose engine for custom ID / use model |
+| Model picker ←→ / ↑↓ / Enter / Esc | Switch provider tab (Tab also goes right) / choose model / select / back; typing searches all tabs |
 | Folder picker Tab / Enter | Complete directory / accept existing folder |
 | `/login` ↑↓ / Enter | Choose provider, then account or API key; key form Enter advances/saves; secret field is masked |
 | `/settings` `a` or `+` / `i` / `l` | Add key / import env file / open provider login |
-| `/settings` ↑↓ / `x` / `t` or Enter | Select saved key / remove it / test Foundry deployments |
+| `/settings` ↑↓ / Enter / `x` / `t` | Select key/action/default row / activate (key row tests) / remove selected key / test |
 | `/settings` `d` / `f` / Tab | Save default model+engine / folder / cycle theme; permission default is always Ask |
 | Import names ↑↓ / Space / Enter | Select name / toggle inclusion / import chosen keys |
 
-Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
+Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
 
 ## Docs
 - `AGENTS.md`: rules for every coding agent working here

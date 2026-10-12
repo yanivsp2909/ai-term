@@ -1,0 +1,472 @@
+{
+  "ramSnapshot": {
+    "pageSize": 16384,
+    "rawPages": {
+      "Anonymous pages": 539265,
+      "Pages purgeable": 7430,
+      "Pages wired down": 684764,
+      "Pages occupied by compressor": 618116,
+      "File-backed pages": 191181,
+      "Pages free": 7462
+    },
+    "purgeableBytes": 121733120,
+    "purgeableGiB": 0.113372802734375,
+    "appWiredCompressedGiB": 27.995529174804688,
+    "anonymousWiredCompressedGiB": 28.108901977539062
+  },
+  "busyCpuComparison": {
+    "samples": [
+      {
+        "sample": 1,
+        "ours": 42.97520661157025,
+        "topUser": 32.5,
+        "topSystem": 11.19,
+        "topBusy": 43.69,
+        "topIdle": 56.75,
+        "seconds": 1.0926637500000003
+      },
+      {
+        "sample": 2,
+        "ours": 40.913242009132425,
+        "topUser": 32.13,
+        "topSystem": 8.77,
+        "topBusy": 40.900000000000006,
+        "topIdle": 59.8,
+        "seconds": 1.0963803749999996
+      },
+      {
+        "sample": 3,
+        "ours": 40.0184842883549,
+        "topUser": 30.95,
+        "topSystem": 9.38,
+        "topBusy": 40.33,
+        "topIdle": 59.65,
+        "seconds": 1.0908270830000002
+      },
+      {
+        "sample": 4,
+        "ours": 39.65201465201465,
+        "topUser": 30.64,
+        "topSystem": 9.13,
+        "topBusy": 39.77,
+        "topIdle": 60.21,
+        "seconds": 1.0963802499999993
+      },
+      {
+        "sample": 5,
+        "ours": 46.48014440433213,
+        "topUser": 36.67,
+        "topSystem": 10.46,
+        "topBusy": 47.13,
+        "topIdle": 52.85,
+        "seconds": 1.111070125000001
+      },
+      {
+        "sample": 6,
+        "ours": 41.8732782369146,
+        "topUser": 32.58,
+        "topSystem": 9.48,
+        "topBusy": 42.06,
+        "topIdle": 57.92,
+        "seconds": 1.095684833000001
+      },
+      {
+        "sample": 7,
+        "ours": 43.462246777163905,
+        "topUser": 33.99,
+        "topSystem": 9.8,
+        "topBusy": 43.790000000000006,
+        "topIdle": 56.2,
+        "seconds": 1.0899668330000003
+      },
+      {
+        "sample": 8,
+        "ours": 45.571955719557195,
+        "topUser": 34.53,
+        "topSystem": 11.6,
+        "topBusy": 46.13,
+        "topIdle": 54.4,
+        "seconds": 1.0942559579999998
+      },
+      {
+        "sample": 9,
+        "ours": 52.38532110091742,
+        "topUser": 40.75,
+        "topSystem": 12.6,
+        "topBusy": 53.35,
+        "topIdle": 47.18,
+        "seconds": 1.097691417
+      },
+      {
+        "sample": 10,
+        "ours": 41.81152790484904,
+        "topUser": 32.8,
+        "topSystem": 9.91,
+        "topBusy": 42.709999999999994,
+        "topIdle": 57.99,
+        "seconds": 1.0966554170000018
+      },
+      {
+        "sample": 11,
+        "ours": 44.30264357338195,
+        "topUser": 34.22,
+        "topSystem": 10.24,
+        "topBusy": 44.46,
+        "topIdle": 55.52,
+        "seconds": 1.103592209000002
+      },
+      {
+        "sample": 12,
+        "ours": 46.88644688644688,
+        "topUser": 36.34,
+        "topSystem": 10.65,
+        "topBusy": 46.99,
+        "topIdle": 52.99,
+        "seconds": 1.0986163750000015
+      },
+      {
+        "sample": 13,
+        "ours": 42.318307267709294,
+        "topUser": 34.88,
+        "topSystem": 7.71,
+        "topBusy": 42.59,
+        "topIdle": 57.39,
+        "seconds": 1.0962815420000007
+      },
+      {
+        "sample": 14,
+        "ours": 46.27133872416891,
+        "topUser": 35.58,
+        "topSystem": 10.72,
+        "topBusy": 46.3,
+        "topIdle": 53.69,
+        "seconds": 1.1169513750000006
+      },
+      {
+        "sample": 15,
+        "ours": 45.27956003666361,
+        "topUser": 35.59,
+        "topSystem": 9.83,
+        "topBusy": 45.42,
+        "topIdle": 54.56,
+        "seconds": 1.098846292000002
+      },
+      {
+        "sample": 16,
+        "ours": 45.622119815668206,
+        "topUser": 35.34,
+        "topSystem": 10.43,
+        "topBusy": 45.77,
+        "topIdle": 54.22,
+        "seconds": 1.092333708000002
+      },
+      {
+        "sample": 17,
+        "ours": 44.587155963302756,
+        "topUser": 32.88,
+        "topSystem": 11.82,
+        "topBusy": 44.7,
+        "topIdle": 55.28,
+        "seconds": 1.096556375
+      },
+      {
+        "sample": 18,
+        "ours": 44.109589041095894,
+        "topUser": 34.55,
+        "topSystem": 9.73,
+        "topBusy": 44.28,
+        "topIdle": 55.71,
+        "seconds": 1.0989975830000003
+      },
+      {
+        "sample": 19,
+        "ours": 42.94813466787989,
+        "topUser": 33.77,
+        "topSystem": 9.9,
+        "topBusy": 43.67,
+        "topIdle": 57.13,
+        "seconds": 1.0998674999999967
+      },
+      {
+        "sample": 20,
+        "ours": 42.06204379562044,
+        "topUser": 32.85,
+        "topSystem": 9.28,
+        "topBusy": 42.13,
+        "topIdle": 57.85,
+        "seconds": 1.0990121250000011
+      },
+      {
+        "sample": 21,
+        "ours": 40.76782449725777,
+        "topUser": 31.16,
+        "topSystem": 9.55,
+        "topBusy": 40.71,
+        "topIdle": 59.28,
+        "seconds": 1.0984689999999973
+      },
+      {
+        "sample": 22,
+        "ours": 42.59597806215722,
+        "topUser": 32.61,
+        "topSystem": 10.36,
+        "topBusy": 42.97,
+        "topIdle": 57.1,
+        "seconds": 1.0978462910000018
+      },
+      {
+        "sample": 23,
+        "ours": 43.61799816345271,
+        "topUser": 33.33,
+        "topSystem": 10.63,
+        "topBusy": 43.96,
+        "topIdle": 56.3,
+        "seconds": 1.0989522920000017
+      },
+      {
+        "sample": 24,
+        "ours": 43.36363636363637,
+        "topUser": 33.65,
+        "topSystem": 10.3,
+        "topBusy": 43.95,
+        "topIdle": 56.3,
+        "seconds": 1.1015794170000008
+      },
+      {
+        "sample": 25,
+        "ours": 43.75,
+        "topUser": 33.68,
+        "topSystem": 10.22,
+        "topBusy": 43.9,
+        "topIdle": 56.8,
+        "seconds": 1.1096446250000007
+      },
+      {
+        "sample": 26,
+        "ours": 43.00091491308326,
+        "topUser": 34.4,
+        "topSystem": 9.11,
+        "topBusy": 43.51,
+        "topIdle": 56.83,
+        "seconds": 1.0992611670000043
+      },
+      {
+        "sample": 27,
+        "ours": 47.34432234432234,
+        "topUser": 37.72,
+        "topSystem": 9.67,
+        "topBusy": 47.39,
+        "topIdle": 52.59,
+        "seconds": 1.0959571249999935
+      },
+      {
+        "sample": 28,
+        "ours": 42.360475754803296,
+        "topUser": 32.94,
+        "topSystem": 9.84,
+        "topBusy": 42.78,
+        "topIdle": 57.2,
+        "seconds": 1.0979950000000027
+      },
+      {
+        "sample": 29,
+        "ours": 43.86446886446886,
+        "topUser": 33.75,
+        "topSystem": 10.17,
+        "topBusy": 43.92,
+        "topIdle": 56.7,
+        "seconds": 1.0959264170000025
+      },
+      {
+        "sample": 30,
+        "ours": 45.37968892955169,
+        "topUser": 35.71,
+        "topSystem": 9.82,
+        "topBusy": 45.53,
+        "topIdle": 54.46,
+        "seconds": 1.0981078750000015
+      }
+    ],
+    "summary": {
+      "count": 30,
+      "oursMean": 43.85253564564926,
+      "topMean": 44.159666666666666,
+      "meanDifferencePercentagePoints": -0.30713102101740547,
+      "meanAbsoluteDifferencePercentagePoints": 0.31186878811008467,
+      "minDifference": -0.9646788990825783,
+      "maxDifference": 0.05782449725776928
+    }
+  },
+  "initialDiagnosticReadings": [
+    {
+      "sample": 1,
+      "anonymousBytes": 8745500672,
+      "purgeableBytes": 67829760,
+      "appBytes": 8677670912,
+      "wiredBytes": 11358339072,
+      "compressedBytes": 10132668416,
+      "cachedBytes": 3131785216,
+      "freeBytes": 69894144,
+      "appWiredCompressedBytes": 30168678400,
+      "anonymousWiredCompressedBytes": 30236508160,
+      "cpuPercent": 35.701275045537336,
+      "topUserPercent": 26.6,
+      "topSystemPercent": 10.32,
+      "topIdlePercent": 63.61,
+      "topBusyPercent": 36.92
+    },
+    {
+      "sample": 2,
+      "anonymousBytes": 7953760256,
+      "purgeableBytes": 72040448,
+      "appBytes": 7881719808,
+      "wiredBytes": 11308007424,
+      "compressedBytes": 10222551040,
+      "cachedBytes": 3191701504,
+      "freeBytes": 745979904,
+      "appWiredCompressedBytes": 29412278272,
+      "anonymousWiredCompressedBytes": 29484318720,
+      "cpuPercent": 64.07678244972578,
+      "topUserPercent": 46.24,
+      "topSystemPercent": 17.79,
+      "topIdlePercent": 35.95,
+      "topBusyPercent": 64.03
+    },
+    {
+      "sample": 3,
+      "anonymousBytes": 7580762112,
+      "purgeableBytes": 71827456,
+      "appBytes": 7508934656,
+      "wiredBytes": 11272241152,
+      "compressedBytes": 10215079936,
+      "cachedBytes": 3234250752,
+      "freeBytes": 1121058816,
+      "appWiredCompressedBytes": 28996255744,
+      "anonymousWiredCompressedBytes": 29068083200,
+      "cpuPercent": 37.06099815157117,
+      "topUserPercent": 25.87,
+      "topSystemPercent": 13.24,
+      "topIdlePercent": 60.87,
+      "topBusyPercent": 39.11
+    },
+    {
+      "sample": 4,
+      "anonymousBytes": 7618428928,
+      "purgeableBytes": 99106816,
+      "appBytes": 7519322112,
+      "wiredBytes": 11294294016,
+      "compressedBytes": 10213261312,
+      "cachedBytes": 3234627584,
+      "freeBytes": 1059405824,
+      "appWiredCompressedBytes": 29026877440,
+      "anonymousWiredCompressedBytes": 29125984256,
+      "cpuPercent": 20.53654024051804,
+      "topUserPercent": 10.22,
+      "topSystemPercent": 10.67,
+      "topIdlePercent": 79.9,
+      "topBusyPercent": 20.89
+    },
+    {
+      "sample": 5,
+      "anonymousBytes": 7724597248,
+      "purgeableBytes": 133382144,
+      "appBytes": 7591215104,
+      "wiredBytes": 11169939456,
+      "compressedBytes": 10212900864,
+      "cachedBytes": 3236249600,
+      "freeBytes": 1083277312,
+      "appWiredCompressedBytes": 28974055424,
+      "anonymousWiredCompressedBytes": 29107437568,
+      "cpuPercent": 20.498614958448755,
+      "topUserPercent": 9.49,
+      "topSystemPercent": 10.84,
+      "topIdlePercent": 79.65,
+      "topBusyPercent": 20.33
+    },
+    {
+      "sample": 6,
+      "anonymousBytes": 7711588352,
+      "purgeableBytes": 114507776,
+      "appBytes": 7597080576,
+      "wiredBytes": 11169103872,
+      "compressedBytes": 10210099200,
+      "cachedBytes": 3237003264,
+      "freeBytes": 1099857920,
+      "appWiredCompressedBytes": 28976283648,
+      "anonymousWiredCompressedBytes": 29090791424,
+      "cpuPercent": 21.935483870967744,
+      "topUserPercent": 11.54,
+      "topSystemPercent": 10.64,
+      "topIdlePercent": 77.81,
+      "topBusyPercent": 22.18
+    },
+    {
+      "sample": 7,
+      "anonymousBytes": 7591477248,
+      "purgeableBytes": 77217792,
+      "appBytes": 7514259456,
+      "wiredBytes": 11331305472,
+      "compressedBytes": 10209148928,
+      "cachedBytes": 3237986304,
+      "freeBytes": 1053343744,
+      "appWiredCompressedBytes": 29054713856,
+      "anonymousWiredCompressedBytes": 29131931648,
+      "cpuPercent": 15.157116451016636,
+      "topUserPercent": 9.74,
+      "topSystemPercent": 5.68,
+      "topIdlePercent": 84.56,
+      "topBusyPercent": 15.42
+    },
+    {
+      "sample": 8,
+      "anonymousBytes": 7622426624,
+      "purgeableBytes": 80412672,
+      "appBytes": 7542013952,
+      "wiredBytes": 11301191680,
+      "compressedBytes": 10207543296,
+      "cachedBytes": 3238215680,
+      "freeBytes": 1053474816,
+      "appWiredCompressedBytes": 29050748928,
+      "anonymousWiredCompressedBytes": 29131161600,
+      "cpuPercent": 17.5,
+      "topUserPercent": 11.65,
+      "topSystemPercent": 6.14,
+      "topIdlePercent": 82.2,
+      "topBusyPercent": 17.79
+    },
+    {
+      "sample": 9,
+      "anonymousBytes": 7652769792,
+      "purgeableBytes": 105758720,
+      "appBytes": 7547011072,
+      "wiredBytes": 11262935040,
+      "compressedBytes": 10206937088,
+      "cachedBytes": 3240181760,
+      "freeBytes": 1064026112,
+      "appWiredCompressedBytes": 29016883200,
+      "anonymousWiredCompressedBytes": 29122641920,
+      "cpuPercent": 13.745387453874539,
+      "topUserPercent": 8.34,
+      "topSystemPercent": 5.35,
+      "topIdlePercent": 86.29,
+      "topBusyPercent": 13.69
+    },
+    {
+      "sample": 10,
+      "anonymousBytes": 7600504832,
+      "purgeableBytes": 72105984,
+      "appBytes": 7528398848,
+      "wiredBytes": 11290591232,
+      "compressedBytes": 10204823552,
+      "cachedBytes": 3239723008,
+      "freeBytes": 1098711040,
+      "appWiredCompressedBytes": 29023813632,
+      "anonymousWiredCompressedBytes": 29095919616,
+      "cpuPercent": 14.391143911439114,
+      "topUserPercent": 9.3,
+      "topSystemPercent": 5.32,
+      "topIdlePercent": 85.36,
+      "topBusyPercent": 14.620000000000001
+    }
+  ]
+}

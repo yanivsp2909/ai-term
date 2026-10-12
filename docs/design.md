@@ -109,9 +109,9 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 - **Cards:** one per session, newest first, except that waiting agents always sort to the top.
 - **Card** (3 lines, 1 blank cell of padding):
   - Logo badge: 4 cols × 2 rows, surface-2 fill, two bold letters (CL Claude, GP GPT, KI Kimi, GR Grok, DS DeepSeek, GL GLM). Real logos come in the app (v0.5) and in terminals with image support.
-  - Line 1: name (bold when selected), right-aligned status glyph + age (`4m`, `2h`, `3d`).
+  - Line 1: name (bold when selected), right-aligned status glyph + word + age (`4m`, `2h`, `3d`).
   - Line 2: `model · engine` (ink-2), right-aligned `ctx NN%` (ink-3; status-waiting from 85%). ctx appears only when the engine reports it (v0.2+).
-  - Line 3, what it's doing:
+  - Line 3, auth for Claude/Codex: `own login · sub`, `own login · API key`, `own login`, or `API key ····last4`. Their status word stays on line 1; a red `!` marks Don't ask, with its full word in the selected preview title. Debug shell cards keep their existing activity line. Later activity details follow:
     - waiting: the question in status-waiting
     - running: the last activity in ink-3 (v0.1 shows the task you typed; live activity from v0.2)
     - done: `+N −M · ready to review`
@@ -147,10 +147,10 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 
 ### Command bar
 - **Field:** surface background with a line border. `›` in accent, your text, block cursor. Placeholder: `What do you want to build?` (ink-3).
-- **Line under it:** left, the defaults for the next agent: `model · engine   folder   permission   worktree` (worktree appears from v0.3). Right, the key hints. Keys appear only here, not repeated in panels.
+- **Line under it:** left, the defaults for the next agent: `model · engine   folder   auth   permission   worktree` (worktree appears from v0.3). Auth uses the next agent's `own login · sub/API key` or `key ····last4`; folder is clipped before auth. Right, the key hints. Keys appear only here, not repeated in panels.
 - **⏎ with text:** opens the **Start a new agent** box (below).
 - **⏎ with an empty field:** goes inside the selected agent.
-- **`/` at the start:** opens the command menu (`/model`, `/cd`, `/settings`, `/login`, `/exit`), filtered as you type.
+- **`/` at the start:** opens the filtered command menu. ↑↓ moves the selected-card highlight through commands, wrapping; typing resets to the first match. ⏎ picks the highlighted command; `/theme` inserts `/theme ` for its argument. Esc closes. Outside the menu ↑↓ selects agents.
 
 ### Start a new agent (box over the command bar)
 - **Box:** surface fill, accent border, title `Start a new agent`. Rows: model (+ `/model`), folder (+ `/cd`), branch (`auto` from v0.3), mode (`ask` · ⇥ toggles to `don't ask`, shown in status-error with `!`), first message ("your text above is its first message").
@@ -158,13 +158,12 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 - **After starting:** the new agent is selected and the preview shows it starting.
 
 ### /model picker
-- **Popup:** a scrim over the homepage and a surface box, title `Select model`, filter field.
-- **Groups:**
-  - **ANTHROPIC:** account models run on Claude Code; key models show `key ····last4`.
-  - **OPENAI:** account models run on Codex.
-  - **FOUNDRY · \<resource\>:** each tested deployment, with the key's last4.
-- **Each row:** model, engine (ink-2), auth (ink-3).
-- **Footer:** `account → official CLI · API key → AI Term's agent` (until v0.4: `→ Claude Code / Codex`).
+- **Popup:** surface box, title `Select model`, provider tabs on its top row, then filter and models.
+- **Tabs:** `ANTHROPIC · OPENAI · FOUNDRY · <resource>`; one Foundry tab per configured resource. Future keyed providers get their own tab. Opens on the current selected/default model's provider.
+- **Keys:** ←→ switch provider (Tab also moves right); ↑↓ select a model inside that provider; ⏎ selects; Esc returns without changing the selection.
+- **Filter:** typing searches model names across all providers, jumps to the first matching provider, and selects its first result. All provider tabs remain available. A custom valid ID in an Anthropic/OpenAI tab uses the CLI's own login; Foundry only lists tested ready deployments.
+- **Each row:** `model · engine · auth`. CLI-managed auth is `own login · sub`, `own login · API key`, or `own login` when unknown. Saved key rows stay `key ····last4`.
+- **Footer:** `own login → official CLI · API key → Claude Code / Codex` until v0.4.
 
 ### /cd
 A path field with completion. It sets the folder for the next agent only. A folder that doesn't exist or isn't a directory is an inline error.
@@ -202,7 +201,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 
 | Keys | Action |
 |---|---|
-| ↑ ↓ | select agent (preview follows) |
+| ↑ ↓ | slash menu: highlighted command; otherwise select agent (preview follows) |
 | ⏎ | empty field: go inside the selected agent · with text: start a new agent |
 | p | hide / show preview (only when the command field is empty) |
 | PgUp PgDn · End | scroll the preview · follow live |
