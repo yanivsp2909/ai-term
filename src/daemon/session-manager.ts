@@ -17,6 +17,7 @@ interface Live {
     host?: PtyHost;
     mirror: Mirror;
     output: Promise<void>;
+    mirrorFailed?:boolean;
     queuedBytes:number;
     paused:boolean;
     attached:boolean;
@@ -144,9 +145,11 @@ export class SessionManager extends EventEmitter {
             else live.host = new PtyHost(recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
             const host=live.host;if(!host)throw new Error('Spawn did not return a PTY');
             host.pty.onData(data => {
+                if(live.mirrorFailed)return;
                 const bytes=Buffer.byteLength(data);live.queuedBytes+=bytes;
                 this.updatePause(live);
                 live.output = live.output.then(async () => {
+                    if(live.mirrorFailed)return;
                     await live.mirror.write(data);
                     info.lastOutputAt = new Date().toISOString();
                     if (info.status === 'starting') {
@@ -157,7 +160,15 @@ export class SessionManager extends EventEmitter {
                         this.event({ kind: 'session.updated', session: { ...info } });
                     }
                     this.emit('output', info.id, Buffer.from(data));
-                }).catch(error => { this.log.error(`Mirror update failed: ${error instanceof Error ? error.message : 'unknown'}`); this.emit('fatal', error); }).finally(()=>{
+                }).catch(async () => {
+                    if(live.mirrorFailed)return;
+                    live.mirrorFailed=true;this.usage?.revoke(info.id);
+                    info.status='error';info.statusDetail='terminal mirror failed';info.exitCode=null;info.statusSince=new Date().toISOString();
+                    this.log.error('Session terminal mirror failed');
+                    await this.persist();this.event({kind:'session.updated',session:{...info}});
+                    // Stop the failed child without waiting on live.output, which is this very task.
+                    try{await host.stop();}catch{this.log.error('Failed to stop session after terminal mirror failure');}
+                }).finally(()=>{
                     live.queuedBytes-=bytes;
                     this.updatePause(live);
                 });
@@ -165,6 +176,7 @@ export class SessionManager extends EventEmitter {
             host.pty.onExit(event => {
                 this.usage?.revoke(info.id);
                 live.output = live.output.then(async () => {
+                    if(live.mirrorFailed)return;
                     // node-pty reports exitCode 0 for a killed child; only the signal tells a crash apart.
                     const crashed = Boolean(event.signal) && !live.host?.stopRequested;
                     info.exitCode = crashed ? null : event.exitCode;
@@ -173,7 +185,7 @@ export class SessionManager extends EventEmitter {
                     info.statusSince = new Date().toISOString();
                     await this.persist();
                     this.event({ kind: 'session.updated', session: { ...info } });
-                }).catch(error => { this.log.error(`Exit record failed: ${error instanceof Error ? error.message : 'unknown'}`); this.emit('fatal', error); });
+                }).catch(error => { this.log.error('Exit record failed'); this.emit('fatal', error); });
             });
         }
         catch (error) {
@@ -181,8 +193,8 @@ export class SessionManager extends EventEmitter {
             if(error instanceof KeyError){this.sessions.delete(info.id);live.mirror.dispose();throw error;}
             info.status = 'error';
             info.statusDetail = 'spawn failed';
-            // Agent spawn errors can include argv (the first message); retain details only for plain shells.
-            this.log.error(agent||telemetry?'PTY spawn failed for agent session':`PTY spawn failed: ${error instanceof Error ? error.message : 'unknown'}`);
+            // Spawn errors can include argv or child output, so keep diagnostics fixed for every session.
+            this.log.error('PTY spawn failed for session');
         }
         await this.persist();
         this.event({ kind: 'session.updated', session: { ...info } });
@@ -226,7 +238,7 @@ export class SessionManager extends EventEmitter {
             publish(snapshot,{cols,rows},live.mirror.modes());
             this.event({kind:'session.previewResized',sessionId:id,cols,rows});
         });
-        live.output=task.catch(error=>{this.log.error(`Attach failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
+        live.output=task.catch(()=>{this.log.error('Attach failed');});await task;
     }
     async detach(id:string,owned:()=>boolean):Promise<void> {
         const live=this.sessions.get(id);if(!live)return;
@@ -236,12 +248,12 @@ export class SessionManager extends EventEmitter {
             live.mirror.resize(this.size.cols,this.size.rows);live.host?.resize(this.size.cols,this.size.rows);
             this.event({kind:'session.previewResized',sessionId:id,...this.size});
         });
-        live.output=task.catch(error=>{this.log.error(`Attachment change failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
+        live.output=task.catch(()=>{this.log.error('Attachment change failed');});await task;
     }
     async resizeAttached(id:string,cols:number,rows:number,owned:()=>boolean):Promise<void> {
         const live=this.sessions.get(id);if(!live||!isSize(cols,rows))throw new Error('Invalid resize');
         const task=live.output.then(()=>{if(!owned())throw new Error('Not attached');live.mirror.resize(cols,rows);live.host?.resize(cols,rows);this.event({kind:'session.previewResized',sessionId:id,cols,rows});});
-        live.output=task.catch(error=>{this.log.error(`Attachment change failed: ${error instanceof Error?error.message:'unknown'}`);});await task;
+        live.output=task.catch(()=>{this.log.error('Attachment change failed');});await task;
     }
     async shutdown(): Promise<void> { this.closing = true; await Promise.all([...this.sessions.keys()].map(id => this.stop(id))); await this.saving; for (const live of this.sessions.values())
         live.mirror.dispose(); this.log.off('writeFailed', this.onLogFailure); this.log.off('writeRecovered', this.onLogRecovery); }

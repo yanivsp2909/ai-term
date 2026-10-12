@@ -113,25 +113,27 @@ describe('failures while running', () => {
   it('a PTY that cannot spawn becomes an error record, is saved, and can be removed', async () => {
     const paths = await home(), m = await manager(paths), events: unknown[] = [];
     m.on('event', event => events.push(event));
-    vi.spyOn(pty, 'spawn').mockImplementation(() => { throw new Error('posix_spawnp failed.'); });
+    vi.spyOn(pty, 'spawn').mockImplementation(() => { throw new Error('posix_spawnp failed. AITERMCANARY'); });
     const failed = await m.create({ cwd: paths.root });
     expect(failed).toMatchObject({ status: 'error', statusDetail: 'spawn failed', exitCode: null });
     expect(events).toContainEqual({ kind: 'session.updated', session: expect.objectContaining({ id: failed.id, status: 'error' }) });
     expect(JSON.parse(await readFile(paths.state, 'utf8')).sessions).toEqual([expect.objectContaining({ id: failed.id, status: 'error', pid: null })]);
     expect(m.sessionRoots()).toEqual([]);
     expect(m.activeCount()).toBe(0);
-    expect(await readFile(paths.log, 'utf8')).toContain('PTY spawn failed: posix_spawnp failed.');
+    expect(await readFile(paths.log, 'utf8')).toContain('PTY spawn failed for session');
+    expect(await readFile(paths.log, 'utf8')).not.toContain('AITERMCANARY');
     await m.remove(failed.id);
     expect(m.list()).toEqual([]);
   });
-  it('a mirror that fails to update reports a fatal error instead of hiding it', async () => {
+  it('a mirror that fails to update reports a session failure without a fatal event', async () => {
     const paths = await home(), m = await manager(paths), fatal = vi.fn();
     m.on('fatal', fatal);
-    vi.spyOn(Mirror.prototype, 'write').mockRejectedValue(new Error('parser crashed'));
-    await m.create({ cwd: paths.root });
-    await expect.poll(() => fatal.mock.calls.length).toBeGreaterThan(0);
-    expect(fatal.mock.calls[0]?.[0]).toBeInstanceOf(Error);
-    expect(await readFile(paths.log, 'utf8')).toContain('Mirror update failed: parser crashed');
+    vi.spyOn(Mirror.prototype, 'write').mockRejectedValue(new Error('parser crashed AITERMCANARY'));
+    const session = await m.create({ cwd: paths.root });
+    await expect.poll(() => m.get(session.id).status).toBe('error');
+    expect(fatal).not.toHaveBeenCalled();
+    expect(await readFile(paths.log, 'utf8')).toContain('Session terminal mirror failed');
+    expect(await readFile(paths.log, 'utf8')).not.toContain('AITERMCANARY');
   });
   it('lists only live PTYs as sampler roots and counts only starting or running sessions as active', async () => {
     const paths = await home(), m = await manager(paths);
@@ -172,7 +174,7 @@ describe('attach races', () => {
     const paths = await home(), m = await manager(paths), live = await m.create({ cwd: paths.root });
     await m.attach(live.id, 70, 20, () => undefined);
     await expect(m.resizeAttached(live.id, 90, 30, () => false)).rejects.toThrow('Not attached');
-    expect(await readFile(paths.log, 'utf8')).toContain('Attachment change failed: Not attached');
+    expect(await readFile(paths.log, 'utf8')).toContain('Attachment change failed');
     // The queue survives a refused change.
     expect(await m.snapshot(live.id)).toEqual(expect.any(String));
   });
