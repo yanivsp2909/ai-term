@@ -135,7 +135,7 @@ describe('SystemSampler', () => {
     sampler.setSubscribers(1);
     await vi.advanceTimersByTimeAsync(0);
     expect(events).toHaveLength(0); // the first sample is only a baseline for the deltas
-    await vi.advanceTimersByTimeAsync(2 * SAMPLE_INTERVAL_MS);
+    await vi.advanceTimersByTimeAsync(2000);
     expect(events).toHaveLength(2);
     const last = events.at(-1);
     expect(validateSystemStats(last)).toBeTruthy();
