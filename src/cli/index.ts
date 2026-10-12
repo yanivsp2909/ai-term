@@ -12,11 +12,6 @@ import { redact, Logger } from '../daemon/log.js';
 import { AttachError } from '../client/attach.js';
 import { ClientSignal } from '../client/signals.js';
 import {aiSubcommands,debugActions} from '../client/tui/commands.js';
-// A downstream pipe consumer may close between writes; stdout errors are asynchronous.
-process.stdout.on('error',(error:unknown)=>{
-    if(isFsError(error,'EPIPE'))process.exit(0);
-    process.stderr.write('Standard output failed\n');process.exit(1);
-});
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
 function usage(): void { process.stderr.write('Usage:\n'+aiSubcommands.map(command=>'  '+command).join('\n')+'\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
@@ -43,7 +38,13 @@ async function main(): Promise<void> {
     const stopDaemon = args.length === 2 && args[0] === 'daemon' && args[1] === 'stop';
     const debug = args[0] === 'debug';
     const action = args[1];
-    if(debug && action==='stats' && args.length===2){const {debugStats}=await import('./debug-stats.js');await debugStats();return;}
+    if(debug && action==='stats' && args.length===2){
+    // A downstream pipe consumer may close between writes; stdout errors are asynchronous.
+process.stdout.on('error',(error:unknown)=>{
+    if(isFsError(error,'EPIPE'))process.exit(0);
+    process.stderr.write('Standard output failed\n');process.exit(1);
+});
+const {debugStats}=await import('./debug-stats.js');await debugStats();return;}
     if (!stopDaemon && (!debug || action==='stats' || !debugActions.includes(action ?? '') || args.length > 3)) {
         usage();
         return;
