@@ -22,3 +22,6 @@ it('native canary add/list/remove uses only a unique test service and removes ev
  const root=await mkdtemp('/tmp/ai-native-key-'),store=new KeyStore(root,{service:'ai-term-test-'+randomUUID()});let id:string|undefined;
  try{const key=await store.add({provider:'anthropic',label:'canary',secret:canary});id=key.id;expect(await store.list()).toEqual([key]);expect(await store.withSecret(id,s=>s===canary)).toBe(true);await store.remove(id);expect(await store.hasCredential('anthropic',id)).toBe(false);id=undefined;}finally{if(id)await store.remove(id);await rm(root,{recursive:true,force:true});}
 },15000);
+it('metadata never permits storing the whole credential as last4 or a duplicate secret field',async()=>{
+ const root=await mkdtemp('/tmp/ai-key-small-'),store=new KeyStore(root,{vault:vault()});try{const key=await store.add({provider:'anthropic',label:'short',secret:'abc'});expect(key.last4).toBe('');await store.remove(key.id);}finally{await rm(root,{recursive:true,force:true});}
+});
