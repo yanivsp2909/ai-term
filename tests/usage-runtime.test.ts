@@ -1,4 +1,4 @@
-import {expect,it} from 'vitest';
+import {expect,it,vi} from 'vitest';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -11,6 +11,10 @@ it('ingests authorized usage with price table, discards private attributes, revo
  service.revoke(sessionId);expect((await fetch(`http://127.0.0.1:${telemetry.port}/v1/logs`,{method:'POST',headers:{'content-type':'application/json','x-ai-term-session':telemetry.credential},body:'{}'})).status).toBe(401);
  const text=await readFile(join(root,'usage',new Date().toISOString().slice(0,7)+'.jsonl'),'utf8');expect(text+JSON.stringify(diagnostics)+JSON.stringify(service.summary())+logs.join('')).not.toMatch(/AITERMCANARY|fake@example/);expect(text+JSON.stringify(diagnostics)).not.toContain(telemetry.credential);
  }finally{await service.close();await rm(root,{recursive:true,force:true});}
+});
+it('publishes the changed local-day summary at midnight without another export',async()=>{
+ const root=await mkdtemp('/tmp/ai-usage-midnight-'),service=new UsageService(root,{error:()=>{}}),updates:unknown[]=[];
+ try{vi.useFakeTimers({toFake:['Date','setTimeout','clearTimeout']});vi.setSystemTime(new Date(2026,9,31,23,59,59));await service.start();service.on('updated',summary=>updates.push(summary));await vi.advanceTimersByTimeAsync(1000);expect(updates).toHaveLength(1);expect(updates[0]).toEqual(service.summary());}finally{await service.close();vi.useRealTimers();await rm(root,{recursive:true,force:true});}
 });
 it('concurrent repeated cumulative exports are counted once and candidates remain numeric-only',async()=>{
  const root=await mkdtemp('/tmp/ai-usage-concurrent-'),service=new UsageService(root,{error:()=>{}});
