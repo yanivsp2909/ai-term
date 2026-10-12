@@ -5,6 +5,8 @@ import type { KeyProvider, KeyView, DeploymentTest } from '../shared/protocol.js
 import { ENV_KEY_NAMES, isEndpoint, isSecret, isUUID, validateKeyView, validateDeploymentTests } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
 export class KeyError extends Error {}
+// Real provider keys are far longer; below this, four characters would give away too much of the secret.
+const MIN_SUFFIX_SECRET=16;
 export interface KeyVault { read(account:string):Promise<string|null>; write(account:string,secret:string):Promise<void>; remove(account:string):Promise<void> }
 function nativeVault(service:string):KeyVault {
  const entry=async(account:string)=>{const {AsyncEntry}=await import('@napi-rs/keyring');return new AsyncEntry(service,account,{linux:{store:'secret-service'}});};
@@ -24,7 +26,7 @@ export class KeyStore {
  async add(request:{provider:KeyProvider;label:string;secret:string;endpoint?:string;deployments?:string[]}):Promise<KeyView>{
   if(!isSecret(request.secret))throw new KeyError('Invalid key details');
   if([request.label,request.endpoint,...request.deployments??[]].some(value=>typeof value==='string'&&value.includes(request.secret)))throw new KeyError('Key details must not contain the secret');
-  const key=validateKeyView({id:randomUUID(),provider:request.provider,label:request.label,last4:request.secret.length>4?request.secret.slice(-4):'',...(request.endpoint!==undefined?{endpoint:request.endpoint}:{}),...(request.deployments!==undefined?{deployments:request.deployments}: {})});
+  const key=validateKeyView({id:randomUUID(),provider:request.provider,label:request.label,last4:request.secret.length>=MIN_SUFFIX_SECRET?request.secret.slice(-4):'',...(request.endpoint!==undefined?{endpoint:request.endpoint}:{}),...(request.deployments!==undefined?{deployments:request.deployments}: {})});
   if(key.provider==='foundry'&&(!isEndpoint(key.endpoint)||!key.deployments?.length))throw new KeyError('Foundry needs an endpoint and deployments');
   const account=`${key.provider}:${key.id}`;
   return this.serial(async()=>{
@@ -50,7 +52,8 @@ export class KeyStore {
    const entries=new Map<string,string>();for(const line of (await file.readFile('utf8')).split(/\r?\n/)){
     const m=line.match(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);if(!m)continue;
     const name=m[1]??'';if(!Object.hasOwn(ENV_KEY_NAMES,name)&&!['AZURE_OPENAI_ENDPOINT','AZURE_OPENAI_DEPLOYMENT'].includes(name))continue;
-    let value=m[2]??'';if(value.startsWith('"')&&value.endsWith('"')||value.startsWith("'")&&value.endsWith("'"))value=value.slice(1,-1);else value=value.replace(/\s+#.*$/,'');
+    // A quoted value may carry a trailing comment (KEY="v" # note); the quotes must still go.
+    const raw=m[2]??'',quoted=raw.match(/^(["'])(.*)\1(?:\s+#.*)?$/),value=quoted?(quoted[2]??''):raw.replace(/\s+#.*$/,'');
     if(entries.has(name))throw new KeyError('Env file contains duplicate import fields');entries.set(name,value);
    }return entries;
   }finally{await file.close();}
@@ -63,6 +66,11 @@ export class KeyStore {
    const endpoint=entries.get('AZURE_OPENAI_ENDPOINT'),deployment=entries.get('AZURE_OPENAI_DEPLOYMENT');
    if(provider==='foundry'&&(!endpoint||!deployment))throw new KeyError('Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT');
    created.push(await this.add({provider,label:name,secret,...(provider==='foundry'?{endpoint,deployments:[deployment??'']}: {})}));
-  }return created;}catch(error){for(const key of created)await this.remove(key.id);throw error;}finally{entries.clear();}
+  }return created;}catch(error){
+   // Every created entry gets its own rollback attempt, and a rollback failure never hides why the import failed.
+   let orphans=0;for(const key of created){try{await this.remove(key.id);}catch{orphans++;}}
+   if(orphans)throw new KeyError(`Import failed and ${orphans} new key${orphans>1?'s':''} could not be removed; remove ${orphans>1?'them':'it'} in /settings or Keychain Access`);
+   throw error;
+  }finally{entries.clear();}
  }
 }
