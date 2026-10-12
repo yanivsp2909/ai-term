@@ -31,7 +31,7 @@ it('S7 key rows set only own secret and strip other own-provider credentials',()
 });
 it('S9/S10 builds argv only with validated model, positional first message and explicit per-session permissions',()=>{
  for(const engine of ['claude-code','codex'] as const){
-  const daemon=engine==='codex'?['--no-daemon']:[];
+  const daemon=engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false']:[];
   const ask=engine==='claude-code'?['--permission-mode=default']:['--ask-for-approval=on-request','--sandbox=workspace-write'];
   const dontAsk=engine==='claude-code'?['--permission-mode=bypassPermissions']:['--ask-for-approval=never','--sandbox=workspace-write'];
   expect(buildArgs({engine,model:null,permission:'ask'})).toEqual([...daemon,...ask]);
@@ -59,6 +59,16 @@ it('B2/D41 every Codex argv starts with exactly one --no-daemon, which Codex rej
   const codex=buildArgs({engine:'codex',...request});
   expect(codex[0]).toBe('--no-daemon');expect(codex.filter(arg=>arg==='--no-daemon')).toHaveLength(1);
   if(!foundry)expect(buildArgs({engine:'claude-code',...request})).not.toContain('--no-daemon');
+ }
+});
+it('B5 every Codex argv skips the startup update check, whose menu takes Enter as "Update now"; Claude never gets it',()=>{
+ const foundryEndpoint='https://example.openai.azure.com/openai/v1';
+ for(const permission of ['ask','dontAsk'] as const)for(const model of [null,'deployment'])for(const firstMessage of [undefined,'reply with ok'])for(const foundry of [false,true]){
+  if(foundry&&model===null)continue;
+  const request={model,permission,...firstMessage===undefined?{}:{firstMessage},...foundry?{foundryEndpoint}:{}};
+  const codex=buildArgs({engine:'codex',...request});
+  expect(codex.slice(0,3)).toEqual(['--no-daemon','-c','check_for_update_on_startup=false']);expect(codex.filter(arg=>arg.includes('check_for_update_on_startup'))).toHaveLength(1);
+  if(!foundry)expect(buildArgs({engine:'claude-code',...request}).join(' ')).not.toContain('check_for_update_on_startup');
  }
 });
 it('Foundry args carry validated endpoint and env variable name, never secret, and use no-daemon',()=>{
