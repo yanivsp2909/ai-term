@@ -3,8 +3,8 @@ import { homedir } from 'node:os';
 import type { RequestBody } from '../connection.js';
 import { attach, type AttachReason } from '../attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
-import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats } from '../../shared/validate.js';
+import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats, UsageSummary, Budgets } from '../../shared/protocol.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets } from '../../shared/validate.js';
 import { redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
 import { CommandField, InputParser, type InputEvent } from './keys.js';
@@ -17,6 +17,7 @@ import { CredentialsPanel } from './credentials.js';
 import { modelChoices, ownLoginLabel } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
+import { BudgetForm, PriceForm, drawUsageForm } from './usage-forms.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
@@ -76,6 +77,8 @@ export class Homepage {
   private stats: SystemStats | null = null;
   private cpuHistory: number[] = [];
   private statsOn = false;
+  private usageOn=false;private usage:UsageSummary|null=null;private budgets:Budgets={daily:null,weekly:null,monthly:null};
+  private usageForm?:BudgetForm|PriceForm;private usageFormError='';
   private disconnected = false;
   private readonly parser: InputParser;
   private readonly replies: BackgroundReplies;
@@ -95,6 +98,7 @@ export class Homepage {
     try {
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
+      this.budgets=validateBudgets(settings.budgets??{});
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
       if(settings.defaultCwd && await validCwd(settings.defaultCwd))this.folder=settings.defaultCwd;
@@ -107,7 +111,7 @@ export class Homepage {
       const engines=(await this.connection.request({kind:'engines.status'})).engines;this.engines=engines;
       this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];
       if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length)await this.openCredentials('login');
-      this.draw(true);await this.updatePreview(true);await this.subscribeStats(true);
+      this.draw(true);await this.updatePreview(true);await this.subscribeStats(true);await this.subscribeUsage(true);
     } catch (error) { await this.stop(error instanceof Error ? error : new Error('Homepage failed')); throw error; }
   }
   private enter(): void {
@@ -130,13 +134,14 @@ export class Homepage {
   }
   async stop(error?: Error): Promise<void> {
     if (this.ended) return;
-    this.ended = true; this.loading = null; this.credentials?.dispose();
+    this.ended = true; this.loading = null; this.credentials?.dispose();this.usageForm=undefined;
     if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve?.();
     if (this.noteTimer) clearTimeout(this.noteTimer);
     this.connection.off('event', this.onEvent); this.connection.off('output', this.onOutput); this.connection.off('disconnected', this.onDisconnect);
     for (const [name, guard] of this.guards) this.signals.off(name, guard);
     try { this.leave(); } catch (cleanupError) { error ??= cleanupError instanceof Error ? cleanupError : new Error('Terminal restore failed'); }
     for (const preview of this.previews.values()) preview.dispose(); this.previews.clear();
+    if(this.usageOn){this.usageOn=false;void this.connection.request({kind:'usage.subscribe',on:false}).catch(()=>undefined);}
     if (this.statsOn && !this.disconnected) {
       this.statsOn = false;
       // Not awaited: quitting never waits on a slow daemon. The CLI closes the connection right after, and the
@@ -181,13 +186,14 @@ export class Homepage {
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
     if (event.kind === 'mouse') { this.mouse(event); return; }
-    if (event.kind === 'paste') { if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});} else if (this.box) this.boxText(event.text); else {this.field.paste(event.text);this.menuChoice=0;} this.draw(true); return; }
+    if (event.kind === 'paste') { if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});} else if(this.usageForm){this.usageForm.paste(event.text);} else if (this.box) this.boxText(event.text); else {this.field.paste(event.text);this.menuChoice=0;} this.draw(true); return; }
     if (event.key === 'ctrl-c') {
       const action = this.field.key('ctrl-c');
       if (action.kind === 'quit') void this.stop();
       else if (action.kind === 'note') this.showNote(action.text, 1000);
       return;
     }
+    if(this.usageForm){const form=this.usageForm;if(event.key==='escape'){this.usageForm=undefined;this.usageFormError='';}else if(event.key==='enter')this.enqueue(async()=>{try{if(form instanceof BudgetForm){const budgets=form.values();await this.connection.request({kind:'settings.set',patch:{budgets}});this.budgets=budgets;}else{const {model,price}=form.values(),settings=(await this.connection.request({kind:'settings.get'})).settings;await this.connection.request({kind:'settings.set',patch:{priceOverrides:{...settings?.priceOverrides,[model]:price}}});}this.usageForm=undefined;}catch(error){this.usageFormError=error instanceof Error?error.message:'Settings could not save';}this.draw(true);});else form.key(event.key);this.draw(true);return;}
     if(this.credentials){const panel=this.credentials;if(event.key==='escape'){panel.dispose();this.credentials=undefined;this.draw(true);}else this.enqueue(()=>panel.key(event.key));return;}
     if (this.box) { this.boxInput(event.key); return; }
     if (this.confirmId) {
@@ -216,6 +222,7 @@ export class Homepage {
         this.field.text='';this.menuChoice=0;this.enqueue(()=>this.submit(command));return;
       }
     }
+    if(event.key==='b'&&!this.field.text){this.usageForm=new BudgetForm(this.budgets);this.draw(true);return;}
     const beforeText=this.field.text, action = this.field.key(event.key);
     if(this.field.text!==beforeText)this.menuChoice=0;
     switch (action.kind) {
@@ -261,6 +268,7 @@ export class Homepage {
     const panel=new CredentialsPanel(kind,{
       request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.draw(true);},
       login:async engine=>{const response=await this.connection.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:this.folder,permission:'ask',login:true,title:engine==='codex'?'Codex login':'Claude login'});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.credentials=undefined;await this.openSelected();},
+      price:()=>{this.credentials=undefined;this.usageForm=new PriceForm();this.draw(true);},
       defaults:kind=>{this.credentials=undefined;this.openBox(kind);this.savingDefault=true;},
       theme:async theme=>{await this.submit('/theme '+theme);},
     });this.credentials=panel;this.draw(true);await panel.load();
@@ -380,6 +388,9 @@ export class Homepage {
       this.backgroundTimer = setTimeout(() => this.backgroundResolve?.(), 200); this.stdout.write(BACKGROUND_QUERY);
     });
   }
+  private async subscribeUsage(on:boolean):Promise<void>{
+    if(this.ended||this.usageOn===on)return;this.usageOn=on;try{await this.connection.request({kind:'usage.subscribe',on});if(on){const usage=(await this.connection.request({kind:'usage.summary'})).usage;if(usage)this.usage=validateUsageSummary(usage);this.draw(true);}}catch{this.usageOn=false;this.showNote('Usage unavailable');}
+  }
   // This Mac samples run in the daemon only while someone subscribes (architecture §10).
   private async subscribeStats(on: boolean): Promise<void> {
     if (this.ended || this.statsOn === on) return;
@@ -445,6 +456,7 @@ export class Homepage {
       if (!value || typeof value !== 'object') throw new Error('Invalid daemon event');
       const v = value as Record<string, unknown>;
       if (v.kind === 'system.stats') { this.onStats(v.stats); return; }
+      if(v.kind==='usage.updated'){this.usage=validateUsageSummary(v.usage);this.draw(true);return;}
       if (v.kind === 'session.updated') {
         const session = validateSession(v.session), index = this.sessions.findIndex(s => s.id === session.id);
         if (index >= 0) this.sessions[index] = session; else this.sessions.push(session);
@@ -471,7 +483,7 @@ export class Homepage {
     if (session && (session.status === 'exited' || session.status === 'error')) { this.showNote(`${session.title} has exited · x removes it`); return; }
     if (!id || !this.options.attachSession) { this.showNote(id ? 'Attach unavailable' : 'No session selected'); return; }
     await this.connection.request({ kind: 'sessions.preview', sessionId: null }); this.previewId = null; this.loading = null;
-    await this.subscribeStats(false);
+    await this.subscribeStats(false);await this.subscribeUsage(false);
     this.attached = true; this.leave();
     let note = '';
     try { const reason = await this.options.attachSession(id); if (reason !== 'home key') note = reason; }
@@ -481,7 +493,7 @@ export class Homepage {
     if (this.pendingSignal) throw this.pendingSignal;
     this.enter();
     const result = await this.connection.request({ kind: 'sessions.list' }); this.sessions = (result.sessions ?? []).map(validateSession);
-    await this.updatePreview(true); await this.subscribeStats(true); this.showNote(note);
+    await this.updatePreview(true); await this.subscribeStats(true);await this.subscribeUsage(true); this.showNote(note);
   }
   private mouse(event: Extract<InputEvent, { kind: 'mouse' }>): void {
     const layout = homepageLayout(this.size().cols, this.size().rows, this.visible), area = layout.terminal, preview = this.currentPreview();
@@ -516,9 +528,10 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.text, note: this.note, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,usage:this.usage,budgets:this.budgets }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
+      if(this.usageForm)grid=drawUsageForm(grid,this.usageForm.lines(),this.usageFormError,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
       if (output) this.blocked = !this.stdout.write(output);
     } catch (error) { this.onError(error); }

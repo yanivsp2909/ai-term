@@ -6,7 +6,7 @@ import { Grid, type Frame } from './grid.js';
 import type { Theme } from './theme.js';
 interface Actions {
  request(body:RequestBody):Promise<SuccessResponse>;changed():void;close():void;
- login(engine:AgentEngine):Promise<void>;defaults(kind:'model'|'folder'):void;theme(theme:ThemeName):Promise<void>;
+ login(engine:AgentEngine):Promise<void>;defaults(kind:'model'|'folder'):void;price?():void;theme(theme:ThemeName):Promise<void>;
 }
 const providers:readonly [string,KeyProvider][]=[['Anthropic','anthropic'],['OpenAI','openai'],['Microsoft Foundry','foundry']];
 const themes:ThemeName[]=['graphite','slate','ink','auto','light'];
@@ -40,6 +40,7 @@ export class CredentialsPanel {
    if(key==='a'||key==='+'){this.screen='providers';this.choice=0;this.actions.changed();return;}
    if(key==='i'){this.screen='import';this.path='';this.message='';this.actions.changed();return;}
    if(key==='l'){this.screen='providers';this.choice=0;this.actions.changed();return;}
+   if(key==='p'){this.actions.price?.();return;}
    if(key==='d'||key==='f'){this.actions.defaults(key==='d'?'model':'folder');return;}
    if(key==='tab'){this.busy=true;try{const settings=(await this.actions.request({kind:'settings.get'})).settings;const index=themes.indexOf(settings?.theme??'graphite');await this.actions.theme(themes[(index+1)%themes.length]??'graphite');this.message='Theme saved';}catch{this.message='Theme could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    const selected=this.keys[this.choice];if(selected&&(key==='x'||key==='t'||key==='enter')){this.busy=true;try{if(key==='x'){await this.actions.request({kind:'keys.remove',keyId:selected.id});this.message='Key removed from the OS keychain';}else{const r=await this.actions.request({kind:'keys.test',keyId:selected.id});this.message=(r.results??[]).map(r=>`${r.model}: ${r.status}${r.httpStatus?' '+r.httpStatus:''}${r.errorCode?' '+r.errorCode:''}`).join(' · ');}this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}catch{this.message='Key operation failed';}finally{this.busy=false;this.actions.changed();}return;}
@@ -69,7 +70,7 @@ export class CredentialsPanel {
    for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${k.provider} · key ····${k.last4}${k.endpoint?' · '+k.endpoint:''}`);
    lines.push(action(0,'+ add key (a)'),action(1,'import from .env (i)'),action(2,'login (l)'),'ENGINES');
    for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(`${name}: ${status?.installed?'✓ installed':'✗ not installed'} · ${status?.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status?.authMethod)}`);
-   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),'keys are never shown in full and never written to .env');
+   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),'Foundry input/output price per 1M · p override','keys are never shown in full and never written to .env');
   }
   if(this.screen==='import')lines.push('Import from .env',`path: ${this.path}█`,'Names only are shown; source file is never modified');
   if(this.screen==='names')lines.push('Select names to import',...this.names.map((n,i)=>`${i===this.choice?'›':' '} [${this.selected.has(n.name)?'x':' '}] ${n.name} · ${n.provider}`),'↑↓ select · Space toggle · ⏎ import');
