@@ -1,38 +1,53 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: 0f61c8e chore: note why the width-table stand-in typechecks
-Roadmap step: v0.1.6g done (three bug fixes and a docs sync). v0.1.6 is still partial: its live checks need Yaniv.
-Branch: main, started from 2ee2353 (clean, 165 tests). This handover is committed last; its own hash is in git log.
+Last commit: 2849af6 docs: record the This Mac gate range across runs
+Roadmap step: v0.1.8a done (This Mac panel: machine CPU, RAM, network, plus per-agent CPU and RAM). v0.1.6 is still partial: its live checks need Yaniv.
+Branch: main, started from 3fb93e3 (clean, 168 tests). This handover is committed last; its own hash is in git log.
 
 ## What works
-- **WIDTH: emoji and wide characters line up.**
-  - The daemon mirror, the homepage preview mirror and the homepage grid now all count cells with `@xterm/addon-unicode11` (`src/shared/unicode-width.ts`). Before, the mirrors used xterm's built-in Unicode 6 table and the grid used its own regex, so the three disagreed.
-  - Test: `tests/unicode-width.test.ts` runs the spike's emoji and CJK demo through mirror → snapshot → preview → grid → `diffFrame` → a Unicode 11 terminal, and checks every cell.
-  - Commits: 6f9a5d1 (dependency), 8806d6e (test), d1a6be1 (fix).
-- **B4: theme-change reports are turned off after a session.** `RESET_MODES` now sends `?2031l`. Every exit path that checks reset bytes also checks it: 8 attach reasons, real Ctrl+E from vim, homepage quit, crash and hand-off. Commits: d089f8f (test), 8b68315 (fix).
-- **B5: Codex never opens on its update menu.**
-  - Every Codex argv starts `--no-daemon -c check_for_update_on_startup=false`. That setting is Codex's own: `codex-rs/config/src/config_toml.rs` at `rust-v0.160.1`, default true. When it's false, `get_upgrade_version` returns nothing, so neither the menu nor the banner appears.
-  - Commits: 447b4c2 (test), 545432e (fix; it also updates the spawn-level argv stub).
-  - Live check, run through AI Term's own daemon from a temp `AI_TERM_HOME` and a temp folder:
-    - Codex 0.160.1 reached its main screen with no menu and no banner, although 0.162.1 is available.
-    - The spike's earlier screens without the flag showed "Update available · 0.160.1 → 0.162.1".
-    - No prompt was sent. Ctrl+C quit Codex, and the temp daemon was stopped.
-- **Docs sync (b591904):**
-  - Added D36–D39 and D42–D45 to the decisions log, and `--approve-for-me` to §7.2's never-passed list.
-  - One line each for the width table (§5) and the update-check flag (§7.2).
-  - 6f5ef1b adds `--approve-for-me` to the test's forbidden-flag list.
-- **Review follow-ups:** 9780922 (textCells checked against a real Unicode 11 xterm on 10 edge cases: marks, VS16, skin tone, flag, keycap, Thai) and 0f61c8e (comment on the stand-in typings). code-reviewer found no critical, high or medium issues.
-- **Checks on this branch:** build success; typecheck exit 0; lint "No issues found"; tests 31 files, 168 passed.
+- **Contract:** `system.subscribe {on}` → `{ok}` and the event `system.stats {stats}`, numbers only (`src/shared/protocol.ts`, eb61fd1).
+  - `stats` = `{cpuPercent, memUsedBytes, memTotalBytes, netRxBytesPerSec, netTxBytesPerSec, sessions: [{sessionId, cpuPercent, rssBytes}]}`.
+  - `validateSystemStats` accepts exact keys only. The daemon checks every sample with it before sending, and the homepage checks every event on arrival.
+- **Sampler (`src/daemon/sysstats.ts`, 192a2a1):**
+  - Every 2 s, only while at least one client is subscribed. It stops on the last unsubscribe or disconnect.
+  - Three commands, run with `execFile`: absolute paths, argv arrays, 2 s timeout, 1 MiB output cap.
+  - Per session: `ps` process tree, PTY child plus all descendants, as a share of the whole machine.
+  - Machine CPU from `os.cpus()` deltas.
+  - RAM from `vm_stat` (active + wired + compressor) out of `os.totalmem()`.
+  - Network from `netstat -ibn` link-row deltas (non-loopback, never negative).
+  - Pure parsers with tests on recorded output, including malformed lines and a ps line carrying a command line.
+- **Daemon wiring (e02bd33):** per-peer subscription flag; events go only to subscribed peers; `SessionManager.sessionRoots()` gives the live PTY pids.
+- **Homepage (044e066):**
+  - This Mac, exactly per design.md: `CPU 31% ▃▃▄▅▆▇▇██▃  agents 19%`, `RAM 14.2/32 GB  agents 2.3 GB`, `NET ↓ 1.4 MB/s  ↑ 0.2 MB/s`. The client keeps 10 samples for the sparkline.
+  - Per-agent usage `cpu 4% · 310 MB` (ink-3) sits at the right of the selected agent's preview header. design.md is silent on where, so this is the choice; it's recorded in design.md. Cards are unchanged.
+  - Subscribes on open; unsubscribes before attach and on quit; resubscribes on return.
+  - Redraws only when a sample arrives.
+- **Review fixes (08b7046):**
+  - A sample still running when sampling stops leaves no baseline.
+  - `server.close()` can't restart sampling.
+  - Numbers clear on unsubscribe, so no stale values show after attach.
+  - A failed subscribe shows a note instead of closing the homepage.
+  - Quit doesn't await the unsubscribe.
+- **Performance gate:** own daemon from `dist`, temp home under /tmp, 3 live shell sessions.
+  - Subscribed for 60 s: 0.32% of one core on the final code. Earlier runs gave 0.13% and 0.18%. The gate is under 1%.
+  - No subscriber for 30 s: kqueue `NOTE_FORK` on the daemon pid counted 0 spawns. While subscribed it counted 87 per 60 s (29 samples × 3 commands), which shows the detector works.
+- **Security checks:**
+  - The only new spawn is `src/daemon/sysstats.ts:118`: `execFile`, absolute path from `SAMPLE_COMMANDS`, argv array. There are no `exec(`, `execSync(` or `shell: true` in `src`.
+  - Fake ps output with a command line never reaches events, logs or responses (unit and server tests). Real ps against a live `sleep` session never shows "sleep".
+  - `system.subscribe` is validated (non-boolean, missing or extra fields are rejected).
+- **Checks:** build success; typecheck exit 0; lint "No issues found"; tests 34 files, 192 passed. Coverage: statements 86.16%, branches 78.08%, functions 87.15%, lines 92.28%.
 
 ## What's next
 - Yaniv runs the manual checks below. When the v0.1.6f ones pass, mark v0.1.6 done and go on to v0.1.7 (login/keys).
-- D39 is pinned (bar spike passed). The bar's build step comes in v0.2. The Unicode 11 precondition from the spike is now met.
+- v0.1.8b: usage and cost (D45). Not started.
 
 ## Manual checks
-- Emoji line in a session preview lines up (commands in the final report of this session): needs Yaniv.
-- B5 Codex live start with no update menu, temp `AI_TERM_HOME`: ran (main screen, no menu, no banner, Ctrl+C quit).
-- B4 in a real terminal: after Ctrl+E from Claude Code, switching macOS dark/light sends nothing into the shell: needs Yaniv.
+- This Mac numbers move with a busy shell session, temp `AI_TERM_HOME` (commands in the final report of this session): needs Yaniv.
+- Performance gate and no-subscriber spawn count: ran (numbers above).
+- Carried from v0.1.6g, all need Yaniv:
+  - emoji line in a session preview lines up
+  - B4: after Ctrl+E from Claude Code, switching dark/light sends nothing into the shell
 - Carried from v0.2.1b, all need Yaniv: bar feel test; htop; kitty keyboard in Ghostty/iTerm2; real-terminal emoji widths.
 - Carried from v0.1.6f, all need Yaniv (commands in `docs/testing/v0.1.6f-fixes.md`):
   - Codex account reply with no Azure error
@@ -43,23 +58,25 @@ Branch: main, started from 2ee2353 (clean, 165 tests). This handover is committe
   - title, palette and cursor after Ctrl+E and `/exit`
 
 ## Gotchas
-- **Unicode 11 is not grapheme-aware.** A skin-tone emoji (👍🏽) is 4 cells, a ZWJ family is 2 cells per person, and ❤️ and flags are 1 cell per code point. The three AI Term counters agree with each other. Agents (Claude Code's string-width) and some terminals draw these sequences 2 wide, so lines with them can still drift in a real terminal. Plain emoji (🧪, 🧠) and CJK now match. `@xterm/addon-unicode-graphemes` would be the next step, but it's a new dependency.
-- **A running daemon keeps its old mirror code.** Widths only change for sessions in a daemon started after this commit. Test with a temp `AI_TERM_HOME`, or restart the daemon.
-- **The addon hands its width table only to `terminal.unicode.register`.** `src/shared/unicode-width.ts` captures it once from a stand-in object, so `Grid.text` uses the exact table the mirrors use. Its typings import `@xterm/xterm`, which isn't installed (`skipLibCheck` hides that), like `@xterm/addon-serialize`.
-- **Codex `-c check_for_update_on_startup=false`** sits right after `--no-daemon` in `src/daemon/env.ts`, which stays the only place either flag is added.
-- **Codex shows "⚠ 1 warning · f2 to view"** in its footer. It did so before this change too (v0.2.1b screens), so it isn't the new flag. Not examined, because reading it means pressing F2 in a session.
-- **Idle Codex TUIs:** two `codex --no-daemon` processes not started by this session (PIDs 35182 and 97340) were running throughout. They were left alone.
+- **ps `%cpu` is a decaying average,** not an instant value, so per-agent and "agents" CPU lag a few seconds. They can briefly disagree with machine CPU, which comes from `os.cpus()` deltas.
+- **Network counts every non-loopback interface,** so VPN traffic is counted twice (on `utun*` and on the physical interface).
+- **The first event comes about 2 s after subscribing:** the first sample is only a baseline. The panel shows `—` until then, including after returning from a session.
+- **A running daemon keeps its old code.** Test This Mac with a temp `AI_TERM_HOME`, or restart the daemon.
+- **Interactive shells ignore SIGTERM.** Stopping a daemon with live shell sessions takes about 3 s (SIGKILL after the timeout), so test scripts must wait for it.
+- **A 25 ms `ps` poller can't see sampler children:** each one exits in a few ms. kqueue `NOTE_FORK` on the daemon pid is exact and needs no root (python3 `select.kqueue`).
+- **ESLint bans any `.exec` property,** including `RegExp.exec`. Use `String.match`.
 - **Earlier gotchas still apply:**
   - The Bash tool runs zsh (no `timeout`).
   - Always filter `codex login status`.
   - Claude's `--permission-mode=default` alias.
   - Never script Enter into Codex or Claude.
-- **Branch coverage** is still below 80% (77.09%); statement 85.27%, function 86.05%, line 91.51%.
+  - Unicode 11 isn't grapheme-aware: skin tones, ZWJ families and flags count per code point.
+- **Branch coverage** is still below 80% (78.08%, up from 77.09%).
 
 ## New dependencies
-- `@xterm/addon-unicode11` 0.9.0, the release that matches `@xterm/headless` 6.0.0: the platform's own table (xterm's built-in Unicode 6) counts most emoji as 1 cell, while agents draw them 2 wide. The spike measured 25 misplaced cells on one line. A hand-written table would be a copy of this one to maintain.
+- None.
 
 ## Concepts introduced
-- **Unicode width table** (`src/shared/unicode-width.ts`): a terminal has no font metrics. It decides how many columns a character takes from a table of code points (East Asian wide = 2, combining marks = 0, the rest = 1). If the program and the terminal use different tables, every character after the disagreement lands in the wrong column. So AI Term uses one table everywhere it counts.
-- **xterm-style cell splitting** (`textCells`): xterm doesn't use grapheme clusters. It gives each code point its own cell, except that a zero-width code point (accent, VS16, ZWJ) joins the cell before it. `Grid.text` now splits the same way, so text the homepage draws itself and text from a mirror take the same cells.
-- **Turning off an update check per session** (`src/daemon/env.ts`): `-c key=value` overrides one Codex config key for that run only, without touching `~/.codex/config.toml`. AI Term uses it to stop the update menu without changing the user's own Codex settings.
+- **Subscribe-to-sample** (`src/daemon/server.ts`, `src/daemon/sysstats.ts`): the daemon measures the machine only while a homepage is looking. Each connection has a flag, and the sampler runs while any flag is set. Closing a connection clears its flag, so a crashed client can't leave sampling on.
+- **Process-tree sums** (`sessionUsage`): an agent is a tree of processes (shell → claude → node → tools). ps lists each process with its parent, so the daemon walks down from each session's PTY child and adds up CPU and memory for the whole tree.
+- **Counters vs. rates** (`cpuPercent`, `netRates`): the OS reports running totals (CPU ticks, bytes since boot). A rate is the difference between two samples divided by the time between them. That's why the first sample is only a baseline, and why a counter that goes backwards (reset) voids a sample instead of showing a negative speed.
