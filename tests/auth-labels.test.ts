@@ -1,0 +1,17 @@
+import { expect,it } from 'vitest';
+import { modelChoices, ownLoginLabel } from '../src/shared/models.js';
+import {renderHomepage} from '../src/client/tui/layout.js';
+import {plainText} from '../src/client/tui/grid.js';
+import {createTheme} from '../src/client/tui/theme.js';
+import type {SessionInfo} from '../src/shared/protocol.js';
+import {randomUUID} from 'node:crypto';
+it('own login labels use only the known engine auth method',()=>{
+ expect(ownLoginLabel('subscription')).toBe('own login · sub');expect(ownLoginLabel('api-key')).toBe('own login · API key');expect(ownLoginLabel('unknown')).toBe('own login');expect(ownLoginLabel(undefined)).toBe('own login');
+ const engines={claudeCode:{installed:true,path:'/stub',version:'1',loggedIn:true,authMethod:'subscription' as const},codex:{installed:true,path:'/stub',version:'1',loggedIn:true,authMethod:'api-key' as const}};
+ const rows=modelChoices([],engines);expect(rows.find(c=>c.engine==='codex')?.authLabel).toBe('own login · API key');expect(rows.find(c=>c.engine==='claude-code')?.authLabel).toBe('own login · sub');
+});
+it('cards and next-agent defaults explicitly show own login auth or last4 only',()=>{
+ const now=new Date().toISOString();const session:SessionInfo={id:randomUUID(),title:'Codex',engine:'codex',model:'gpt-6.1-sol',auth:{kind:'account'},authMethod:'api-key',cwd:'/tmp',permission:'ask',status:'running',statusDetail:'running',statusSince:now,createdAt:now,lastOutputAt:null,exitCode:null,ctxPercent:null};
+ const text=plainText(renderHomepage({cols:130,rows:45,sessions:[session],selectedId:session.id,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0,engine:'codex',model:'gpt-6.1-sol',authLabel:'own login · API key'},createTheme('graphite')));
+ expect(text.split('\n').slice(2,5).join('\n')).toContain('own login · API key');expect(text.split('\n').at(-1)).toContain('· own login · API key');
+});
