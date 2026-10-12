@@ -24,12 +24,12 @@ export function buildSpawnEnv(engine: AgentEngine, auth: {kind:'account'} | {kin
 }
 export function buildArgs(request:{engine:AgentEngine;model:string|null;permission:Permission;firstMessage?:string;foundryEndpoint?:string}):string[] {
     if(!isModel(request.model)||!isPermission(request.permission)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid spawn arguments');
-    const args:string[]=[];
+    // D41: without --no-daemon the Codex TUI may join a shared background server started elsewhere, whose env and config win over this recipe's env and -c overrides. Codex rejects the flag twice, so only this line adds it.
+    const args:string[]=request.engine==='codex'?['--no-daemon']:[];
     if(request.foundryEndpoint!==undefined){
         const endpoint=request.foundryEndpoint;
         let url:URL;try{url=new URL(endpoint);}catch{throw new Error('Invalid Foundry endpoint');}
         if(request.engine!=='codex'||!request.model||url.protocol!=='https:'||!url.hostname||url.username||url.password||/[\s"'\\]/.test(endpoint))throw new Error('Invalid Foundry endpoint');
-        args.push('--no-daemon');
         for(const config of ['model_provider="aiterm_foundry"','model_providers.aiterm_foundry.name="AI Term Foundry"',`model_providers.aiterm_foundry.base_url="${endpoint}"`,'model_providers.aiterm_foundry.env_key="AITERM_FOUNDRY_KEY"','model_providers.aiterm_foundry.env_http_headers={"api-key"="AITERM_FOUNDRY_KEY"}','model_providers.aiterm_foundry.wire_api="responses"','model_providers.aiterm_foundry.requires_openai_auth=false'])args.push('-c',config);
     }
     if(request.model!==null)args.push(`--model=${request.model}`);
