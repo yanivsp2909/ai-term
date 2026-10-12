@@ -12,6 +12,11 @@ import { redact, Logger } from '../daemon/log.js';
 import { AttachError } from '../client/attach.js';
 import { ClientSignal } from '../client/signals.js';
 import {aiSubcommands,debugActions} from '../client/tui/commands.js';
+// A downstream pipe consumer may close between writes; stdout errors are asynchronous.
+process.stdout.on('error',(error:unknown)=>{
+    if(isFsError(error,'EPIPE'))process.exit(0);
+    process.stderr.write('Standard output failed\n');process.exit(1);
+});
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
 function usage(): void { process.stderr.write('Usage:\n'+aiSubcommands.map(command=>'  '+command).join('\n')+'\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
