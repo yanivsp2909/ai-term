@@ -32,7 +32,8 @@ const PERMISSION_ARGS:Record<AgentEngine,Record<Permission,readonly string[]>>={
 export function buildArgs(request:{engine:AgentEngine;model:string|null;permission:Permission;firstMessage?:string;foundryEndpoint?:string}):string[] {
     if(!isModel(request.model)||!isPermission(request.permission)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid spawn arguments');
     // D41: without --no-daemon the Codex TUI may join a shared background server started elsewhere, whose env and config win over this recipe's env and -c overrides. Codex rejects the flag twice, so only this line adds it.
-    const args:string[]=request.engine==='codex'?['--no-daemon']:[];
+    // B5: Codex's startup update menu takes Enter as "Update now"; its own check_for_update_on_startup (config_toml.rs, rust-v0.160.1) turns the check off for this session only.
+    const args:string[]=request.engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false']:[];
     if(request.foundryEndpoint!==undefined){
         const endpoint=request.foundryEndpoint;
         let url:URL;try{url=new URL(endpoint);}catch{throw new Error('Invalid Foundry endpoint');}
