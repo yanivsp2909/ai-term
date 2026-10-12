@@ -34,17 +34,22 @@ export function parsePs(text: string): ProcRow[] {
   }
   return rows;
 }
-// Used = active + wired + compressor pages, like Activity Monitor; os.freemem() under-reports on macOS.
+// Activity Monitor's App Memory includes inactive anonymous pages too; purgeable pages are reclaimable.
 export function parseVmStat(text: string): number | null {
   const pageSize = Number(text.match(/page size of (\d+) bytes/)?.[1]);
   if (!Number.isSafeInteger(pageSize) || pageSize <= 0) return null;
-  let pages = 0;
-  for (const label of ['Pages active', 'Pages wired down', 'Pages occupied by compressor']) {
+  const counts: number[] = [];
+  for (const label of ['Anonymous pages', 'Pages purgeable', 'Pages wired down', 'Pages occupied by compressor']) {
     const value = text.match(new RegExp(`^${label}:\\s+(\\d+)\\.$`, 'm'))?.[1];
     if (value === undefined) return null;
-    pages += Number(value);
+    const count = Number(value);
+    if (!Number.isSafeInteger(count)) return null;
+    counts.push(count);
   }
-  return pages * pageSize;
+  const [anonymous = 0, purgeable = 0, wired = 0, compressed = 0] = counts;
+  if (purgeable > anonymous) return null;
+  const bytes = (anonymous - purgeable + wired + compressed) * pageSize;
+  return Number.isSafeInteger(bytes) ? bytes : null;
 }
 // Link-layer rows (`<Link#N>`) carry each interface's totals once; address rows repeat them.
 // Rows without a hardware address have 10 fields instead of 11, so the byte columns are read from the end.
