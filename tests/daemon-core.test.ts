@@ -236,7 +236,7 @@ describe('real PTY lifecycle and mirror', () => {
             await manager.shutdown();
         }
     });
-    it('marks old records exited on restart without killing saved PIDs', async () => {
+    it('keeps finished results on restart and only marks live records exited without killing saved PIDs', async () => {
         const paths = getPaths(await temp());
         await preparePaths(paths);
         const manager = new SessionManager(paths, new Logger(paths.log), { executable: '/bin/sh', args: ['-c', 'printf hi; exit 0'], env: { PATH: '/usr/bin:/bin' } });
@@ -246,8 +246,21 @@ describe('real PTY lifecycle and mirror', () => {
         await manager.shutdown();
         const restarted = new SessionManager(paths, new Logger(paths.log));
         await restarted.load();
-        expect(restarted.get(session.id)).toMatchObject({ status: 'exited', statusDetail: 'background service restarted' });
+        expect(restarted.get(session.id)).toMatchObject({ status: 'exited', statusDetail: 'exit 0', exitCode: 0 });
         await restarted.shutdown();
+        const since = '2026-10-11T12:00:00.000Z';
+        const records = ['error', 'exited', 'running'].map((status, i) => ({ ...session, id: randomUUID(), status, statusDetail: i === 0 ? 'exit 3' : i === 1 ? 'exit 0' : 'running', statusSince: since, exitCode: i === 0 ? 3 : i === 1 ? 0 : null, pid: process.pid }));
+        await atomicWrite(paths.state, { sessions: records });
+        const loaded = new SessionManager(paths, new Logger(paths.log));
+        const kill = vi.spyOn(process, 'kill');
+        try {
+            await loaded.load();
+            expect(loaded.list()[0]).toMatchObject({ status: 'error', exitCode: 3, statusDetail: 'exit 3', statusSince: since });
+            expect(loaded.list()[1]).toMatchObject({ status: 'exited', exitCode: 0, statusDetail: 'exit 0', statusSince: since });
+            expect(loaded.list()[2]).toMatchObject({ status: 'exited', exitCode: null, statusDetail: 'background service restarted' });
+            expect(loaded.list()[2]?.statusSince).not.toBe(since);
+            expect(kill).not.toHaveBeenCalled();
+        } finally { kill.mockRestore(); await loaded.shutdown(); }
     });
 });
 it('refuses directories owned by another UID before changing their mode',async()=>{
