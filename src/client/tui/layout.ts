@@ -103,6 +103,6 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   }
   if (view.note && !commandMenu) { grid.fill(0, rows - 5, cols, 1, view.copying ? t.accent : t.bg); grid.text(2, rows - 5, view.note, view.copying ? t['on-accent'] : t['ink-3'], view.copying ? t.accent : t.bg, false, cols - 4); }
   if(budget&&!commandMenu&&!view.notePriority){grid.fill(0,rows-5,cols,1,t.bg);grid.text(2,rows-5,budget,t['status-waiting'],t.bg,false,cols-4);}
-  if (view.warning) { grid.fill(0, rows - 5, cols, 1, t.bg); grid.text(2, rows - 5, '✗ ' + view.warning, t['status-error'], t.bg, false, cols - 4); }
+  if (view.warning&&!view.notePriority) { grid.fill(0, rows - 5, cols, 1, t.bg); grid.text(2, rows - 5, '✗ ' + view.warning, t['status-error'], t.bg, false, cols - 4); }
   return grid.cells;
 }
