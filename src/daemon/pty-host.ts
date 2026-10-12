@@ -25,8 +25,20 @@ export class PtyHost {
     }
     write(data: string | Buffer): void { if (!this.exited)
         this.pty.write(data); }
-    resize(cols: number, rows: number): void { if (!this.exited)
-        this.pty.resize(cols, rows); }
+    resize(cols: number, rows: number): void {
+        if (this.exited)
+            return;
+        try {
+            this.pty.resize(cols, rows);
+        }
+        catch (error) {
+            // node-pty closes the PTY fd as soon as the child hangs up but reports the exit only later, so a resize
+            // in between fails with EBADF. Nothing is left to resize, and onExit follows; any other failure is real.
+            if (error instanceof Error && error.message.includes('EBADF'))
+                return;
+            throw error;
+        }
+    }
     pause(): void { this.pty.pause(); }
     resume(): void { this.pty.resume(); }
     async stop(): Promise<void> {
