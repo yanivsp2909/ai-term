@@ -13,3 +13,8 @@ it('is idempotent, handles CRLF and produces empty text for an empty decorative 
   const once = cleanSessionText('│ one │\r\n\r\n│ two │');
   expect(once).toBe('one\n\ntwo'); expect(cleanSessionText(once)).toBe(once);
 });
+it('cleans long internal border runs without blocking input for a quadratic suffix search', () => {
+  const text = 'prose ' + '─'.repeat(50000) + ' x';
+  const started = performance.now(), cleaned = cleanSessionText(text);
+  expect(cleaned).toBe(text); expect(performance.now() - started).toBeLessThan(500);
+});

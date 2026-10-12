@@ -146,3 +146,20 @@ it('a background-color reply sequence inside a multiline paste stays literal fir
     expect(f.client.requests.find(r => r.kind === 'sessions.create')).toMatchObject({ firstMessage: text });
   } finally { await f.home.stop(); }
 });
+it('oversize note stays visible over a slash menu and slash-prefixed tokens render as task drafts', async () => {
+  const f = await fixture();
+  try {
+    send(f.tty, '/copy'); paste(f.tty, 'x'.repeat(16385));
+    expect(await screen(f.tty)).toContain(tooLong);
+    paste(f.tty, '\nmy task');
+    const text = await screen(f.tty); expect(text).toContain('/copy[pasted · 2 lines]'); expect(text).not.toContain('Commands');
+    send(f.tty, '\r'); await expect.poll(() => screen(f.tty)).toContain('Start a new agent'); send(f.tty, '\r');
+    await expect.poll(() => f.client.requests.some(r => r.kind === 'sessions.create')).toBe(true);
+    expect(f.client.requests.find(r => r.kind === 'sessions.create')).toMatchObject({ firstMessage: '/copy\nmy task' });
+  } finally { await f.home.stop(); }
+});
+it('an oversize-paste note takes precedence over a crossed budget warning', async () => {
+  const { renderHomepage } = await import('../src/client/tui/layout.js'), { createTheme } = await import('../src/client/tui/theme.js'), { plainText } = await import('../src/client/tui/grid.js');
+  const text = plainText(renderHomepage({ cols: 130, rows: 45, sessions: [], selectedId: null, input: 'keep', note: tooLong, notePriority: true, previewVisible: true, cwd: '/tmp', now: Date.now(), budgets: { daily: 0, weekly: null, monthly: null }, usage: { today: { costUsd: 1, tokens: 0, unknownPrice: false, providers: [] }, week: { costUsd: 1, tokens: 0, unknownPrice: false, providers: [] }, month: { costUsd: 1, tokens: 0, unknownPrice: false, providers: [] } } }, createTheme('graphite')));
+  expect(text).toContain(tooLong);
+});
