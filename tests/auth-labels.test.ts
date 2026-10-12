@@ -24,3 +24,8 @@ it('next-agent auth stays visible even when the folder is long',()=>{
  const text=plainText(renderHomepage({cols:100,rows:30,sessions:[],selectedId:null,input:'',note:'',previewVisible:true,cwd:'/tmp/'+ 'folder'.repeat(30),now:0,engine:'codex',model:'gpt-6.1-sol',authLabel:'key ····ITid'},createTheme('graphite')));
  expect(text.split('\n').at(-1)).toContain('key ····ITid');
 });
+it('finished own-login cards retain a status word alongside explicit auth',()=>{
+ const now=new Date().toISOString();const session:SessionInfo={id:randomUUID(),title:'Codex',engine:'codex',model:'gpt-6.1-sol',auth:{kind:'account'},authMethod:'api-key',cwd:'/tmp',permission:'ask',status:'exited',statusDetail:'exit 0',statusSince:now,createdAt:now,lastOutputAt:null,exitCode:0,ctxPercent:null};
+ const text=plainText(renderHomepage({cols:130,rows:45,sessions:[session],selectedId:session.id,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0},createTheme('graphite')));
+ expect(text.split('\n').slice(2,5).join('\n')).toContain('exited');expect(text).toContain('own login · API key');
+});
