@@ -266,9 +266,13 @@ export function validatePriceOverrides(v:unknown):Record<string,import('./protoc
  for(const [model,value]of Object.entries(v)){if(!isValidModelId(model)||!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid model price');const p=value as Record<string,unknown>;if(Object.keys(p).some(k=>!['input','output','cacheRead'].includes(k))||!isAmount(p.input)||!isAmount(p.output)||p.cacheRead!==undefined&&!isAmount(p.cacheRead)||Object.values(p).some(n=>typeof n==='number'&&n>1e9))throw new ValidationError('Invalid model price');}
  return v as Record<string,import('./protocol.js').ModelPrice>;
 }
+// One export point never carries more than this. Larger values are forged (the receiver credential sits in the
+// agent's env/argv), and summed totals must stay safe integers or the summary fails validation on every client.
+export const MAX_RECORD_TOKENS=1_000_000_000,MAX_RECORD_COST_USD=10_000;
+const isRecordTokens=(n:unknown)=>Number.isSafeInteger(n)&&isAmount(n)&&n<=MAX_RECORD_TOKENS;
 export function validateUsageRecord(v:unknown):import('./protocol.js').UsageRecord{
  if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid usage record');const r=v as Record<string,unknown>;
- if(Object.keys(r).some(k=>!['ts','sessionId','provider','model','inputTokens','outputTokens','cachedTokens','costUsd','costSource'].includes(k))||typeof r.ts!=='string'||!Number.isFinite(Date.parse(r.ts))||!isUUID(r.sessionId)||!isKeyProvider(r.provider)||typeof r.model!=='string'||!isValidModelId(r.model)||!Number.isSafeInteger(r.inputTokens)||!isAmount(r.inputTokens)||!Number.isSafeInteger(r.outputTokens)||!isAmount(r.outputTokens)||r.cachedTokens!==undefined&&(!Number.isSafeInteger(r.cachedTokens)||!isAmount(r.cachedTokens))||r.costUsd!==null&&!isAmount(r.costUsd)||!['cli-estimate','price-table'].includes(String(r.costSource)))throw new ValidationError('Invalid usage record');
+ if(Object.keys(r).some(k=>!['ts','sessionId','provider','model','inputTokens','outputTokens','cachedTokens','costUsd','costSource'].includes(k))||typeof r.ts!=='string'||!Number.isFinite(Date.parse(r.ts))||!isUUID(r.sessionId)||!isKeyProvider(r.provider)||typeof r.model!=='string'||!isValidModelId(r.model)||!isRecordTokens(r.inputTokens)||!isRecordTokens(r.outputTokens)||r.cachedTokens!==undefined&&!isRecordTokens(r.cachedTokens)||r.costUsd!==null&&(!isAmount(r.costUsd)||r.costUsd>MAX_RECORD_COST_USD)||!['cli-estimate','price-table'].includes(String(r.costSource)))throw new ValidationError('Invalid usage record');
  return r as unknown as import('./protocol.js').UsageRecord;
 }
 export function validateUsageSummary(v:unknown):import('./protocol.js').UsageSummary{

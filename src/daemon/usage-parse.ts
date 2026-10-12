@@ -1,5 +1,9 @@
 import type {AgentEngine,KeyProvider,UsageRecord,UsageDiagnostic} from '../shared/protocol.js';
-import {isValidModelId} from '../shared/validate.js';
+import {isValidModelId,MAX_RECORD_TOKENS,MAX_RECORD_COST_USD} from '../shared/validate.js';
+// Dedupe keys are per export point; a session sending endless unique timestamps must not grow memory without end.
+const MAX_DEDUPE_KEYS=100_000;
+// Evict the oldest tenth in one pass: deleting from the front one at a time leaves holes every new iterator rescans.
+function bounded<K>(keys:{size:number;keys():IterableIterator<K>;delete(key:K):boolean}):void{if(keys.size<=MAX_DEDUPE_KEYS)return;let excess=keys.size-MAX_DEDUPE_KEYS*0.9;for(const key of keys.keys()){if(excess--<=0)break;keys.delete(key);}}
 export interface UsageContext {sessionId:string;engine:AgentEngine;provider:KeyProvider;model:string|null}
 const object=(v:unknown):Record<string,unknown>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{};
 const list=(v:unknown):unknown[]=>Array.isArray(v)?v:[];
@@ -11,7 +15,7 @@ export class UsageParser {
  private seen=new Set<string>();private cumulative=new Map<string,number>();
  constructor(private readonly diagnostic:(entry:UsageDiagnostic)=>void,private readonly now=()=>Date.now()){}
  revoke(sessionId:string):void{for(const key of this.seen.keys())if(key.startsWith(sessionId+':'))this.seen.delete(key);for(const key of this.cumulative.keys())if(key.startsWith(sessionId+':'))this.cumulative.delete(key);}
- private duplicate(key:string):boolean{if(this.seen.has(key))return true;this.seen.add(key);return false;}
+ private duplicate(key:string):boolean{if(this.seen.has(key))return true;this.seen.add(key);bounded(this.seen);return false;}
  private model(attrs:unknown,context:UsageContext):string{const model=stringAttribute(attrs,'model');return model&&isValidModelId(model)&&!model.startsWith('sk-')?model:context.model??'unknown';}
  private record(context:UsageContext,model:string):UsageRecord{return {ts:new Date(this.now()).toISOString(),sessionId:context.sessionId,provider:context.provider,model,inputTokens:0,outputTokens:0,costUsd:context.engine==='claude-code'?0:null,costSource:context.engine==='claude-code'?'cli-estimate':'price-table'};}
  parse(route:string,raw:unknown,context:UsageContext):UsageRecord[]{
@@ -20,13 +24,13 @@ export class UsageParser {
    const metric=object(metricRaw);if(metric.name!=='claude_code.token.usage'&&metric.name!=='claude_code.cost.usage')continue;
    const sum=object(metric.sum);for(const pointRaw of list(sum.dataPoints)){
     const point=object(pointRaw),model=this.model(point.attributes,context),type=metric.name==='claude_code.cost.usage'?'cost':stringAttribute(point.attributes,'type');if(!type||!(metric.name==='claude_code.cost.usage'?type==='cost':['input','output','cacheRead','cacheCreation'].includes(type)))continue;
-    let value=numeric(point.asInt??point.asDouble);if(value===null||type!=='cost'&&!Number.isSafeInteger(value))continue;
+    let value=numeric(point.asInt??point.asDouble);if(value===null||type!=='cost'&&!Number.isSafeInteger(value)||value>(type==='cost'?MAX_RECORD_COST_USD:MAX_RECORD_TOKENS))continue;
     this.diagnostic({sessionId:context.sessionId,at:new Date(this.now()).toISOString(),values:[{name:metric.name+'.'+type,value}]});
     const start=typeof point.startTimeUnixNano==='string'&&/^\d{1,30}$/.test(point.startTimeUnixNano)?point.startTimeUnixNano:'',time=typeof point.timeUnixNano==='string'&&/^\d{1,30}$/.test(point.timeUnixNano)?point.timeUnixNano:'';
     // Missing timestamps cannot be safely deduplicated, so never count that point.
     if(!time||this.duplicate(`${context.sessionId}:${model}:${type}:${start}:${time}`))continue;
     if(sum.aggregationTemporality===2||sum.aggregationTemporality==='AGGREGATION_TEMPORALITY_CUMULATIVE'){
-     const key=`${context.sessionId}:${model}:${type}:${start}`,before=this.cumulative.get(key);this.cumulative.set(key,value);value=before!==undefined&&value>=before?value-before:value;
+     const key=`${context.sessionId}:${model}:${type}:${start}`,before=this.cumulative.get(key);this.cumulative.set(key,value);bounded(this.cumulative);value=before!==undefined&&value>=before?value-before:value;
     }else{const key=`${context.sessionId}:${model}:${type}:${start}`,before=this.cumulative.get(key);if(before!==undefined)this.cumulative.set(key,before+value);}
     const record=this.record(context,model);if(type==='cost')record.costUsd=value;else if(type==='output')record.outputTokens=value;else {record.inputTokens=value;if(type==='cacheRead')record.cachedTokens=value;}
     if(value>0)records.push(record);
@@ -37,7 +41,7 @@ export class UsageParser {
    const values=tokenNames.flatMap(name=>{const value=numberAttribute(attrs,name);return value!==null?[{name,value}]:[];});
    this.diagnostic({sessionId:context.sessionId,at:new Date(this.now()).toISOString(),values});
    const input=numberAttribute(attrs,'input_token_count'),output=numberAttribute(attrs,'output_token_count'),cached=numberAttribute(attrs,'cached_token_count')??0;
-   if(input===null||output===null||![input,output,cached].every(Number.isSafeInteger)||cached>input)continue;
+   if(input===null||output===null||![input,output,cached].every(n=>Number.isSafeInteger(n)&&n<=MAX_RECORD_TOKENS)||cached>input)continue;
    const model=this.model(attrs,context),time=typeof log.timeUnixNano==='string'&&/^\d{1,30}$/.test(log.timeUnixNano)?log.timeUnixNano:'';
    if(!time||this.duplicate(`${context.sessionId}:${model}:codex:${time}`))continue;
    const record=this.record(context,model);record.inputTokens=input;record.outputTokens=output;record.cachedTokens=cached;records.push(record);
