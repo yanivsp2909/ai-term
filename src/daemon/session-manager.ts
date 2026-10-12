@@ -181,7 +181,8 @@ export class SessionManager extends EventEmitter {
             if(error instanceof KeyError){this.sessions.delete(info.id);live.mirror.dispose();throw error;}
             info.status = 'error';
             info.statusDetail = 'spawn failed';
-            this.log.error(agent?.auth.kind==='key'||telemetry?'PTY spawn failed for authenticated session':`PTY spawn failed: ${error instanceof Error ? error.message : 'unknown'}`);
+            // Agent spawn errors can include argv (the first message); retain details only for plain shells.
+            this.log.error(agent||telemetry?'PTY spawn failed for agent session':`PTY spawn failed: ${error instanceof Error ? error.message : 'unknown'}`);
         }
         await this.persist();
         this.event({ kind: 'session.updated', session: { ...info } });
