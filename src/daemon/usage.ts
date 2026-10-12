@@ -6,8 +6,11 @@ import {privateDirectory,isFsError} from '../shared/paths.js';
 import type {UsageRecord,UsageSummary,UsagePeriod} from '../shared/protocol.js';
 import {validateUsageRecord} from '../shared/validate.js';
 async function append(path:string,record:UsageRecord):Promise<void>{
- const file=await open(path,constants.O_WRONLY|constants.O_APPEND|constants.O_CREAT|constants.O_NOFOLLOW|constants.O_NONBLOCK,0o600);
- try{const stat=await file.stat();if(!stat.isFile()||stat.uid!==process.getuid?.())throw new Error('Unsafe usage file');await file.chmod(0o600);await file.writeFile(JSON.stringify(record)+'\n');await file.sync();}finally{await file.close();}
+ const file=await open(path,constants.O_RDWR|constants.O_APPEND|constants.O_CREAT|constants.O_NOFOLLOW|constants.O_NONBLOCK,0o600);
+ try{const stat=await file.stat();if(!stat.isFile()||stat.uid!==process.getuid?.())throw new Error('Unsafe usage file');await file.chmod(0o600);
+  // ENOSPC can leave half a JSON line. Roll back before retrying instead of corrupting the next record.
+  try{await file.writeFile(JSON.stringify(record)+'\n');await file.sync();}catch(error){await file.truncate(stat.size);throw error;}
+ }finally{await file.close();}
 }
 function empty():UsagePeriod{return {costUsd:0,tokens:0,unknownPrice:false,providers:[]};}
 export class UsageStore extends EventEmitter {
