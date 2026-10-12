@@ -1,4 +1,4 @@
-import { expect,it } from 'vitest';
+import { expect,it,vi } from 'vitest';
 import { parseMemoryParts, parseTopCpu } from '../src/daemon/sysstats.js';
 import { debugStats } from '../src/cli/debug-stats.js';
 const vm=`Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -20,11 +20,12 @@ it('top parser keeps only the last valid numeric CPU usage line, never names or 
 });
 it('debug stats prints ten JSON number-only samples without socket or process-list data',async()=>{
  const output:string[]=[];let samples=0;const memory=parseMemoryParts(vm);if(!memory)throw new Error('fixture');
- await debugStats({sample:async()=>{samples++;return {...memory,cpuPercent:25,top:{userPercent:20,systemPercent:5,idlePercent:75,busyPercent:25}};},write:text=>{output.push(text);}});
+ vi.useFakeTimers();
+ const done=debugStats({sample:async()=>{samples++;return {...memory,cpuPercent:25,top:{userPercent:20,systemPercent:5,idlePercent:75,busyPercent:25}};},write:text=>{output.push(text);}});await vi.advanceTimersByTimeAsync(9000);await done;vi.useRealTimers();
  expect(samples).toBe(10);expect(output).toHaveLength(10);for(const [i,line]of output.entries()){const value=JSON.parse(line);expect(value.sample).toBe(i+1);expect(Object.values(value).every(v=>typeof v==='number'&&Number.isFinite(v))).toBe(true);expect(line).not.toMatch(/PRIVATE|Processes|PID|COMMAND/);}
 });
 it('debug stats failures print no raw command output',async()=>{
- const output:string[]=[];await expect(debugStats({sample:async()=>{throw new Error('PRIVATE raw stderr');},write:text=>{output.push(text);}})).rejects.toThrow('Stats diagnostic failed');expect(output).toEqual([]);
+ vi.useFakeTimers();const output:string[]=[];const failed=expect(debugStats({sample:async()=>{throw new Error('PRIVATE raw stderr');},write:text=>{output.push(text);}})).rejects.toThrow('Stats diagnostic failed');await vi.advanceTimersByTimeAsync(9000);await failed;vi.useRealTimers();expect(output).toEqual([]);
 });
 it('diagnostic CLI reads counters without creating an AI Term home or connecting a daemon',async()=>{
  const {mkdtemp,rm,lstat}=await import('node:fs/promises');const {execFile}=await import('node:child_process');const {resolve,join}=await import('node:path');
