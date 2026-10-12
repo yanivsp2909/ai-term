@@ -2,6 +2,7 @@ import { getPaths, preparePaths } from '../shared/paths.js';
 import { acquireLock } from './lock.js';
 import { Logger } from './log.js';
 import { SessionManager } from './session-manager.js';
+import { UsageService } from './usage-service.js';
 import { DaemonServer } from './server.js';
 export async function runDaemon(): Promise<void> {
     // Private files for the daemon; sessions get the user's own umask back (session-manager).
@@ -9,7 +10,8 @@ export async function runDaemon(): Promise<void> {
     const paths = getPaths();
     await preparePaths(paths);
     const log = new Logger(paths.log), release = await acquireLock(paths.pid);
-    const manager = new SessionManager(paths, log, undefined, userUmask), server = new DaemonServer(paths, manager, log);
+    const usage=new UsageService(paths.root,log);
+    const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage), server = new DaemonServer(paths, manager, log,undefined,undefined,usage);
     let closing = false;
     let idleSince: number | null = null;
     let idle: ReturnType<typeof setInterval> | undefined;
@@ -26,7 +28,7 @@ export async function runDaemon(): Promise<void> {
             process.exitCode = 1;
         }
         try {
-            for(const cleanup of [()=>server.close(),()=>manager.shutdown()]) {
+            for(const cleanup of [()=>server.close(),()=>manager.shutdown(),()=>usage.close()]) {
                 try{await cleanup();}catch(cleanupError){try{log.error(`Shutdown failed: ${cleanupError instanceof Error?cleanupError.message:'unknown'}`);}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
             }
         } finally {
@@ -40,6 +42,7 @@ export async function runDaemon(): Promise<void> {
     process.on('SIGINT', onSignal);
     manager.on('fatal', (error: unknown) => { void shutdown(error); });
     try {
+        await usage.start();
         await manager.load();
         if (!closing)
             await server.listen();

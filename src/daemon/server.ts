@@ -7,6 +7,7 @@ import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
+import { UsageService } from './usage-service.js';
 import { enginesStatus } from './engines.js';
 import { KeyStore, KeyError } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
@@ -20,7 +21,7 @@ interface Peer {
     attached:string|null;
     refreshing: boolean;
     lagged: boolean;
-    stats: boolean;
+    stats: boolean; usage:boolean;
     queue: Promise<void>;
     snapshotId?: string;
 }
@@ -55,8 +56,9 @@ export class DaemonServer {
     } | undefined;
     private readonly sampler: SystemSampler;
     private closed = false;
-    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root)) {
+    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService) {
         this.settings = new SettingsStore(paths.root);
+        usage?.on('updated',summary=>{for(const peer of this.peers)if(peer.hello&&peer.usage)this.control(peer,{kind:'usage.updated',usage:summary});});
         this.sampler = sampler ?? new SystemSampler(defaultSamplerDeps(() => manager.sessionRoots(), log));
         this.sampler.on('stats', (stats: SystemStats) => { for (const peer of this.peers) if (peer.hello && peer.stats) this.control(peer, { kind: 'system.stats', stats }); });
         this.server = createServer(socket => this.accept(socket));
@@ -122,7 +124,7 @@ export class DaemonServer {
         this.socketIdentity = { ino: stat.ino, dev: stat.dev };
     }
     private accept(socket: Socket): void {
-        const peer: Peer = { socket, closing:false, hello: false, attached:null, preview: null, refreshing: false, lagged: false, stats: false, queue: Promise.resolve() };
+        const peer: Peer = { socket, closing:false, hello: false, attached:null, preview: null, refreshing: false, lagged: false, stats: false, usage:false, queue: Promise.resolve() };
         this.peers.add(peer);
         const decoder = new FrameDecoder();
         let queued = 0;let queuedBytes=0;
@@ -202,6 +204,9 @@ export class DaemonServer {
         }
         try {
             switch (request.kind) {
+                case 'usage.summary':this.control(peer,{id:request.id,ok:true,usage:this.usage?.summary()});break;
+                case 'usage.diagnostics':this.control(peer,{id:request.id,ok:true,usageDiagnostics:this.usage?.diagnostics()});break;
+                case 'usage.subscribe':peer.usage=request.on;this.control(peer,{id:request.id,ok:true});break;
                 case 'keys.list': this.control(peer,{id:request.id,ok:true,keys:await this.keys.list()}); break;
                 case 'keys.add': this.control(peer,{id:request.id,ok:true,key:await this.keys.add(request)}); break;
                 case 'keys.remove': await this.keys.remove(request.keyId); this.control(peer,{id:request.id,ok:true}); break;

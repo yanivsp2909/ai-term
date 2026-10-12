@@ -1,6 +1,5 @@
 import {expect,it} from 'vitest';
 import {mkdtemp,rm} from 'node:fs/promises';
-import {randomUUID} from 'node:crypto';
 import {getPaths,preparePaths} from '../src/shared/paths.js';
 import {Logger} from '../src/daemon/log.js';
 import {SessionManager} from '../src/daemon/session-manager.js';
