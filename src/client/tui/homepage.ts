@@ -85,6 +85,7 @@ export class Homepage {
     if (!this.stdin.isTTY || !this.stdout.isTTY) throw new Error('Homepage requires an interactive terminal');
     this.originalRaw = this.stdin.isRaw ?? false;
     this.connection.on('event', this.onEvent); this.connection.on('output', this.onOutput); this.connection.on('disconnected', this.onDisconnect);
+    for (const [name, guard] of this.guards) this.signals.on(name, guard);
     try {
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
@@ -123,6 +124,7 @@ export class Homepage {
     if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve?.();
     if (this.noteTimer) clearTimeout(this.noteTimer);
     this.connection.off('event', this.onEvent); this.connection.off('output', this.onOutput); this.connection.off('disconnected', this.onDisconnect);
+    for (const [name, guard] of this.guards) this.signals.off(name, guard);
     try { this.leave(); } catch (cleanupError) { error ??= cleanupError instanceof Error ? cleanupError : new Error('Terminal restore failed'); }
     for (const preview of this.previews.values()) preview.dispose(); this.previews.clear();
     if (this.statsOn && !this.disconnected) {
@@ -139,6 +141,12 @@ export class Homepage {
   private onTerm = () => { void this.stop(new ClientSignal(143)); };
   private onHup = () => { void this.stop(new ClientSignal(129)); };
   private onQuit = () => { void this.stop(new ClientSignal(131)); };
+  // Leaving a session, attach drops its signal listeners and awaits the detach reply before enter() takes them back.
+  // With no listener Node restores the default action and the signal kills the client, so these stay installed for
+  // the homepage's whole life and keep a signal nobody else heard until attach returns.
+  private pendingSignal: ClientSignal | null = null;
+  private guard = (name: string, code: number) => () => { if (this.signals.listenerCount(name) === 1) this.pendingSignal ??= new ClientSignal(code); };
+  private readonly guards: [string, () => void][] = [['SIGTERM', this.guard('SIGTERM', 143)], ['SIGHUP', this.guard('SIGHUP', 129)], ['SIGQUIT', this.guard('SIGQUIT', 131)]];
   private onDisconnect = () => { this.disconnected = true; void this.stop(new Error('Daemon connection closed')); };
   private onDrain = () => { this.blocked = false; this.draw(true); };
   private onResize = () => {
@@ -409,6 +417,7 @@ export class Homepage {
     catch (error) { if (error instanceof ClientSignal) throw error; note = error instanceof Error ? error.message : 'Attach failed'; }
     finally { this.attached = false; }
     if (this.ended) return;
+    if (this.pendingSignal) throw this.pendingSignal;
     this.enter();
     const result = await this.connection.request({ kind: 'sessions.list' }); this.sessions = (result.sessions ?? []).map(validateSession);
     await this.updatePreview(true); await this.subscribeStats(true); this.showNote(note);
