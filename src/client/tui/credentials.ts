@@ -20,7 +20,7 @@ export class CredentialsPanel {
  private fieldNames():string[]{return this.provider==='foundry'?['label','endpoint','secret','deployments']:['label','secret'];}
  private field():string{return this.screen==='import'?'path':this.fieldNames()[this.row]??'label';}
  paste(text:string):void{if(this.busy)return;const field=this.field();if(this.screen!=='form'&&this.screen!=='import')return;
-  const safe=text.replace(/[\r\n]/g,'');if(field==='secret')this.secret=(this.secret+safe).slice(0,512);
+  const safe=text.replace(/[\r\n]/g,'');if(field==='secret'){if(this.secret.length+safe.length>512){this.secret='';this.message='Key is too long; enter at most 512 characters';this.actions.changed();return;}this.secret+=safe;}
   else if(field==='path')this.path=(this.path+safe).slice(0,4096);else if(field==='label')this.label=(this.label+safe).slice(0,60);else if(field==='endpoint')this.endpoint=(this.endpoint+safe).slice(0,2048);else this.deployments=(this.deployments+safe).slice(0,3200);
   this.message='';this.actions.changed();
  }
