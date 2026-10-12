@@ -95,12 +95,26 @@ function parseBackground(reply: string): string | null {
 }
 export class BackgroundReplies {
   private pending = '';
+  private pasted = false;
+  private pasteEnd = '';
   constructor(private readonly reply: (background: string) => void) {}
   push(chunk: Buffer): Buffer {
     const output: number[] = [];
     for (const byte of chunk) {
+      // OSC11-looking bytes inside a bracketed paste are message content, never a terminal reply.
+      if (this.pasted) {
+        output.push(byte); this.pasteEnd = (this.pasteEnd + String.fromCharCode(byte)).slice(-6);
+        if (this.pasteEnd === '\x1b[201~') { this.pasted = false; this.pasteEnd = ''; }
+        continue;
+      }
       if (!this.pending) { if (byte === 27) this.pending = '\x1b'; else output.push(byte); continue; }
       this.pending += String.fromCharCode(byte);
+      if (this.pending.startsWith('\x1b[')) {
+        const start = '\x1b[200~';
+        if (this.pending === start) { output.push(...Buffer.from(this.pending, 'latin1')); this.pending = ''; this.pasted = true; }
+        else if (!start.startsWith(this.pending)) { output.push(...Buffer.from(this.pending, 'latin1')); this.pending = ''; }
+        continue;
+      }
       if (this.pending === '\x1b]') continue;
       if (this.pending.startsWith('\x1b]')) {
         const header = '\x1b]11;';
@@ -112,5 +126,5 @@ export class BackgroundReplies {
     }
     return Buffer.from(output);
   }
-  flush(): Buffer { const data = this.pending === '\x1b' ? Buffer.from(this.pending) : Buffer.alloc(0); this.pending = ''; return data; }
+  flush(): Buffer { const data = this.pending === '\x1b' ? Buffer.from(this.pending) : Buffer.alloc(0); if(!this.pending.startsWith('\x1b['))this.pending = ''; return data; }
 }
