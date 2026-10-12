@@ -1,5 +1,7 @@
 import { createServer, createConnection, type Socket, type Server } from 'node:net';
-import { lstat, unlink, chmod } from 'node:fs/promises';
+import { lstat, unlink, chmod, rename } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import type { Paths } from '../shared/paths.js';
 import { isFsError } from '../shared/paths.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
@@ -112,14 +114,24 @@ export class DaemonServer {
             if (!isFsError(error, 'ENOENT'))
                 throw error;
         }
+        // libuv unlinks a pipe server's bound path on close(), whatever is there by then (B6). Binding a
+        // private temp name and renaming it into place means close() only ever unlinks that temp name.
+        const temp = join(dirname(this.paths.socket), `.${randomBytes(3).toString('hex')}.sock`);
         await new Promise<void>((resolve, reject) => {
             this.server.once('error', reject);
             // Unix sockets start with 0777 & ~umask. Create as 0600 before clients can lstat it.
             const previousMask=process.umask(0o177);
-            try{this.server.listen(this.paths.socket, () => { this.server.off('error', reject); resolve(); });}
+            try{this.server.listen(temp, () => { this.server.off('error', reject); resolve(); });}
             finally{process.umask(previousMask);}
         });
-        await chmod(this.paths.socket, 0o600);
+        try {
+            await chmod(temp, 0o600);
+            await rename(temp, this.paths.socket);
+        }
+        catch (error) {
+            await new Promise<void>(resolve => this.server.close(() => resolve()));
+            throw error;
+        }
         const stat = await lstat(this.paths.socket);
         this.socketIdentity = { ino: stat.ino, dev: stat.dev };
     }
