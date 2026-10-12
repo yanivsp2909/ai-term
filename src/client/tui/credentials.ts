@@ -1,4 +1,5 @@
 import type { AgentEngine, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings } from '../../shared/protocol.js';
+import { ownLoginLabel } from '../../shared/models.js';
 import type { RequestBody } from '../connection.js';
 import { isEndpoint, isValidModelId } from '../../shared/validate.js';
 import { Grid, type Frame } from './grid.js';
@@ -29,12 +30,13 @@ export class CredentialsPanel {
  async key(key:string):Promise<void>{
   if(this.disposed)return;
   if(key==='escape'){this.secret='';this.actions.close();return;}if(this.busy)return;
-  if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?Math.max(1,this.keys.length):this.screen==='names'?this.names.length:this.screen==='providers'?3:2)-1,this.choice+delta));this.actions.changed();return;}
+  if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?this.keys.length+6:this.screen==='names'?this.names.length:this.screen==='providers'?3:2)-1,this.choice+delta));this.actions.changed();return;}
   if(key==='backspace'&&(this.screen==='form'||this.screen==='import')){this.backspace();this.actions.changed();return;}
   if(this.screen==='providers'&&key==='enter'){this.provider=providers[this.choice]?.[1]??'anthropic';this.choice=0;if(this.provider==='foundry')this.form('foundry');else this.screen='method';this.actions.changed();return;}
   if(this.screen==='method'&&key==='enter'){if(this.choice===0){this.busy=true;this.actions.changed();try{await this.actions.login(this.provider==='anthropic'?'claude-code':'codex');this.actions.close();}catch{this.message='Login could not start';}finally{this.busy=false;this.actions.changed();}}else this.form(this.provider);this.actions.changed();return;}
   if(this.screen==='form'&&key==='enter'){if(this.row<this.fieldNames().length-1){this.row++;this.actions.changed();return;}await this.save();return;}
   if(this.screen==='settings'){
+   if(key==='enter'&&this.choice>=this.keys.length){const action=['a','i','l','d','f','tab'][this.choice-this.keys.length];if(action)await this.key(action);return;}
    if(key==='a'||key==='+'){this.screen='providers';this.choice=0;this.actions.changed();return;}
    if(key==='i'){this.screen='import';this.path='';this.message='';this.actions.changed();return;}
    if(key==='l'){this.screen='providers';this.choice=0;this.actions.changed();return;}
@@ -58,9 +60,17 @@ export class CredentialsPanel {
  lines():string[]{
   const lines:string[]=[];
   if(this.screen==='providers')lines.push('Connect a provider',...providers.map(([label],i)=>`${i===this.choice?'›':' '} ${label}`));
-  if(this.screen==='method')lines.push(providers.find(p=>p[1]===this.provider)?.[0]??'',`${this.choice===0?'›':' '} ${this.provider==='anthropic'?'Claude account':'ChatGPT account'} · official CLI login`,`${this.choice===1?'›':' '} API key · OS keychain`,'What happens: the CLI owns login; AI Term never reads its credentials');
+  if(this.screen==='method')lines.push(providers.find(p=>p[1]===this.provider)?.[0]??'',`${this.choice===0?'›':' '} ${this.provider==='anthropic'?'Claude Code':'Codex'} · ${ownLoginLabel(this.provider==='anthropic'?this.engines?.claudeCode.authMethod:this.engines?.codex.authMethod)} · official CLI login`,`${this.choice===1?'›':' '} API key · OS keychain`,'What happens: the CLI owns login; AI Term never reads its credentials');
   if(this.screen==='form'){lines.push('Add API key');for(const [i,name]of this.fieldNames().entries()){const value=name==='secret'?'•'.repeat(this.secret.length):name==='label'?this.label:name==='endpoint'?this.endpoint:this.deployments;lines.push(`${i===this.row?'›':' '} ${name}: ${value}`);}lines.push('↑↓ fields · ⏎ next/save · key is masked');}
-  if(this.screen==='settings'){lines.push('KEYS · OS keychain');for(const [offset,k]of this.keys.slice(Math.max(0,this.choice-2),Math.max(0,this.choice-2)+5).entries())lines.push(`${Math.max(0,this.choice-2)+offset===this.choice?'›':' '} ${k.label} · ${k.provider} · key ····${k.last4}${k.endpoint?' · '+k.endpoint:''}`);lines.push('+ add key (a) · import from .env (i) · x remove · t test','ENGINES');for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(`${name}: ${status?.installed?'✓ installed':'✗ not installed'} · ${status?.loggedIn?'✓ logged in':'✗ not logged in · /login'}`);lines.push('DEFAULTS',`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`,'keys are never shown in full and never written to .env');}
+  if(this.screen==='settings'){
+   const action=(index:number,text:string)=>`${this.choice===this.keys.length+index?'›':' '} ${text}`;
+   lines.push('KEYS · OS keychain');
+   const keyStart=Math.max(0,Math.min(this.choice,this.keys.length-1)-2);
+   for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${k.provider} · key ····${k.last4}${k.endpoint?' · '+k.endpoint:''}`);
+   lines.push(action(0,'+ add key (a)'),action(1,'import from .env (i)'),action(2,'login (l)'),'ENGINES');
+   for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(`${name}: ${status?.installed?'✓ installed':'✗ not installed'} · ${status?.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status?.authMethod)}`);
+   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),'keys are never shown in full and never written to .env');
+  }
   if(this.screen==='import')lines.push('Import from .env',`path: ${this.path}█`,'Names only are shown; source file is never modified');
   if(this.screen==='names')lines.push('Select names to import',...this.names.map((n,i)=>`${i===this.choice?'›':' '} [${this.selected.has(n.name)?'x':' '}] ${n.name} · ${n.provider}`),'↑↓ select · Space toggle · ⏎ import');
   if(this.screen==='result')lines.push('Keys',...this.keys.map(k=>`${k.label} · key ····${k.last4}`),...this.keys.flatMap(k=>(k.lastTest??[]).map(r=>`${r.model} · ${r.status}`)));

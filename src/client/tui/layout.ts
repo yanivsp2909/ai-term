@@ -48,7 +48,6 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     const auth = session.auth.kind==='key'?`API key ····${session.auth.last4}`:session.engine==='shell'?'':ownLoginLabel(session.authMethod);
     const detail = auth||`${session.statusDetail === word ? word : `${word} · ${session.statusDetail}`}`;
     grid.text(7, y + 2, detail, session.status === 'error' || session.status === 'waiting' ? color : t['ink-3'], bg, false, panel.w - 9);
-    if(session.permission==='dontAsk'&&layout.preview&&view.selectedId===session.id)grid.text(layout.preview.x+2,2,"! don't ask",t['status-error'],t.surface);
   }
   if (!sessions.length) grid.text(3, 3, 'No sessions yet', t['ink-3']);
   const selected = sessions.find(s => s.id === view.selectedId);
