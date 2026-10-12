@@ -53,7 +53,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             break;
         case 'settings.set':
             fields = ['patch'];
-            validateSettingsPatch(v.patch);
+            validateSettingsPatch(v.patch, true);
             break;
         case 'engines.status':
         case 'sessions.list':
@@ -132,9 +132,10 @@ export function isModel(value: unknown): value is string | null { return value =
 export function isPermission(value: unknown): value is import('./protocol.js').Permission { return value === 'ask' || value === 'dontAsk'; }
 function isAccount(value: unknown): boolean { return !!value && typeof value === 'object' && Object.keys(value).length === 1 && 'kind' in value && value.kind === 'account'; }
 export function sanitizeTitle(value: string): string { return [...stripVTControlCharacters(value).replace(/[\p{C}]/gu, '').trim()].slice(0,60).join(''); }
-export function validateSettingsPatch(value: unknown): import('./protocol.js').SettingsPatch {
+export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultCwd','permission'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isAgentEngine(v.defaultEngine) ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.permission !== undefined && v.permission !== 'ask' ||

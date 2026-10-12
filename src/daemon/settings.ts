@@ -22,7 +22,7 @@ export class SettingsStore {
     } finally { await file.close(); }
   }
   set(patch: SettingsPatch): Promise<Settings> {
-    const validated = validateSettingsPatch(patch);
+    const validated = validateSettingsPatch(patch, true);
     // A failed write stays visible to its caller; later requests may retry.
     const next = this.queue.then(async () => { const settings = validateSettings({...await this.get(),...validated}); await atomicWrite(this.path, settings); return settings; });
     this.queue = next.then(() => undefined, () => undefined);

@@ -33,3 +33,13 @@ it('Foundry args carry validated endpoint and env variable name, never secret, a
  expect(args).toContain('model_providers.aiterm_foundry.wire_api="responses"');
  for(const endpoint of ['http://example.com','https://bad.com/"','https://bad.com/ space'])expect(()=>buildArgs({engine:'codex',model:'deployment',permission:'ask',foundryEndpoint:endpoint})).toThrow();
 });
+it('S6 recipe in a real stub child exposes no own-provider auth variables',async()=>{
+ const {execFile}=await import('node:child_process');
+ for(const [engine,vars] of [['claude-code',CLAUDE_AUTH_VARS],['codex',CODEX_AUTH_VARS]] as const){
+  const base={...Object.fromEntries(vars.map(v=>[v.replace('*','TEST'),canary]))};
+  const env=buildSpawnEnv(engine,{kind:'account'},base);
+  const source='const names='+JSON.stringify(vars)+';process.stdout.write(JSON.stringify(names.filter(p=>Object.keys(process.env).some(k=>p.endsWith("*")?k.startsWith(p.slice(0,-1)):k===p))));';
+  const stdout=await new Promise<string>((resolve,reject)=>execFile(process.execPath,['-e',source],{env,timeout:2000},(error,out)=>error?reject(error):resolve(out)));
+  expect(stdout).toBe('[]');
+ }
+});
