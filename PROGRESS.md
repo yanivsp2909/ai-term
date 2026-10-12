@@ -1,59 +1,74 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: e4d7233 docs: record v0.1.6f verification and manual checks
-Roadmap step: v0.1.6f done; v0.1.6 still partial (its live reply and effective-permission checks need Yaniv)
-Branch: main, started from 08de6d5 (clean, 162 tests). This handover is committed last; its own hash is in git log.
+Last commit: e2161aa spike: v0.2 top bar (redraw vs raw)
+Roadmap step: v0.2.1b done (top-bar spike). v0.1.6 is still partial: its live checks need Yaniv.
+Branch: main, started from adf092d (clean, 165 tests). This handover is committed last; its own hash is in git log.
 
 ## What works
-- v0.1.6f fixes B2 and B3 from the v0.1.6 live checks, per D40 and D41 (both in the architecture decisions log):
-  - Every Codex session's argv starts with `--no-daemon`, exactly once. Codex rejects a duplicate, so only `src/daemon/env.ts:35` adds it, and the Foundry path no longer does.
-  - `AZURE_OPENAI_API_KEY` passes through to Codex account sessions. The other 7 Codex variables stay stripped, and the dormant Foundry key row still strips Azure (a key session gets only its own key, D16).
-  - Ask passes explicit ask flags: Claude Code `--permission-mode=default`; Codex `--ask-for-approval=on-request --sandbox=workspace-write`. Don't ask is unchanged. All permission flags come from the `PERMISSION_ARGS` table in env.ts.
-- Every argv `buildArgs` emits parses in the installed Claude Code 2.1.296 and Codex 0.160.1.
-- Commits, RED then GREEN: 8515293/b11d286 (no-daemon), 77ac368/19a1dfd (Azure), 6f3ca80/d730815 (Ask). Then cfb4da6 (D40/D41 docs), 804a2a0 (spawn-level argv check), e4d7233 (verification docs).
-- The code reviewer and security reviewer found no CRITICAL, HIGH or MEDIUM issues. Their LOW doc notes were fixed.
-- Required final output:
-  - npm run typecheck: tsc --noEmit, exit 0
-  - npm run lint: ESLint: No issues found, exit 0
-  - npm test -- --coverage: Test Files 30 passed (30); Tests 165 passed (165)
-  - coverage: statements 85.19%, branches 77.09%, functions 85.92%, lines 91.45%; env.ts 100% branches
-  - npm run build: ESM Build success in 10ms, exit 0
-  - git diff --check 08de6d5..HEAD: no output, exit 0
-- Evidence (CLI facts, greps, TDD table, exact manual commands): docs/testing/v0.1.6f-fixes.md.
+- **v0.2.1b top-bar spike (D39):** throwaway harness in `spikes/bar/`, report in `docs/spikes/v0.2-bar.md`. No product code changed.
+- **Recommendation: go, with listed limits.** A client-side headless mirror redrawn under a one-row bar is fast and faithful enough. The window-title fallback isn't needed unless the manual feel test says otherwise.
+- **Typing latency, p95, 500 keys, two rounds:** redraw adds +0.40/+0.49 ms (echo) and +0.62/+0.63 ms (vim) over raw. Gate is 2 ms: pass. It needs the user-input fast path; without it the cost was +2.03 ms.
+- **CPU:**
+  - `noise.js` for 30 s: raw 0.74%, redraw 2.89% of one core (flag at 25%: not reached).
+  - Extra `yes` flood: raw 79%, redraw 92% (flagged). Redraw sends the terminal 13 KB/s instead of 85 MB/s.
+- **Fidelity:** redraw matches the program run directly at the agent's size, cell for cell.
+  - Pass: vim (insert, visual, `:split`, click, wheel, `:q`), less (scroll, search), truecolor/256/16 colors and attributes, CJK and emoji (with a modern width table), bracketed paste, Esc, resize, alt screen, title, all 4 mouse encodings with bar clicks dropped, and all 5 Ctrl+E forms. A Ctrl+E inside a paste stays text.
+  - Claude Code 2.1.296 and Codex 0.160.1 render, take typing in their input box (no Enter, no prompt sent) and quit with Ctrl+C.
+- **Raw passthrough at rows − 1 is confirmed broken:** `less` is off by a row (1,130+ cells), and leaving the alternate screen shows the terminal's own normal screen.
+- **Losses vs raw:** OSC 8 link targets, underline style/color, inline images, terminal identity in DA2/XTVERSION answers, some color queries, and flood CPU. The mirror also needs a modern width table: the built-in Unicode 6 table fails emoji (25 cells).
+- **Checks on this branch:**
+  - `npm run typecheck`: `tsc --noEmit`, exit 0
+  - `npm run lint`: ESLint: No issues found, exit 0
+  - `npm test`: Test Files 30 passed (30); Tests 165 passed (165)
+  - `npx tsc -p spikes/bar/tsconfig.json`: exit 0
+- **Still true from v0.1.6f (D40, D41):** every Codex argv starts with one `--no-daemon`; `AZURE_OPENAI_API_KEY` passes through to Codex account sessions; Ask passes explicit ask flags. All permission flags live in `PERMISSION_ARGS` in `src/daemon/env.ts`.
 
 ## What's next
-- Yaniv runs the v0.1.6f manual checks below. When the replies and effective Ask permissions pass, mark v0.1.6 done; then v0.1.7 (login/keys). Do not start v0.1.7 before that.
+- Yaniv runs the v0.1.6f manual checks below. When they pass, mark v0.1.6 done and go on to v0.1.7 (login/keys).
+- Yaniv runs the bar feel test (2 minutes, commands in `docs/spikes/v0.2-bar.md`) and decides D39: build redraw, or fall back to the window title.
+- If go: the bar's implementation step(s) in v0.2. About 600–700 product lines plus about 300 test lines, files listed in the report.
+  - Preconditions: a modern width table in both mirrors (own table, or a new dependency Yaniv approves).
+  - Add D39 to the architecture decisions log (it's missing there).
 
 ## Manual checks
-- Flag spellings in the installed CLIs: ran. All exist. Claude's help lists `manual`, and the binary maps it to the canonical `default`.
-- Parse check of every emitted argv (Claude ask/dontAsk, Codex ask/dontAsk, Foundry ask): ran, all accepted.
-- `codex login status` with and without `--no-daemon`: ran. Same result. The flag works only before the subcommand. With an empty temp `CODEX_HOME`, both forms say "Not logged in" while the logged-in daemon runs, so the status command reads its own env's `CODEX_HOME`. The engine check is unchanged.
-- Mutation check of the spawn-level argv assertion (ask flags removed; `--no-daemon` doubled): ran, it failed both times, then env.ts was restored from git.
-- Codex account reply with no Azure error (B2): needs Yaniv.
-- Codex effective Ask, `/status` shows on-request + workspace-write instead of YOLO (B3): needs Yaniv.
-- Claude Ask mode shows the normal ask mode, plus the `ok` reply after you answer folder trust: needs Yaniv.
-- S6 manual env check, names only (`env | cut -d= -f1 | grep ...`): needs Yaniv.
-- Don't ask unchanged (optional): needs Yaniv.
-- Terminal title/palette/cursor after Ctrl+E and `/exit` (carried over from v0.1.6): needs Yaniv.
+- Spike, automated in a PTY with a headless terminal: latency, CPU, the fidelity matrix, Ctrl+E forms, and Claude/Codex first screen, typing and quit: ran (numbers in the report).
+- Bar feel test in a real terminal (vim and Claude Code, raw vs redraw; flicker, typing feel, colors, cursor shape): needs Yaniv.
+- htop (colors, mouse click, F10): needs Yaniv. It isn't installed here; `top` stood in.
+- Kitty keyboard path in Ghostty or iTerm2 (the test terminal had none): needs Yaniv.
+- Real-terminal emoji widths (Terminal.app vs others) with the redraw harness: needs Yaniv.
+- Carried from v0.1.6f, all need Yaniv (commands in `docs/testing/v0.1.6f-fixes.md`):
+  - Codex account reply with no Azure error
+  - Codex `/status` shows on-request + workspace-write
+  - Claude Ask mode and its `ok` reply
+  - S6 names-only env check
+  - optional: Don't ask unchanged
+  - title, palette and cursor after Ctrl+E and `/exit`
 
 ## Gotchas
-- Codex errors with "the argument '--no-daemon' cannot be used multiple times". Never add the flag anywhere but env.ts:35.
-- `--no-daemon` is a top-level Codex option: `codex --no-daemon login status` works, `codex login status --no-daemon` exits 2.
-- The shared Codex app-server daemon on this Mac runs 0.162.1 while the CLI is 0.160.1. That's the "started elsewhere" server D41 avoids.
-- Claude 2.1.296 accepts `--permission-mode=default` but its help shows only `manual`. If a later Claude drops the `default` alias, Claude sessions fail to start with an invalid-choice error. Then switch PERMISSION_ARGS to `manual` (same mode).
-- Codex 0.160.1 adds `--approve-for-me` (automatic approval review). We never pass it, and the exact-argv tests would catch it. It isn't on the architecture's "never passed" list; add it if Yaniv wants.
-- `codex login status` prints a masked key hint. One manual comparison this session printed that masked hint into the session transcript (no file, commit or doc); later checks printed only the leading phrase. Always filter that command's output.
-- The Bash tool runs zsh: an unquoted `$var` is one argv element, not word-split. That made one early check pass "login status" as a Codex prompt.
-- "Key rows are unchanged" was read as unchanged behavior: the Foundry key row still strips Azure. Tests pin it.
-- An idle `codex --no-daemon` TUI was open in ~/ai-term during this session (0% CPU, no file changes; its v0.1.6 handover was already committed). Close it before the next agent starts.
-- The prompt text ended mid-sentence in SECURITY CHECKS ("Add it to the canary test with a fake"). Nothing after that was visible, so the handover followed AGENTS.md.
-- Branch coverage is still below 80% (77.09%); statement/function/line coverage is above.
+- **xterm parses `write()` on a later timer tick** (at least 1 ms in Node) unless the write follows user input. A redraw client must call `term.input('', true)` after forwarding keys, or it loses about 2 ms per keystroke (`spikes/bar/bar.ts`, `send`).
+- **@xterm/headless 6.0.0 has only Unicode 6 widths**, where most emoji are 1 cell. Today's daemon mirror has this too, so snapshots of emoji-heavy screens can already be misaligned.
+- **`RESET_MODES` doesn't turn off mode 2031**, which Claude Code turns on. After Ctrl+E, a terminal that supports it keeps sending theme reports. Not fixed (spike only).
+- **Codex's update notice:**
+  - It ignores Esc for over a second, and Enter on it means "Update now". Ctrl+C skips it.
+  - Its main screen keeps an "Update available" banner, so match the menu text ("Skip until next version"), not "Update available".
+  - Never script Enter into Codex or Claude.
+- **The flood test crashed the driver once,** because a raw `yes` flood fills a JS string in seconds. CPU runs now only count bytes.
+- **The driver drops this Claude Code session's `CLAUDECODE` and `CLAUDE_CODE_*` markers** before starting an agent, as a daemon started from a plain shell would.
+- **Codex `--no-daemon` rules:** never add the flag anywhere but `src/daemon/env.ts:35`, because Codex rejects it twice. It's top-level only: `codex --no-daemon login status` works, `codex login status --no-daemon` fails.
+- **Claude's `default` permission mode:** Claude 2.1.296 accepts `--permission-mode=default`, but its help lists only `manual`. If the alias goes away, switch `PERMISSION_ARGS` to `manual`.
+- **Always filter `codex login status`:** it prints a masked key hint.
+- **The Bash tool runs zsh:** `$var` isn't word-split, and `timeout` doesn't exist.
+- **Idle Codex TUIs:** a `codex --no-daemon` TUI was open in `~/ai-term` during both v0.1.6f and this session (0% CPU, no repo changes). Close it before the next agent starts.
+- **Branch coverage** is still below 80% (77.09%); statement, function and line coverage are above.
 
 ## New dependencies
-- None.
+- None. The spike uses node-pty, @xterm/headless and tsx, which are already in the repo.
 
 ## Concepts introduced
-- Shared background server (src/daemon/env.ts, `--no-daemon`): by default the Codex TUI attaches to one long-lived app-server process that may have been started by another app with a different env and version. A session on that server doesn't use the env and `-c` settings AI Term built. `--no-daemon` makes each session run its own process, so the recipe really applies.
-- Flags beat config (src/daemon/env.ts, `PERMISSION_ARGS`): a CLI reads your config file first, then command-line flags override it for that run. Passing explicit ask flags pins Ask behavior whatever your own config says (for example YOLO), without AI Term reading or editing that config.
-- Mutation check (tests/agent-spawn.test.ts): to prove a test guards a fix, you break the fix on purpose and watch the test fail, then restore it. Here, removing the ask flags or doubling `--no-daemon` turned the spawn test red.
+- **Client-side mirror redraw (tmux model)** (`spikes/bar/bar.ts`, `render.ts`): instead of piping the agent's bytes to your terminal, the client feeds them into its own invisible terminal and then paints that terminal's cells wherever it wants, here one row lower. The agent can clear the screen or jump to row 1 as much as it likes; it only changes the invisible copy, so the bar stays put.
+- **Passthrough policy** (`spikes/bar/passthrough.ts`): once you redraw, nothing reaches your terminal unless you send it on purpose. Each escape sequence gets one of three choices:
+  - forward it, if it's about your terminal's input or look (mouse modes, paste mode, title);
+  - answer it from the mirror, if it's about the agent's own screen (cursor position);
+  - drop it, if there's no faithful way to pass it (a clipboard read, link ids).
+- **Mouse row shift** (`spikes/bar/mouse.ts`): your terminal counts mouse rows from its own top row, which is now the bar. So every click report gets its row reduced by one before the agent sees it, and clicks on the bar itself never reach the agent.
