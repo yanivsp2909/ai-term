@@ -11,6 +11,16 @@ it('S6 removes every own-provider auth/routing variable, leaves other provider v
   expect(env.npm_test).toBeUndefined();expect(env.AI_TERM_HOME).toBeUndefined();env.PATH='changed';expect(buildSpawnEnv(engine,{kind:'account'},all).PATH).toBe('/usr/bin:/bin');expect(all.PATH).toBe('/usr/bin:/bin');
  }
 });
+it('B2/D41 Codex account env keeps AZURE_OPENAI_API_KEY and strips every other listed Codex variable; key rows unchanged',()=>{
+ const stripped=['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_URL','OPENAI_ORG_ID','OPENAI_ORGANIZATION','OPENAI_PROJECT_ID','AITERM_FOUNDRY_KEY'];
+ expect(CODEX_AUTH_VARS).toEqual(stripped);
+ const all={...base,AZURE_OPENAI_API_KEY:'azure',...Object.fromEntries(stripped.map(key=>[key,'private']))};
+ const account=buildSpawnEnv('codex',{kind:'account'},all);
+ expect(account.AZURE_OPENAI_API_KEY).toBe('azure');for(const key of stripped)expect(account[key]).toBeUndefined();
+ const foundry=buildSpawnEnv('codex',{kind:'key',secret:canary},all);
+ expect(foundry.AITERM_FOUNDRY_KEY).toBe(canary);expect(foundry.AZURE_OPENAI_API_KEY).toBeUndefined();for(const key of stripped)if(key!=='AITERM_FOUNDRY_KEY')expect(foundry[key]).toBeUndefined();
+ expect(buildSpawnEnv('claude-code',{kind:'account'},all).AZURE_OPENAI_API_KEY).toBe('azure');
+});
 it('S7 key rows set only own secret and strip other own-provider credentials',()=>{
  const all={...base,...Object.fromEntries([...CLAUDE_AUTH_VARS,...CODEX_AUTH_VARS].map(key=>[key.replace('*','CANARY'),'private']))};
  for(const [engine,key,vars] of [['claude-code','ANTHROPIC_API_KEY',CLAUDE_AUTH_VARS],['codex','AITERM_FOUNDRY_KEY',CODEX_AUTH_VARS]] as const){
@@ -44,13 +54,13 @@ it('Foundry args carry validated endpoint and env variable name, never secret, a
  expect(args).toContain('model_providers.aiterm_foundry.wire_api="responses"');
  for(const endpoint of ['http://example.com','https://bad.com/"','https://bad.com/ space'])expect(()=>buildArgs({engine:'codex',model:'deployment',permission:'ask',foundryEndpoint:endpoint})).toThrow();
 });
-it('S6 recipe in a real stub child exposes no own-provider auth variables',async()=>{
+it('S6 recipe in a real stub child exposes no own-provider auth variables and keeps AZURE_OPENAI_API_KEY (D41)',async()=>{
  const {execFile}=await import('node:child_process');
  for(const [engine,vars] of [['claude-code',CLAUDE_AUTH_VARS],['codex',CODEX_AUTH_VARS]] as const){
-  const base={...Object.fromEntries(vars.map(v=>[v.replace('*','TEST'),canary]))};
+  const base={AZURE_OPENAI_API_KEY:canary,...Object.fromEntries(vars.map(v=>[v.replace('*','TEST'),canary]))};
   const env=buildSpawnEnv(engine,{kind:'account'},base);
-  const source='const names='+JSON.stringify(vars)+';process.stdout.write(JSON.stringify(names.filter(p=>Object.keys(process.env).some(k=>p.endsWith("*")?k.startsWith(p.slice(0,-1)):k===p))));';
+  const source='const names='+JSON.stringify(vars)+';process.stdout.write(JSON.stringify([names.filter(p=>Object.keys(process.env).some(k=>p.endsWith("*")?k.startsWith(p.slice(0,-1)):k===p)),"AZURE_OPENAI_API_KEY" in process.env]));';
   const stdout=await new Promise<string>((resolve,reject)=>execFile(process.execPath,['-e',source],{env,timeout:2000},(error,out)=>error?reject(error):resolve(out)));
-  expect(stdout).toBe('[]');
+  expect(stdout).toBe('[[],true]');
  }
 });
