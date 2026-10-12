@@ -261,7 +261,7 @@ export class Homepage {
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
     if(command==='/clean'){if(argument){this.showNote('/clean takes no argument');return;}this.cleanIds=this.sessions.filter(s=>['exited','error'].includes(s.status)).map(s=>s.id);if(!this.cleanIds.length){this.cleanIds=null;this.showNote('No finished agents to remove');}else this.showNote(`remove ${this.cleanIds.length} finished agents? y/n`);return;}
-    if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));return;}
+    if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));}catch(error){this.showNote(error instanceof Error?error.message:'Shell could not start');}return;}
     if(command==='/resume'){if(argument){this.showNote('/resume uses the selected agent');return;}const session=this.sessions.find(s=>s.id===this.selectedId);if(!session||!['exited','error'].includes(session.status)){this.showNote('Select an exited or failed agent to resume');return;}if(session.engine==='shell'){this.showNote('A shell has no AI conversation to resume');return;}if(session.engine==='claude-code'&&!session.conversationId){this.showNote('This older Claude agent has no conversation ID');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.resume',sessionId:session.id}));if(session.engine==='codex')this.showNote('Codex resume picker · choose its conversation');}catch(error){this.showNote(error instanceof Error?error.message:'Resume failed');}return;}
     if(command==='/effort'){if(!argument){this.openBox('effort');return;}const effort=argument==='CLI default'?null:argument;if(!isEffortForEngine(this.engine,effort)){this.showNote('/effort '+effortValues(this.engine).join('|'));return;}this.effort=effort;this.showNote('');return;}
     if(command==='/mode'){if(!argument){this.openBox('mode');return;}const permission=argument==="don't ask"||argument==='dontAsk'?'dontAsk':argument;if(!isPermissionForEngine(this.engine,permission)){this.showNote(this.engine==='codex'&&permission==='auto'?'Codex has no distinct auto mode; choose ask or don\'t ask':'/mode ask|auto|don\'t ask');return;}this.permission=permission;this.showNote('');return;}
@@ -343,7 +343,7 @@ export class Homepage {
     if (key === 'escape') {
       this.savingDefault=false;
       if (b.kind !== 'start' && this.returnToStart) { b.kind = 'start'; this.returnToStart = false; this.enqueue(() => this.checkSelectedEngine()); }
-      else { if (b.kind === 'start') this.field.text = b.message; this.box = undefined; }
+      else { if (b.kind === 'start'){this.field.text = b.message;this.permission='ask';} this.box = undefined; }
       this.draw(true); return;
     }
     if (key === 'backspace') {
@@ -364,7 +364,7 @@ export class Homepage {
       this.draw(true); return;
     }
     if (key === 'tab') {
-      if (b.kind === 'start'){const modes=modeValues(b.engine);b.permission=modes[(modes.indexOf(b.permission)+1)%modes.length]??'ask';this.permission=b.permission;}
+      if (b.kind === 'start'){const modes=modeValues(b.engine);b.permission=modes[(modes.indexOf(b.permission)+1)%modes.length]??'ask';}
       else if (b.kind === 'model') { this.boxInput('right');return; }
       else this.enqueue(async () => { b.completions = await completeFolder(b.path || b.cwd, b.cwd); if (b.completions.length === 1) b.path = b.completions[0] ?? b.path; this.draw(true); });
       this.draw(true); return;
@@ -394,7 +394,7 @@ export class Homepage {
         try {
           const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message});
           const session = validateSession(result.session); this.sessions = [session,...this.sessions.filter(s => s.id !== session.id)]; this.selectedId = session.id;
-          this.box = undefined; this.field.text = ''; this.previewCells = undefined; await this.updatePreview(false);
+          this.box = undefined;this.permission='ask'; this.field.text = ''; this.previewCells = undefined; await this.updatePreview(false);
         } catch (error) { b.error = error instanceof Error ? error.message : 'Agent could not start'; }
         this.draw(true);
       }); return;
