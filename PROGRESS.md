@@ -1,65 +1,57 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: b1558ad docs: record Claude status limits and skipped agent guide sync
-Roadmap step: v0.2.2 done (Claude status core; physical CLI checks need Yaniv)
+Last commit: 4415994 test: remove canary-scan and idle-interval races exposed by a busier suite
+Roadmap step: v0.2.3 done (Codex status core; physical Codex checks need Yaniv)
 Branch: main. This handover is the last commit; its own hash is in git log.
-Started clean at 72d981d after git pull --ff-only (already up to date); baseline 88 files / 547 passed / two native Keychain opt-in skips, 8.03 s. Final 95 files / 576 passed / same two skips, twice consecutively, 7.78 s and 7.76 s. No Codex ingress, homepage card/notification UI or bar; v0.2.3 not started.
+Started at 2399e49 (Codex's earlier session had only deleted SYNC_NOTES.md, unpushed; no v0.2.3 code existed). Baseline 95 files / 576 passed / two native Keychain skips, 7.59 s. Final 100 files / 596 passed / same two skips, twice consecutively, 8.65 s each; ten further full runs all green.
 
 ## What works
-- Task 1, protocol first: RED 47ab8b7 → GREEN 1c15606. Six planned statuses (idle removed), context 0–100/null and lastActivity {tool, at}/null validate in responses and events. Legacy records may omit activity. Added explicit sessions.text lastReply boolean and an optional copy source; ordinary session responses have no reply. Removing the unused idle renderer entry is the only card-renderer edit.
-- Task 2, reducer/Claude mapper: RED e54b03b → GREEN d60e7cc. Pure status-reducer.ts handles sequence order, running/waiting/done/context and exit precedence; terminal state ignores later events. claude-status.ts reads only mapped hook fields, restricts tool/error metadata and separates bounded replies from status. Late permission_prompt is backup only, suppressed after tool completion/done. Startup correction RED f830de0 → GREEN 5f22987, then review RED dbc568c → GREEN 5f2755d covers context before output and queued output after exit.
-- Task 3, one local server: RED da2d159 → GREEN 035a9cb. Existing usage-receiver gains POST /v1/status/claude; separate timing-safe status credential map resolves session identity. Every status/unknown-route reply is bodyless 204, including auth/Host/Origin/type/JSON/oversize/wrong method/errors. Usage paths preserve their 200 {} contract and existing rejection codes. Cap 4 MiB; parse only to map allowed fields, no bodies logged. Seq assigned at request arrival; slots consume in order.
-- Tasks 4–5, env/hooks: RED f92b5c0 → GREEN 826fa25; integration RED 6d5a112 → GREEN 7e88fea. Every new Claude agent (subscription included, login sessions excluded) gets its own random AITERM_STATUS_TOKEN and numeric AITERM_STATUS_PORT in env via env.ts. Token never enters argv/settings/state/logs; base env drops stale status values. sessions/<id>/claude-settings.json is 0600 under 0700 directories, passed as one --settings=<path> argument before first-message delimiter and deleted on record removal. All hooks have timeout2, literal $AITERM_STATUS_TOKEN header and allowedEnvVars. No writes to CLI configuration.
-- Task 6, D37 status line: RED b11a6e7 → GREEN f729fa2. Internal ai status-line reads at most 1 MiB stdin, prints safe model · ctx N%, sends only numeric context to 127.0.0.1 with env credential and one-second request bound. Unsafe command paths omit statusLine. Review RED 465fbda → GREEN 387d876 includes validated absolute tsx loader for source sessions; actual generated source command executes in a child test. Built JS command smoke passes too, without daemon/home creation.
-- Task 7, last reply: RED 2b14069 → GREEN 923ae91. Stop.last_assistant_message stays in Live memory only, UTF-8 cap256KB; explicit c and /copy prefer Claude last reply, preserving whitespace after control stripping. /copy all retains mirror behavior; unavailable reply retains cleaned whole text and today's fallback note. Chunk source validated by client; no reply reaches lifecycle/session metadata or disk.
-- Task 8, L4: 7e88fea plus runtime tests. All nonterminal sessions, including waiting and done, count live and remain sampler roots. Restart marks previously live statuses exited; saved PIDs never signalled. Stub tests assert permission/done activeCount1.
-- Task 9, debug/docs: f729fa2, 7e88fea, d5d2e00, b1558ad. ai debug ls prints id/status/statusDetail/ctx=<used% or ?>/title. README command inventory, copy behavior and status-line semantics updated; architecture S12/S15 and §12.1 updated.
-- Review fixes: security-reviewer initially found source loader and body overtaking; RED bd1de5a → GREEN 208b3de preserves request order. RED ecb44b0 → GREEN 200da55 preserves failed-slot predecessor order and closes half-open reads after empty204. Re-review approved with 25 focused tests and no remaining findings. Final typescript-reviewer found startup output/state divergence; 5f2755d fixed it, re-review approved with 51 targeted tests plus separate output/exit regression. Reviews serial/read-only; parent did no edits while reviewers ran.
-- Final verification, all exit0:
+- Task 1, endpoint: RED 890be41 → GREEN f4ae3ef. POST /v1/status/codex on the shared server with the S12 rules; every reply is bodyless 204 (success, auth, Host, Origin, type, bad JSON, oversize, unknown path, wrong method, errors). Status credentials are bound to an engine and reach only that engine's path. sessionId comes from the credential only. Codex cap is 2 MiB, not the planned 64 KB (Yaniv chose this: a 256 KiB reply can grow ×6 under JSON escaping). Only type and last-assistant-message are read; bodies are never logged.
+- Task 2, `ai status-notify <json>`: same commits. Keeps type (agent-turn-complete only) and last-assistant-message (UTF-8 cap 256 KiB, shared `src/shared/last-reply.ts`); input-messages, cwd, thread ids and the rest are never copied. POSTs with AITERM_STATUS_TOKEN/PORT from env, 1 s bound, no output, exit 0 on any failure (built and source CLI checked).
+- Task 3, argv: RED 6354a85 → GREEN 53e98d1. Only through buildArgs, each -c one argv element, right after the single --no-daemon and before `resume`: notify=[node, (--import, tsx loader in source mode,) ai cli, "status-notify"] only from paths passing isStatusCommandPath, otherwise notify is left off (and the daemon logs it); tui.notifications, tui.notification_method="osc9", tui.notification_condition="always", tui.terminal_title=["activity","run-state","context-remaining"]. Token never in argv.
+- Task 4, mirror signals: RED bcb58ed → GREEN c91793f, review fixes RED 7e8f89d → GREEN 30c9f47 and RED b608b16 → GREEN 3b48beb. The daemon mirror (never the client) reports OSC 9, title and bare bell. Approval OSC 9 ("Approval requested", "Codex wants to edit"), a bell while running, or a change into `[ ! ] Action Required` → waiting permission; a change into Working/Thinking → running; Ready left to notify; whole-part `Context N% left` → ctx 100−N. Attached owner Enter (CR, CSI 13 u; never inside a bracketed paste, tracked across chunks) after done/waiting → running. Signals join the session's request queue so a notify still being read is applied first; they apply only when status/reason/ctx would change; exit still wins.
+- Task 5, last reply: notify's reply stays in Live memory only; kept even if its done event was stale. c and /copy request it for Codex as for Claude (homepage asks for lastReply on any agent engine).
+- Task 6: subscription and key sessions both register status (status is not billing); usage telemetry rules unchanged.
+- Task 7: ai debug ls already prints status/statusDetail/ctx for every session, so Codex shows there unchanged. README (ai status-notify, Codex status paragraph, c and /copy for Codex), architecture S12 and §12.1 updated (7e549bc, 617493a).
+- Codex config keys confirmed on installed codex-cli 0.160.1 without a session: `codex --no-daemon -c … features list` loads all five keys together; `tui.notification_method="osc777"` fails ("expected one of auto, osc9, bel"); a bad `tui.notification_condition` fails. `tui.terminal_title` items are not validated at load, so their names rest on the v0.2 spike's source reading. No naming difference from the prompt.
+- Reviews: security-reviewer found no critical/high; typescript-reviewer found 2 high (Enter on empty composer, done lost to a later signal) and 4 medium. Fixed: lost done, paste, stray bell, dropped-notify log, signal failure isolation, title spoofing, OSC 9 not marked handled. Re-review: no critical/high; split-paste low fixed in 3b48beb. Reviews were read-only; no edits to reviewed code while they ran.
+- Final verification, all exit 0:
   - `npm run typecheck`: `> tsc --noEmit`
   - `npm run lint`: `> eslint .`, no diagnostics
-  - `npm test`: `Test Files 95 passed (95)` / `Tests 576 passed | 2 skipped (578)` / `Duration 7.78s`
-  - `npm test` again: same counts / `Duration 7.76s`
-  - `npm run build`: `ESM ⚡️ Build success in 16ms`
-  - Coverage: statements87.82%, branches82.51%, functions89.66%, lines92.54%.
-  - Built status-line child: exit0, claude-sonnet-4-6 · ctx25%, empty stderr, unused AI_TERM_HOME never created.
-  - S8 grep no exec(, execSync( or shell:true; permission flags only env.ts. Diff excludes keys.ts, spikes/, docs/spikes/, docs/reviews/, .claude/. git diff --check clean.
+  - `npm test`: `Test Files 100 passed (100)` / `Tests 596 passed | 2 skipped (598)` / `Duration 8.65s`
+  - `npm test` again: same counts / `Duration 8.65s`
+  - `npm run build`: `ESM ⚡️ Build success in 19ms`
+  - Coverage: statements 87.93%, branches 82.99%, functions 89.97%, lines 92.69%.
+  - Security: S8 grep no exec(, execSync(, shell: true; permission flags only in env.ts; forbidden flags absent; no S11 paths. Diff excludes keys.ts, spikes/, docs/spikes/, docs/reviews/, .claude/. git diff --check clean. Canary in notify input-messages, OSC 9 and title text absent from logs, state.json, usage files and protocol responses; token absent from full spawn argv (incl. notify array), every file under the test home and logs.
 
 ## What's next
-- v0.2.3 Codex ingress only when Yaniv asks: notify/OSC9/title handling not implemented here. v0.2.4 owns card/notification UI; bar later.
-- Physical Claude permission/run/done/context/copy checks below need Yaniv. New sessions need the new hooks; restart daemon first. Trust dialog must be accepted before Claude enables HTTP hooks.
-- v0.2.1 notifier remains partial; its permission/display/click checks unresolved. B12/B21 remain open for the Claude gate, untouched here.
-- agent-and-skills.md Project upload sync: skipped per Yaniv's final instruction because neither target nor uploaded source was found in allowed workspace. SYNC_NOTES.md records the request and skip; no replacement contents invented.
+- v0.2.4 (homepage cards, notifications) only when Yaniv asks. Bar later.
+- Physical Codex checks below need Yaniv. New sessions need the new argv; restart the daemon first.
+- Physical Claude checks from v0.2.2 still need Yaniv. v0.2.1 notifier remains partial.
 
 ## Manual checks
-- Stub Claude account/subscription lifecycle, private settings/env, permission→running→done, context/activity, active waiting/done, exit revocation, memory-only reply/explicit copy, source command execution, endpoint empty204/reordered/abort/half-open/canary checks: ran headless in own temp homes, no real agents or credentials. Passed.
-- Security/type reviews and full type/lint/tests/build/coverage: ran, passed as above. Built status-line smoke ran independently.
-- `cd ~/ai-term && node dist/cli/index.js daemon stop` — needs Yaniv: explicitly stops his daemon/agents; agent did not run it. Then restart with the next command.
-- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: start Claude on account, accept workspace trust, ask for a command needing permission and leave the prompt open. Use Ask, not auto/Don't ask.
-- `cd ~/ai-term && node dist/cli/index.js debug ls` — needs Yaniv: while permission prompt is open expect waiting permission; approve in Claude, then re-run to observe running and done. No new card design is claimed.
-- `cd ~/ai-term && node dist/cli/index.js debug ls` — needs Yaniv: compare ctx=<used%> with Claude's model · ctx N% status line after a turn; status line replaces the user's only in this session.
-- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: Ctrl+E home from that Claude session, press c or /copy, paste in a scratch editor and confirm only the last reply; /copy all keeps whole-session scope.
-- Native Keychain, real keys/logins, other providers, actual CLI hook timing, billing, physical clipboard and live UI: not run; needs Yaniv. No computer use used in this step.
+- Stub Codex subscription and api-key lifecycle (argv, env-only token, OSC 9/bell/title/Enter/paste, notify done with in-flight ordering, ctx, memory-only reply and copy, exit precedence, canaries): ran headless in temp homes, passed. Built `node dist/cli/index.js status-notify` with bad JSON, input-messages canary and a closed port: exit 0, no stdout/stderr, no home created.
+- `cd ~/ai-term && node dist/cli/index.js daemon stop && node dist/cli/index.js` — needs Yaniv: restarts the daemon (stops running agents).
+- `cd ~/ai-term && node dist/cli/index.js debug ls` — needs Yaniv: after starting a Codex agent and asking it something, expect running then done and a ctx=N%.
+- `cd ~/ai-term && node dist/cli/index.js debug ls` — needs Yaniv: ask the Codex agent to run `curl https://example.com` (sandbox blocks network, so Codex asks); expect waiting permission, then running after approving.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: Ctrl+E home, press c on the Codex agent, paste in a scratch editor; expect only the last reply.
+- Real Codex OSC 9/bell/title emission in our PTY and whether Esc interrupt fires notify: not run (no real sessions); needs Yaniv.
 
 ## Gotchas
-- Prompt §12.1 has correct status cap/empty errors, but older S12 row still said64KB/413; updated to4MiB/204. Usage exporters still require200{}, so “every response204” applies to status/unknown routes, not usage endpoints.
-- HTTP status read deadline1s stays under hook timeout2s. Over-cap bodies retain no bytes beyond4MiB; delayed/half-open requests flush204 then close. Queue predecessors settle on abort/timeouts before later callbacks execute. Connection/header parser failures also use bodyless204.
-- Seq is daemon request-arrival order, not native CLI sequence; hook requests themselves may be concurrent. No raw/native sessionId or seq is trusted. Context cannot overtake an earlier Stop body. PTY startup promotion preserves ingress seq and cannot overwrite terminal state.
-- StopFailure uses fixed allowlisted errors; unknown error values become unknown. Tool names must pass a strict80-character identifier rule; no tool input/reply appears in activity. LastActivity keeps the last tool, not arbitrary prose.
-- Last reply UTF-8 truncation retains the first256KB and is memory-only; daemon restart loses it along with mirror history. Older sessions/no reply and Codex still use today's fallback note. c scopes to the selection when queued, and copied content is never rendered in homepage notes.
-- Source statusLine uses an absolute validated tsx import path; built mode uses JS directly. Spaces/metacharacters in node/entry/loader omit the status line rather than shell quoting. Hook --settings path is always one argv element and may contain spaces safely.
-- Claude Esc interrupt fires no hook; trust gate can withhold hooks. No heuristics added; status may remain running until a later event. Codex ingress not silently added.
-- session settings file removal checks directory type/owner and unlinks only generated claude-settings.json; unsafe paths fail visibly. Empty session directories can remain. Existing private root protections remain mandatory.
-- PROGRESS baseline had v0.2.1 partial; this step was explicitly authorized on synced72d981d. RTK.md still absent. No other agents edited; requested reviews were serial/read-only.
-- No real ~/.ai-term, ~/.claude, ~/.codex, ~/.ssh, keychain, .env, native Keychain tests or real Claude/Codex sessions accessed. No external network except explicitly requested git pull/push. Stub env/key hygiene tests remain unchanged and pass.
+- The prompt's 64 KB Codex cap contradicted its 256 KB reply; Yaniv chose 2 MiB. S12 and §12.1 updated.
+- Enter on an empty Codex composer after done shows running until the next turn ends (prompt's Enter rule; no timer guessing). An Esc interrupt may leave running if Codex sends no notify (unverified).
+- Anything rendered in Codex that emits an approval-looking OSC 9 or a bell while running can show waiting; display only. AITERM_STATUS_TOKEN is in every Codex tool's env (as for Claude): a tool can forge done/last reply for its own session only.
+- Signals may lag up to the 1 s body deadline behind a slow status request (queue order). Status bodies and signals share one per-session sequence in UsageReceiver.
+- ingressStatus now keeps a reply even when its done/Stop event is stale (shared code; applies to Claude too).
+- The status-notify CLI child test runs once: several tsx children in parallel starved timing tests. Two pre-existing test races (canary scan vs atomic temp rename; idle interval registered after the socket appears) were exposed by the busier suite and fixed test-only in 4415994.
+- No real ~/.ai-term, ~/.claude, ~/.codex, ~/.ssh, keychain, .env or real Claude/Codex sessions accessed. `codex --help` and `codex … features list` (config load only) were run.
 
 ## New dependencies
-- None. Existing tsx handles source-mode status-line; Node HTTP, crypto, filesystem and existing PTYs provide the implementation.
+- None. Node http/crypto, xterm's existing parser hooks and tsx (source mode) cover it.
 
 ## Concepts introduced
-- Ordered reducer (src/daemon/status-reducer.ts): each session has explicit state and a monotonic ingress sequence. Process exit is terminal even if its sequence is older; later hook/context updates cannot revive it.
-- Dual contracts on one listener (src/daemon/usage-receiver.ts): usage exporters require200{} but Claude status hooks require204 with no body because JSON can be a permission decision. Separate credentials/routes let subscriptions report status without becoming billable usage.
-- Ordered asynchronous slots (src/daemon/usage-receiver.ts): request bodies can finish out of order. Each callback waits for its predecessor, and abort/timeouts release the slot only after that predecessor, so a large reply cannot be superseded by a tiny context request.
-- Per-session generated settings (src/daemon/claude-settings.ts, env.ts): a private file contains hook configuration and an env-variable name, not the secret value. argv selects the file while the fresh session env supplies the token; the helper's command string uses only strict absolute paths.
-- Explicit reply export (src/daemon/session-manager.ts, client/tui/homepage.ts): the full reply is not session metadata. It stays in one memory field until a user asks to copy it, then travels through the bounded existing text-export protocol, keeping automatic events/logs/state free of reply content.
+- Terminal signals as status (src/daemon/mirror.ts, codex-status.ts): xterm's parser separates a real bell from OSC terminators and exposes title changes and custom OSC handlers, so the daemon's own mirror can read Codex's notifications without any raw bytes reaching the user's terminal (S15). Only enums and a number are derived; the text is dropped.
+- Edge-triggered signals (src/daemon/session-manager.ts codexSignal): a title repaints often, so only a change into a run state counts. That stops a spinner's repeated "Working" from undoing the done that notify reported.
+- One queue for two channels (src/daemon/usage-receiver.ts enqueueStatus): HTTP bodies and terminal signals for a session share a sequence and a promise chain, so whatever arrived first is applied first even when an HTTP body is still streaming. The chain never rejects, or one failure would block every later request.
+- argv-only config for a CLI (src/daemon/env.ts codexStatusArgs): Codex's `-c key=value` takes TOML, so values built from paths are allowed only from a strict alphabet; anything else drops the feature instead of quoting.
