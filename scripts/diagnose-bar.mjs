@@ -25,14 +25,20 @@ let spawnedAt = 0, childEnded = false, inputCaptured = 0, outputTail = '', quitT
 // print pasted/typed text; anything outside terminal reports or exact quit keys is count-only.
 // eslint-disable-next-line no-control-regex -- terminal input framing
 const REPORT = /(?:\x1b\](?:10|11);rgb:[0-9a-fA-F/]+(?:\x07|\x1b\\)|\x1b\[[0-9?;:<>]*[cRuIOy]|\x1b\[<\d+;\d+;\d+[Mm]|\x1b:qa!\r|ZZ|ZQ)/g;
+const captures = new Map();
 function capture(entries, data) {
   if (!traceEnabled || !spawned || trace.autoQuitSent || performance.now() - spawnedAt > 1000) return;
   const bytes = Buffer.from(data);
   if (inputCaptured + bytes.length > 4096) { trace.inputBytesOmitted += bytes.length; return; }
   inputCaptured += bytes.length;
-  const text = bytes.toString('latin1'), reports = text.match(REPORT) ?? [];
-  trace.inputBytesOmitted += bytes.length - reports.join('').length;
-  for (const report of reports) entries.push({ ms: Math.round(performance.now() - spawnedAt), hex: Buffer.from(report, 'latin1').toString('hex') });
+  // Keep at most 4 KB in memory across the two streams, so a reply split across reads is still
+  // recognized. Only the allowlisted matches leave memory; all other bytes are count-only.
+  const state = captures.get(entries) ?? { text: '', count: 0 };
+  state.text += bytes.toString('latin1');
+  const reports = state.text.match(REPORT) ?? [];
+  for (const report of reports.slice(state.count)) entries.push({ ms: Math.round(performance.now() - spawnedAt), hex: Buffer.from(report, 'latin1').toString('hex') });
+  state.count = reports.length;
+  captures.set(entries, state);
 }
 const require = createRequire(import.meta.url), nodePty = require('node-pty');
 const originalSpawn = nodePty.spawn;
@@ -85,6 +91,8 @@ process.on('exit', code => {
   // eslint-disable-next-line no-control-regex -- terminal reply framing
   const replies = probeInput.match(/\x1b\](?:10|11);rgb:[0-9a-fA-F/]+(?:\x07|\x1b\\)|\x1b\[\?[\d;]*[cu]/g) ?? [];
   if (traceEnabled) {
+    for (const state of captures.values()) trace.inputBytesOmitted += state.text.length - (state.text.match(REPORT) ?? []).join('').length;
+    captures.clear();
     try { trace.vimLeave = JSON.parse(readFileSync(leave, 'utf8')); }
     catch { trace.vimLeave = null; }
   }
