@@ -31,6 +31,8 @@ async function main(): Promise<void> {
         return;
     }
     if(args.length===1&&args[0]==='status-line'){const {statusLine}=await import('./status-line.js');await statusLine();return;}
+    // Codex runs this after every turn; it must exit 0 quietly whatever happens, so a failure here never reaches Codex.
+    if(args[0]==='status-notify'){try{const {statusNotify}=await import('./status-notify.js');await statusNotify(args.slice(1));}catch{/* Intentionally silent: Codex shows notify failures to the user. */}process.exitCode=0;return;}
     if (args.length === 1 && args[0] === 'doctor') {
         const { doctor } = await import('./doctor.js');
         await doctor(entry);

@@ -21,7 +21,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/theme',description:'Choose the saved theme',argumentHint:()=> 'graphite|slate|ink|auto|light',values:()=>['graphite','slate','ink','auto','light'],current:c=>c.theme},
  {name:'/exit',description:'Quit AI Term; agents keep running',current:none},
 ];
-export const aiSubcommands=['ai','ai --version','ai doctor','ai status-line','ai daemon','ai daemon stop','ai debug stats','ai debug usage','ai debug ls','ai debug shell [cwd]','ai debug attach <id>','ai debug stop <id>','ai debug peek <id>'] as const;
+export const aiSubcommands=['ai','ai --version','ai doctor','ai status-line','ai status-notify <json>','ai daemon','ai daemon stop','ai debug stats','ai debug usage','ai debug ls','ai debug shell [cwd]','ai debug attach <id>','ai debug stop <id>','ai debug peek <id>'] as const;
 export const debugActions=aiSubcommands.filter(c=>c.startsWith('ai debug ')).map(c=>c.split(' ')[2]??'');
 export const keyTable:readonly [string,string][]=[
  ['c','Empty field copies Claude last reply; cleaned session fallback (v0.2)'],

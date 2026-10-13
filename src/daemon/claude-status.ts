@@ -1,6 +1,6 @@
 import type {ClaudeStatusEvent} from '../shared/protocol.js';
 import {isToolName} from '../shared/validate.js';
-const MAX_REPLY_BYTES=256*1024;
+import {capReply} from '../shared/last-reply.js';
 const ERROR_KINDS=new Set(['rate_limit','overloaded','authentication_failed','billing_error','invalid_request','server_error','max_output_tokens','unknown']);
 export interface ClaudeUpdate {event:ClaudeStatusEvent;reply?:string}
 export function parseClaudeStatus(raw:unknown,seq:number,at:string):ClaudeUpdate|null {
@@ -15,10 +15,7 @@ export function parseClaudeStatus(raw:unknown,seq:number,at:string):ClaudeUpdate
    if(['elicitation_dialog','elicitation_url_dialog','agent_needs_input'].includes(String(value.notification_type)))return {event:{...base,kind:'waiting',reason:'question'}};
    return null;
   case 'Stop':{
-   let reply:string|undefined;
-   if(typeof value.last_assistant_message==='string'){
-    const bytes=Buffer.from(value.last_assistant_message);let end=Math.min(bytes.length,MAX_REPLY_BYTES);while(end<bytes.length&&((bytes[end]??0)&0xc0)===0x80)end--;reply=bytes.subarray(0,end).toString('utf8');
-   }
+   const reply=typeof value.last_assistant_message==='string'?capReply(value.last_assistant_message):undefined;
    return {event:{...base,kind:'done'},...(reply!==undefined?{reply}:{})};
   }
   case 'StopFailure':return {event:{...base,kind:'waiting',reason:'turn failed',error:typeof value.error==='string'&&ERROR_KINDS.has(value.error)?value.error:'unknown'}};
