@@ -14,7 +14,7 @@ export class UsageReceiver {
  private credentials=new Map<string,UsageContext>();
  constructor(private readonly consume:(route:string,body:unknown,context:UsageContext)=>Promise<void>,private readonly log:{error(text:string):void},private readonly consumeStatus?:(id:string,body:unknown,seq:number)=>Promise<void>){
   this.server=createServer((req,res)=>{void this.handle(req,res).catch(()=>{const status=this.isStatusPath(req.url);this.log.error(status?'Status receiver request failed':'Usage receiver request failed');if(!res.headersSent){if(status)this.statusAnswer(res);else this.answer(res,500);}else res.destroy();});});
-  this.server.requestTimeout=5000;this.server.headersTimeout=5000;this.server.on('clientError',(_error,socket)=>{socket.end('HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n');});
+  this.server.requestTimeout=5000;this.server.headersTimeout=5000;this.server.on('clientError',(_error,socket)=>{socket.end('HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n',()=>socket.destroy());});
  }
  async listen():Promise<void>{await new Promise<void>((resolve,reject)=>{this.server.once('error',reject);this.server.listen(0,'127.0.0.1',()=>{this.server.off('error',reject);resolve();});});}
  address():AddressInfo{const a=this.server.address();if(!a||typeof a==='string')throw new Error('Usage receiver unavailable');return a;}
@@ -36,20 +36,23 @@ export class UsageReceiver {
  }
  private async handleStatus(req:IncomingMessage,res:ServerResponse):Promise<void>{
   const context=this.authorizeStatus(req.headers['x-ai-term-session']);
-  if(req.url!=='/v1/status/claude'||req.method!=='POST'||req.headers.host!==`127.0.0.1:${this.port()}`||Object.hasOwn(req.headers,'origin')||req.headers['content-type']!=='application/json'||!context){this.statusAnswer(res);req.resume();return;}
+  if(req.url!=='/v1/status/claude'||req.method!=='POST'||req.headers.host!==`127.0.0.1:${this.port()}`||Object.hasOwn(req.headers,'origin')||req.headers['content-type']!=='application/json'||!context){this.statusAnswer(res);res.once('finish',()=>req.destroy());req.resume();return;}
   const seq=++context.seq,previous=context.queue;let release=()=>{};context.queue=new Promise<void>(resolve=>{release=resolve;});let bytes=0;const chunks:Buffer[]=[];
   try{
   const body=await new Promise<Buffer|null>((resolve,reject)=>{
    req.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>4*MAX_BODY){chunks.length=0;}else chunks.push(chunk);});
-   req.on('end',()=>resolve(bytes>4*MAX_BODY?null:Buffer.concat(chunks)));req.on('error',reject);
+   // Keep the queue bounded by the hook's two-second timeout. Send the bodyless reply before cutting a half-open sender.
+   const timer=setTimeout(()=>{chunks.length=0;this.statusAnswer(res);res.once('finish',()=>req.destroy());resolve(null);},1000);
+   req.on('end',()=>{clearTimeout(timer);resolve(bytes>4*MAX_BODY?null:Buffer.concat(chunks));});req.on('error',error=>{clearTimeout(timer);reject(error);});
+   req.on('close',()=>{clearTimeout(timer);if(!req.complete)resolve(null);});
   });
   await previous;
   if(body&&this.authorizeStatus(req.headers['x-ai-term-session'])===context){
    let raw:unknown;try{raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));}catch{this.statusAnswer(res);return;}
    await this.consumeStatus?.(context.id,raw,seq);
   }
-  this.statusAnswer(res);
-  }finally{release();}
+  if(!res.headersSent)this.statusAnswer(res);
+  }finally{await previous;release();}
  }
  private answer(res:ServerResponse,status:number):void{res.writeHead(status,{'content-type':'application/json','connection':'close'});res.end(status===200?'{}':'');}
  private async handle(req:IncomingMessage,res:ServerResponse):Promise<void>{
