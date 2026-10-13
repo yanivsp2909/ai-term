@@ -2,6 +2,8 @@ import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { MAX_FRAME_BYTES, MAX_COPY_BYTES, type TerminalModes } from '../shared/protocol.js';
 import { useUnicode11 } from '../shared/unicode-width.js';
+// Terminal signals the daemon reads for status (S15: the daemon's mirror, never the client). Text is passed on, never stored or logged here.
+export type MirrorSignal={kind:'bell'}|{kind:'osc9';text:string}|{kind:'title';title:string};
 // eslint-disable-next-line no-control-regex -- C0/C1 controls never reach the clipboard.
 const COPY_STRIP=/[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/gu;
 export class Mirror {
@@ -10,7 +12,7 @@ export class Mirror {
     private attached = false;
     private cursorVisible=true;
     private mouseEncoding:TerminalModes['mouseEncoding']='default';
-    constructor(cols: number, rows: number, reply: (data: string) => void) {
+    constructor(cols: number, rows: number, reply: (data: string) => void, signal?: (signal: MirrorSignal) => void) {
         this.terminal = new headless.Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
         useUnicode11(this.terminal);
         this.addon = new serialize.SerializeAddon();
@@ -25,6 +27,12 @@ export class Mirror {
             return false; // Let xterm apply the mode too.
         });
         this.terminal.parser.registerEscHandler({final:'c'},()=>{this.cursorVisible=true;this.mouseEncoding='default';return false;});
+        if(signal){
+            // xterm's parser keeps OSC terminators apart from a bell: onBell fires only for a BEL outside any sequence.
+            this.terminal.onBell(()=>signal({kind:'bell'}));
+            this.terminal.onTitleChange(title=>signal({kind:'title',title}));
+            this.terminal.parser.registerOscHandler(9,text=>{signal({kind:'osc9',text});return true;});
+        }
         this.terminal.onData(data => { if (!this.attached)
             reply(data); });
     }

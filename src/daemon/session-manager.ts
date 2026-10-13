@@ -1,17 +1,19 @@
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { stripVTControlCharacters } from 'node:util';
 import { writeClaudeSettings,removeClaudeSettings } from './claude-settings.js';
 import {parseClaudeStatus} from './claude-status.js';
+import {parseCodexStatus,codexTitle,isCodexApproval,type CodexRun} from './codex-status.js';
 import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
-import type { SessionInfo, SessionEvent, TerminalModes, CreateSession } from '../shared/protocol.js';
+import type { SessionInfo, SessionEvent, TerminalModes, CreateSession, ClaudeStatusEvent } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession } from '../shared/validate.js';
 import { atomicWrite, readState } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
-import { Mirror } from './mirror.js';
+import { Mirror, type MirrorSignal } from './mirror.js';
 import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs } from './env.js';
 import { KeyStore, KeyError } from './keys.js';
 import { checkEngine } from './engines.js';
@@ -25,6 +27,7 @@ interface Live {
     mirrorFailed?:boolean;
     statusState?:StatusState;
     lastReply?:string;
+    codexRun?:CodexRun;
     queuedBytes:number;
     paused:boolean;
     attached:boolean;
@@ -40,7 +43,7 @@ export class SessionManager extends EventEmitter {
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
-        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.claudeStatus(id,raw,seq));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -114,7 +117,10 @@ export class SessionManager extends EventEmitter {
             throw new Error('Invalid session request');
         const agent = 'engine' in request && request.engine !== 'shell' ? request : null;
         const conversationId=agent?.engine==='claude-code'&&!agent.login?(continuation?.conversationId??randomUUID()):undefined;
-        const argvRequest=agent?{...agent,...(conversationId?{conversationId}:{}),...(continuation?{resume:true}:{})}:null;
+        // Status is not billing: subscription and key sessions both report it. Login sessions only sign in.
+        const withStatus=Boolean(agent&&!agent.login&&this.usage);
+        const codexStatus=withStatus&&agent?.engine==='codex'?{node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})}:undefined;
+        const argvRequest=agent?{...agent,...(conversationId?{conversationId}:{}),...(continuation?{resume:true}:{}),...(codexStatus?{codexStatus}:{})}:null;
         let recipe: SpawnRecipe;
         let authMethod: SessionInfo['authMethod'];
         if (agent) {
@@ -133,7 +139,7 @@ export class SessionManager extends EventEmitter {
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
-        const statusTelemetry=agent?.engine==='claude-code'&&!agent.login&&this.usage?this.usage.registerStatus(info.id):undefined;
+        const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
         const telemetry=agent&&!agent.login&&authMethod==='api-key'&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model}):undefined;
         if(telemetry){const extra=buildUsageArgs(agent?.engine??'codex',telemetry),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);Object.assign(recipe.env,buildUsageEnv(agent?.engine??'codex',telemetry));}
         const replies = new ReplyBudget();
@@ -143,10 +149,11 @@ export class SessionManager extends EventEmitter {
             if (!dropping) this.log.error(`Dropped terminal query replies over budget for session ${info.id}`);
             dropping = true;
         };
-        const live: Live = { info,...(statusTelemetry?{statusState:initialStatus(now)}:{}), mirror: new Mirror(this.size.cols, this.size.rows, reply), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
+        const live: Live = { info,...(statusTelemetry?{statusState:initialStatus(now)}:{}), mirror: new Mirror(this.size.cols, this.size.rows, reply, agent?.engine==='codex'?signal=>this.codexSignal(live,signal):undefined), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         this.sessions.set(info.id, live);
         try {
-            if(statusTelemetry){
+            if(statusTelemetry&&agent?.engine==='codex')Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
+            if(statusTelemetry&&agent?.engine==='claude-code'){
                 const settings=await writeClaudeSettings(this.paths.root,info.id,statusTelemetry.port,process.execPath,this.cliEntry);
                 const extra=buildStatusArgs(settings),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);
                 Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
@@ -220,22 +227,44 @@ export class SessionManager extends EventEmitter {
         this.event({ kind: 'session.updated', session: { ...info } });
         return { ...info };
     }
-    private claudeStatus(id:string,raw:unknown,seq:number):void{
-        const live=this.sessions.get(id);if(!live?.statusState||live.mirrorFailed||['exited','error'].includes(live.statusState.status))return;
-        const update=parseClaudeStatus(raw,seq,new Date().toISOString());if(!update)return;
-        const next=reduceStatus(live.statusState,update.event);if(next===live.statusState)return;
+    private ingressStatus(id:string,update:{event:ClaudeStatusEvent;reply?:string}|null):void{
+        const live=this.sessions.get(id);if(!live?.statusState||live.mirrorFailed||['exited','error'].includes(live.statusState.status)||!update)return;
+        this.applyStatus(live,reduceStatus(live.statusState,update.event),update.reply);
+    }
+    private applyStatus(live:Live,next:StatusState,reply?:string):void{
+        if(!live.statusState||next===live.statusState)return;
         live.statusState=next;
         Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
-        if(update.reply!==undefined)live.lastReply=update.reply;
+        if(reply!==undefined)live.lastReply=reply;
         this.event({kind:'session.updated',session:{...live.info}});
         void this.persist();
+    }
+    // Codex terminal signals and Enter from the attached owner. Each applies only when it changes what a card would show, so a
+    // repainting title cannot reset statusSince or flood state writes, and it takes the next request sequence so status follows arrival order.
+    private codexStatus(live:Live,event:{kind:'running'}|{kind:'waiting';reason:'permission'}|{kind:'context';percent:number}):void{
+        const state=live.statusState;if(!state||live.mirrorFailed||['exited','error'].includes(state.status))return;
+        const preview=reduceStatus(state,{...event,seq:state.seq+1,at:state.statusSince});
+        if(preview.status===state.status&&preview.statusDetail===state.statusDetail&&preview.ctxPercent===state.ctxPercent)return;
+        const seq=this.usage?.nextStatusSeq(live.info.id);if(seq===null||seq===undefined)return;
+        this.applyStatus(live,reduceStatus(state,{...event,seq,at:new Date().toISOString()}));
+    }
+    private codexSignal(live:Live,signal:MirrorSignal):void{
+        if(signal.kind==='bell'||signal.kind==='osc9'&&isCodexApproval(signal.text)){this.codexStatus(live,{kind:'waiting',reason:'permission'});return;}
+        if(signal.kind!=='title')return;
+        const title=codexTitle(signal.title),previous=live.codexRun;live.codexRun=title.run;
+        if(title.leftPercent!==null)this.codexStatus(live,{kind:'context',percent:100-title.leftPercent});
+        // Only a change into a run state counts: the spinner repaints the same "Working" title after notify already said done.
+        // Ready is left to notify, which marks the turn done.
+        if(title.run===previous)return;
+        if(title.run==='working')this.codexStatus(live,{kind:'running'});
+        else if(title.run==='action')this.codexStatus(live,{kind:'waiting',reason:'permission'});
     }
     async snapshot(id: string, publish?: (snapshot: string, size:{cols:number;rows:number}) => void): Promise<string> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); return live.output.then(() => { const snapshot = live.mirror.snapshot(); publish?.(snapshot,{cols:live.mirror.terminal.cols,rows:live.mirror.terminal.rows}); return snapshot; }); }
     async text(id:string,lastReply=false):Promise<import('../shared/protocol.js').SessionText>{
         if(!isUUID(id))throw new Error('Invalid session UUID');const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         return live.output.then(()=>{
-            if(lastReply&&live.info.engine==='claude-code'&&live.lastReply!==undefined){
+            if(lastReply&&live.info.engine!=='shell'&&live.lastReply!==undefined){
                 // eslint-disable-next-line no-control-regex -- Explicit copy strips controls before reaching a clipboard.
                 const text=stripVTControlCharacters(live.lastReply).replace(/\r\n?/g,'\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/gu,'');
                 return {sessionId:id,text,truncated:false,source:'last-reply' as const};
@@ -264,7 +293,11 @@ export class SessionManager extends EventEmitter {
         else if(!live.clientPaused&&live.queuedBytes<=256*1024&&live.paused){live.host?.resume();live.paused=false;}
     }
     clientBackpressure(id:string,paused:boolean):void {const live=this.sessions.get(id);if(!live)return;live.clientPaused=paused;this.updatePause(live);}
-    input(id:string,data:Buffer):void {const live=this.sessions.get(id);if(live?.attached)live.host?.write(data);}
+    input(id:string,data:Buffer):void {
+        const live=this.sessions.get(id);if(!live?.attached)return;live.host?.write(data);
+        // Enter after a finished turn or an answered prompt starts work; plain CR or the kitty-protocol Enter (CSI 13 u).
+        if(live.info.engine==='codex'&&(live.statusState?.status==='done'||live.statusState?.status==='waiting')&&(data.includes(0x0d)||data.includes('\x1b[13u')||data.includes('\x1b[13;1u')))this.codexStatus(live,{kind:'running'});
+    }
     async attach(id:string,cols:number,rows:number,publish:(snapshot:string,size:{cols:number;rows:number},modes:TerminalModes)=>void):Promise<void> {
         const live=this.sessions.get(id);if(!live||!isSize(cols,rows)||this.closing)throw new Error('Invalid attach');
         const task=live.output.then(()=>{

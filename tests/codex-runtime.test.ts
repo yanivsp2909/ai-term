@@ -10,7 +10,8 @@ import {Logger} from '../src/daemon/log.js';
 import {DaemonServer} from '../src/daemon/server.js';
 import {Connection} from '../src/client/connection.js';
 import * as engines from '../src/daemon/engines.js';
-async function files(folder:string):Promise<string[]>{const text:string[]=[];for(const e of await readdir(folder,{withFileTypes:true})){const path=join(folder,e.name);if(e.isDirectory())text.push(...await files(path));else if(e.isFile())text.push(await readFile(path,'utf8'));}return text;}
+// Atomic state writes rename a temp file that readdir may still list; its contents reappear under the final name.
+async function files(folder:string):Promise<string[]>{const text:string[]=[];for(const e of await readdir(folder,{withFileTypes:true})){const path=join(folder,e.name);if(e.isDirectory())text.push(...await files(path));else if(e.isFile())try{text.push(await readFile(path,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}return text;}
 it.each(['subscription','api-key'] as const)('Codex %s sessions get notify argv, env-only credential, mirror signals, Enter, done and explicit last reply',async(authMethod)=>{
  const root=await mkdtemp('/tmp/ai-codex-runtime-'),paths=getPaths(root);await preparePaths(paths);
  const entry=resolve('src/cli/index.ts'),log=new Logger(paths.log),usage=new UsageService(root,log),m=new SessionManager(paths,log,undefined,undefined,undefined,undefined,usage,entry),server=new DaemonServer(paths,m,log,undefined,undefined,usage);

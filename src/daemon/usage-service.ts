@@ -1,6 +1,6 @@
 import {EventEmitter} from 'node:events';
 import type {UsageSummary,UsageDiagnostics,UsageDiagnostic,Settings} from '../shared/protocol.js';
-import {UsageReceiver} from './usage-receiver.js';
+import {UsageReceiver,type StatusEngine} from './usage-receiver.js';
 import {UsageParser,type UsageContext} from './usage-parse.js';
 import {UsageStore} from './usage.js';
 import {SettingsStore} from './settings.js';
@@ -19,7 +19,7 @@ export class UsageService extends EventEmitter {
   this.receiver=new UsageReceiver(async(route,raw,context)=>{
    const settings=await this.readSettings(),overrides=settings.priceOverrides??{};
    for(const record of this.parser.parse(route,raw,context)){if(!this.takeRecord(context.sessionId))continue;if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides),record.inputTokens,record.outputTokens,record.cachedTokens??0);await this.store.add(record);}
-  },log,async(id,body,seq)=>{this.emit('claude-status',id,body,seq);});
+  },log,async(id,body,seq,engine)=>{this.emit(engine==='codex'?'codex-status':'claude-status',id,body,seq);});
   this.store.on('warning',(on:boolean)=>this.emit('warning',on));this.store.on('updated',(usage:UsageSummary)=>this.emit('updated',usage));
  }
  async start():Promise<void>{await this.readSettings();await this.store.load();await this.receiver.listen();this.scheduleMidnight();}
@@ -35,7 +35,8 @@ export class UsageService extends EventEmitter {
   return this.lastSettings;
  }
  private scheduleMidnight():void{const now=new Date(),next=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1);this.midnight=setTimeout(()=>{this.emit('updated',this.summary());this.scheduleMidnight();},next.getTime()-now.getTime());this.midnight.unref();}
- registerStatus(sessionId:string):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.registerStatus(sessionId)};}
+ registerStatus(sessionId:string,engine:StatusEngine='claude-code'):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.registerStatus(sessionId,engine)};}
+ nextStatusSeq(sessionId:string):number|null{return this.receiver.nextStatusSeq(sessionId);}
  register(context:UsageContext):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.register(context)};}
  revoke(sessionId:string):void{this.receiver.revoke(sessionId);this.parser.revoke(sessionId);this.recordLimits.delete(sessionId);}
  summary():UsageSummary{return this.store.summary();}

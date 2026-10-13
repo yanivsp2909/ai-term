@@ -281,7 +281,7 @@ export class Homepage {
   private async copySelected(session:SessionInfo|null,all=false):Promise<void>{
     if(!session){this.showNote('select an agent first');return;}
     let copy:ReturnType<typeof validateSessionText>;
-    try{const result=await this.connection.request({kind:'sessions.text',sessionId:session.id,...(!all&&session.engine==='claude-code'?{lastReply:true}:{})});copy=validateSessionText(result.copy);if(copy.sessionId!==session.id||copy.more===true)throw new Error('Invalid session text');}
+    try{const result=await this.connection.request({kind:'sessions.text',sessionId:session.id,...(!all&&session.engine!=='shell'?{lastReply:true}:{})});copy=validateSessionText(result.copy);if(copy.sessionId!==session.id||copy.more===true)throw new Error('Invalid session text');}
     catch{this.showNote('Copy failed: session text unavailable');return;}
     if(this.ended)return;
     const text=copy.source==='last-reply'?copy.text:cleanSessionText(copy.text);
