@@ -1,6 +1,74 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 5167cad fix: keep diagnostic vim writes in temporary cwd (GREEN)
+Roadmap step: v0.2 bar + notification authorization partial — BLOCKED at task 1 (Terminal.app diagnostic pending)
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 540ebe8 after git pull --ff-only (already up to date). Baseline: 113 files / 670 passed / two existing opt-in native Keychain skips (9.81 s).
+
+## What works
+- Existing v0.2 status, homepage cards and v0.2.4b notifications remain at the previous checkpoint. No product code changed.
+- Task 1 investigation: read the entire bar spike report, startup probe and all exit paths, current attach, daemon mirror, shared width code, design and architecture §12.1/D39.
+  - The probe asks OSC 10, OSC 11, kitty and DA1. It finishes on DA1 or after 250 ms. Lack of kitty/color answers does not itself exit the harness.
+  - `bar spike: program exited` is emitted only after node-pty's child onExit event, which the spike currently ignores the numeric code/signal for. No cause for Yaniv's immediate exit is established.
+  - Headless outer PTY driver on this Mac answered DA1 as Terminal.app (`CSI ?1;2c`) and ignored kitty and OSC 10/11. Both raw and redraw vim stayed alive after 1.8 s, accepted `TERMINAL_APP_DRIVER`, and quit only after the driver sent Esc + `:qa!`. Redraw probe facts: kitty false; startup 8.54 ms. These are startup checks, not latency measurements or Terminal.app visual verification.
+- Safe pending diagnostic: `cd ~/ai-term && node scripts/diagnose-bar.mjs`.
+  - Runs the unmodified spike in Terminal.app with disposable vim, temporary HOME and cwd, literal child env. It instruments node-pty's CommonJS spawn before tsx loads the harness, so it can print numeric child exit/code, byte count, bounded recognized terminal probe replies (hex), probe facts and reason in one `BAR_DIAGNOSTIC {...}` line.
+  - No raw typed-input trace, agent, login, real daemon, real ~/.ai-term or notification access. Temporary state is removed at normal exit. No writes to spikes/ or docs/spikes/.
+  - RED ee2492b: diagnostic absent, 1 failing PTY test. GREEN ee2ab0f: DA1-only startup, typing and actual vim exit recording pass. The test uses an outer headless screen to inspect positioned text.
+- One requested fresh-context high TypeScript reviewer pass on the code diff; one MEDIUM finding, no additional correctness/security findings.
+  - Finding: diagnostic child cwd was the checkout; vim's `file bar probe` plus `:w` could create a file there.
+  - RED bd15053: actual vim `:pwd` shows the checkout rather than the temp directory, 1 failing test. GREEN 5167cad: cwd is temporary HOME; the same test passes.
+- Final verification after the review fix, all exit 0:
+  - `npm run typecheck`: `> tsc --noEmit`
+  - `npm run lint`: `> eslint .`
+  - `npm run build`: `ESM ⚡️ Build success in 17ms`
+  - `npm test -- --reporter=dot` twice consecutively: `Test Files 114 passed (114)` / `Tests 671 passed | 2 skipped (673)` / 10.09 s then 9.70 s.
+  - Existing daemon-core flood test emits node-pty EIO/EBADF stderr in the baseline and final suites; both suites exit 0. The two skips are the unchanged native Keychain opt-in cases; did not enable them.
+  - `git diff --check` clean. Only scripts/diagnose-bar.mjs, tests/bar-diagnostic.test.ts and this handover changed. No new dependencies.
+
+## What's next
+- BLOCKER: Yaniv's Terminal.app immediate-redraw-vim exit was not reproduced. Need the single BAR_DIAGNOSTIC JSON line from `cd ~/ai-term && node scripts/diagnose-bar.mjs` in Terminal.app. If vim stays open, type a few characters, then Esc + `:qa!` + Enter. Task 1 explicitly requires waiting for this result before building. Do not guess the cause.
+- After the diagnostic establishes a cause and its regression test, finish tasks 2–5: shared width agreement in the attached client, session-screen renderer/query/mouse/same-tick path, themed bar + rows−1 resizing, bar on/off default on + failed-probe raw fallback, README/design/architecture. Then task 6: notifier --status, verified direct-launch identity or unknown fallback, cached asynchronous daemon checks, settings states and denied suppression.
+- Typing-performance agent and latency measurements were not reached. No redraw/raw echo/vim p95 table is measured for a product implementation. The 2 ms gate is unresolved; no bar ships from this session.
+- After completion, the next roadmap step remains click-through notifications per the preceding checkpoint; do not start it within the current bar/authorization step.
+
+## Manual checks
+- DA1-only headless raw/redraw vim startup + typing + explicit quit: ran; no immediate exit. Diagnostic PTY test: ran; actual temp cwd and exit report verified.
+- `cd ~/ai-term && node scripts/diagnose-bar.mjs` — needs Yaniv: Terminal.app startup evidence. Reply with BAR_DIAGNOSTIC line; no credentials or screenshot needed.
+- `cd ~/ai-term && node scripts/diagnose-bar.mjs raw` — needs Yaniv only if comparison is useful after the first result.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: /shell then vim, typing and :q; current product is raw passthrough.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: /shell then /usr/bin/top, q quits.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: Claude Code typing and permission flow; real login checks not run.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: Codex typing and permission flow; real login checks not run.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: multiline paste, Ctrl+E inside paste stays text.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: vim mouse click/wheel, bar press/release ignored.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: resize attached terminal, PTY gets rows−1.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: Ctrl+E goes home and agent keeps running.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: /settings bar off, attach uses original raw path (setting not built yet).
+- Notification direct-launch authorization parity: not reached; status helper is not implemented, so there is no valid --status diagnostic yet. Do not claim permission is known.
+
+## Gotchas
+- Code disagrees with the spike's stale prerequisites: src/shared/unicode-width.ts already registers @xterm/addon-unicode11 in the daemon and preview mirrors. Existing unicode-width test covers CJK, skin tones, ZWJ families and flags with Unicode 11 semantics (separate emoji members, not grapheme shaping). Attached client mirror still needs integration and agreement tests; no dependency decision made yet.
+- D39/§12.1 now exist and RESET_MODES already resets 2031. These spike findings are stale.
+- design.md's bar includes `· branch`; the prompt excludes it, and worktrees start at v0.3. Follow the prompt for this step and document that decision when implementing.
+- RTK.md is referenced by the supplied instructions but absent from the repository. No RTK command used.
+- This session is Codex, not Claude Code/Opus; the requested high fresh-context TypeScript reviewer was used. No other repository editing agent was started.
+- The pending diagnostic blocks subsequent tasks by explicit user requirement. Preserve the task-6 override allowing notifier changes only after task 5.
+- No real ~/.ai-term, ~/.claude, ~/.codex, ~/.ssh, keychain or .env read; no computer use or network except git pull/push. No user daemon or sessions stopped.
+
+## New dependencies
+- None. The diagnostic reuses existing node-pty, tsx and @xterm/headless.
+
+## Concepts introduced
+- Diagnostic instrumentation (`scripts/diagnose-bar.mjs`): node-pty exposes a CommonJS module object, so a wrapper can observe its public spawn and exit events before loading the unchanged spike. This preserves the suspected startup path while recovering the exit evidence the spike discards.
+- Terminal capability probe (`scripts/diagnose-bar.mjs`, existing spike): terminal reply bytes say which keyboard and color features the outer terminal implements. DA1 completes this spike's startup; absent optional replies mean unsupported/unknown capabilities, and are not proof of a program-exit cause.
+
+---
+
+## Previous checkpoint (v0.2.4b, retained for existing behavior and evidence)
+
+## Checkpoint
 Last commit: d8bffb0 fix: tolerant settings read for notifications, staged signed build swap, accept unassigned code points, compare waiting reasons (GREEN)
 Roadmap step: v0.2.4b done (notifications without click-through; real banner, sound and Allow prompt need Yaniv)
 Branch: main. This handover is the last commit; its own hash is in git log.
