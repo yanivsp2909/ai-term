@@ -18,7 +18,7 @@ export class SessionScreen {
  private barPrevious='';
  private queuedBytes=0;
  constructor(cols:number,rows:number,facts:OuterFacts,private readonly out:(data:string)=>boolean|void,reply:(data:string)=>void,private readonly bar:()=>string,private readonly failed:(error:Error)=>void){
-  this.terminal=new headless.Terminal({cols,rows,scrollback:0,allowProposedApi:true,windowOptions:{getWinSizeChars:true}});useUnicode11(this.terminal);
+  this.terminal=new headless.Terminal({cols,rows,scrollback:0,allowProposedApi:true,windowOptions:{getWinSizeChars:true,pushTitle:true,popTitle:true}});useUnicode11(this.terminal);
   this.passthrough=installPassthrough(this.terminal,facts,data=>this.send(data),reply);
   this.terminal.onData(reply);this.renderer=new BodyRenderer(this.terminal,1);
  }

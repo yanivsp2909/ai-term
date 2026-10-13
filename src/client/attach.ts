@@ -10,7 +10,7 @@ import { terminalProbe } from './terminal-probe.js';
 import { SessionScreen } from './session-screen.js';
 import { MouseRewriter } from './mouse-rows.js';
 import { frameBar } from './tui/frame-bar.js';
-import { diffFrame } from './tui/grid.js';
+import { diffFrame,type Frame } from './tui/grid.js';
 import { createTheme } from './tui/theme.js';
 import type { SessionInfo,Settings } from '../shared/protocol.js';
 export type AttachReason='home key'|'session exited'|'daemon gone'|'attach rejected'|'stdin not a TTY'|'error'|'attached elsewhere'|'client interrupted';
@@ -36,6 +36,14 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
   let screen:SessionScreen|undefined;
   let barSession:SessionInfo|undefined;const others=new Map<string,SessionInfo>();
   const theme=createTheme(options.settings?.theme??'graphite');
+  let barKey='',barOutput='';
+  const barBytes=()=>{
+    if(!barSession)return '';
+    const cols=screen?.terminal.cols??stdout.columns??80;
+    const key=JSON.stringify([cols,barSession.title,barSession.engine,barSession.model,barSession.status,...[...others.values()].map(s=>s.status)]);
+    if(key!==barKey){const frame:Frame=frameBar(cols,barSession,[...others.values()],theme);barOutput=diffFrame(frame,[],theme).slice(8,-8);barKey=key;}
+    return barOutput;
+  };
   const mouse=new MouseRewriter(()=>screen?.passthrough.mouse()??{tracking:false,encoding:'default'});
   const filter=new HomeKeyFilter();let active=false,ended=false,entered=false,exitCode:number|undefined,failure:Error|undefined;let sessionEnded=false;
   let reason:AttachReason='error';let inputBytes=0,attachAccepted=false;
@@ -102,7 +110,7 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
     entered=true;stdout.write('\x1b[?1049h');stdin.setRawMode(true);stdin.resume();
     const dimensions=size();
     if(probe){
-      screen=new SessionScreen(dimensions.cols,dimensions.rows,probe.facts,data=>{const ready=stdout.write(data);if(!ready)connection.pauseOutput?.();return ready;},data=>send(Buffer.from(data)),()=>barSession?diffFrame(frameBar(screen?.terminal.cols??dimensions.cols,barSession,[...others.values()],theme),[],theme).slice(8,-8):'',onError);
+      screen=new SessionScreen(dimensions.cols,dimensions.rows,probe.facts,data=>{const ready=stdout.write(data);if(!ready)connection.pauseOutput?.();return ready;},data=>send(Buffer.from(data)),barBytes,onError);
       // This request has no bearing on the agent PTY or keyboard path.
       void connection.request({kind:'sessions.list'}).then(result=>{for(const s of result.sessions??[])if(s.id!==id)others.set(s.id,s);screen?.changed();},onError);
     }
