@@ -30,7 +30,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'}
-export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; [key: string]: unknown }
+export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; effort?:Effort|null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean };
 export interface SessionInfo {

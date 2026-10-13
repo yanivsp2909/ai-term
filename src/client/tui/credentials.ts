@@ -1,4 +1,4 @@
-import type { AgentEngine, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings } from '../../shared/protocol.js';
+import type { AgentEngine, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings, NotifierState } from '../../shared/protocol.js';
 import { ownLoginLabel } from '../../shared/models.js';
 import { DaemonRequestError, type RequestBody } from '../connection.js';
 import { isEndpoint, isValidModelId } from '../../shared/validate.js';
@@ -14,7 +14,7 @@ const themes:ThemeName[]=['graphite','slate','ink','auto','light'];
 const reason=(error:unknown,fallback:string)=>error instanceof DaemonRequestError?error.message:fallback;
 export class CredentialsPanel {
  private screen:'providers'|'method'|'form'|'settings'|'import'|'names'|'result';
- private choice=0;private row=0;private provider:KeyProvider='anthropic';private keys:KeyView[]=[];private engines?:EnginesStatus;private settings?:Settings;
+ private choice=0;private row=0;private provider:KeyProvider='anthropic';private keys:KeyView[]=[];private engines?:EnginesStatus;private notifier?:NotifierState;private settings?:Settings;
  private label='';private endpoint='';private deployments='';private secret='';private path='';private names:{name:string;provider:KeyProvider}[]=[];private selected=new Set<string>();private message='';private busy=false;private disposed=false;
  constructor(kind:'login'|'settings',private readonly actions:Actions){this.screen=kind==='login'?'providers':'settings';}
  containsSecret():boolean{return this.secret.length>0;}
@@ -23,7 +23,7 @@ export class CredentialsPanel {
   // Independent requests: one failing must not blank the others or show engines as missing.
   const failures:string[]=[];
   try{this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}catch(error){failures.push(reason(error,'Keys unavailable'));}
-  try{this.engines=(await this.actions.request({kind:'engines.status'})).engines;}catch(error){failures.push(reason(error,'Engine status unavailable'));}
+  try{const status=await this.actions.request({kind:'engines.status'});this.engines=status.engines;this.notifier=status.notifier;}catch(error){failures.push(reason(error,'Engine status unavailable'));}
   try{this.settings=(await this.actions.request({kind:'settings.get'})).settings;}catch(error){failures.push(reason(error,'Settings unavailable'));}
   this.message=failures.join(' · ');this.busy=false;this.actions.changed();}
  private fieldNames():string[]{return this.provider==='foundry'?['label','endpoint','secret','deployments']:['label','secret'];}
@@ -38,17 +38,18 @@ export class CredentialsPanel {
  async key(key:string):Promise<void>{
   if(this.disposed)return;
   if(key==='escape'){this.secret='';this.actions.close();return;}if(this.busy)return;
-  if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?this.keys.length+8:this.screen==='names'?this.names.length:this.screen==='providers'?3:2)-1,this.choice+delta));this.actions.changed();return;}
+  if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?this.keys.length+9:this.screen==='names'?this.names.length:this.screen==='providers'?3:2)-1,this.choice+delta));this.actions.changed();return;}
   if(key==='backspace'&&(this.screen==='form'||this.screen==='import')){this.backspace();this.actions.changed();return;}
   if(this.screen==='providers'&&key==='enter'){this.provider=providers[this.choice]?.[1]??'anthropic';this.choice=0;if(this.provider==='foundry')this.form('foundry');else this.screen='method';this.actions.changed();return;}
   if(this.screen==='method'&&key==='enter'){if(this.choice===0){this.busy=true;this.actions.changed();try{await this.actions.login(this.provider==='anthropic'?'claude-code':'codex');this.actions.close();}catch(error){this.message=reason(error,'Login could not start');}finally{this.busy=false;this.actions.changed();}}else this.form(this.provider);this.actions.changed();return;}
   if(this.screen==='form'&&key==='enter'){if(this.row<this.fieldNames().length-1){this.row++;this.actions.changed();return;}await this.save();return;}
   if(this.screen==='settings'){
-   if(key==='enter'&&this.choice>=this.keys.length){const action=['a','i','l','d','f','tab','e','p'][this.choice-this.keys.length];if(action)await this.key(action);return;}
+   if(key==='enter'&&this.choice>=this.keys.length){const action=['a','i','l','d','f','tab','e','p','n'][this.choice-this.keys.length];if(action)await this.key(action);return;}
    if(key==='a'||key==='+'){this.screen='providers';this.choice=0;this.actions.changed();return;}
    if(key==='i'){this.screen='import';this.path='';this.message='';this.actions.changed();return;}
    if(key==='l'){this.screen='providers';this.choice=0;this.actions.changed();return;}
    if(key==='p'){this.actions.price?.();return;}
+   if(key==='n'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{notifications:this.settings?.notifications===false}})).settings;this.message='';}catch{this.message='Notifications setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    if(key==='d'||key==='f'||key==='e'){this.actions.defaults(key==='d'?'model':key==='e'?'effort':'folder');return;}
    if(key==='tab'){this.busy=true;try{const settings=(await this.actions.request({kind:'settings.get'})).settings;const index=themes.indexOf(settings?.theme??'graphite');await this.actions.theme(themes[(index+1)%themes.length]??'graphite');this.message='Theme saved';}catch{this.message='Theme could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    const selected=this.keys[this.choice];if(selected&&(key==='x'||key==='t'||key==='enter')){this.busy=true;try{if(key==='x'){await this.actions.request({kind:'keys.remove',keyId:selected.id});this.message='Key removed from the OS keychain';this.keys=this.keys.filter(k=>k.id!==selected.id);this.choice=Math.min(this.choice,Math.max(0,this.keys.length-1));}else{const r=await this.actions.request({kind:'keys.test',keyId:selected.id});this.message=(r.results??[]).map(r=>`${r.model}: ${r.status}${r.httpStatus?' '+r.httpStatus:''}${r.errorCode?' '+r.errorCode:''}${r.reason?' · '+r.reason:''}`).join(' · ');}}catch(error){this.message=reason(error,'Key operation failed');this.busy=false;this.actions.changed();return;}
@@ -84,7 +85,9 @@ export class CredentialsPanel {
    for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${k.provider} · key ····${k.last4}${k.endpoint?' · '+k.endpoint:''}`);
    lines.push(action(0,'+ add key (a)'),action(1,'import from .env (i)'),action(2,'login (l)'),'ENGINES');
    for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(status?`${name}: ${status.installed?'✓ installed':'✗ not installed'} · ${status.loggedIn===null?'status unavailable':status.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status.authMethod)}${status.error?' · '+status.error:''}`:`${name}: status unavailable`);
-   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'Foundry input/output price per 1M · p override'),'keys are never shown in full and never written to .env');
+   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'Foundry input/output price per 1M · p override'),action(8,`notifications: ${this.settings?.notifications===false?'off':'on'} (n)`),'keys are never shown in full and never written to .env');
+   // Fixed text only: the daemon reports one of three states.
+   if(this.notifier==='not built')lines.push('notifications unavailable: helper not built · run npm run build:notifier');else if(this.notifier==='launch failed')lines.push('notifications unavailable: helper failed to launch');
   }
   if(this.screen==='import')lines.push('Import from .env',`path: ${this.path}█`,'Names only are shown; source file is never modified');
   if(this.screen==='names')lines.push('Select names to import',...this.names.map((n,i)=>`${i===this.choice?'›':' '} [${this.selected.has(n.name)?'x':' '}] ${n.name} · ${n.provider}`),'↑↓ select · Space toggle · ⏎ import');

@@ -96,6 +96,7 @@ Homepage slash commands:
 | `/settings` `a` or `+` / `i` / `l` | Add key / import env file / open provider login |
 | `/settings` ↑↓ / Enter / `x` / `t` | Select key/action/default row / activate (key row tests) / remove selected key / test |
 | `/settings` `d` / `f` / `e` / Tab | Save default model+engine / folder / effort / cycle theme; permission default is always Ask |
+| `/settings` `n` or notifications row Enter | Turn macOS notifications on or off (default on; saved with the other settings). If the helper is missing or failed to launch, the panel says `notifications unavailable: …` |
 | `/settings` `p` or price row Enter | Foundry deployment price override: deployment, input and output USD per 1M; ↑↓ fields, Enter saves, Esc cancels |
 | Import names ↑↓ / Space / Enter | Select name / toggle inclusion / import chosen keys |
 
