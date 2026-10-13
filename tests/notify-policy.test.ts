@@ -45,3 +45,7 @@ it('the agent name is cleaned and capped so the helper never rejects it',()=>{
  expect([...long].length).toBeLessThanOrEqual(200);expect(long).toBe('x'.repeat(59)+'… · waiting: turn failed');
  const emoji=notificationBody('😀'.repeat(100),{kind:'done'});expect([...emoji.split(' · ')[0]??''].length).toBe(60);
 });
+it('two failed turns in a row are one change: the reason, not the failure text, decides',()=>{
+ expect(notificationFor(s('waiting','turn failed: rate_limit'),s('waiting','turn failed: overloaded'),false,true)).toBeNull();
+ expect(notificationFor(s('waiting','turn failed: x'),s('waiting','permission'),false,true)).toEqual({kind:'waiting',reason:'permission'});
+});

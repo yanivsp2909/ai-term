@@ -18,12 +18,13 @@ it.skipIf(!built)('the built helper is the signed AI Term bundle',()=>{
  expect(spawnSync('/usr/bin/codesign',['--verify','--strict',app]).status).toBe(0);
 });
 it.skipIf(!built)('the helper accepts only its three fields within their caps and refuses everything else with a fixed error',()=>{
- for(const args of [base,replace('--title','x'.repeat(80)),replace('--body','😀'.repeat(200))]){const result=run([...args,'--check']);expect(result.status).toBe(0);expect(result.stderr).toBe('');}
+ // Unassigned code points pass: macOS's Unicode tables can lag Node's, and the daemon already strips them.
+ for(const args of [base,replace('--title','x'.repeat(80)),replace('--body','😀'.repeat(200)),replace('--body','a\u0378b')]){const result=run([...args,'--check']);expect(result.status).toBe(0);expect(result.stderr).toBe('');}
  const invalid=[
   replace('--session','AITERMCANARY'),replace('--session','-bad'),replace('--title','x'.repeat(81)),replace('--title','😀'.repeat(81)),
   replace('--body','x'.repeat(201)),replace('--title',''),replace('--body','AITERMCANARY\n'),replace('--title','\u202eAITERMCANARY'),replace('--body','AITERMCANARY\u0007'),
   // The same characters the daemon removes from names: separators, private use and unassigned code points.
-  replace('--body','a\u2028b'),replace('--body','a\u2029b'),replace('--body','a\ue000b'),replace('--title','a\u{10FFFD}b'),replace('--body','a\u0378b'),
+  replace('--body','a\u2028b'),replace('--body','a\u2029b'),replace('--body','a\ue000b'),replace('--title','a\u{10FFFD}b'),
   [...base,'--unknown'],[...base,'--session',session],[...base,'--check'],[...base,'--body'],base.slice(0,4),
   // The spike's click and lifetime flags are gone from the product helper.
   [...base,'--socket','/tmp/click.sock'],[...base,'--temp-dir','/tmp'],[...base,'--lifetime','10'],[...base,'--probe-click'],[...base,'--exit-after-post'],
@@ -38,4 +39,10 @@ it('without a Swift compiler the build prints a fixed message, builds nothing an
  const result=spawnSync(process.execPath,['scripts/build-notifier.mjs'],{encoding:'utf8',timeout:10000,env:{PATH:'/usr/bin:/bin',HOME:process.env.HOME??'/tmp',DEVELOPER_DIR:'/nonexistent-ai-term-toolchain'}});
  expect(result.status).toBe(1);
  expect(result.stdout+result.stderr).toBe('Notifier not built: swiftc not found (install the Xcode Command Line Tools). AI Term works without notifications.\n');
+});
+it('a build assembles and signs the whole bundle aside, then swaps it in whole at the fixed path',()=>{
+ const source=readFileSync(resolve('scripts/build-notifier.mjs'),'utf8');
+ // Signing happens on the staged bundle, before anything replaces the working helper.
+ expect(source.indexOf("'--verify'")).toBeLessThan(source.indexOf('renameSync(staged, app)'));
+ expect(source).not.toContain('renameSync(fresh, binary)');
 });

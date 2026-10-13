@@ -106,3 +106,12 @@ it('a later successful launch clears the launch failed state',async()=>{
  f.notifier.transition(agent(),running,waiting,false);await vi.waitFor(()=>expect(f.calls).toHaveLength(1));f.calls[0]?.done(new Error('x'));expect(f.notifier.state()).toBe('launch failed');
  f.notifier.transition(agent(),running,waiting,false);await vi.waitFor(()=>expect(f.calls).toHaveLength(2));f.calls[1]?.done(null);expect(f.notifier.state()).toBe('ready');
 });
+it('the daemon reads the setting through a store that tolerates a malformed key entry',async()=>{
+ const {notificationsSetting}=await import('../src/daemon/notifier.js'),{writeFile}=await import('node:fs/promises');
+ const root=await mkdtemp('/tmp/ai-notify-read-');
+ try{
+  const enabled=notificationsSetting(root);expect(await enabled()).toBe(true);
+  await writeFile(`${root}/settings.json`,JSON.stringify({theme:'graphite',keys:[{id:'AITERMCANARY'}]}),{mode:0o600});expect(await enabled()).toBe(true);
+  await writeFile(`${root}/settings.json`,JSON.stringify({theme:'graphite',notifications:false,keys:[{id:'AITERMCANARY'}]}),{mode:0o600});expect(await enabled()).toBe(false);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
