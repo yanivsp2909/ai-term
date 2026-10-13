@@ -176,7 +176,7 @@ it('the daemon tells only clients that handle clicks to select the agent, and co
   await vi.waitFor(() => expect(server.clickClients()).toBe(0));
 });
 
-it('daemon click activates only the validated terminal subscription and removal returns a kept worktree',async()=>{
+it('daemon click activates only the validated terminal subscription',async()=>{
  const paths=await home(),log=new Logger(paths.log),manager=new SessionManager(paths,log),activate=vi.fn().mockResolvedValue(undefined);
  await manager.load();const server=new DaemonServer(paths,manager,log,undefined,undefined,undefined,undefined,activate);await server.listen();
  const client=await Connection.connect(paths,{entry:'/unused',autoStart:false});cleanup.push(async()=>{client.close();await server.close();await manager.shutdown();});

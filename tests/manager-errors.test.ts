@@ -15,6 +15,8 @@ it('B16 exposes exact fixed manager reasons and never logs or returns raw causes
   let client: Connection | undefined;
   try {
     await manager.load(); await server.listen(); client = await Connection.connect(paths, { entry: '/unused', autoStart: false });
+    // The handler reads retained metadata before removing; the injected failure still belongs to remove().
+    vi.spyOn(manager,'get').mockReturnValue({} as ReturnType<SessionManager['get']>);
     const remove = vi.spyOn(manager, 'remove');
     for (const text of ['Session not found', 'Only exited sessions can be removed', 'Resume needs a finished agent', 'Conversation already running', 'Session stop timed out']) {
       remove.mockRejectedValueOnce(new Error(text));
