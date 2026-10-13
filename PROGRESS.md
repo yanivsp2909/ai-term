@@ -1,6 +1,100 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: f0b61eb fix: count hidden index edits and agent-written ignore rules as loss
+Roadmap step: v0.3.2 worktree removal (tasks 1–6) done
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at e54e575 after `git pull --ff-only` (already up to date). Baseline 131 files / 789 passed / 2 opt-in Keychain skips. Final 136 files / 839 passed / same 2 skips, twice in a row. Session: Claude Code, Opus 5.5.
+Prompt vs code:
+- v0.3.1 kept worktree metadata only on session records, and `x`/`/clean` deleted them. Worktrees already orphaned that way have no record, so under task 2 they can't be deleted. `/worktrees` lists them read-only as `✗ Not in AI Term's record`.
+- v0.3.1 recorded neither the repo nor the base. Older records now find their repo through git, pinned by the folder hash, and use the checkout's current branch as base. The UI says so.
+- `git worktree prune` is deliberately not run. `git worktree remove -- <missing dir>` already cleans up a folder deleted by hand (git 2.50.1). Prune would also drop git's records of other missing worktrees in that repo, which breaks "never touch anything outside that one worktree".
+- The prompt was cut off after "a crafted"; the reviewers were also told to try crafted state.json records and socket requests.
+
+## What works
+- **Task 1, 97f03a1:** `inspectWorktree` in `git.ts`, read-only.
+  - Counts changed, untracked and ignored files, plus commits on `ai/<slug>` not in the base. The base is the recorded branch, else the start commit when that branch was deleted, else the checkout's branch for older records.
+  - Flags locked, missing, renamed/switched, checked-out-elsewhere and foreign worktrees.
+  - Gives a fingerprint of exactly what it saw.
+  - Temp-repo tests cover each case alone and combined, merged into base, base moved forward, deleted base and a folder deleted by hand.
+- **Tasks 2–3, 323f8f6:**
+  - Worktree records sit in state.json beside sessions and outlive the agent; v0.3.1 records are migrated as legacy.
+  - `worktree-removal.ts` refuses with fixed texts: not recorded; outside `<home>/worktrees/<repo folder>/<slug>`; any symlink; repo not hashing to its folder; main checkout; not listed by git; not on its branch; locked; branch checked out elsewhere; running or waiting agent; busy with a resume.
+  - Clean: `worktree remove --` then `branch -d --`. Loss: typed branch plus unchanged fingerprint, then `--force` and `-D`.
+  - A failing step stops and names itself. Deletes share the start queue and exclude resumes.
+- **Tasks 4–5, bd04d84:**
+  - `x` removes the record, then asks one question: clean is k/Esc/⏎ keep, d delete; loss is listed plainly and needs the typed branch plus ⏎ (pastes ignored).
+  - `/clean` keeps every worktree and counts them.
+  - `/worktrees` popup: ↑↓, ⏎ opens the same question, Esc closes. It shows unrecorded leftovers.
+- **Task 6:** README in bd04d84 (commands, keys, flow) and f0b61eb; architecture S14 and §12.3 with the exact argv, plus design.md, in f3e2fbd and f0b61eb.
+- **Final review:** fresh-context security-reviewer and security-bounty-hunter (general-purpose agent) on e54e575..f3e2fbd, read-only, temp repos only. Both independently confirmed the same two bypasses. RED d452a96 → GREEN f0b61eb:
+  - **HIGH:** `assume-unchanged`/`skip-worktree` hid edits from status, and from git's own plain remove, so one `d` deleted them. Now `ls-files -v` flags count as changed.
+  - **MEDIUM:** `info/exclude`, a repo `core.excludesFile` or an uncommitted `.gitignore` (the agent can write all of them) could turn untracked work into "ignored". Now a path stays ignored only if `check-ignore -v` names a `.gitignore` tracked in the repo.
+  - **LOW:** nested repos are now called out (`repos`).
+  - **Theoretical:** a `.git` pointed at a sibling admin dir. Now the admin dir's `gitdir` must point back at `<path>/.git`.
+  - Also: literal pathspecs for git, and a 300 s timeout for removal (the reviewer flagged that 10 s could cut a big removal part way through).
+  - Not fixed, documented in §12.3 Known limits: the millisecond window between the recheck and git's own remove (same-user boundary, D35; git refused a symlink swap in the reviewer's test); legacy records pinned only by the 40-bit folder hash.
+
+### Final check output (all exit 0)
+```text
+npm run build       ESM ⚡️ Build success in 19ms
+npm run typecheck   > tsc --noEmit
+npm run lint        ESLint: No issues found
+npm test -- --reporter=dot (twice in a row)
+ Test Files  136 passed (136)
+      Tests  839 passed | 2 skipped (841)
+   Duration  12.95s / 13.15s
+coverage of the new code (worktree tests): 96.15% lines, 86.54% statements
+```
+Git argv in `src/daemon/git.ts` (the only git execFile); every positional ref and path follows `--`. The exceptions are option values: `-bai/<slug>` (git needs it before `--`), `--format=%(ahead-behind:<base>)` (a validated plain branch, hex commit or HEAD), and `check-ignore --stdin` (names on stdin, `./`-prefixed):
+```text
+rev-parse --path-format=absolute --show-toplevel [--git-common-dir --absolute-git-dir]
+show --no-patch --format=%H --
+worktree list --porcelain -z --
+for-each-ref --format=%(refname) -- refs/heads/
+for-each-ref --format=%(ahead-behind:<base>) -- refs/heads/ai/<slug>
+status --porcelain=v1 -z --untracked-files=all --ignored=matching --
+ls-files -v -z --          ls-files -z -- <.gitignore sources>
+check-ignore -v -z --stdin
+worktree add -bai/<slug> -- <path> <HEAD>
+worktree remove -- <path>          branch -d -- ai/<slug>          (clean)
+worktree remove --force -- <path>  branch -D -- ai/<slug>          (confirmed loss only)
+```
+Grep: `--force` and `-D` appear only at git.ts `forceRemoveWorktree`/`forceDeleteBranch`, called only in the loss branch of `deleteWorktree`. There is no `rm`/`fs.rm`/`rmdir` on a worktree path and no `prune`. S8: no `exec(`, `execSync(` or `shell: true`.
+
+## What's next
+- The next roadmap step (v0.3 splits). Nothing is left from v0.3.2 except the manual checks below.
+
+## Manual checks
+All need Yaniv, after an explicit daemon restart when it's safe (`node dist/cli/index.js daemon stop`, then `node dist/cli/index.js`), starting in ~/ai-term:
+- Clean flow, needs Yaniv: start an agent in a repo, let it exit, then `x`. Expect `remove worktree and branch ai/<slug>? k keep · d delete`. Esc shows `worktree kept: <path>`. Repeat and press `d`: `✓ deleted worktree and branch …`. Afterwards `git worktree list` and `git branch` no longer show it, and `git status` in your checkout is unchanged.
+- Loss flow, needs Yaniv: in an exited agent's worktree, `echo x > new.txt` and make one commit; `x` lists `1 untracked · 1 commit not in main`; `d` only types; typing the branch name and ⏎ deletes.
+- `/worktrees`, needs Yaniv: lists v0.3.1 leftovers as `✗ Not in AI Term's record` and never offers to delete them; ↑↓/⏎/Esc work.
+- `/clean`, needs Yaniv: the result line says `kept N worktrees · /worktrees reviews them`.
+- Headless (ran): temp-repo git tests for every loss and refusal case; real SessionManager plus git delete paths; socket round-trip; homepage key flows replayed through a headless xterm.
+
+## Gotchas
+- `branch -d` compares with the original checkout's current branch. If that isn't the recorded base, a clean delete can stop at `Worktree removed; branch delete failed`; the record is dropped and the branch stays.
+- A start that fails after `git worktree add` (subfolder checks) still leaves an unrecorded worktree, as in v0.3.1.
+- A freed slug can be reused by a later start. An old exited session whose worktree was deleted then points at the new agent's folder, and resuming it would start there.
+- The status/ls-files output cap is 16 MiB. A tree too large to list is refused (`Git check failed`), never deleted.
+- An agent-enabled sparse checkout counts every skip-worktree entry as changed, so it always needs the typed confirmation.
+- In tests, the homepage writes only changed cells; read the screen through `@xterm/headless` (see `tests/worktree-flow.test.ts`), not the byte stream.
+- The reviewers' scratch scripts are in the session scratchpad, outside the repo.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- **Index flags (`src/daemon/git.ts`, `hiddenEntries`):** `git update-index --assume-unchanged`/`--skip-worktree` tell git to stop looking at a file, so `git status` and plain `git worktree remove` treat edits to it as absent. `git ls-files -v` reveals them (lowercase tag or `S`), and AI Term counts them as changed.
+- **Ignore sources (`committedIgnores`):** a file can be ignored by `.gitignore`, `.git/info/exclude` or `core.excludesFile`. `git check-ignore -v` names the rule's source. Only a committed `.gitignore` is trusted, because the other sources live outside history and can be written by anything in the worktree.
+- **Fingerprint confirmation (`worktree-removal.ts`):** the daemon hashes exactly what it showed you. A delete must send that hash back and is refused if anything changed in between, so a confirmation always matches the loss you actually saw.
+
+---
+
+## Previous checkpoint (v0.3.1 worktree starts, retained)
+
+## Checkpoint
 Last commit: 1269435 fix: preserve trailing spaces in git top-level paths
 Roadmap step: v0.3.1 done (worktree starts, tasks 1–7) + extra task 8 done (open-homepage terminal activation).
 Branch: main. This handover is the last commit; its own hash is in git log.
