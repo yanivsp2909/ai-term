@@ -21,6 +21,9 @@ it('the diagnostic records DA1-only startup and the actual vim exit without chan
     const screen = () => Array.from({ length: terminal.rows }, (_, row) => terminal.buffer.active.getLine(row)?.translateToString(true) ?? '').join('\n');
     await expect.poll(screen, { timeout: 5000 }).toContain('bar probe');
     expect(finished).toBe(false);
+    child.write(':pwd\r');
+    await expect.poll(screen).toContain('ai-term-bar-diagnostic-');
+    child.write('\x1b');
     child.write('iDIAGNOSTIC_TYPED');
     await expect.poll(() => output).toContain('DIAGNOSTIC_TYPED');
     child.write('\x1b:qa!\r');
