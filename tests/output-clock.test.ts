@@ -23,6 +23,9 @@ it('publishes the first output at once, then at most once per interval with a tr
 it('an external publish (a status event) restarts the interval, and dispose cancels the trailing publish',()=>{
  const clock=fake(),published:number[]=[],output=new OutputClock(()=>published.push(clock.now()),OUTPUT_EVENT_MS,clock.now,clock.schedule,clock.cancel);
  output.sent();output.output();expect(published).toEqual([]);expect(clock.pending()).toBe(1);
+ // A status event carries the newest output time, so a pending trailing publish is redundant and is dropped.
+ clock.advance(2000);output.sent();expect(clock.pending()).toBe(0);clock.advance(4000);expect(published).toEqual([]);
+ output.output();expect(published).toEqual([]);expect(clock.pending()).toBe(1);
  output.dispose();clock.advance(10000);expect(published).toEqual([]);
  output.output();expect(published).toEqual([]);
 });

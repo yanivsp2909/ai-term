@@ -51,6 +51,10 @@ it('the quiet tick asks for one redraw per second only while a card is quiet, el
  expect(nextCardTick([agent({lastOutputAt:ago(4000),statusSince:ago(20000)})],NOW)).toBe(6000);
  expect(nextCardTick([agent({lastOutputAt:ago(4000),statusSince:ago(20000)}),agent({lastOutputAt:ago(15500),statusSince:ago(20000)})],NOW)).toBe(500);
  expect(nextCardTick([],NOW)).toBeNull();
+ // Past a minute the text only changes per minute, so the wake-ups slow down with it.
+ expect(nextCardTick([agent({lastOutputAt:ago(300400),statusSince:ago(400000)})],NOW)).toBe(59600);
+ // Unreadable times never turn into a redraw loop or an "Infinity" label.
+ const broken=agent({lastOutputAt:'not a date',statusSince:'also not',lastActivity:null});expect(quietSeconds(broken,NOW)).toBeNull();expect(nextCardTick([broken],NOW)).toBeNull();expect(cardText(broken,NOW,W).activity).toBeNull();
 });
 it('line 3 shows the activity, keeps auth when it fits whole, and shows auth alone without activity; Don\'t ask keeps its !',()=>{
  const text=plainText(renderHomepage(view([agent({status:'waiting',statusDetail:'permission',permission:'dontAsk',statusSince:ago(240000)}),agent({title:'idle-one',status:'starting',statusDetail:'starting',createdAt:ago(120000)})]),theme));
