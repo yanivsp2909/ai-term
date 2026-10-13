@@ -63,3 +63,7 @@ it('a changed bar preserves the agent cursor even when no body cells changed',as
  let bar='\x1b[1;1Hbar';const out:string[]=[];const screen=new SessionScreen(20,3,{kitty:false},s=>{out.push(s);},()=>{},()=>bar,()=>{});
  try{await screen.write('abc');await new Promise(r=>setTimeout(r,12));out.length=0;bar='\x1b[1;1Hnew';screen.changed();expect(out.join('')).toContain('\x1b[2;4H');}finally{screen.dispose();}
 });
+it('a queued frame cannot paint through an agent synchronized-output begin',async()=>{
+ const out:string[]=[];const screen=new SessionScreen(20,3,{kitty:false},s=>{out.push(s);},()=>{},()=>'',()=>{});
+ try{await screen.write('a');screen.input();await screen.write('b');screen.input();await screen.write('\x1b[?2026hINCOMPLETE');const n=out.length;await new Promise(r=>setTimeout(r,20));expect(out.length).toBe(n);screen.input();await screen.write('\x1b[?2026l');await new Promise(r=>setTimeout(r,12));expect(out.length).toBeGreaterThan(n);}finally{screen.dispose();}
+});

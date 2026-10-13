@@ -38,3 +38,6 @@ it('reattach carries cursor shape, title, kitty flags and theme report mode from
  const {Mirror}=await import('../src/daemon/mirror.js');const {enterModes}=await import('../src/client/terminal-modes.js');const mirror=new Mirror(80,23,()=>{});
  try{await mirror.write('\x1b[5 q\x1b]2;agent title\x07\x1b[>3u\x1b[?2031h');expect(mirror.modes()).toMatchObject({cursorShape:5,title:'agent title',kittyFlags:[0,3],themeReports:true});const modes=enterModes(mirror.modes());for(const seq of ['\x1b[5 q','\x1b]2;agent title\x1b\\','\x1b[>3u','\x1b[?2031h'])expect(modes).toContain(seq);}finally{mirror.dispose();}
 });
+it('a terminal with one row uses raw because a bar leaves no agent rows',async()=>{
+ const tty=new TTY(),connection=new Connection();tty.rows=1;const done=attach(connection,id,{stdin:tty,stdout:tty,signals:new EventEmitter(),bar:'on'});await tick();tty.emit('data',Buffer.from([5]));await done;expect(connection.requests).toContainEqual({kind:'sessions.attach',sessionId:id,cols:80,rows:1});
+});
