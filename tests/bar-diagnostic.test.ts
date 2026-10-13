@@ -52,7 +52,7 @@ it('the hands-off trace records post-probe reports, PTY size and vim exit state 
   child.onData(data => {
     output += data;
     if (!answered && output.includes('\x1b[c')) { answered = true; child.write(colors + '\x1b[?1;2c'); }
-    if (!lateSent && output.includes('\x1b[?2026l')) { lateSent = true; child.write('\x1b['); setTimeout(() => child.write('I\x1b[O'), 10); }
+    if (!lateSent && output.includes('\x1b[?2026l')) { lateSent = true; child.write('\x1b['); setTimeout(() => child.write('I\x1b[O\x1b[112u\x1b[97u\x1b[115u\x1b[115uSECRETZZSECRET'), 10); }
   });
   try {
     await expect.poll(() => output, { timeout: 6000 }).toContain('BAR_DIAGNOSTIC ');
@@ -67,6 +67,9 @@ it('the hands-off trace records post-probe reports, PTY size and vim exit state 
     expect(report.trace.outerInput.map((entry: { hex: string }) => entry.hex).join('').includes('1b5b491b5b4f')).toBe(true);
     expect(report.trace.childInput.map((entry: { hex: string }) => entry.hex).join('').includes('1b5b491b5b4f')).toBe(true);
     expect(report.trace.childInput.some((entry: { hex: string }) => entry.hex === Buffer.from('\x1b:qa!\r').toString('hex'))).toBe(false);
+    const traceHex = report.trace.outerInput.concat(report.trace.childInput).map((entry: { hex: string }) => entry.hex).join('');
+    expect(traceHex).not.toContain(Buffer.from('\x1b[112u').toString('hex'));
+    expect(traceHex).not.toContain(Buffer.from('ZZ').toString('hex'));
     expect(report.trace.exitedAfterMs).toBeGreaterThanOrEqual(2000);
   } finally {
     if (!finished) child.kill('SIGTERM');
