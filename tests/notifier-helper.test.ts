@@ -118,6 +118,6 @@ it.skipIf(!built)('the notification carries the session id for the click, and th
  const source=readFileSync(resolve('native/notifier/Notifier.swift'),'utf8');
  expect(source).toContain('content.userInfo = ["session": arguments.sessionID]');
  // The delegate must be in place before app.run(): a cold click is delivered while the app finishes launching.
- expect(source.indexOf('UNUserNotificationCenter.current().delegate = delegate')).toBeLessThan(source.indexOf('app.run()'));
+ expect(source.indexOf('UNUserNotificationCenter.current().delegate = delegate')).toBeLessThan(source.indexOf('withExtendedLifetime(delegate) { app.run() }'));
  expect(source).toContain('UNNotificationDefaultActionIdentifier');
 });
