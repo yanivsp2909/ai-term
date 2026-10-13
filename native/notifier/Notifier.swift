@@ -84,7 +84,20 @@ let exitDelay: Duration = .seconds(2)
 }
 
 @main @MainActor enum NotifierMain {
-    static func main() {
+    static func main() async {
+        if Array(CommandLine.arguments.dropFirst()) == ["--status"] {
+            // Reads authorization without ever presenting the requestAuthorization prompt.
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            let word: String
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral: word = "allowed"
+            case .denied: word = "denied"
+            case .notDetermined: word = "not-asked"
+            @unknown default: word = "unknown"
+            }
+            FileHandle.standardOutput.write(Data((word + "\n").utf8))
+            return
+        }
         guard let arguments = Arguments.parse(Array(CommandLine.arguments.dropFirst())) else { fail("Invalid notifier arguments", code: 2) }
         if arguments.check { return }
         let app = NSApplication.shared

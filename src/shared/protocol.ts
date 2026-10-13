@@ -113,6 +113,7 @@ export type Request = {
     on: boolean;
 });
 // Whether the daemon can post notifications; only these fixed states cross the socket.
+export type NotificationAuthorization='allowed'|'denied'|'not-asked'|'unknown';
 export type NotifierState = 'ready' | 'not built' | 'launch failed';
 export interface SuccessResponse {
     id: string;
@@ -125,6 +126,7 @@ export interface SuccessResponse {
     settings?: Settings;
     engines?: EnginesStatus;
     notifier?: NotifierState;
+    notificationPermission?:NotificationAuthorization;
     keys?: KeyView[];
     key?: KeyView;
     results?: DeploymentTest[];

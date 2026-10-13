@@ -25,6 +25,6 @@ it('denied permission never launches a notification and logs the suppression onc
  const launch=vi.fn(),log={error:vi.fn()},permission=new NotificationPermission('/tmp/app',()=>{},(_f,_a,_o,done)=>done(null,'denied'),()=>0,true);await permission.refresh();
  const notifier=new Notifier('/tmp/app',log,async()=>true,launch,()=>true,()=>0,permission);
  const session={id:randomUUID(),title:'task'} as SessionInfo;
- for(let i=0;i<2;i++)notifier.transition(session,{status:'running',statusDetail:null},{status:'waiting',statusDetail:{reason:'permission'}},true);
+ for(let i=0;i<2;i++)notifier.transition(session,{status:'running',statusDetail:'running'},{status:'waiting',statusDetail:'permission'},true);
  await new Promise(r=>setTimeout(r,0));expect(launch).not.toHaveBeenCalled();expect(log.error).toHaveBeenCalledTimes(1);
 });

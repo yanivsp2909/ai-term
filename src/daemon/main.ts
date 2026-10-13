@@ -33,7 +33,7 @@ export async function runDaemon(entry?:string): Promise<void> {
             process.exitCode = 1;
         }
         try {
-            for(const cleanup of [()=>server.close(),()=>manager.shutdown(),()=>usage.close()]) {
+            for(const cleanup of [()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close()]) {
                 try{await cleanup();}catch{try{log.error('Shutdown cleanup failed');}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
             }
         } finally {
@@ -47,6 +47,7 @@ export async function runDaemon(entry?:string): Promise<void> {
     process.on('SIGINT', onSignal);
     manager.on('fatal', (error: unknown) => { void shutdown(error); });
     try {
+        notifier.start();
         await usage.start();
         await manager.load();
         if (!closing)

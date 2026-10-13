@@ -1,4 +1,4 @@
-import type { AgentEngine, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings, NotifierState } from '../../shared/protocol.js';
+import type { AgentEngine, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings, NotifierState,NotificationAuthorization } from '../../shared/protocol.js';
 import { ownLoginLabel } from '../../shared/models.js';
 import { DaemonRequestError, type RequestBody } from '../connection.js';
 import { isEndpoint, isValidModelId } from '../../shared/validate.js';
@@ -14,7 +14,7 @@ const themes:ThemeName[]=['graphite','slate','ink','auto','light'];
 const reason=(error:unknown,fallback:string)=>error instanceof DaemonRequestError?error.message:fallback;
 export class CredentialsPanel {
  private screen:'providers'|'method'|'form'|'settings'|'import'|'names'|'result';
- private choice=0;private row=0;private provider:KeyProvider='anthropic';private keys:KeyView[]=[];private engines?:EnginesStatus;private notifier?:NotifierState;private settings?:Settings;
+ private choice=0;private row=0;private provider:KeyProvider='anthropic';private keys:KeyView[]=[];private engines?:EnginesStatus;private notifier?:NotifierState;private notificationPermission:NotificationAuthorization='unknown';private settings?:Settings;
  private label='';private endpoint='';private deployments='';private secret='';private path='';private names:{name:string;provider:KeyProvider}[]=[];private selected=new Set<string>();private message='';private busy=false;private disposed=false;
  constructor(kind:'login'|'settings',private readonly actions:Actions){this.screen=kind==='login'?'providers':'settings';}
  containsSecret():boolean{return this.secret.length>0;}
@@ -24,7 +24,7 @@ export class CredentialsPanel {
   const failures:string[]=[];
   try{this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}catch(error){failures.push(reason(error,'Keys unavailable'));}
   try{const status=await this.actions.request({kind:'engines.status'});this.engines=status.engines;this.notifier=status.notifier;}catch(error){failures.push(reason(error,'Engine status unavailable'));}
-  try{this.settings=(await this.actions.request({kind:'settings.get'})).settings;}catch(error){failures.push(reason(error,'Settings unavailable'));}
+  try{const result=await this.actions.request({kind:'settings.get'});this.settings=result.settings;this.notificationPermission=result.notificationPermission??'unknown';}catch(error){failures.push(reason(error,'Settings unavailable'));}
   this.message=failures.join(' · ');this.busy=false;this.actions.changed();}
  private fieldNames():string[]{return this.provider==='foundry'?['label','endpoint','secret','deployments']:['label','secret'];}
  private field():string{return this.screen==='import'?'path':this.fieldNames()[this.row]??'label';}
@@ -74,6 +74,10 @@ export class CredentialsPanel {
   try{if(saved){this.keys=[saved];if(saved.provider==='foundry'){const test=await this.actions.request({kind:'keys.test',keyId:saved.id});this.message+=' · '+(test.results??[]).map(r=>`${r.model}: ${r.status}${r.reason?' · '+r.reason:''}`).join(' · ');this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}}}
   catch(error){this.message+=' · test failed: '+reason(error,'try t in /settings');}finally{this.busy=false;this.actions.changed();}
  }
+ private notificationText():string{
+  const text:Record<NotificationAuthorization,string>={allowed:'on · allowed',denied:'on · blocked: turn on AI Term in System Settings → Notifications','not-asked':"on · not asked yet: you'll be asked at the first notification",unknown:'on · permission unknown'};
+  return text[this.notificationPermission];
+ }
  lines():string[]{
   const lines:string[]=[];
   if(this.screen==='providers')lines.push('Connect a provider',...providers.map(([label],i)=>`${i===this.choice?'›':' '} ${label}`));
@@ -86,7 +90,7 @@ export class CredentialsPanel {
    for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${k.provider} · key ····${k.last4}${k.endpoint?' · '+k.endpoint:''}`);
    lines.push(action(0,'+ add key (a)'),action(1,'import from .env (i)'),action(2,'login (l)'),'ENGINES');
    for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(status?`${name}: ${status.installed?'✓ installed':'✗ not installed'} · ${status.loggedIn===null?'status unavailable':status.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status.authMethod)}${status.error?' · '+status.error:''}`:`${name}: status unavailable`);
-   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'Foundry input/output price per 1M · p override'),action(8,`notifications: ${this.settings?.notifications===false?'off':'on'} (n)`),action(9,`bar: ${this.settings?.bar??'off'} (h)`),'keys are never shown in full and never written to .env');
+   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'Foundry input/output price per 1M · p override'),action(8,`notifications: ${this.settings?.notifications===false?'off':this.notificationText()} (n)`),action(9,`bar: ${this.settings?.bar??'off'} (h)`),'keys are never shown in full and never written to .env');
    // Fixed text only: the daemon reports one of three states.
    if(this.notifier==='not built')lines.push('notifications unavailable: helper not built · run npm run build:notifier');else if(this.notifier==='launch failed')lines.push('notifications unavailable: helper failed to launch');
   }

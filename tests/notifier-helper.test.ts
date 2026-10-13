@@ -46,3 +46,6 @@ it('a build assembles and signs the whole bundle aside, then swaps it in whole a
  expect(source.indexOf("'--verify'")).toBeLessThan(source.indexOf('renameSync(staged, app)'));
  expect(source).not.toContain('renameSync(fresh, binary)');
 });
+it.skipIf(!built)('--status prints one authorization word with exit zero and no permission prompt',()=>{
+ const result=run(['--status']);expect(result.status).toBe(0);expect(result.stdout).toMatch(/^(allowed|denied|not-asked|unknown)\n$/);expect(result.stderr).toBe('');
+});

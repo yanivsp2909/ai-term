@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import type { NotifierState, SessionInfo } from '../shared/protocol.js';
 import { notificationBody, notificationFor } from './notify-policy.js';
+import { NotificationPermission } from './notification-permission.js';
 import { SettingsStore } from './settings.js';
 // Inside the bundle; the helper's own name in Info.plist.
 export const NOTIFIER_EXECUTABLE = 'Contents/MacOS/AITermNotifier';
@@ -36,7 +37,11 @@ export class Notifier {
   private readonly lastLaunch = new Map<string, number>();
   private recent: number[] = [];
   constructor(private readonly app: string | null, private readonly log: { error(text: string): void }, private readonly enabled: () => Promise<boolean>,
-    private readonly launch: Launcher = launchHelper, private readonly exists: (app: string) => boolean = helperExists, private readonly now: () => number = Date.now) {}
+    private readonly launch: Launcher = launchHelper, private readonly exists: (app: string) => boolean = helperExists, private readonly now: () => number = Date.now,private readonly authorization=new NotificationPermission(app,text=>this.once(text))) {}
+  start():void{this.authorization.start();}
+  close():void{this.authorization.close();}
+  permission(){return this.authorization.value();}
+  refreshPermission(){return this.authorization.refresh();}
   state(): NotifierState { return this.launchFailed ? 'launch failed' : !this.app || !this.exists(this.app) ? 'not built' : 'ready'; }
   // Called on every status change. It never throws and never waits: the setting is read and the helper launched in the background.
   transition(session: SessionInfo, previous: StatusPair, next: StatusPair, attached: boolean): void {
@@ -45,6 +50,7 @@ export class Notifier {
     void this.enabled().then(on => { if (on) this.send(id, body); }, () => this.once('Notification settings unreadable'));
   }
   private send(sessionId: string, body: string): void {
+    if(this.permission()==='denied'){this.once('Notifications blocked by macOS permission');return;}
     if (!this.app || !this.exists(this.app)) { this.once('Notifier helper not built'); return; }
     if (!this.allowed(sessionId)) { this.once('Notifications rate limited'); return; }
     const failed = () => { this.launchFailed = true; this.once('Notifier helper failed to launch'); };

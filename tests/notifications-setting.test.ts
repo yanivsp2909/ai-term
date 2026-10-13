@@ -28,10 +28,10 @@ it('notifications is a stored on/off setting, on unless turned off',async()=>{
 });
 it('/settings shows notifications on, n or Enter on its row turns it off and on, and saves it',async()=>{
  const {p,requests}=panel('ready');await p.load();
- expect(p.lines()).toContain('  notifications: on (n)');expect(p.lines().join('\n')).not.toContain('unavailable');
+ expect(p.lines()).toContain('  notifications: on · permission unknown (n)');expect(p.lines().join('\n')).not.toContain('unavailable');
  await p.key('n');expect(requests.filter(r=>r.kind==='settings.set').at(-1)).toMatchObject({patch:{notifications:false}});expect(p.lines()).toContain('  notifications: off (n)');
  for(let i=0;i<8;i++)await p.key('down');expect(p.lines()).toContain('› notifications: off (n)');
- await p.key('enter');expect(requests.filter(r=>r.kind==='settings.set').at(-1)).toMatchObject({patch:{notifications:true}});expect(p.lines()).toContain('› notifications: on (n)');
+ await p.key('enter');expect(requests.filter(r=>r.kind==='settings.set').at(-1)).toMatchObject({patch:{notifications:true}});expect(p.lines()).toContain('› notifications: on · permission unknown (n)');
 });
 it('/settings says why notifications are unavailable, with fixed text only',async()=>{
  const missing=panel('not built');await missing.p.load();expect(missing.p.lines()).toContain('notifications unavailable: helper not built · run npm run build:notifier');
