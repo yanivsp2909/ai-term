@@ -103,6 +103,14 @@ export class CredentialsPanel {
   const rows=frame.length,cols=frame[0]?.length??0,grid=new Grid(cols,rows,theme),lines=this.lines();
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){const cell=frame[y]?.[x];if(cell)grid.put(x,y,cell);}
   const w=Math.min(cols,110),h=Math.min(rows-2,Math.max(8,lines.length+2)),x=Math.floor((cols-w)/2),y=Math.max(1,rows-4-h);grid.box(x,y,w,h,this.screen==='settings'?'Settings':'Login',theme.colors.surface);
-  lines.slice(0,h-2).forEach((line,i)=>grid.text(x+3,y+i+1,line,theme.colors['ink-2'],theme.colors.surface,false,w-6));return grid.cells;
+  const wrapped:string[]=[];let selected=0;
+  for(const line of lines){
+   if(line.startsWith('›'))selected=wrapped.length;
+   let rest=line;
+   while(rest.length>w-6&&w>6){const limit=w-6,space=rest.lastIndexOf(' ',limit),at=space>0?space:limit;wrapped.push(rest.slice(0,at));rest=rest.slice(at).trimStart();}
+   wrapped.push(rest);
+  }
+  const start=Math.min(Math.max(0,selected-(h-4)),Math.max(0,wrapped.length-(h-2)));
+  wrapped.slice(start,start+h-2).forEach((line,i)=>grid.text(x+3,y+i+1,line,theme.colors['ink-2'],theme.colors.surface,false,w-6));return grid.cells;
  }
 }
