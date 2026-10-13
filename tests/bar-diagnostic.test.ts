@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import * as pty from 'node-pty';
+import headless from '@xterm/headless';
 import { resolve } from 'node:path';
 
 it('the diagnostic records DA1-only startup and the actual vim exit without changing the spike', async () => {
@@ -7,15 +8,18 @@ it('the diagnostic records DA1-only startup and the actual vim exit without chan
     cwd: resolve('.'), cols: 120, rows: 40, name: 'xterm-256color',
     env: { PATH: '/usr/bin:/bin', TERM: 'xterm-256color', TERM_PROGRAM: 'Apple_Terminal' },
   });
+  const terminal = new headless.Terminal({ cols: 120, rows: 40, allowProposedApi: true });
   let output = '', answered = false, finished = false;
   const exited = new Promise<number>(resolve => child.onExit(event => { finished = true; resolve(event.exitCode); }));
   child.onData(data => {
     output += data;
+    terminal.write(data);
     // Terminal.app answers DA1 but supplies neither kitty nor default-color replies here.
     if (!answered && output.includes('\x1b[c')) { answered = true; child.write('\x1b[?1;2c'); }
   });
   try {
-    await expect.poll(() => output, { timeout: 5000 }).toContain('bar probe');
+    const screen = () => Array.from({ length: terminal.rows }, (_, row) => terminal.buffer.active.getLine(row)?.translateToString(true) ?? '').join('\n');
+    await expect.poll(screen, { timeout: 5000 }).toContain('bar probe');
     expect(finished).toBe(false);
     child.write('iDIAGNOSTIC_TYPED');
     await expect.poll(() => output).toContain('DIAGNOSTIC_TYPED');
@@ -30,5 +34,6 @@ it('the diagnostic records DA1-only startup and the actual vim exit without chan
   } finally {
     if (!finished) child.kill('SIGTERM');
     await exited;
+    terminal.dispose();
   }
 }, 10000);
