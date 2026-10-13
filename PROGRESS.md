@@ -1,65 +1,70 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: 6b86aae fix: start box edits at the end, a new press resets a lost field drag, caret-aware field scroll, shortened spend (GREEN)
-Roadmap step: v0.2.4a fixes done (B22, B23, command bar cursor + selection; live look needs Yaniv)
+Last commit: d8bffb0 fix: tolerant settings read for notifications, staged signed build swap, accept unassigned code points, compare waiting reasons (GREEN)
+Roadmap step: v0.2.4b done (notifications without click-through; real banner, sound and Allow prompt need Yaniv)
 Branch: main. This handover is the last commit; its own hash is in git log.
-Started clean at 7e7094f after git pull --ff-only (up to date). Baseline 104 files / 619 passed / two native Keychain skips. Final 109 files / 641 passed / same two skips, twice consecutively (9.65 s, 9.92 s).
+Started clean at 1b720c4 after git pull --ff-only (up to date). Baseline 109 files / 641 passed / two native Keychain skips. Final 113 files / 670 passed / same two skips, twice consecutively with the dot reporter (9.64 s, 9.44 s).
 
 ## What works
-- B22, Codex last reply: RED 938e0f9 → GREEN 20a78a7.
-  - Cause, from the installed Codex 0.160.1 binary (`tui/src/app/thread_title.rs`, `tui/src/temporary_structured_request.rs`, the "Generate a concise, single-line task title…" prompt): the TUI names each new thread by running a temporary structured thread with a `{title}` output schema. Codex's legacy notify (`hooks/src/legacy_notify.rs`) fires `agent-turn-complete` for that thread's turn too, so its last message is `{"title":"Respond to greeting"}`. It comes from a different thread-id, not a misread field. No Codex setting turns the title thread off.
-  - Fix: `src/shared/codex-title.ts` recognises a last message that is a JSON object with only a string `title`. `ai status-notify` drops that notify whole (no POST), and `parseCodexStatus` ignores such a body too. So the title never replaces the reply and never marks a running turn done. Tests cover both orders through the real daemon and `sessions.text lastReply`.
-- B23, usage clarity: RED 2c2a701 → GREEN b46f49f (+ snapshot 8391858).
-  - Field meanings, from the installed binary: `response.completed` carries the Responses API usage (`ResponseCompletedUsage`: `input_tokens`/`input_tokens_details`, `output_tokens`/`output_tokens_details`). `input_token_count` includes `cached_token_count`, and Codex's own turn metrics export `non_cached_input_tokens` beside `input_tokens` and `cached_input_tokens`. `output_token_count` includes `reasoning_token_count`. The math was already right, so it is unchanged.
-  - `UsageTotal.cachedTokens` (optional, for older daemons) is summed per day, period and provider.
-  - The Usage tokens row shows `80.8K (71.0K cached)` when every column fits it; else `80.8K (71.0K)` with `(…) cached ·` on the hint line (the 130-col reference); else totals only. Columns now share the panel after the labels, up to 23 cells each.
-  - The narrow (<32) panel appends ` (N cached)` only when it fits.
-- Command bar: selection RED 37eeee2 → GREEN 7adee71; cursor (Yaniv's mid-session request) RED 86f265d → GREEN bd7876b.
-  - The field (`src/client/tui/message-field.ts`) is a list of units, each a grapheme or a whole paste token, with a caret and an anchor. Drawing and hit-testing live in `src/client/tui/command-bar.ts`.
-  - Cursor: ←/→ move by character; Alt+←/→ (also ESC b / ESC f) move by word, a token counting as one word; Home/End and Ctrl+A/Ctrl+E jump to the ends. Typing and paste insert at the cursor, and Backspace/Delete work at it. The block cursor is drawn reversed over the character at the caret.
-  - Selection:
-    - A mouse drag in the field or Shift+←/→ selects, in the selection color (accent 38%). The caret block hides while text is selected.
-    - Typing or paste replaces the selection. Backspace, Delete and Alt+Backspace remove it.
-    - Esc or a click clears the selection; a second Esc clears the field. Ctrl+U clears the field.
-    - Alt+Backspace (or Ctrl+W) deletes the previous word.
-    - Tokens are always selected and deleted whole.
-  - A field drag never copies. Preview drag-copy is unchanged. ↑↓ select agents only while the field is empty, as before. Homepage keys never reach an agent.
-- README (keys table and Usage/Codex text), the help key table (`keyTable`), design.md (command bar, Usage tokens row, keyboard table) and architecture.md (B22, B23 field meanings) are updated.
-- Review: typescript-reviewer found no critical/high issues. One medium and four lows, all fixed: RED 35f8afd → GREEN 6b86aae.
-  - Medium: the start box inherited the bar's caret or selection.
-  - Lows: a lost drag release swallowed the next press; a right-edge drag scrolled the text; a wide character at the caret was clipped; spend ≥ $1000 was clipped to a wrong number (now `$1235` / `$123.5K`).
+- Task 1, helper: RED 97fbc4e → GREEN 86f45a2 (+ lint fix 1420cc5).
+  - `native/notifier/Notifier.swift` + `Info.plist` (bundle id `local.aiterm.notifier`, name "AI Term", LSUIElement). Argv only: `--session <UUID> --title --body` (+ `--check` = validate and exit). It requests alert+sound authorization and posts one notification: title, body, default sound, threadIdentifier = session id, no trigger. It exits 2 s later, and gives up after 120 s if the Allow prompt is never answered. No click socket, no time-sensitive/critical level.
+  - No argv (a cold launch, e.g. after a click) or bad argv → `Invalid notifier arguments`, exit 2. The spike's argv cases are adapted (its click/socket/lifetime flags are now refused) and pass against the built app.
+  - `npm run build:notifier` (`scripts/build-notifier.mjs`): xcode-select + `xcrun --find swiftc` check (fixed message and exit 1 without the toolchain). swiftc builds a staged bundle; it is ad-hoc signed and verified, then swapped in whole at `build/notifier/AI Term.app`.
+- Task 2, policy (D42): RED 541e1fe → GREEN aae75d9. `src/daemon/notify-policy.ts`:
+  - waiting (permission, question, turn failed) always; done only when no client is attached.
+  - Same status and reason → no repeat; nothing for starting/running/exited/error; nothing when the setting is off.
+  - The body is the name (cleaned, 60 code points max) plus `waiting: <reason>` or `done`.
+- Task 3, sending: RED 0b9259b → GREEN cc685a6.
+  - `SessionManager.applyStatus` emits `statusChanged(session, previous, next, attached)`, guarded so a listener can't break status.
+  - `src/daemon/notifier.ts` reads the setting per notification and runs `execFile('/usr/bin/open', ['-n','-g','-a',app,'--args',…])` with `PATH=/usr/bin:/bin`, never awaited.
+  - Failures are logged once per daemon run with fixed text. `engines.status` carries `notifier: ready | not built | launch failed`.
+- Task 4, setting: RED 8b044b9 → GREEN 6441ab4. `notifications` (boolean, default on) in settings.json. `/settings` row `notifications: on|off (n)`, toggled by n or Enter. A fixed `notifications unavailable: helper not built · run npm run build:notifier` / `… helper failed to launch` line appears when needed.
+- Task 5, docs: f5e3e7f. README covers `npm run build:notifier`, the notifications paragraph and the `/settings n` key row. architecture.md §12.1 says v0.2.4b ships without click-through and records the helper, launch, policy and failure details. design.md /settings DEFAULTS lists notifications.
+- Reviews (fresh context, high): no critical/high findings from either reviewer. Each real finding got a failing test, then a fix.
+  - Security: RED 9f59f69 → GREEN 59493ec.
+    - MEDIUM: unbounded helper launches from a flapping Codex card, now capped at 1 per agent per 5 s and 10 a minute, logged once.
+    - LOW: `launch failed` now clears after a success.
+    - LOW: the helper now refuses separators, private use and surrogates.
+    - Its fourth point (a denied or rejected helper is invisible behind `open`'s exit 0) is documented, not fixable from the daemon.
+  - TypeScript: RED 66f8261 → GREEN d8bffb0.
+    - MEDIUM: one malformed key entry made the notifier's settings read fail and silenced notifications; it now reads through a store that skips bad keys.
+    - LOW: codesign ran after the swap; the whole bundle is now staged, signed and verified first.
+    - LOW: refusing *unassigned* code points could silently drop names macOS tables don't know; now accepted (the daemon strips them anyway).
+    - LOW: two failed turns with different error text re-notified; reasons are now compared.
+    - Its design note, that a waiting alert inside an agent's 5 s gap is dropped, was kept as a trade-off.
 - Final verification, all exit 0:
   - `npm run typecheck`: `> tsc --noEmit`
-  - `npm run lint`: `> eslint .`, no diagnostics
-  - `npm test`: `Test Files 109 passed (109)` / `Tests 641 passed | 2 skipped (643)` / `Duration 9.65s`
-  - `npm test` again: same counts / `Duration 9.92s`
-  - `npm run build`: `ESM ⚡️ Build success in 21ms`
-  - The diff doesn't touch src/daemon/keys.ts, env.ts, spikes/, docs/spikes/, docs/reviews/ or .claude/. No `sk-` or raw hex in source. `git diff --check` is clean.
+  - `npm run lint`: `> eslint .`
+  - `npm run build`: `ESM ⚡️ Build success in 17ms`
+  - `npm run build:notifier`: `Notifier built and ad-hoc signed: /Users/yanivsp/ai-term/build/notifier/AI Term.app`
+  - `npx vitest run --reporter=dot` twice: `Test Files 113 passed (113)` / `Tests 670 passed | 2 skipped (672)` / 9.64 s and 9.44 s
+  - The diff doesn't touch src/daemon/keys.ts, env.ts, spikes/, docs/spikes/, docs/reviews/, .claude/, .codex/ or .agents/. No secrets, raw hex or hidden bidi characters were added. `git diff --check` is clean. No new npm dependencies.
 
 ## What's next
-- v0.2.4b (notifications) only when Yaniv asks. Bar later.
-- Live checks below need Yaniv; restart the daemon first so status-notify and usage summaries come from the new build.
+- After Yaniv's replay confirms banner, name, icon and sound: click-through (callback socket via a fixed private path, select or attach the agent, D43 Terminal launch through a generated `.command`), as the next step. Not started.
 
 ## Manual checks
-- Selection/cursor/paste-token rules, parser key names, title-notify both orders, usage forms at 100/112/130/220 cols: ran headless with fake TTY, stub sessions and a stub Codex PTY; passed. Rendered field and Usage frames and read them.
-- `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js` — needs Yaniv: start a Codex key session, say "hii", wait for done, press c: the clipboard holds the reply, not `{"title":…}`.
-- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: the Usage tokens row shows e.g. `80.8K (71.0K)` and `(…) cached · b add` at 130 cols (wider windows show `cached` inline).
-- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: in the command bar type text, then try ←/→, Option+←/→, Home/End, Ctrl+A/E, a mouse drag, Shift+←/→, Delete, Ctrl+U, Option+Backspace and a multi-line paste. Option keys need "Use Option as Meta key" in Terminal.app (iTerm2: Esc+).
+- Ran (headless): argv cases against the built helper (`--check` only, nothing posted), `open -n -g -a <helper> --args … --check` with a minimal env (exit 0; a missing app exits 1), policy, sender, setting and panel tests with stubs.
+- `cd ~/ai-term && npm run build && npm run build:notifier && node dist/cli/index.js daemon stop && node dist/cli/index.js` — needs Yaniv: restarts the daemon (stops running agents) so it has the notifier.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: start a Codex agent and make it ask for permission (e.g. a network command). Expect the Allow prompt for "AI Term" the first time. After Allow, a banner titled "AI Term" with `<name> · waiting: permission` and the default sound; record the icon.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: let an agent finish while you stay inside it (attached) → no banner. Let one finish while you're on the homepage → `<name> · done` banner.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: `/settings`, press n → `notifications: off`; trigger waiting → no banner; n again to turn it back on.
+- If no banner: System Settings → Notifications → AI Term must allow alerts; the helper can't report a denial to the daemon.
 
 ## Gotchas
-- End: with text in the field it moves the cursor; with an empty field it follows the preview live, like the letter shortcuts.
-- Option+←/→/Backspace depend on the terminal sending ESC sequences (Meta). Without Meta, Terminal.app sends plain arrows or DEL. Ctrl+W is accepted as the word delete for presets that send it.
-- Two ESC presses inside 30 ms (as one chunk) are not two Escapes; the parser reads ESC+ESC as an unknown sequence (unchanged behavior).
-- The title-thread check is by reply shape. A real agent reply that is exactly `{"title":"…"}` and nothing else would be ignored; the card would then stay running until the next turn.
-- `cache_write_token_count` (new in Codex 0.160.1) is not read; OpenAI/Azure don't bill cache writes separately.
-- `src/client/tui/keys.ts` (the homepage input parser) changed; the protected `src/daemon/keys.ts` (keychain) did not.
-- No real ~/.ai-term, ~/.claude, ~/.codex auth files, ~/.ssh, keychain, .env or real agent sessions were accessed. Codex's installed binary (~/.codex/packages/standalone/releases/0.160.1-…/bin/codex) was read with `strings` only. No network except git pull/push.
+- The helper's permission belongs to `build/notifier/AI Term.app` in this checkout. Moving the repo means a new Allow prompt. The spike's `spikes/notifier/build/AI Term.app` has the same bundle id at another path.
+- The launch method is `open -n -g -a` (Launch Services): `-n` because only a fresh instance gets `--args`; `-g` so the terminal keeps focus. `open` exits 0 once the app starts, so a helper denied permission still shows `ready`.
+- One notification per agent per 5 s and 10 a minute in all; extras are dropped (homepage status still shows them) and logged once.
+- Clicking a notification relaunches the helper with no argv; it exits 2. Nothing else happens yet.
+- `tests/notifier-helper.test.ts` skips its helper-binary cases when the app isn't built; the path and swiftc-missing cases always run.
+- The build-script review fix is tested by reading the script's step order; a real codesign failure can't be triggered without a fault-injection switch.
+- No real ~/.ai-term, ~/.claude, ~/.codex auth, ~/.ssh, keychain, .env or agent sessions were accessed. No notification was posted. No network except git pull/push.
 
 ## New dependencies
-- None.
+- None (swiftc/codesign are system tools; the build is optional).
 
 ## Concepts introduced
-- Units instead of characters (src/client/tui/message-field.ts): the field stores graphemes and paste tokens as one list, and every position (caret, anchor, drag) counts units. A token is one unit, so no edit or selection can land inside it. A caret plus an anchor is all a selection needs: the range between them.
-- Sticky horizontal scroll (src/client/tui/command-bar.ts fieldStart): the first visible unit is kept from the previous draw and moved only when the caret would leave the field or when the text's end fits again. Recomputing it from zero each time would shift the text under the mouse during a drag.
-- Notify fan-out (src/shared/codex-title.ts): one CLI process can run several model threads, and a per-turn hook fires for all of them. The receiver must decide which turns belong to the user's conversation, here by the title thread's structured output shape.
+- Launch Services launch (`src/daemon/notifier.ts`): `open -a` asks macOS to start an app the way the Dock would, so the app gets its own identity, permissions and parent (launchd). A plain child process of the daemon would be "responsible" to the daemon's terminal. `-n` forces a new instance so `--args` arrive, and `-g` keeps it in the background.
+- Edge-triggered notifications (`src/daemon/notify-policy.ts`): notify on a *change* into a state, compared by what the user would be told (status plus reason), never on the state itself. Repeated hooks or repainted titles then can't produce repeated banners.
+- Staged build swap (`scripts/build-notifier.mjs`): build and sign a complete copy aside, verify it, then rename it into the fixed path. Readers see either the old complete bundle or the new one, never a half-signed mix.
