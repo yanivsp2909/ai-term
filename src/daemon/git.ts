@@ -18,7 +18,7 @@ function run(cwd: string, args: string[], failure: ConstructorParameters<typeof 
 export async function repoTopLevel(cwd: string): Promise<string | null> {
     // No positional refs or paths here: cwd is an execFile option, not a git argument.
     let top: string;
-    try { top = (await run(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel'])).trimEnd(); }
+    try { top = (await run(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel'])).replace(/\n$/, ''); }
     catch (error) {
         // Both non-repositories and bare repos lack a working checkout; callers fall back in place.
         try { await run(cwd, ['rev-parse', '--is-inside-work-tree']); } catch { return null; }
