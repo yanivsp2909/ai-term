@@ -37,3 +37,9 @@ it('failed helper reads cache unknown and log only a fixed operation message',as
  const log=vi.fn(),cache=new NotificationPermission('/tmp/app',log,(_f,_a,_o,done)=>done(new Error('private argv'),'allowed'),()=>0,true);
  expect(await cache.refresh()).toBe('unknown');expect(await cache.refresh()).toBe('unknown');expect(log).toHaveBeenCalledExactlyOnceWith('Notification permission check failed');
 });
+it('permission words and bar action remain reachable in a short narrow settings overlay',async()=>{
+ const {Grid,plainText}=await import('../src/client/tui/grid.js'),{createTheme}=await import('../src/client/tui/theme.js'),theme=createTheme('graphite');
+ const panel=new CredentialsPanel('settings',{request:async()=>({id:randomUUID(),ok:true,settings:{theme:'graphite'},notificationPermission:'denied'}),changed(){},close(){},login:async()=>{},defaults(){},theme:async()=>{}});await panel.load();
+ for(let i=0;i<8;i++)await panel.key('down');expect(plainText(panel.draw(new Grid(70,14,theme).cells,theme))).toContain('Notifications');
+ await panel.key('down');expect(plainText(panel.draw(new Grid(70,14,theme).cells,theme))).toContain('bar: off');
+});
