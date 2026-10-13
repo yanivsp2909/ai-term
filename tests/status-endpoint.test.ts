@@ -29,3 +29,14 @@ it('revocation while receiving a body discards it, and consumption follows reque
   await new Promise(r=>setTimeout(r,20));receiver.revoke(id);finish();expect(await pending).toBe(204);expect(updates).toHaveLength(2);
  }finally{await receiver.close();}
 });
+it('an aborted middle status body never lets later requests overtake a held earlier body',async()=>{
+ const {connect}=await import('node:net');const updates:number[]=[],receiver=new UsageReceiver(async()=>{}, {error:()=>{}},async(_id,_body,seq)=>{updates.push(seq);});await receiver.listen();const token=receiver.registerStatus(randomUUID());
+ const begin=async()=>{const socket=connect({host:'127.0.0.1',port:receiver.port(),allowHalfOpen:true});await new Promise<void>(r=>socket.once('connect',r));socket.on('error',()=>{});socket.write(`POST /v1/status/claude HTTP/1.1\r\nHost: 127.0.0.1:${receiver.port()}\r\nContent-Type: application/json\r\nx-ai-term-session: ${token}\r\nContent-Length: 2\r\n\r\n{`);await new Promise(r=>setTimeout(r,20));return socket;};
+ const first=await begin(),middle=await begin();
+ try{middle.destroy();await new Promise(r=>setTimeout(r,20));const later=send(receiver.port(),token);await new Promise(r=>setTimeout(r,30));expect(updates).toEqual([]);first.end('}');expect(await later).toEqual({status:204,body:''});await expect.poll(()=>updates).toEqual([1,3]);}finally{first.destroy();middle.destroy();await receiver.close();}
+});
+it('a half-open unfinished status body receives empty 204 and cannot block subsequent status forever',async()=>{
+ const {connect}=await import('node:net');const updates:number[]=[],receiver=new UsageReceiver(async()=>{}, {error:()=>{}},async(_id,_body,seq)=>{updates.push(seq);});await receiver.listen();const token=receiver.registerStatus(randomUUID());
+ const socket=connect({host:'127.0.0.1',port:receiver.port(),allowHalfOpen:true});let response='';socket.on('error',()=>{});socket.on('data',data=>{response+=String(data);});await new Promise<void>(r=>socket.once('connect',r));
+ try{socket.write(`POST /v1/status/claude HTTP/1.1\r\nHost: 127.0.0.1:${receiver.port()}\r\nContent-Type: application/json\r\nx-ai-term-session: ${token}\r\nContent-Length: 2\r\n\r\n{`);await new Promise(r=>setTimeout(r,30));const later=send(receiver.port(),token);await expect.poll(()=>response,{timeout:1500}).toMatch(/^HTTP\/1.1 204/);expect(await later).toEqual({status:204,body:''});expect(updates).toEqual([2]);expect(response.split('\r\n\r\n')[1]).toBe('');}finally{socket.destroy();await receiver.close();}
+});
