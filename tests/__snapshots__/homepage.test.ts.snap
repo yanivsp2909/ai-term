@@ -118,10 +118,10 @@ exports[`homepage layout and cards > plain grid at 130x45 matches the approved b
 │                                  │  ╰──────────────────────────────────────────────────────────────────────────────────────────╯
 │                                  │
 │                                  │  ╭─ Usage ────────────────────────────────────────────╮  ╭─ This Mac ───────────────────────╮
-│                                  │  │                    today     week      month       │  │ CPU —             agents —       │
-│                                  │  │ ≈ spend            —         —         —           │  │ RAM —             agents —       │
-│                                  │  │ tokens             —         —         —           │  │ NET ↓ —  ↑ —                     │
-│                                  │  │ budget             none      none      none        │  │                                  │
+│                                  │  │         today         week          month          │  │ CPU —             agents —       │
+│                                  │  │ ≈ spend —             —             —              │  │ RAM —             agents —       │
+│                                  │  │ tokens  —             —             —              │  │ NET ↓ —  ↑ —                     │
+│                                  │  │ budget  none          none          none           │  │                                  │
 │                                  │  │ b add                                              │  │ v0.1.8                           │
 ╰──────────────────────────────────╯  ╰────────────────────────────────────────────────────╯  ╰──────────────────────────────────╯
 
