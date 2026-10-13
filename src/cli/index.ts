@@ -30,6 +30,7 @@ async function main(): Promise<void> {
         await runDaemon();
         return;
     }
+    if(args.length===1&&args[0]==='status-line'){const {statusLine}=await import('./status-line.js');await statusLine();return;}
     if (args.length === 1 && args[0] === 'doctor') {
         const { doctor } = await import('./doctor.js');
         await doctor(entry);

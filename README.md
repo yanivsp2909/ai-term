@@ -27,6 +27,7 @@ Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source
 |---|---|
 | `ai` | Open homepage; start/connect to the background daemon |
 | `ai --version` | Print version |
+| `ai status-line` | Internal Claude status-line helper: reads stdin, reports context, prints model · ctx N% |
 | `ai doctor` | Report Node, daemon, file modes, CLI installation/version and login method |
 | `ai daemon` | Internal background service entry point |
 | `ai daemon stop` | Stop the background service and all its sessions |
