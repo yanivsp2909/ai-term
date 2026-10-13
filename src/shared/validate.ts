@@ -53,6 +53,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
                 throw new ValidationError('Invalid hello');
             break;
         case 'settings.get':
+            if(v.refreshNotifications!==undefined&&typeof v.refreshNotifications!=='boolean')throw new ValidationError('Invalid notification refresh');
             fields = [];
             break;
         case 'settings.set':

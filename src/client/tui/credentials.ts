@@ -24,7 +24,7 @@ export class CredentialsPanel {
   const failures:string[]=[];
   try{this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}catch(error){failures.push(reason(error,'Keys unavailable'));}
   try{const status=await this.actions.request({kind:'engines.status'});this.engines=status.engines;this.notifier=status.notifier;}catch(error){failures.push(reason(error,'Engine status unavailable'));}
-  try{const result=await this.actions.request({kind:'settings.get'});this.settings=result.settings;this.notificationPermission=result.notificationPermission??'unknown';}catch(error){failures.push(reason(error,'Settings unavailable'));}
+  try{const result=await this.actions.request({kind:'settings.get',refreshNotifications:true});this.settings=result.settings;this.notificationPermission=result.notificationPermission??'unknown';}catch(error){failures.push(reason(error,'Settings unavailable'));}
   this.message=failures.join(' · ');this.busy=false;this.actions.changed();}
  private fieldNames():string[]{return this.provider==='foundry'?['label','endpoint','secret','deployments']:['label','secret'];}
  private field():string{return this.screen==='import'?'path':this.fieldNames()[this.row]??'label';}

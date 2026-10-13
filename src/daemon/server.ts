@@ -245,7 +245,7 @@ export class DaemonServer {
                     this.control(peer, { id: request.id, ok: true, engines: await enginesStatus(), notifier: this.notifier?.state() ?? 'not built' });
                     break;
                 case 'settings.get':
-                    this.control(peer, { id: request.id, ok: true, settings: await this.settings.get(),notificationPermission:await this.notifier?.refreshPermission?.()??'unknown' });
+                    this.control(peer, { id: request.id, ok: true, settings: await this.settings.get(),notificationPermission:(request.refreshNotifications?await this.notifier?.refreshPermission?.():this.notifier?.permission?.())??'unknown' });
                     break;
                 case 'settings.set':
                     this.control(peer, { id: request.id, ok: true, settings: await this.settings.set(request.patch) });

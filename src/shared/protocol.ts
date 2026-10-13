@@ -70,6 +70,7 @@ export type Request = {
     version: string;
 } | {
     kind: 'settings.get';
+    refreshNotifications?:boolean;
 } | {
     kind: 'settings.set';
     patch: SettingsPatch;
