@@ -1,6 +1,85 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 1269435 fix: preserve trailing spaces in git top-level paths
+Roadmap step: v0.3.1 done (worktree starts, tasks 1–7) + extra task 8 done (open-homepage terminal activation).
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 15e646e after git pull --ff-only (already up to date). Baseline: 126 files / 767 passed / 2 existing opt-in native Keychain skips. Final: 131 files / 789 passed / same 2 skips, twice consecutively. No other skips introduced.
+
+## What works
+- Tasks 1–2, 74a29b0: git process boundary, protocol/validators and allocation. Temp-repo tests cover no repo, unborn HEAD, spaces, branch collision, hostile titles and forty-character suffixes. Worktrees are outside the checkout, keyed by canonical repo path hash; private layout directories are 0700, owned and not symlinks. Only execFile/argv is used, with timeout, fixed errors and no inherited git routing. Hooks, fsmonitor and recursive submodules are disabled.
+- Tasks 3–6, d01df57: new agent PTYs use their own branch/worktree and relative /cd subfolder; fallback starts in place with a card note. Shells and login sessions stay in place; resume reuses saved worktree metadata. Session persistence, cards, bar, debug ls, default-on settings and read-only start preview are wired. x and /clean retain worktree/branch and display kept paths. Tests use real temp git repos and inspect the actual PTY spawn cwd, original status/worktree list, reload and resume.
+- Task 7, 27ac856: README commands/keys and architecture/design describe worktrees, preview, setting, retention and click activation.
+- Extra task 8, d01df57: fixed TERM_PROGRAM → bundle map, validated click subscription, exact `/usr/bin/open -b <bundle>` argv with minimal PATH/timeout, own-terminal CSI 5 t, unknown-terminal note. Actual server selection/activation tested with a stub launcher. Helper, notifier banners/rate limits and closed-homepage launcher were untouched.
+- Final fresh-context reviewers at high, serial and read-only temporary snapshot: typescript-reviewer and security-reviewer. Each confirmed finding has a failing test commit then fix:
+  - MEDIUM, branch/tag short-ref ambiguity: RED 07f17e3 → GREEN 68a2034; use full refs/heads/ names so a same-name tag cannot hide branch collisions.
+  - MEDIUM, trailing-space repo path confusion: RED 8721812 → GREEN 1269435; remove exactly git's final newline, preserving valid trailing spaces. Two sibling repos test wrong-repo HEAD/branch/worktree routing.
+  - No other confirmed findings. 91cf4e6 adapts the removal-error test double to the new metadata read and clarifies a test title. An initial full-suite run exposed that fixture gap; final runs are green.
+
+### Final check output (all exit 0)
+```text
+npm run typecheck
+> tsc --noEmit
+npm run lint
+> eslint .
+npm run build
+ESM ⚡️ Build success in 19ms
+npm test -- --reporter=dot (twice consecutively after final fix)
+ Test Files  131 passed (131)
+      Tests  789 passed | 2 skipped (791)
+   Duration  12.04s / 11.38s
+```
+Baseline and some full runs emit the known node-pty EIO write diagnostic; no failed tests or unhandled test errors in final runs. The two native Keychain checks remain opt-in and were not run under the user limit.
+
+S8 grep: no process exec(, execSync( or shell: true. Only existing RegExp .exec at mouse-rows.ts:56 and passthrough.ts:121. Sole production git execFile: git.ts:12. Git command argv audit:
+```text
+rev-parse --path-format=absolute --show-toplevel   (no positional refs/paths; cwd is execFile option)
+rev-parse --is-inside-work-tree                    (no positional refs/paths)
+show --no-patch --format=%H --                     (implicit HEAD)
+worktree add -bai/<slug> -- <worktree path> <HEAD commit>
+worktree list --porcelain -z --
+for-each-ref --format=%(refname) -- refs/heads/
+status --porcelain --untracked-files=normal --
+```
+Git requires -b's branch option value before --; `rev-parse --verify -- HEAD` and `check-ref-format --branch -- <branch>` were tried only in a temporary repo and Git rejects them. The generated branch alphabet is stricter than check-ref-format. Every positional ref/path in production follows --. `git diff --check 15e646e..HEAD` is clean. No prohibited paths/modules or npm dependencies were changed.
+
+## What's next
+- v0.3 worktree deletion / cleanup safety (Claude's next step); splits are not implemented here.
+- Earlier carry-overs below remain; real UI/CLI checks listed here need Yaniv. No user daemon or session was stopped.
+
+## Manual checks
+All commands below start in ~/ai-term. Needs Yaniv; none require pasting credentials into chat.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after an explicit daemon restart when safe: /cd ~/ai-term, choose Codex, start two agents; each shows ai/codex and ai/codex-2 (or later unused suffixes), distinct cwd in its external tree, and branch on card/bar/debug ls. Observe each folder-trust prompt and report it.
+- `cd ~/ai-term && git worktree list --porcelain && git status --short && git branch --show-current` — needs Yaniv after two starts: both external trees listed, main stays checked out, no agent-created files in your checkout.
+- `cd ~/ai-term && node dist/cli/index.js debug ls` — needs Yaniv: both ai/ branches appear.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: /cd an existing non-repo temp folder and start an agent; cwd stays there and card says worktree off: not a git repo.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: /settings w toggles worktrees; /shell stays in /cd; x or /clean on finished worktree agents shows worktree kept: path, with tree/branch retained.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv in Terminal.app: move another app in front and click a live-agent notification; Terminal app activates and the correct ai window rises, agent selects, Enter attaches. Record CSI 5 t behavior; no Automation prompt expected.
+- `cd ~/ai-term && printf '[5t'` — needs Yaniv in Terminal.app: direct raise-window probe (whether it brings this window forward).
+- `cd ~/ai-term && TERM_PROGRAM=unknown node dist/cli/index.js` — needs Yaniv: click selects only, homepage says selected <name> from a notification.
+- Headless temp-home checks: ran — git/names/security/fallback/cwd/collisions/reload/resume/retention; UI model/card/bar/start box/settings; exact activation argv and server/client click routing. Real official CLI trust prompts and Terminal.app focus were not observed: the user's no-logins/no-computer-use limits exclude those checks.
+
+## Gotchas
+- Prompt checkpoint matches code (15e646e / 767 tests). README/design still described branch as deferred and Automation as necessary; updated for this step. RTK.md is referenced but absent; no RTK command used. The Codex process in ai-term was this session (verified parent PID), not another editing agent. Reviewers only used a temp snapshot after implementation.
+- Reasonable decisions: v0.3.1 label for this worktree-start slice; excluded login sessions as well as plain shells; resumes preserve saved worktree, even with setting off; absent setting means on; default names Codex/Claude Code produce codex/claude-code slugs. No name/branch editor was added. Preview rechecks at start; external races may change suffix or HEAD between preview and spawn.
+- Empty/untracked selected subfolders are created in the new worktree without copying their local contents. Private layout/selected cwd dirs are 0700; ordinary checked-out project directories retain git's normal permissions behind the private root. Repo path controls are refused; space paths, including trailing spaces, work.
+- Failed git allocation retains any partial directory/branch because this step never deletes. Its slug stays occupied for later starts. A symlinked layout is rejected before reading through it.
+- Known CLI issues are documented, not solved: trust may be asked per folder; ignored dependency/local env files are absent. Temp-repo evidence confirms local ignored/untracked content is not included. Actual installed CLI trust behavior was not tested, and no real .env was read.
+- Real ~/.ai-term, ~/.claude, ~/.codex, ~/.ssh, keychain and .env were untouched. Only project and temporary folders were written; network only git pull/push. Main changes/commits are the requested development work; product git never commits or changes the user's selected checkout.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Linked worktree (`src/daemon/git.ts`): git creates another checkout with its own selected branch while sharing the repository's object store. AI Term starts it from a pinned HEAD commit, so local checkout edits do not silently enter the agent's task.
+- Path identity and reservation (`src/daemon/worktrees.ts`): canonical top-level path hashes separate same-named repos, and a per-home promise queue serializes allocation from different socket clients. Existing branch names and filesystem allocations reserve a slug; no cleanup deletes user work.
+- Launch Services activation (`src/daemon/terminal-activate.ts`, `src/shared/terminal-app.ts`): open -b activates a known terminal app without Apple Events. CSI 5 t requests that terminal to raise its particular client window; the terminal controls whether the request is supported.
+
+---
+
+## Previous checkpoint (v0.2 release, retained)
+
+## Checkpoint
 Last commit: 8e7b717 test: await the stopped homepage's done promise in the L2 case
 Roadmap step: v0.2.7 done (notification click-through) + v0.2 release gate done. **v0.2 is closed** on automated evidence; the click/banner and Foundry re-add checks below are Yaniv's manual checks.
 Branch: main. This handover is the last commit; its own hash is in git log.
