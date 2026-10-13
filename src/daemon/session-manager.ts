@@ -167,8 +167,9 @@ export class SessionManager extends EventEmitter {
                     if(live.mirrorFailed)return;
                     await live.mirror.write(data);
                     info.lastOutputAt = new Date().toISOString();
-                    if (info.status === 'starting') {
-                        if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:0,at:info.lastOutputAt,kind:'running'});
+                    if (info.status === 'starting'&&(!live.statusState||live.statusState.status==='starting')) {
+                        // PTY output is not an ingress event: preserve its sequence while making the same startup transition in both records.
+                        if(live.statusState)live.statusState={...live.statusState,status:'running',statusDetail:'running',statusSince:info.lastOutputAt};
                         info.status = 'running';
                         info.statusDetail = 'running';
                         info.statusSince = info.lastOutputAt;
