@@ -67,3 +67,19 @@ it('a queued frame cannot paint through an agent synchronized-output begin',asyn
  const out:string[]=[];const screen=new SessionScreen(20,3,{kitty:false},s=>{out.push(s);},()=>{},()=>'',()=>{});
  try{await screen.write('a');screen.input();await screen.write('b');screen.input();await screen.write('\x1b[?2026hINCOMPLETE');const n=out.length;await new Promise(r=>setTimeout(r,20));expect(out.length).toBe(n);screen.input();await screen.write('\x1b[?2026l');await new Promise(r=>setTimeout(r,12));expect(out.length).toBeGreaterThan(n);}finally{screen.dispose();}
 });
+it('complete query policy forwards position-free operations and resets but never raw screen controls or images',async()=>{
+ const out:string[]=[],reply:string[]=[];const screen=new SessionScreen(80,23,{kitty:true},s=>{out.push(s);},s=>reply.push(s),()=>'',()=>{});
+ try{screen.input();await screen.write('stable');await new Promise(r=>setTimeout(r,12));out.length=0;
+ const forwarded=['\x1b[?1;9;1000;1002;1003;1005;1006;1015;1004;1007;2004;12;66;2031h','\x1b=','\x1b>','\x1b[5 q','\x1b[22;0t','\x1b[23;0t','\x1b[?996n','\x1b[>4;2m','\x1b[>3u','\x1b[=1;2u','\x1b[<1u','\x07'];
+ for(const id of [0,1,2,7,9,777,4,10,11,12])forwarded.push(`\x1b]${id};value\x1b\\`);
+ for(const id of [104,110,111,112])forwarded.push(`\x1b]${id}\x1b\\`);
+ screen.input();await screen.write(forwarded.join(''));for(const sequence of forwarded)expect(out.join('')).toContain(sequence);
+ screen.input();await screen.write('\x1b[>c\x1b[5n\x1b[?1$p\x1bP$qm\x1b\\\x1b[18t');expect(reply.join('')).toContain('\x1b[0n');expect(reply.join('')).toContain('\x1b[?1;1$y');expect(reply.join('')).toContain('\x1bP1$r');expect(reply).toContain('\x1b[8;23;80t');
+ out.length=0;screen.input();await screen.write('\x1bPqSECRET_IMAGE\x1b\\\x1b_Ga=T;SECRET_IMAGE\x1b\\\x1b]1337;File=SECRET_IMAGE\x07');expect(out.join('')).not.toContain('SECRET_IMAGE');
+ out.length=0;screen.input();await screen.write('\x1bc');expect(out.join('')).toContain('\x1b[?1;9;1000;1002;1003;1005;1006;1015;1004;1007;2004;12;66;2031l');
+ }finally{screen.dispose();}
+});
+it('agent sync expires after 150 ms and bar text stays unchanged during repeated output',async()=>{
+ const out:string[]=[];const screen=new SessionScreen(20,3,{kitty:false},s=>{out.push(s);},()=>{},()=>'<BAR>',()=>{});
+ try{screen.input();await screen.write('a');screen.input();await screen.write('\x1b[?2026hb');const before=out.length;await new Promise(r=>setTimeout(r,170));expect(out.length).toBeGreaterThan(before);expect(out.join('').split('<BAR>')).toHaveLength(2);}finally{screen.dispose();}
+});
