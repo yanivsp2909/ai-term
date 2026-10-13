@@ -12,13 +12,15 @@ struct Arguments: Sendable {
     let body: String
     let check: Bool
 
+    static let refused: Set<Unicode.GeneralCategory> = [.format, .lineSeparator, .paragraphSeparator, .privateUse, .surrogate, .unassigned]
     static func uuid(_ value: String) -> Bool {
         value.utf8.count == 36 && UUID(uuidString: value) != nil
     }
     static func text(_ value: String, limit: Int) -> Bool {
-        // Scalar bounds also bound UTF-8 bytes and disallow invisible control/format characters.
+        // Scalar bounds also bound UTF-8 bytes. The same classes the daemon removes from names are refused here:
+        // controls, format (bidi), line/paragraph separators, private use, surrogates and unassigned code points.
         !value.isEmpty && value.unicodeScalars.count <= limit && !value.unicodeScalars.contains {
-            CharacterSet.controlCharacters.contains($0) || $0.properties.generalCategory == .format
+            CharacterSet.controlCharacters.contains($0) || refused.contains($0.properties.generalCategory)
         }
     }
     static func parse(_ argv: [String]) -> Arguments? {

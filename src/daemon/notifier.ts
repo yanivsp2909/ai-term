@@ -14,17 +14,22 @@ export type Launcher = (file: string, args: readonly string[], done: (error: Err
 // child of the daemon's terminal. -n starts a new instance even if one is still running, since only a fresh launch
 // receives --args; -g keeps it from taking focus from the terminal. The spike saw it launch with the right bundle id.
 const OPEN = '/usr/bin/open', LAUNCH_TIMEOUT_MS = 10_000;
+// Codex status comes partly from terminal output an agent controls, so a flapping card must not launch helpers without
+// bound: at most one per agent every 5 s, and 10 a minute in all. Waiting agents stay visible on the homepage.
+const SESSION_GAP_MS = 5_000, WINDOW_MS = 60_000, WINDOW_LAUNCHES = 10;
 const launchHelper: Launcher = (file, args, done) => {
   // open never hands its environment to the app; a fixed PATH keeps the daemon's environment out of it anyway.
   execFile(file, [...args], { timeout: LAUNCH_TIMEOUT_MS, env: { PATH: '/usr/bin:/bin' } }, error => done(error));
 };
 const helperExists = (app: string): boolean => existsSync(join(app, NOTIFIER_EXECUTABLE));
 export class Notifier {
-  private failure: 'not built' | 'launch failed' | null = null;
+  private launchFailed = false;
   private readonly logged = new Set<string>();
+  private readonly lastLaunch = new Map<string, number>();
+  private recent: number[] = [];
   constructor(private readonly app: string | null, private readonly log: { error(text: string): void }, private readonly enabled: () => Promise<boolean>,
-    private readonly launch: Launcher = launchHelper, private readonly exists: (app: string) => boolean = helperExists) {}
-  state(): NotifierState { return this.failure === 'launch failed' ? 'launch failed' : !this.app || !this.exists(this.app) ? 'not built' : 'ready'; }
+    private readonly launch: Launcher = launchHelper, private readonly exists: (app: string) => boolean = helperExists, private readonly now: () => number = Date.now) {}
+  state(): NotifierState { return this.launchFailed ? 'launch failed' : !this.app || !this.exists(this.app) ? 'not built' : 'ready'; }
   // Called on every status change. It never throws and never waits: the setting is read and the helper launched in the background.
   transition(session: SessionInfo, previous: StatusPair, next: StatusPair, attached: boolean): void {
     const alert = notificationFor(previous, next, attached, true); if (!alert) return;
@@ -32,11 +37,19 @@ export class Notifier {
     void this.enabled().then(on => { if (on) this.send(id, body); }, () => this.once('Notification settings unreadable'));
   }
   private send(sessionId: string, body: string): void {
-    if (!this.app || !this.exists(this.app)) { this.failure = 'not built'; this.once('Notifier helper not built'); return; }
-    const failed = () => { this.failure = 'launch failed'; this.once('Notifier helper failed to launch'); };
+    if (!this.app || !this.exists(this.app)) { this.once('Notifier helper not built'); return; }
+    if (!this.allowed(sessionId)) { this.once('Notifications rate limited'); return; }
+    const failed = () => { this.launchFailed = true; this.once('Notifier helper failed to launch'); };
     // Error details can carry the argv; only fixed text is logged.
-    try { this.launch(OPEN, ['-n', '-g', '-a', this.app, '--args', '--session', sessionId, '--title', 'AI Term', '--body', body], error => { if (error) failed(); }); }
+    try { this.launch(OPEN, ['-n', '-g', '-a', this.app, '--args', '--session', sessionId, '--title', 'AI Term', '--body', body], error => { if (error) failed(); else this.launchFailed = false; }); }
     catch { failed(); }
+  }
+  private allowed(sessionId: string): boolean {
+    const now = this.now(), last = this.lastLaunch.get(sessionId);
+    this.recent = this.recent.filter(at => now - at < WINDOW_MS);
+    for (const [id, at] of this.lastLaunch) if (now - at >= SESSION_GAP_MS) this.lastLaunch.delete(id);
+    if (last !== undefined && now - last < SESSION_GAP_MS || this.recent.length >= WINDOW_LAUNCHES) return false;
+    this.lastLaunch.set(sessionId, now); this.recent.push(now); return true;
   }
   private once(text: string): void { if (this.logged.has(text)) return; this.logged.add(text); this.log.error(text); }
 }

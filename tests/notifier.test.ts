@@ -27,7 +27,8 @@ it('launches the helper through open with an argv array: fixed title, the name a
  f.notifier.transition(session,running,waiting,false);
  await vi.waitFor(()=>expect(f.calls).toHaveLength(1));
  expect(f.calls[0]).toMatchObject({file:'/usr/bin/open',args:['-n','-g','-a',APP,'--args','--session',session.id,'--title','AI Term','--body','fix-login · waiting: permission']});
- f.notifier.transition(session,waiting,done,false);
+ // A second agent: one agent gets at most one notification per 5 s.
+ f.notifier.transition(agent(),waiting,done,false);
  await vi.waitFor(()=>expect(f.calls).toHaveLength(2));expect(f.calls[1]?.args.at(-1)).toBe('fix-login · done');
 });
 it('never puts prompts, replies, failure text, paths, models, key labels or secrets in argv',async()=>{
