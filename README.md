@@ -72,8 +72,14 @@ Homepage slash commands:
 | `x` | Empty field removes an exited/failed session |
 | PgUp / PgDn / End | Preview scroll / follow live |
 | Mouse wheel / drag-release | Preview scroll / copy selection; a click alone does not copy |
-| Esc | Close popup or clear command field; discards masked key input |
-| Backspace | Edit the current field; delete a paste token whole |
+| Esc | Close popup; in the command field drop a selection first, then clear the field; discards masked key input |
+| Backspace | Delete the selection, or the character before the cursor; a paste token goes whole |
+| Delete | Delete the selection, or the character after the cursor; a paste token goes whole |
+| ← / → | Command field: move the cursor one character; a paste token is one step |
+| Shift+← / Shift+→ | Command field: extend a selection from the cursor |
+| Command field drag | Select text, paste tokens whole (selection color = accent 38%); a click places the cursor and clears a selection; typing or paste replaces a selection; never copies |
+| Ctrl+U | Clear the command field |
+| Alt+Backspace (or Ctrl+W) | Delete the previous word; a paste token counts as one word. In Terminal.app, Option sends Alt only with "Use Option as Meta key" |
 | Ctrl+C twice within one second | Quit client; sessions keep running |
 | Ctrl+E | Inside session returns home, keeping session running; inside pasted text it is pasted |
 | SIGTERM / SIGHUP / SIGQUIT | Client cleanup and exit 143 / 129 / 131; sessions keep running |

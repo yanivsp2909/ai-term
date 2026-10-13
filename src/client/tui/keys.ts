@@ -10,8 +10,11 @@ export class CommandField extends MessageField {
       if (now - this.lastInterrupt <= 1000) return { kind: 'quit' };
       this.lastInterrupt = now; return { kind: 'note', text: 'Ctrl+C again to quit' };
     }
-    if (key === 'escape') { this.text = ''; return { kind: 'draw' }; }
-    if (key === 'backspace') { this.backspace(); return { kind: 'draw' }; }
+    // Esc first drops a selection, then clears the field.
+    if (key === 'escape') { if (this.selection) this.clearSelection(); else this.text = ''; return { kind: 'draw' }; }
+    const edit: Record<string, () => void> = { backspace: () => this.backspace(), delete: () => this.deleteForward(), 'alt-backspace': () => this.deleteWord(), 'ctrl-u': () => this.clear(),
+      left: () => this.move(-1, false), right: () => this.move(1, false), 'shift-left': () => this.move(-1, true), 'shift-right': () => this.move(1, true) };
+    const editKey = Object.hasOwn(edit, key) ? edit[key] : undefined; if (editKey) { editKey(); return { kind: 'draw' }; }
     if (key === 'enter') { const text = this.text, message = this.copy(); this.text = ''; return text ? { kind: 'submit', text, message } : { kind: 'attach' }; }
     if (['page-up', 'page-down', 'end'].includes(key)) return { kind: key as 'page-up' | 'page-down' | 'end' };
     if (!this.text) {
@@ -59,12 +62,13 @@ export class InputParser {
         // eslint-disable-next-line no-control-regex -- SGR mouse coordinates arrive in CSI.
         const mouse = sequence.match(/^\x1b\[<(\d{1,3});(\d{1,4});(\d{1,4})([Mm])$/);
         if (mouse) { this.emit({ kind: 'mouse', button: Number(mouse[1]), x: Number(mouse[2]) - 1, y: Number(mouse[3]) - 1, release: mouse[4] === 'm' }); continue; }
-        const key = ({ '\x1b[A': 'up', '\x1b[B': 'down', '\x1bOA': 'up', '\x1bOB': 'down', '\x1b[C': 'right', '\x1b[D': 'left', '\x1bOC': 'right', '\x1bOD': 'left', '\x1b[5~': 'page-up', '\x1b[6~': 'page-down', '\x1b[F': 'end', '\x1bOF': 'end', '\x1b[4~': 'end' } as Record<string, string>)[sequence];
+        const key = ({ '\x1b[A': 'up', '\x1b[B': 'down', '\x1bOA': 'up', '\x1bOB': 'down', '\x1b[C': 'right', '\x1b[D': 'left', '\x1bOC': 'right', '\x1bOD': 'left', '\x1b[5~': 'page-up', '\x1b[6~': 'page-down', '\x1b[F': 'end', '\x1bOF': 'end', '\x1b[4~': 'end', '\x1b[3~': 'delete', '\x1b[1;2C': 'shift-right', '\x1b[1;2D': 'shift-left', '\x1b\x7f': 'alt-backspace', '\x1b\b': 'alt-backspace' } as Record<string, string>)[sequence];
         if (key) this.emit({ kind: 'key', key });
         continue;
       }
       if (char === '\x1b') { this.sequence = char; continue; }
-      const key = char === '\x03' ? 'ctrl-c' : char === '\t' ? 'tab' : char === '\r' || char === '\n' ? 'enter' : char === '\x7f' || char === '\b' ? 'backspace' : char;
+      // Ctrl+W is the readline word delete; some macOS terminal presets send it for Option+Backspace instead of ESC DEL.
+      const key = char === '\x03' ? 'ctrl-c' : char === '\x15' ? 'ctrl-u' : char === '\x17' ? 'alt-backspace' : char === '\t' ? 'tab' : char === '\r' || char === '\n' ? 'enter' : char === '\x7f' || char === '\b' ? 'backspace' : char;
       if (!/[\p{C}]/u.test(key)) this.emit({ kind: 'key', key });
     }
     if (this.pasteText === null && this.sequence === '\x1b') this.timer = setTimeout(() => { this.sequence = ''; this.emit({ kind: 'key', key: 'escape' }); }, 30);

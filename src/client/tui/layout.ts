@@ -6,6 +6,8 @@ import { drawUsage, budgetWarning } from './usage-panel.js';
 import { marks, cardText } from './agent-card.js';
 import { commandRegistry, commandRows, modeLabel } from './commands.js';
 import { agentUsage, drawThisMac } from './this-mac.js';
+import { drawField } from './command-bar.js';
+import type { FieldView } from './message-field.js';
 export interface Rect { x: number; y: number; w: number; h: number }
 export function homepageLayout(cols: number, rows: number, visible = true) {
   const tiny = cols < 60 || rows < 16, compact = cols < 100 || rows < 30;
@@ -26,7 +28,7 @@ export function visibleCards(view: Pick<HomepageView, 'cols' | 'rows' | 'session
 export function visibleStart(selected: number, capacity: number, start: number): number { return selected < start ? selected : selected >= start + capacity ? selected - capacity + 1 : start; }
 export const commands = commandRegistry.map(c=>c.name);
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
-export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; notePriority?: boolean; commandMenu?: boolean; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string;usage?:UsageSummary|null;budgets?:Budgets;effort?:Effort|null;permission?:Permission;themeName?:import('../../shared/protocol.js').ThemeName }
+export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; notePriority?: boolean; commandMenu?: boolean; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string; field?: FieldView;usage?:UsageSummary|null;budgets?:Budgets;effort?:Effort|null;permission?:Permission;themeName?:import('../../shared/protocol.js').ThemeName }
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
   if (layout.tiny) { const label = 'make the window bigger'; grid.text(Math.floor((cols - label.length) / 2), Math.floor(rows / 2), label, t['ink-3']); return grid.cells; }
@@ -84,10 +86,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     grid.text(x + usageW + 4, layout.statsY + 5, 'v0.1.8', t['ink-3'], t.bg, false, macW - 4, true);
   }
   grid.box(0, rows - 4, cols, 3, '', t.surface); grid.text(2, rows - 3, '›', t.accent, t.surface);
-  const input = graphemes(view.input); let width = textWidth(view.input);
-  while (width > cols - 7) { const removed = input.shift(); if (removed) width -= textWidth(removed); }
-  const end = grid.text(4, rows - 3, view.input ? input.join('') : 'What do you want to build?', view.input ? t.ink : t['ink-3'], t.surface, false, cols - 6);
-  grid.text(end, rows - 3, '█', t.cursor, t.surface, false, 1);
+  const units = graphemes(view.input); drawField(grid, view.field ?? { units, caret: units.length, selection: null }, cols, rows - 3, theme);
   const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;
   const defaultWidth=Math.max(0,hintsX-2),auth=view.engine?` · ${view.authLabel??'own login'} · ${view.effort??'CLI default'} · ${modeLabel(view.permission??'ask')}`:'',model=view.engine?`${view.model??'CLI default'} · ${view.engine==='codex'?'codex':'claude code'}`:'shell';
   let clippedModel='';for(const char of graphemes(model)){if(textWidth(clippedModel+char)>Math.max(0,defaultWidth-textWidth(auth)-3))break;clippedModel+=char;}

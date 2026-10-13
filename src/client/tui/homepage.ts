@@ -9,7 +9,8 @@ import { getPaths } from '../../shared/paths.js';
 import { Logger, redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
 import { CommandField, InputParser, type InputEvent } from './keys.js';
-import { MessageField, FIRST_MESSAGE_TOO_LONG } from './message-field.js';
+import { MessageField, FIRST_MESSAGE_TOO_LONG, type FieldView } from './message-field.js';
+import { FIELD_X, fieldIndexAt, fieldStart } from './command-bar.js';
 import { Preview, type Point } from './preview.js';
 import { copyText } from './clipboard.js';
 import { cleanSessionText } from './copy-clean.js';
@@ -83,6 +84,8 @@ export class Homepage {
   private blocked = false;
   private forceRedraw = true;
   private drag: Point | null = null;
+  private fieldDrag: { x: number; index: number } | null = null;
+  private fieldScroll = 0;
   private stats: SystemStats | null = null;
   private cpuHistory: number[] = [];
   private statsOn = false;
@@ -566,7 +569,26 @@ export class Homepage {
     const result = await this.connection.request({ kind: 'sessions.list' }); this.sessions = (result.sessions ?? []).map(validateSession);
     await this.updatePreview(true); await this.subscribeStats(true);await this.subscribeUsage(true); this.showNote(note);
   }
+  private fieldView(cols: number): FieldView {
+    const view = this.field.view(); this.fieldScroll = fieldStart(view, cols, this.fieldScroll);
+    return { ...view, start: this.fieldScroll };
+  }
+  // A drag in the command field selects whole units (a paste token is one) from the pressed cell to the pointer's cell;
+  // a click there only places the caret. A click anywhere else drops the field's selection. Nothing here copies.
+  private fieldMouse(event: Extract<InputEvent, { kind: 'mouse' }>): boolean {
+    const { cols, rows } = this.size(), press = !event.release && !(event.button & 32) && (event.button & 3) === 0;
+    const view = { ...this.field.view(), start: this.fieldScroll }, index = fieldIndexAt(view, cols, Math.max(FIELD_X, event.x));
+    if (press && event.y === rows - 3 && event.x >= 1 && event.x <= cols - 2) { this.fieldDrag = { x: event.x, index }; this.field.select(index, index); this.draw(true); return true; }
+    const start = this.fieldDrag;
+    if (!start) { if (press && this.field.selection) { this.field.clearSelection(); this.draw(true); } return false; }
+    if (event.x === start.x) this.field.select(start.index, start.index);
+    else if (index >= start.index) this.field.select(start.index, index + 1);
+    else this.field.select(start.index + 1, index);
+    if (event.release) this.fieldDrag = null;
+    this.draw(true); return true;
+  }
   private mouse(event: Extract<InputEvent, { kind: 'mouse' }>): void {
+    if (!(event.button & 64) && this.fieldMouse(event)) return;
     const layout = homepageLayout(this.size().cols, this.size().rows, this.visible), area = layout.terminal, preview = this.currentPreview();
     if (!layout.preview || !preview || event.button & 4 || event.button & 8) return;
     const firstRow = preview.linesBack ? 1 : 0, lastRow = area.h - (preview.newLines ? 1 : 0);
@@ -606,7 +628,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,usage:this.usage,budgets:this.budgets }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), field: this.fieldView(cols), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,usage:this.usage,budgets:this.budgets }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);
