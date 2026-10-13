@@ -1,6 +1,99 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 7186961 docs: record measured product bar latency gate on this Mac
+Roadmap step: v0.2.6 done — tasks 2–6 delivered; task 1 Terminal.app spike exit remains open by Yaniv's explicit nonblocking override.
+Branch: main. This handover is the last commit; its own hash is in git log.
+Continued at 112839b after git pull --ff-only (already up to date), preserving the existing 114-file / 672-passing baseline and two native Keychain opt-in skips. The original 540ebe8/670 checkpoint and later 3a0c949 prompt are historical; the checkout was further ahead. Session is Codex, not Claude Code/Opus.
+
+## What works
+- Task 2: d22de29 confirms existing shared Unicode 11 registration in daemon and attached client mirrors. Snapshot/cell tests agree on CJK, skin tones, ZWJ families and flags. No width dependency added; Unicode 11 already existed. This proves mirror agreement, not every terminal's grapheme shaping.
+- Tasks 3–4: eda9fe0 / 0bbb675 / 6d7e778 implement opt-in client mirror/cell rendering and saved bar setting. Default **off** per latest instruction. Off preserves full-height raw passthrough and skips probing; on gives the daemon PTY rows−1, including resize. Failed DA1 probe (250 ms) falls back raw and logs once; one-row terminals also use raw. Early probe input survives fallback.
+- Bar: surface tokens, glyph + status word, bold name, engine · model, other-session counts and ^E home. Counts drop first, then model; engine is retained when it fits (cc39ab5). Name/home are clipped or omitted when needed to keep the status word. No animation; unchanged bar bytes aren't emitted or rebuilt. Branch in the design was future worktrees data, absent in current code; explicitly deferred to v0.3 in design.md.
+- Renderer: synchronized changed-cell output, same-tick idle draw after the public xterm user-input hint, one frame per 8 ms under floods, agent sync waits at most 150 ms (including a sync begin after a frame was already scheduled). Palette/default/RGB colors and accessible cell attributes stay intact. Cursor is restored after bar-only updates. All four mouse encodings shift rows, bar clicks/releases drop, arbitrary split reports and paste markers survive. Home keys are filtered before mouse rewriting; lone Escape retains its 30 ms ambiguity timeout.
+- Exact spike query table covered: screen-relative queries answered by the mirror; CSI 18 t reports rows−1; input/title/cwd/theme/copy modes forward; OSC 52 reads, unsupported color/window queries, pixel mouse and inline images drop. Title-stack operations require enabled xterm windowOptions (covered). Reattach carries validated cursor shape, sanitized title, kitty root/push flags and theme reports.
+- Task 5: README, design.md and architecture.md document the setting, shortcut, narrow layout, raw fallback and losses: OSC 8 targets (text stays), curly/dotted/colored underlines (plain underline stays), inline images. Product attach has no client-owned child: the daemon owns its PTY; client EOF detaches, cleanup never stops the agent. The spike's client child.onExit callback therefore has no equivalent in product attach. Unexpected input could still make vim quit; the unknown cause isn't declared fixed. Daemon-owned vim was observed staying alive and retaining text across attach/resize/Ctrl+E/reattach with bar both off and on.
+- Task 6: RED 64fbf1d → GREEN ab66666. Signed helper --status reads getNotificationSettings without prompting, emits exactly allowed/denied/not-asked/unknown and exits 0. Real direct binary and open -W -n -g --stdout launches each returned **denied**, exit 0, for the same signed bundle on this Mac; direct identity parity confirmed. Native --status test ran, helper rebuilt and signature verified.
+- Daemon execFile argv-only status reads: timeout 3 s, maxBuffer 128, fixed PATH; daemon start and once per minute timer, in-flight deduplication and cached state. Settings overlay explicitly requests refresh; ordinary settings reads used by attach return cached state immediately (b60d1bc RED → e3f4b80/2e40abd fix). No helper wait in session paths. Cached denied suppresses notification launches and logs once. Failed/unrecognized/unverified reads are unknown. All four wording states have stub-helper coverage; instructions wrap and scroll to selected rows in short settings (64ae92c RED → 0b33fc8 GREEN).
+- Read-only performance-optimizer: confirmed input hint, identified deferred daemon parsing shared by raw/redraw and 8 ms busy-frame delay. No daemon typing changes made. Used actual separate daemon/socket/client/outer PTY measurement rather than claiming spike timing applies to product.
+
+### Latency evidence (milliseconds, this Mac, bar forced on)
+Method: scripts/measure-bar.ts, 120×40 outer PTY; raw agent 120×40, bar-on agent 120×39. Actual daemon SessionManager/DaemonServer and configured attach; temp HOME/cwd/AI_TERM_HOME, fixed echo/vim argv. 50 warmup + 500 measured keys per run, 15/20/25 ms gaps; raw/on order reversed in round 2. Output arrival timestamp validated against new body cell and cursor. Eight runs: 4,000 measured keys, zero timeouts. Artifact: docs/testing/v0.2.6-bar-latency.json; Node v26.3.0 darwin arm64.
+
+| Program | Round | raw p95 | on p95 | delta | gate ≤2 ms |
+|---|---:|---:|---:|---:|---|
+| echo | 1 | 2.48 | 2.88 | +0.40 | pass |
+| echo | 2 | 2.27 | 2.66 | +0.39 | pass |
+| vim | 1 | 2.47 | 3.20 | +0.73 | pass |
+| vim | 2 | 2.70 | 2.85 | +0.15 | pass |
+
+These are headless PTY delivery measurements, not Terminal.app pixels or subjective feel. Gate does not cover input arriving just after a bar/output frame; the mandated 8 ms throttle can delay that busy path. Final review fixes affect Escape/probe fallback/kitty root restoration/narrow layout, not the quiet measured ASCII typing path.
+
+### Final reviewer and checks
+One fresh-context high typescript-reviewer pass through 7186961, read-only, no remaining material correctness/security/requirement findings. Initial review preflight caught a test mock type; fixed before review continued. Three real findings:
+- Lone Escape buffered by mouse filter: feb6f14 RED → d1af1ac GREEN.
+- Early typing discarded on failed probe: 99837eb RED → fcb4994 GREEN.
+- Nonzero root kitty flags reset on reattach: 99837eb RED → fcb4994 GREEN (separate failing test in same commits).
+Reviewer independently ran three targeted files / 44 passed, typecheck/lint exit 0, diff check clean. During implementation ran touched test files only; final suites include all files.
+
+Final output tails, all exit 0:
+```text
+npm run typecheck
+> tsc --noEmit
+npm run lint
+> eslint .
+npm run build
+ESM ⚡️ Build success in 18ms
+npm test -- --reporter=dot (run 1)
+Test Files 118 passed (118)
+Tests 720 passed | 2 skipped (722)
+Duration 10.26s
+npm test -- --reporter=dot (run 2, immediately consecutive)
+Test Files 118 passed (118)
+Tests 720 passed | 2 skipped (722)
+Duration 10.26s
+```
+Two skips are unchanged opt-in native Keychain tests; not enabled under the no-keychain constraint. Existing node-pty flood test still prints EIO/EBADF stderr as baseline did; both suites green. No additional tests skipped. git diff --check clean.
+
+## What's next
+- v0.2.6 tasks 2–6 complete. Next roadmap step: notification click-through, only in a new explicitly requested step.
+- Yaniv runs the still-open Terminal.app trace later, then chooses when to enable bar and perform subjective feel/agent checks. No request to wait for trace; no block imposed.
+
+## Manual checks
+- Daemon-owned vim, typing, resize, Ctrl+E and retained text on reattach: ran headlessly with real isolated PTYs, both bar off/on. Product benchmark echo/vim: ran, gate pass. Cell/query/mouse/paste/settings/denied suppression: ran targeted tests. Native status and signed bundle checks: ran; no notification posted or permission prompted.
+- Trace — needs Yaniv: `cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace` (hands off; auto-quits surviving vim after 2.5 s).
+- vim feel — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — /settings → bar on (h), /shell, `/usr/bin/vim -Nu NONE -i NONE -n`, type, Esc, :q.
+- top — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — bar on, /shell, `/usr/bin/top`, q.
+- Claude Code — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — bar on, select Claude Code, type and check permissions; no real login accessed in this session.
+- Codex — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — bar on, select Codex, type and check permissions; Ctrl+C skips an update notice, never approve an update during this check.
+- Paste — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — bar on, multiline paste including Ctrl+E remains text.
+- Mouse — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — bar on, vim `:set mouse=a`, click/wheel, bar press/release ignored, Esc immediate after normal ambiguity delay.
+- Resize — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — bar on, resize during vim/top; agent has rows−1.
+- Ctrl+E — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — bar on, Ctrl+E home, agent keeps running, reattach retains text.
+- Bar off — needs Yaniv: `cd ~/ai-term && node dist/cli/index.js` — /settings h → bar off; next attach raw/full-height.
+- Notification parity repeat — ran; optional Yaniv command: `cd ~/ai-term && node --input-type=module -e 'import {execFileSync} from "node:child_process";import {mkdtempSync,readFileSync,rmSync} from "node:fs";import {tmpdir} from "node:os";import {join,resolve} from "node:path";const app=resolve("build/notifier/AI Term.app"),dir=mkdtempSync(join(tmpdir(),"ai-status-")),out=join(dir,"status");try{process.stdout.write("direct: "+execFileSync(join(app,"Contents/MacOS/AITermNotifier"),["--status"],{timeout:3000}));execFileSync("/usr/bin/open",["-W","-n","-g","--stdout",out,"-a",app,"--args","--status"],{timeout:3000});process.stdout.write("open: "+readFileSync(out,"utf8"));}finally{rmSync(dir,{recursive:true});}'`
+- Benchmark repeat — ran: `cd ~/ai-term && node --import tsx scripts/measure-bar.ts 500` (temp daemon only; takes about two minutes; writes the measurement artifact).
+
+## Gotchas
+- Mac spike exit cause remains **unknown**. Successful probe, 4,430 vim bytes and clean exit 0 do not prove why vim quit. Prior exact replies/sizes/late focus/mouse/query headless replay did not reproduce it. Trace remains available and nonblocking per Yaniv; default bar off is deliberate.
+- The product's daemon ownership avoids client EOF/child lifetime coupling, but cannot guarantee against a terminal report being interpreted as editor input. Never report task 1 fixed without a proven reproduction.
+- The original design had `· branch`; current session data has no branch until worktrees v0.3. Current task specifies engine/model; docs now explicitly defer branch. Old spike report claims D39/2031 absent; current architecture and RESET_MODES already include them. Trust current code.
+- No new npm dependency. No protected source/status/env/notifier-spike/review/config directories edited. No real ~/.ai-term touched or user daemon stopped. No ~/.claude, ~/.codex, ~/.ssh, keychain or .env access; no computer use or network except git pull/push. Review/performance agents read-only; root alone edited.
+- Existing daemon processes need the new build before recognizing new settings/protocol fields. This session built code but did not restart Yaniv's real daemon.
+
+## New dependencies
+- None; @xterm/addon-unicode11 was already installed.
+
+## Concepts introduced
+- Client mirror (`src/client/session-screen.ts`): the agent's escape sequences update an in-memory terminal at its own rows−1 dimensions. The renderer draws its cells one row lower, so clears and cursor moves cannot overwrite AI Term's bar.
+- Input fast path (`src/client/session-screen.ts`): xterm normally parses on a later timer; its public input('', true) hints that the next write is a typing echo. Idle rendering runs in that same tick; floods keep the 8 ms cap.
+- Permission cache (`src/daemon/notification-permission.ts`): authorization is a separate fact from whether an app could launch. A bounded background read caches one fixed enum; session transitions only consult it and never wait on a process.
+- Probe fallback (`src/client/terminal-probe.ts`): DA1 confirms that startup queries completed; missing optional colors/kitty support do not fail it. A timeout selects raw for this attach while preserving ordinary input, which keeps startup keystrokes from disappearing.
+
+---
+Previous handovers (historical; the checkpoint above supersedes their blocking/default statements):
+
+## Checkpoint
 Last commit: 1aa2d47 fix: restrict exit trace to terminal response formats (GREEN)
 Roadmap step: v0.2.6 partial — BLOCKED at task 1 (hands-off Terminal.app exit trace pending)
 Branch: main. This handover is the last commit; its own hash is in git log.
