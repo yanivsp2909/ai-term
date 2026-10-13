@@ -30,8 +30,11 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'}
-export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
+export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
+export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
+export type TerminalBundle = 'com.apple.Terminal' | 'com.googlecode.iterm2' | 'com.mitchellh.ghostty' | 'com.github.wez.wezterm';
 export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; effort?:Effort|null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean };
 export interface SessionInfo {
     id: string;
@@ -42,6 +45,9 @@ export interface SessionInfo {
     conversationId?:string; // AI Term-generated Claude CLI UUID; absent on legacy records and Codex.
     auth: AuthView;
     cwd: string;
+    worktree?: string;
+    branch?: string;
+    worktreeNote?: WorktreeNote;
     permission: Permission;
     authMethod?: AuthMethod;
     status: Status;
@@ -83,6 +89,7 @@ export type Request = {
   | { kind: 'keys.remove' | 'keys.test'; keyId: string }
   | { kind: 'keys.scanEnvFile'; path: string }
   | { kind: 'keys.importEnv'; path: string; names: string[] }
+  | {kind:'worktrees.preview';cwd:string;title:string}
   | ({ kind: 'sessions.create' } & CreateSession) | {
     kind: 'sessions.preview';
     sessionId: string | null;
@@ -111,7 +118,7 @@ export type Request = {
     kind: 'usage.subscribe'; on:boolean;
 } | {
     // A homepage that handles notification clicks; while one is connected a click selects the agent there.
-    kind: 'clicks.subscribe'; on:boolean;
+    kind: 'clicks.subscribe'; on:boolean; terminal?:TerminalBundle;
 } | {kind:'usage.summary'|'usage.diagnostics'} | {
     kind: 'system.subscribe';
     on: boolean;
@@ -127,6 +134,8 @@ export interface SuccessResponse {
     version?: string;
     daemonPid?: number;
     usage?:UsageSummary;usageDiagnostics?:UsageDiagnostics;
+    worktreePreview?: WorktreePreview;
+    keptWorktree?: string;
     settings?: Settings;
     engines?: EnginesStatus;
     notifier?: NotifierState;

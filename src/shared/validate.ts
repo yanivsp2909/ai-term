@@ -76,6 +76,10 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'sessions.list':
             fields = [];
             break;
+        case 'worktrees.preview':
+            fields=['cwd','title'];
+            if(!(await validCwd(v.cwd))||!isTitle(v.title))throw new ValidationError('Invalid worktree preview');
+            break;
         case 'sessions.create':
             fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
@@ -104,8 +108,11 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if (!isUUID(v.sessionId) || (v.kind === 'sessions.rename' && !isTitle(v.title)))
                 throw new ValidationError('Invalid session UUID or title');
             break;
-        case 'usage.subscribe':
         case 'clicks.subscribe':
+            fields=['on','terminal'];
+            if(typeof v.on!=='boolean'||v.terminal!==undefined&&!isTerminalBundle(v.terminal))throw new ValidationError('Invalid click subscription');
+            break;
+        case 'usage.subscribe':
         case 'system.subscribe':
             fields = ['on'];
             if (typeof v.on !== 'boolean') throw new ValidationError(`${v.kind} needs on: boolean`);
@@ -135,6 +142,8 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.keys!==undefined){if(!Array.isArray(v.keys)||v.keys.length>100)throw new ValidationError('Invalid keys');v.keys.forEach(validateKeyView);}
     if(v.results!==undefined)validateDeploymentTests(v.results);
     if(v.found!==undefined){if(!Array.isArray(v.found)||v.found.some(f=>!f||typeof f!=='object'||Object.keys(f).some(k=>!['name','provider'].includes(k))||!Object.hasOwn(ENV_KEY_NAMES,String(f.name))||ENV_KEY_NAMES[f.name as string]!==f.provider))throw new ValidationError('Invalid env names');}
+    if(v.worktreePreview!==undefined)validateWorktreePreview(v.worktreePreview);
+    if(v.keptWorktree!==undefined&&!isSafeAbsolutePath(v.keptWorktree))throw new ValidationError('Invalid kept worktree');
     if(v.settings!==undefined)validateSettings(v.settings);
     if(v.engines!==undefined) { if (!v.engines || typeof v.engines !== 'object' || !('claudeCode' in v.engines) || !('codex' in v.engines)) throw new ValidationError('Invalid engines status'); validateEngineStatus(v.engines.claudeCode); validateEngineStatus(v.engines.codex); }
     if(v.notifier!==undefined&&!['ready','not built','launch failed'].includes(String(v.notifier)))throw new ValidationError('Invalid notifier state');
@@ -184,10 +193,10 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isAgentEngine(v.defaultEngine) ||
-        v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
+        v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
         v.defaultCwd !== undefined && (typeof v.defaultCwd !== 'string' || !isAbsolute(v.defaultCwd) || v.defaultCwd.includes('\0')) || JSON.stringify(v).length > 16384) throw new ValidationError('Invalid settings patch; permission default must be ask');
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
@@ -212,6 +221,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
     if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
         !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
+        s.worktree!==undefined&&!isSafeAbsolutePath(s.worktree) || s.branch!==undefined&&!isWorktreeBranch(s.branch) || (s.worktree===undefined)!==(s.branch===undefined) || s.worktreeNote!==undefined&&!isWorktreeNote(s.worktreeNote) ||
         !isAuthView(s.auth) || !(s.engine==='shell'?s.permission==='ask':isPermissionForEngine(s.engine,s.permission)) || s.effort!==undefined && !isEffortForEngine(s.engine,s.effort) || s.conversationId!==undefined && (s.engine!=='claude-code'||!isUUID(s.conversationId)) ||
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
@@ -307,3 +317,23 @@ export function validateSessionText(value:unknown):import('./protocol.js').Sessi
 export function isActivity(value:unknown):boolean{if(!value||typeof value!=='object'||Array.isArray(value))return false;const v=value as Record<string,unknown>;return Object.keys(v).length===2&&isToolName(v.tool)&&typeof v.at==='string'&&Number.isFinite(Date.parse(v.at));}
 export function isToolName(value:unknown):value is string{return typeof value==='string'&&/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(value)&&!value.includes('sk-');}
 export function isStatusCommandPath(value:unknown):value is string{return typeof value==='string'&&value.length<=4096&&/^\/[A-Za-z0-9_./-]+$/.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
+
+// Generated names use a smaller alphabet than git refs: no metacharacters, separators or option prefixes.
+export function isWorktreeSlug(value:unknown):value is string{return typeof value==='string'&&/^[a-z0-9][a-z0-9-]{0,39}$/.test(value);}
+export function worktreeSlug(name:string):string{return name.toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40).replace(/-+$/g,'')||'agent';}
+export function availableWorktreeSlug(name:string,occupied:ReadonlySet<string>):string{
+ const base=worktreeSlug(name);let slug=base;
+ for(let n=2;occupied.has(slug);n++){const suffix=`-${n}`;slug=base.slice(0,40-suffix.length).replace(/-+$/g,'')+suffix;}
+ return slug;
+}
+export function isWorktreeBranch(value:unknown):value is string{return typeof value==='string'&&value.startsWith('ai/')&&isWorktreeSlug(value.slice(3));}
+export function isSafeAbsolutePath(value:unknown):value is string{return typeof value==='string'&&isAbsolute(value)&&value.length<=4096&&!/[\p{C}\p{Zl}\p{Zp}]/u.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
+const WORKTREE_NOTES=['worktree off: not a git repo','worktree off: repo has no commits','worktree off: git check failed','worktree off: creation failed'];
+export function isWorktreeNote(value:unknown):value is import('./protocol.js').WorktreeNote{return typeof value==='string'&&WORKTREE_NOTES.includes(value);}
+export function validateWorktreePreview(value:unknown):import('./protocol.js').WorktreePreview{
+ if(!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid worktree preview');
+ const v=value as Record<string,unknown>;
+ if(Object.keys(v).some(k=>!['branch','head','dirty','note'].includes(k))||v.branch!==undefined&&!isWorktreeBranch(v.branch)||v.head!==undefined&&(typeof v.head!=='string'||!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(v.head))||v.dirty!==undefined&&typeof v.dirty!=='boolean'||v.note!==undefined&&!isWorktreeNote(v.note)||(v.branch===undefined)!==(v.head===undefined))throw new ValidationError('Invalid worktree preview');
+ return v as import('./protocol.js').WorktreePreview;
+}
+export function isTerminalBundle(value:unknown):value is import('./protocol.js').TerminalBundle{return typeof value==='string'&&['com.apple.Terminal','com.googlecode.iterm2','com.mitchellh.ghostty','com.github.wez.wezterm'].includes(value);}
