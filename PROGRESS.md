@@ -1,61 +1,65 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: eadd58c chore: add isolated Swift notifier spike and measurements
-Roadmap step: v0.2.1 partial (D36 notifier spike built and measured; physical permission/display/click checks blocked)
+Last commit: b1558ad docs: record Claude status limits and skipped agent guide sync
+Roadmap step: v0.2.2 done (Claude status core; physical CLI checks need Yaniv)
 Branch: main. This handover is the last commit; its own hash is in git log.
-Started clean at 9bacfae, v0.1.10 done, 547 passed / two native Keychain opt-in skips. Final same 88 files / 547 passed / two skips, 8.14 s. No product code/tests, daemon/protocol, README/architecture, dependencies or protected configuration changes. v0.2.2 not started.
+Started clean at 72d981d after git pull --ff-only (already up to date); baseline 88 files / 547 passed / two native Keychain opt-in skips, 8.03 s. Final 95 files / 576 passed / same two skips, twice consecutively, 7.78 s and 7.76 s. No Codex ingress, homepage card/notification UI or bar; v0.2.3 not started.
 
 ## What works
-- `spikes/notifier/build.mjs` compiles a minimal AppKit/UserNotifications Swift 6 app without Xcode/SwiftPM, names it AI Term, bundle id local.aiterm.notifier, LSUIElement, signs ad-hoc and verifies strictly. No custom icon/provider branding. Generated binaries/cache ignored under spikes/notifier/build.
-- Toolchain: Swift 6.3.2, macOS 26.5.1 arm64, codesign available. First compile ~4.34 s, warm ~1.01–1.58 s; sign 7–10 ms, verify 3–4 ms.
-- `Notifier.swift`: argv-only UUID/text/path validation before APIs; alert+sound authorization, default sound/title/body/session userInfo/threadIdentifier, retained delegate, UUID-only Unix callback. Fixed failures, bounded lifetime and callback send; check/probe modes never request notifications.
-- `harness.mjs`: owns one private random temp root/socket (0700/0600), launches direct or open -n -a with argv arrays, prints approved callback UUIDs, tracks only spike helper executables, and prepares same/different-thread, warm-click and post-exit click replays. No ai/daemon/Terminal launch or networking.
-- `verify.mjs`: 26 argument/security boundaries plus exact UUID-only callback probe pass. A real probe took ~393 ms including startup. It is not notification click proof.
-- Both real launch modes ran. Direct app launch observed ~47–53 ms; a warm open launch ~102 ms (another ~0.56 s including polling). Both eventually failed authorization: numeric UNErrorDomain code 1, SDK NotificationsNotAllowed; no banner was posted. The first direct authorization call remained pending until its own tracked helper was stopped. Later direct failures exit 1; open returning 0 only means launch acceptance.
-- `docs/spikes/v0.2-notifier.md` lists every observation/unproved measurement, D43 comparison and v0.2.4 recommendation. Current verdict: no-go for claiming D36/D43 proved; permission/display/real click still need Yaniv. Stable retained helper via Launch Services is the provisional design; cold relaunch socket recovery is a separate gate.
-- D43 read-only evidence: local Terminal document roles and do-script dictionary inspected. Recommend evaluating private generated .command + Launch Services first to avoid Automation consent, but new-window vs tab behavior and possible OS warnings are unproved. No .command or AppleScript launch built/executed.
-- Requested security-reviewer: serial/read-only, no actionable findings. Independently strict-built/signed/verified, all 26 cases/probe passed, congested socket refused promptly (~7 ms), exit 1 and fixed stderr. Parent did no edits during review.
-- Optional swift-reviewer produced no code verdict: mandatory SwiftPM preflight failed because this script-only spike has no Package.swift, and SwiftLint unavailable. This is a tooling mismatch; no project/dependency was added.
-- Final checks, all exit 0:
+- Task 1, protocol first: RED 47ab8b7 → GREEN 1c15606. Six planned statuses (idle removed), context 0–100/null and lastActivity {tool, at}/null validate in responses and events. Legacy records may omit activity. Added explicit sessions.text lastReply boolean and an optional copy source; ordinary session responses have no reply. Removing the unused idle renderer entry is the only card-renderer edit.
+- Task 2, reducer/Claude mapper: RED e54b03b → GREEN d60e7cc. Pure status-reducer.ts handles sequence order, running/waiting/done/context and exit precedence; terminal state ignores later events. claude-status.ts reads only mapped hook fields, restricts tool/error metadata and separates bounded replies from status. Late permission_prompt is backup only, suppressed after tool completion/done. Startup correction RED f830de0 → GREEN 5f22987, then review RED dbc568c → GREEN 5f2755d covers context before output and queued output after exit.
+- Task 3, one local server: RED da2d159 → GREEN 035a9cb. Existing usage-receiver gains POST /v1/status/claude; separate timing-safe status credential map resolves session identity. Every status/unknown-route reply is bodyless 204, including auth/Host/Origin/type/JSON/oversize/wrong method/errors. Usage paths preserve their 200 {} contract and existing rejection codes. Cap 4 MiB; parse only to map allowed fields, no bodies logged. Seq assigned at request arrival; slots consume in order.
+- Tasks 4–5, env/hooks: RED f92b5c0 → GREEN 826fa25; integration RED 6d5a112 → GREEN 7e88fea. Every new Claude agent (subscription included, login sessions excluded) gets its own random AITERM_STATUS_TOKEN and numeric AITERM_STATUS_PORT in env via env.ts. Token never enters argv/settings/state/logs; base env drops stale status values. sessions/<id>/claude-settings.json is 0600 under 0700 directories, passed as one --settings=<path> argument before first-message delimiter and deleted on record removal. All hooks have timeout2, literal $AITERM_STATUS_TOKEN header and allowedEnvVars. No writes to CLI configuration.
+- Task 6, D37 status line: RED b11a6e7 → GREEN f729fa2. Internal ai status-line reads at most 1 MiB stdin, prints safe model · ctx N%, sends only numeric context to 127.0.0.1 with env credential and one-second request bound. Unsafe command paths omit statusLine. Review RED 465fbda → GREEN 387d876 includes validated absolute tsx loader for source sessions; actual generated source command executes in a child test. Built JS command smoke passes too, without daemon/home creation.
+- Task 7, last reply: RED 2b14069 → GREEN 923ae91. Stop.last_assistant_message stays in Live memory only, UTF-8 cap256KB; explicit c and /copy prefer Claude last reply, preserving whitespace after control stripping. /copy all retains mirror behavior; unavailable reply retains cleaned whole text and today's fallback note. Chunk source validated by client; no reply reaches lifecycle/session metadata or disk.
+- Task 8, L4: 7e88fea plus runtime tests. All nonterminal sessions, including waiting and done, count live and remain sampler roots. Restart marks previously live statuses exited; saved PIDs never signalled. Stub tests assert permission/done activeCount1.
+- Task 9, debug/docs: f729fa2, 7e88fea, d5d2e00, b1558ad. ai debug ls prints id/status/statusDetail/ctx=<used% or ?>/title. README command inventory, copy behavior and status-line semantics updated; architecture S12/S15 and §12.1 updated.
+- Review fixes: security-reviewer initially found source loader and body overtaking; RED bd1de5a → GREEN 208b3de preserves request order. RED ecb44b0 → GREEN 200da55 preserves failed-slot predecessor order and closes half-open reads after empty204. Re-review approved with 25 focused tests and no remaining findings. Final typescript-reviewer found startup output/state divergence; 5f2755d fixed it, re-review approved with 51 targeted tests plus separate output/exit regression. Reviews serial/read-only; parent did no edits while reviewers ran.
+- Final verification, all exit0:
   - `npm run typecheck`: `> tsc --noEmit`
   - `npm run lint`: `> eslint .`, no diagnostics
-  - `npm test`: `Test Files 88 passed (88)` / `Tests 547 passed | 2 skipped (549)` / `Duration 8.14s`
-  - `npm run build`: `ESM ⚡️ Build success in 18ms`
-  - Coverage: statements 87.58%, branches 82.03%, functions 89.51%, lines 92.25%.
-  - Node syntax checks, plist lint, codesign strict verify, spike verify.mjs and git diff --check pass.
+  - `npm test`: `Test Files 95 passed (95)` / `Tests 576 passed | 2 skipped (578)` / `Duration 7.78s`
+  - `npm test` again: same counts / `Duration 7.76s`
+  - `npm run build`: `ESM ⚡️ Build success in 16ms`
+  - Coverage: statements87.82%, branches82.51%, functions89.66%, lines92.54%.
+  - Built status-line child: exit0, claude-sonnet-4-6 · ctx25%, empty stderr, unused AI_TERM_HOME never created.
+  - S8 grep no exec(, execSync( or shell:true; permission flags only env.ts. Diff excludes keys.ts, spikes/, docs/spikes/, docs/reviews/, .claude/. git diff --check clean.
 
 ## What's next
-- Finish v0.2.1 with Yaniv's permission, banner name/icon/sound, warm/direct clicks, stacks/threads, Focus suppression and post-exit relaunch checks. Do not call it done from build, signing, socket probe or open's exit code.
-- v0.2.2 is the next roadmap step only after Yaniv directs it; nothing from it started here.
-- B12/B21 remain outside this spike and open for the Claude gate: Foundry endpoint authentication binding and current env scrub list review. v0.1.10 B13–B20 remain done; full evidence is in 9bacfae's checkpoint.
-- Earlier v0.1 real-session, physical paste/copy and Notes checks still need Yaniv; this spike did not run official agent sessions or billing checks.
+- v0.2.3 Codex ingress only when Yaniv asks: notify/OSC9/title handling not implemented here. v0.2.4 owns card/notification UI; bar later.
+- Physical Claude permission/run/done/context/copy checks below need Yaniv. New sessions need the new hooks; restart daemon first. Trust dialog must be accepted before Claude enables HTTP hooks.
+- v0.2.1 notifier remains partial; its permission/display/click checks unresolved. B12/B21 remain open for the Claude gate, untouched here.
+- agent-and-skills.md Project upload sync: skipped per Yaniv's final instruction because neither target nor uploaded source was found in allowed workspace. SYNC_NOTES.md records the request and skip; no replacement contents invented.
 
 ## Manual checks
-- Build/sign/verify, 26 invalid/boundary argv cases, UUID-only probe, direct/open runtime launches, cleanup, congested socket refusal: ran with own temp roots; details above.
-- Notification permission UI and settings inspection: attempted, UI tool returned cgWindowNotFound. No permission accepted/reset by the agent. Both launch modes reported NotificationsNotAllowed.
-- Banner says AI Term / icon / heard default sound / live delegate callback / post-exit OS relaunch and callback / same-app grouping / Focus suppression: needs Yaniv; no notification posted here.
-- `cd ~/ai-term && node spikes/notifier/build.mjs` — build helper.
-- `cd ~/ai-term && node spikes/notifier/verify.mjs` — replay safe headless boundaries/probe.
-- `cd ~/ai-term && node spikes/notifier/harness.mjs` — type open, Allow AI Term if asked (or enable it in System Settings → Notifications after code 1), click banner; expect clicked UUID and record name/icon/sound. Type quit-helper then direct and compare. Type stack to inspect grouping. Type second, wait for exit-after-post, type quit-helper, then click the second notification; record relaunch/callback separately. Type quit to clean up. Use one harness at a time.
-- D43 .command vs AppleScript actual consent/new-window checks: needs Yaniv in a later explicitly authorized experiment; neither built.
+- Stub Claude account/subscription lifecycle, private settings/env, permission→running→done, context/activity, active waiting/done, exit revocation, memory-only reply/explicit copy, source command execution, endpoint empty204/reordered/abort/half-open/canary checks: ran headless in own temp homes, no real agents or credentials. Passed.
+- Security/type reviews and full type/lint/tests/build/coverage: ran, passed as above. Built status-line smoke ran independently.
+- `cd ~/ai-term && node dist/cli/index.js daemon stop` — needs Yaniv: explicitly stops his daemon/agents; agent did not run it. Then restart with the next command.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: start Claude on account, accept workspace trust, ask for a command needing permission and leave the prompt open. Use Ask, not auto/Don't ask.
+- `cd ~/ai-term && node dist/cli/index.js debug ls` — needs Yaniv: while permission prompt is open expect waiting permission; approve in Claude, then re-run to observe running and done. No new card design is claimed.
+- `cd ~/ai-term && node dist/cli/index.js debug ls` — needs Yaniv: compare ctx=<used%> with Claude's model · ctx N% status line after a turn; status line replaces the user's only in this session.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv: Ctrl+E home from that Claude session, press c or /copy, paste in a scratch editor and confirm only the last reply; /copy all keeps whole-session scope.
+- Native Keychain, real keys/logins, other providers, actual CLI hook timing, billing, physical clipboard and live UI: not run; needs Yaniv. No computer use used in this step.
 
 ## Gotchas
-- Architecture has D36/D42/D43 but no requested §12.1 Notifications or D51 entry. User brief supplied missing details; pinned decisions not reopened. RTK.md remains referenced and absent.
-- Current no-go is an authorization/observation limit, not proof macOS lacks the capability. Fallback requested by Yaniv is sound plus notification without click-through until v0.5, still contingent on permission/display proof; do not bypass Focus.
-- Cold notification clicks may relaunch with no original argv. Strict helper then exits 2 and cannot recover its socket; only session UUID is in userInfo. Do not add route persistence/product wiring as a workaround in the spike. Recommend long-lived stable helper and separately reviewed restart routing for v0.2.4.
-- `/private/tmp` is the macOS real temp path, but Foundation resolvingSymlinksInPath reports `/tmp`; canonical string equality wrongly rejected valid paths. Validation uses exact spike prefix/basename and lstat type/owner/modes instead. Reject nested, traversal and symlinked roots/sockets.
-- OS notification identity/authorization can persist after deleting runtime files. Scripts never reset OS permissions, identifiers or notification state. Rebuilding ad-hoc changes the designated code; stable identity permission/rebuild behavior still needs observation.
-- No custom icon means actual banner icon is unknown, not verified generic. Same app grouping also depends on OS preferences. Respect Do Not Disturb; homepage status remains authoritative.
-- open exit 0 is not helper exit or post success; inspect helper stage diagnostics. Launch logs are private temp files. Callback writes only the UUID, never title/body/raw errors.
-- Harness stops only tracked PIDs after checking the current executable path, then cleans only its own random root. The measurement harness and all tracked processes were closed; real ~/.ai-term and Yaniv's daemon untouched.
-- Native Keychain skips remain opt-in; no native tests, real CLIs, keychain, .env, ~/.claude, ~/.codex, ~/.ssh or network used except explicit final git push. No other agent edited this repo; reviews were serial/read-only.
+- Prompt §12.1 has correct status cap/empty errors, but older S12 row still said64KB/413; updated to4MiB/204. Usage exporters still require200{}, so “every response204” applies to status/unknown routes, not usage endpoints.
+- HTTP status read deadline1s stays under hook timeout2s. Over-cap bodies retain no bytes beyond4MiB; delayed/half-open requests flush204 then close. Queue predecessors settle on abort/timeouts before later callbacks execute. Connection/header parser failures also use bodyless204.
+- Seq is daemon request-arrival order, not native CLI sequence; hook requests themselves may be concurrent. No raw/native sessionId or seq is trusted. Context cannot overtake an earlier Stop body. PTY startup promotion preserves ingress seq and cannot overwrite terminal state.
+- StopFailure uses fixed allowlisted errors; unknown error values become unknown. Tool names must pass a strict80-character identifier rule; no tool input/reply appears in activity. LastActivity keeps the last tool, not arbitrary prose.
+- Last reply UTF-8 truncation retains the first256KB and is memory-only; daemon restart loses it along with mirror history. Older sessions/no reply and Codex still use today's fallback note. c scopes to the selection when queued, and copied content is never rendered in homepage notes.
+- Source statusLine uses an absolute validated tsx import path; built mode uses JS directly. Spaces/metacharacters in node/entry/loader omit the status line rather than shell quoting. Hook --settings path is always one argv element and may contain spaces safely.
+- Claude Esc interrupt fires no hook; trust gate can withhold hooks. No heuristics added; status may remain running until a later event. Codex ingress not silently added.
+- session settings file removal checks directory type/owner and unlinks only generated claude-settings.json; unsafe paths fail visibly. Empty session directories can remain. Existing private root protections remain mandatory.
+- PROGRESS baseline had v0.2.1 partial; this step was explicitly authorized on synced72d981d. RTK.md still absent. No other agents edited; requested reviews were serial/read-only.
+- No real ~/.ai-term, ~/.claude, ~/.codex, ~/.ssh, keychain, .env, native Keychain tests or real Claude/Codex sessions accessed. No external network except explicitly requested git pull/push. Stub env/key hygiene tests remain unchanged and pass.
 
 ## New dependencies
-- None. Uses installed swiftc/codesign, Apple frameworks and Node standard library only.
+- None. Existing tsx handles source-mode status-line; Node HTTP, crypto, filesystem and existing PTYs provide the implementation.
 
 ## Concepts introduced
-- Bundle identity and ad-hoc signing (spikes/notifier/Info.plist, build.mjs): UserNotifications belongs to the app identity, not the Node launcher. A proper .app supplies its name/id and signed resources; ad-hoc signing has no developer team and proves local integrity, not distribution trust or notification delivery.
-- Notification delegate lifetime (spikes/notifier/Notifier.swift): UserNotifications delivers presentation and response callbacks to a delegate while the app event loop runs. Keeping the delegate strongly alive enables warm clicks; it does not guarantee macOS preserves argv when relaunching a terminated helper.
-- Private Unix callback (spikes/notifier/Notifier.swift, harness.mjs): the helper connects to a private local socket supplied by the harness and sends one validated UUID. It can prove transport safety without posting notifications, so that probe must not be mistaken for a click test.
-- Evidence levels and authorization (docs/spikes/v0.2-notifier.md): successful compilation/signing and launching only establish those stages. A failed authorization prevents the display/sound/click measurements, which remain needs Yaniv instead of being inferred from API structure.
+- Ordered reducer (src/daemon/status-reducer.ts): each session has explicit state and a monotonic ingress sequence. Process exit is terminal even if its sequence is older; later hook/context updates cannot revive it.
+- Dual contracts on one listener (src/daemon/usage-receiver.ts): usage exporters require200{} but Claude status hooks require204 with no body because JSON can be a permission decision. Separate credentials/routes let subscriptions report status without becoming billable usage.
+- Ordered asynchronous slots (src/daemon/usage-receiver.ts): request bodies can finish out of order. Each callback waits for its predecessor, and abort/timeouts release the slot only after that predecessor, so a large reply cannot be superseded by a tiny context request.
+- Per-session generated settings (src/daemon/claude-settings.ts, env.ts): a private file contains hook configuration and an env-variable name, not the secret value. argv selects the file while the fresh session env supplies the token; the helper's command string uses only strict absolute paths.
+- Explicit reply export (src/daemon/session-manager.ts, client/tui/homepage.ts): the full reply is not session metadata. It stays in one memory field until a user asks to copy it, then travels through the bounded existing text-export protocol, keeping automatic events/logs/state free of reply content.
