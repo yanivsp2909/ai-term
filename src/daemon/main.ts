@@ -4,8 +4,7 @@ import { Logger } from './log.js';
 import { SessionManager } from './session-manager.js';
 import { UsageService } from './usage-service.js';
 import { DaemonServer } from './server.js';
-import { SettingsStore } from './settings.js';
-import { Notifier, notifierAppPath } from './notifier.js';
+import { Notifier, notifierAppPath, notificationsSetting } from './notifier.js';
 import type { StatusState } from './status-reducer.js';
 import type { SessionInfo } from '../shared/protocol.js';
 export async function runDaemon(entry?:string): Promise<void> {
@@ -15,8 +14,7 @@ export async function runDaemon(entry?:string): Promise<void> {
     await preparePaths(paths);
     const log = new Logger(paths.log), release = await acquireLock(paths.pid);
     const usage=new UsageService(paths.root,log);
-    // Notifications default to on; the setting is read at each notification so /settings changes apply at once.
-    const settings = new SettingsStore(paths.root), notifier = new Notifier(entry ? notifierAppPath(entry) : null, log, async () => (await settings.get()).notifications !== false);
+    const notifier = new Notifier(entry ? notifierAppPath(entry) : null, log, notificationsSetting(paths.root));
     const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage,notifier);
     manager.on('statusChanged', (session: SessionInfo, previous: StatusState, next: StatusState, attached: boolean) => notifier.transition(session, previous, next, attached));
     let closing = false;

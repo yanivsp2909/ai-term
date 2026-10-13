@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import type { NotifierState, SessionInfo } from '../shared/protocol.js';
 import { notificationBody, notificationFor } from './notify-policy.js';
+import { SettingsStore } from './settings.js';
 // Inside the bundle; the helper's own name in Info.plist.
 export const NOTIFIER_EXECUTABLE = 'Contents/MacOS/AITermNotifier';
 // One fixed place per checkout (src/cli/index.ts and dist/cli/index.js both sit two levels below the repo root).
@@ -22,6 +23,13 @@ const launchHelper: Launcher = (file, args, done) => {
   execFile(file, [...args], { timeout: LAUNCH_TIMEOUT_MS, env: { PATH: '/usr/bin:/bin' } }, error => done(error));
 };
 const helperExists = (app: string): boolean => existsSync(join(app, NOTIFIER_EXECUTABLE));
+// Notifications default to on and the setting is read at each notification, so /settings changes apply at once.
+// The no-op callback makes the store skip a malformed key entry, as the server's store does, instead of failing the
+// whole read (which would turn notifications off).
+export function notificationsSetting(root: string): () => Promise<boolean> {
+  const store = new SettingsStore(root, () => {});
+  return async () => (await store.get()).notifications !== false;
+}
 export class Notifier {
   private launchFailed = false;
   private readonly logged = new Set<string>();

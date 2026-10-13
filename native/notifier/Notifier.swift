@@ -12,13 +12,14 @@ struct Arguments: Sendable {
     let body: String
     let check: Bool
 
-    static let refused: Set<Unicode.GeneralCategory> = [.format, .lineSeparator, .paragraphSeparator, .privateUse, .surrogate, .unassigned]
+    static let refused: Set<Unicode.GeneralCategory> = [.format, .lineSeparator, .paragraphSeparator, .privateUse, .surrogate]
     static func uuid(_ value: String) -> Bool {
         value.utf8.count == 36 && UUID(uuidString: value) != nil
     }
     static func text(_ value: String, limit: Int) -> Bool {
         // Scalar bounds also bound UTF-8 bytes. The same classes the daemon removes from names are refused here:
-        // controls, format (bidi), line/paragraph separators, private use, surrogates and unassigned code points.
+        // controls, format (bidi), line/paragraph separators, private use and surrogates. Unassigned code points pass:
+        // macOS's Unicode tables can lag Node's, and a name the daemon accepted must not be dropped silently here.
         !value.isEmpty && value.unicodeScalars.count <= limit && !value.unicodeScalars.contains {
             CharacterSet.controlCharacters.contains($0) || refused.contains($0.properties.generalCategory)
         }

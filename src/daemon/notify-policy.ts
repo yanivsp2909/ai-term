@@ -6,12 +6,13 @@ const MAX_NAME = 60;
 // D42: always when an agent starts waiting (permission, question, turn failed); done only when nobody is attached to it.
 // One notification per transition: the same status and reason again is not a new one. Nothing when the setting is off.
 export function notificationFor(previous: StatusPair, next: StatusPair, attached: boolean, enabled: boolean): NotificationAlert | null {
-  if (!enabled || previous.status === next.status && previous.statusDetail === next.statusDetail) return null;
-  if (next.status === 'waiting') {
-    const reason = next.statusDetail === 'permission' || next.statusDetail === 'question' ? next.statusDetail : next.statusDetail.startsWith('turn failed') ? 'turn failed' : null;
-    return { kind: 'waiting', reason };
-  }
+  // Compared by what the notification would say: two failed turns with different error text are one change.
+  if (!enabled || previous.status === next.status && waitingReason(previous) === waitingReason(next)) return null;
+  if (next.status === 'waiting') return { kind: 'waiting', reason: waitingReason(next) };
   return next.status === 'done' && previous.status !== 'done' && !attached ? { kind: 'done' } : null;
+}
+function waitingReason(state: StatusPair): 'permission' | 'question' | 'turn failed' | null {
+  return state.statusDetail === 'permission' || state.statusDetail === 'question' ? state.statusDetail : state.statusDetail.startsWith('turn failed') ? 'turn failed' : null;
 }
 // Whitespace becomes one space and every other control, format or private-use character goes, as the helper requires.
 function notificationName(title: string): string {
