@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
-import type { RequestBody } from '../connection.js';
+import { DaemonRequestError, type RequestBody } from '../connection.js';
 import { type AttachReason } from '../attach.js';
 import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
@@ -128,7 +128,7 @@ export class Homepage {
       this.draw(true);await this.updatePreview(true);await this.subscribeStats(true);await this.subscribeUsage(true);
       // Notification clicks select agents here while this homepage is open. An older daemon refuses the request;
       // its clicks then open a new Terminal window instead, which is all this homepage needs to know.
-      await this.connection.request({ kind: 'clicks.subscribe', on: true }).catch(() => undefined);
+      await this.connection.request({ kind: 'clicks.subscribe', on: true }).catch((error: unknown) => { if (!(error instanceof DaemonRequestError)) throw error; });
       if (this.options.attachOnStart) this.attachOnStart(this.options.attachOnStart);
     } catch (error) { await this.stop(error instanceof Error ? error : new Error('Homepage failed')); throw error; }
   }

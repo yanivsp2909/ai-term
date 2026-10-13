@@ -269,7 +269,7 @@ export class DaemonServer {
             }
         }
         catch (error) {
-            if(request.kind==='sessions.text')this.log.error('Session text export failed');else this.log.error('Operation failed');
+            if(request.kind==='sessions.text')this.log.error('Session text export failed');
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const fixed = new Set([
                 'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
@@ -287,6 +287,8 @@ export class DaemonServer {
                 'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS
             ]);
             const message = error instanceof Error && (fixed.has(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
+            // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.
+            this.log.error(`Operation failed: ${request.kind} (${message === 'Session operation failed' ? 'unexpected error' : message})`);
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });
         }
     }

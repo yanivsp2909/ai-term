@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { Homepage } from '../src/client/tui/homepage.js';
 import { aiSubcommands } from '../src/client/tui/commands.js';
 import { sortSessions } from '../src/client/tui/layout.js';
-import type { RequestBody } from '../src/client/connection.js';
+import { DaemonRequestError, type RequestBody } from '../src/client/connection.js';
 import type { SuccessResponse, SessionInfo } from '../src/shared/protocol.js';
 class TTY extends EventEmitter { isTTY = true; isRaw = false; columns = 130; rows = 45; output = ''; setRawMode(v: boolean) { this.isRaw = v; } resume() {} pause() {} write(v: string | Buffer) { this.output += v.toString(); return true; } }
 const now = new Date().toISOString();
@@ -16,7 +16,8 @@ class Client extends EventEmitter {
   constructor(private readonly sessions: SessionInfo[], private readonly refuseClicks = false) { super(); }
   async request(body: RequestBody): Promise<SuccessResponse> {
     this.requests.push(body); const result: SuccessResponse = { id: randomUUID(), ok: true };
-    if (body.kind === 'clicks.subscribe' && this.refuseClicks) throw new Error('Unknown request kind');
+    // What Connection.request throws for an older daemon's INVALID_REQUEST answer.
+    if (body.kind === 'clicks.subscribe' && this.refuseClicks) throw new DaemonRequestError('Unknown request kind');
     if (body.kind === 'settings.get') result.settings = { theme: 'graphite' };
     if (body.kind === 'sessions.list') result.sessions = this.sessions;
     if (body.kind === 'engines.status') result.engines = { claudeCode: { installed: true, path: '/stub/claude', version: '2.1.295', loggedIn: true, authMethod: 'subscription' }, codex: { installed: true, path: '/stub/codex', version: '0.160.1', loggedIn: true, authMethod: 'subscription' } };

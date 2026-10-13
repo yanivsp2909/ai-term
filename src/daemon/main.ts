@@ -11,6 +11,12 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import type { StatusState } from './status-reducer.js';
 import type { SessionInfo } from '../shared/protocol.js';
+// Fixed words for why clicks can't reach the daemon; never the raw error, which can carry paths.
+const CLICK_ROUTE_REASONS: Record<string, string> = { 'Daemon socket already in use': 'socket in use', 'Unsafe socket path': 'unsafe socket path', 'Socket changed during stale check': 'socket changed during startup' };
+export function clickRouteFailure(error: unknown): string {
+    const reason = error instanceof Error ? CLICK_ROUTE_REASONS[error.message] : undefined;
+    return `Notification click route unavailable: ${reason ?? 'setup failed'}`;
+}
 export async function runDaemon(entry?:string): Promise<void> {
     // Private files for the daemon; sessions get the user's own umask back (session-manager).
     const userUmask = process.umask(0o077);
@@ -67,7 +73,7 @@ export async function runDaemon(entry?:string): Promise<void> {
         // Clicks are optional: a failure here is logged and AI Term runs on without click-through.
         if (!closing) {
             try { await launcher?.sweep(); await clicks.listen(); }
-            catch { log.error('Notification click route unavailable'); }
+            catch (error) { log.error(clickRouteFailure(error)); }
         }
         if (!closing) {
             log.info('Daemon started');

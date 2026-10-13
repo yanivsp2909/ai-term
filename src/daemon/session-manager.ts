@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { stripVTControlCharacters } from 'node:util';
-import { writeClaudeSettings,removeClaudeSettings } from './claude-settings.js';
+import { writeClaudeSettings,removeClaudeSettings,claudeStatusLine } from './claude-settings.js';
 import {parseClaudeStatus} from './claude-status.js';
 import {parseCodexStatus,codexTitle,isCodexApproval,type CodexRun} from './codex-status.js';
 import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
@@ -163,6 +163,7 @@ export class SessionManager extends EventEmitter {
             }
             if(statusTelemetry&&agent?.engine==='claude-code'){
                 const settings=await writeClaudeSettings(this.paths.root,info.id,statusTelemetry.port,process.execPath,this.cliEntry);
+                if(!claudeStatusLine(process.execPath,this.cliEntry))this.log.error('Claude status line left off: node or ai path has characters outside the safe set; context % needs it');
                 const extra=buildStatusArgs(settings),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);
                 Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
             }

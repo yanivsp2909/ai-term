@@ -32,11 +32,13 @@ export class KeyStore extends EventEmitter {
  private metadataWarning=false;
  private readonly settings:SettingsStore;
  private readonly vault:KeyVault;
+ private readonly log:Logger;
+ private readonly service:string;
  private queue:Promise<unknown>=Promise.resolve();
  constructor(root:string,options:{service?:string;vault?:KeyVault}={}){
   super();
   if(options.service!==undefined&&!/^ai-term-test-[A-Za-z0-9-]+$/.test(options.service))throw new KeyError('Invalid test keychain service');
-  const log=new Logger(join(root,'logs','daemon.log'));
+  const log=new Logger(join(root,'logs','daemon.log'));this.log=log;this.service=options.service??'ai-term';
   this.settings=new SettingsStore(root,()=>{if(!this.metadataWarning){this.metadataWarning=true;log.error('Invalid key metadata entry skipped');this.emit('warning','Invalid key metadata entry skipped; other keys remain usable.');}});this.vault=options.vault??nativeVault(options.service??'ai-term');
  }
  async list():Promise<KeyView[]>{const keys=(await this.settings.get()).keys??[];if(!Array.isArray(keys)||keys.length>100)throw new KeyError('Invalid key metadata');return keys.map(validateKeyView);}
@@ -52,7 +54,10 @@ export class KeyStore extends EventEmitter {
    const stored=key.provider==='foundry'?foundryEntry(request.secret,{endpoint:key.endpoint??'',deployments:key.deployments??[]}):request.secret;
    try{await this.vault.write(account,stored);}catch{throw new KeyError('OS keychain unavailable; key was not saved',{cause:new Error('Keychain write failed')});}
    try{await this.settings.update(async settings=>{const keys=Array.isArray(settings.keys)?settings.keys.map(validateKeyView):[];if(keys.length>=100)throw new Error('Too many keys');return {...settings,keys:[...keys,key]};});}
-   catch{try{await this.vault.remove(account);}catch{throw new KeyError('Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',{cause:new Error('Keychain cleanup failed')});}throw new KeyError('Key metadata could not be saved');}
+   catch{try{await this.vault.remove(account);}catch{
+    // The account names a provider and a UUID, never the secret: without it the orphaned entry can't be found.
+    this.log.error(`Keychain cleanup failed; remove ${this.service} ${account} in Keychain Access`);
+    throw new KeyError('Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',{cause:new Error('Keychain cleanup failed')});}throw new KeyError('Key metadata could not be saved');}
    return key;
   });
  }
