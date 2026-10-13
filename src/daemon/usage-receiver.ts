@@ -19,7 +19,10 @@ export class UsageReceiver {
  private statusCredentials=new Map<string,StatusContext>();
  private credentials=new Map<string,UsageContext>();
  constructor(private readonly consume:(route:string,body:unknown,context:UsageContext)=>Promise<void>,private readonly log:{error(text:string):void},private readonly consumeStatus?:(id:string,body:unknown,seq:number,engine:StatusEngine)=>Promise<void>){
-  this.server=createServer((req,res)=>{void this.handle(req,res).catch(()=>{const status=this.isStatusPath(req.url);this.log.error(status?'Status receiver request failed':'Usage receiver request failed');if(!res.headersSent){if(status)this.statusAnswer(res);else this.answer(res,500);}else res.destroy();});});
+  const serve=(req:IncomingMessage,res:ServerResponse)=>{void this.handle(req,res).catch(()=>{const status=this.isStatusPath(req.url);this.log.error(status?'Status receiver request failed':'Usage receiver request failed');if(!res.headersSent){if(status)this.statusAnswer(res);else this.answer(res,500);}else res.destroy();});};
+  this.server=createServer(serve);
+  // Node answers an unknown Expect header with 417 by itself; a listener takes that over, so status paths stay 204 (S12).
+  this.server.on('checkExpectation',serve);
   this.server.requestTimeout=5000;this.server.headersTimeout=5000;this.server.on('clientError',(_error,socket)=>{socket.end('HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n',()=>socket.destroy());});
  }
  async listen():Promise<void>{await new Promise<void>((resolve,reject)=>{this.server.once('error',reject);this.server.listen(0,'127.0.0.1',()=>{this.server.off('error',reject);resolve();});});}

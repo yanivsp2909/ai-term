@@ -14,7 +14,8 @@ export function graphemes(text: string): string[] {
   }
   return [...result];
 }
-export function safeText(text: string): string { return text.replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu, ''); }
+// Line/paragraph separators go too (S15): a terminal cell can't hold one, and copied text must not carry it.
+export function safeText(text: string): string { return text.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu, ''); }
 export class Grid {
   readonly cells: Frame;
   constructor(readonly cols: number, readonly rows: number, readonly theme: Theme) {
