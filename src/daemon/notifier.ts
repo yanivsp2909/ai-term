@@ -21,7 +21,9 @@ const OPEN = '/usr/bin/open', LAUNCH_TIMEOUT_MS = 10_000;
 // one flapping agent from using up the budget other agents' real alerts need. Waiting agents stay visible on the homepage.
 const SESSION_GAP_MS = 5_000, WINDOW_MS = 60_000, WINDOW_LAUNCHES = 10, SESSION_WINDOW_LAUNCHES = 3;
 const launchHelper: Launcher = (file, args, done) => {
-  // open never hands its environment to the app; a fixed PATH keeps the daemon's environment out of it anyway.
+  // open passes its own environment on to the app (v0.2 gate check), so the fixed PATH keeps the daemon's environment
+  // out of the helper. AI_TERM_HOME doesn't reach it either, and a cold click has no environment at all: clicks always
+  // go to ~/.ai-term.
   execFile(file, [...args], { timeout: LAUNCH_TIMEOUT_MS, env: { PATH: '/usr/bin:/bin' } }, error => done(error));
 };
 const helperExists = (app: string): boolean => existsSync(join(app, NOTIFIER_EXECUTABLE));
