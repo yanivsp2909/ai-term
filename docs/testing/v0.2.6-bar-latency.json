@@ -1,0 +1,117 @@
+{
+  "method": "outer PTY write to arrival of chunk establishing expected body cell and cursor, actual daemon/socket/configured attach; 50 warmup, 500 keys, 15/20/25 ms gaps",
+  "results": [
+    {
+      "round": 1,
+      "program": "echo",
+      "bar": "off",
+      "measured": 500,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 2.02,
+      "p95": 2.48,
+      "p99": 2.74,
+      "max": 3.228291999999783
+    },
+    {
+      "round": 1,
+      "program": "echo",
+      "bar": "on",
+      "measured": 500,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 39,
+      "p50": 2.35,
+      "p95": 2.88,
+      "p99": 3.66,
+      "max": 10.150292000002082
+    },
+    {
+      "round": 1,
+      "program": "vim",
+      "bar": "off",
+      "measured": 500,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 1.97,
+      "p95": 2.47,
+      "p99": 2.73,
+      "max": 13.640832999997656
+    },
+    {
+      "round": 1,
+      "program": "vim",
+      "bar": "on",
+      "measured": 500,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 39,
+      "p50": 2.41,
+      "p95": 3.2,
+      "p99": 3.49,
+      "max": 8.582000000002154
+    },
+    {
+      "round": 2,
+      "program": "echo",
+      "bar": "on",
+      "measured": 500,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 39,
+      "p50": 2.11,
+      "p95": 2.66,
+      "p99": 2.96,
+      "max": 3.789667000004556
+    },
+    {
+      "round": 2,
+      "program": "echo",
+      "bar": "off",
+      "measured": 500,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 1.84,
+      "p95": 2.27,
+      "p99": 2.44,
+      "max": 2.5832079999963753
+    },
+    {
+      "round": 2,
+      "program": "vim",
+      "bar": "on",
+      "measured": 500,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 39,
+      "p50": 2.31,
+      "p95": 2.85,
+      "p99": 2.98,
+      "max": 10.933666999990237
+    },
+    {
+      "round": 2,
+      "program": "vim",
+      "bar": "off",
+      "measured": 500,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 2.21,
+      "p95": 2.7,
+      "p99": 3.75,
+      "max": 6.922542000000249
+    }
+  ],
+  "checkpoint": "6d7e778 (product renderer/attach measured; subsequent permission settings edits outside steady-state typing)",
+  "machine": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "node": "v26.3.0"
+  },
+  "gate": "redraw p95 minus raw p95 <= 2 ms per program and round, 500 samples each, zero timeouts; all four pairs pass",
+  "manualLimit": "Headless PTY byte-delivery/cell validation; Terminal.app pixels and typing feel need Yaniv. 8 ms flood throttle can delay input shortly after output/bar frames."
+}
