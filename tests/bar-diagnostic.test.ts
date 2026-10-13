@@ -52,7 +52,7 @@ it('the hands-off trace records post-probe reports, PTY size and vim exit state 
   child.onData(data => {
     output += data;
     if (!answered && output.includes('\x1b[c')) { answered = true; child.write(colors + '\x1b[?1;2c'); }
-    if (!lateSent && output.includes('\x1b[?2026l')) { lateSent = true; child.write('\x1b[I\x1b[O'); }
+    if (!lateSent && output.includes('\x1b[?2026l')) { lateSent = true; child.write('\x1b['); setTimeout(() => child.write('I\x1b[O'), 10); }
   });
   try {
     await expect.poll(() => output, { timeout: 6000 }).toContain('BAR_DIAGNOSTIC ');
