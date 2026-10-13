@@ -58,3 +58,10 @@ it('a branch and tag with the same name still reserve the branch slug',async()=>
  const {repo,home}=await fixture();await run('/usr/bin/git',['branch','--','ai/codex'],{cwd:repo});await run('/usr/bin/git',['tag','--','ai/codex'],{cwd:repo});
  expect(await previewWorktree(home,repo,'Codex')).toMatchObject({branch:'ai/codex-2'});expect(await prepareWorktree(home,repo,'Codex')).toMatchObject({branch:'ai/codex-2'});
 });
+it('a repo name ending in a space never routes git operations into its sibling',async()=>{
+ const {temp,repo,home}=await fixture(),trailing=join(temp,'repo spaces ');await mkdir(trailing);await run('/usr/bin/git',['init','--',trailing]);
+ await run('/usr/bin/git',['-c','user.name=Test','-c','user.email=test@example.invalid','-c','commit.gpgsign=false','commit','--allow-empty','-m','different','--'],{cwd:trailing});
+ const head=(await run('/usr/bin/git',['show','--no-patch','--format=%H','--'],{cwd:trailing})).stdout.trim();
+ expect(await previewWorktree(home,trailing,'space')).toMatchObject({head,branch:'ai/space'});const started=await prepareWorktree(home,trailing,'space');expect(started.branch).toBe('ai/space');
+ expect((await listWorktrees(repo))).toHaveLength(1);expect((await listWorktrees(trailing)).map(w=>w.branch)).toEqual(['main','ai/space']);
+});
