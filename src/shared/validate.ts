@@ -278,7 +278,7 @@ export function validateUsageRecord(v:unknown):import('./protocol.js').UsageReco
 }
 export function validateUsageSummary(v:unknown):import('./protocol.js').UsageSummary{
  if(!v||typeof v!=='object'||Array.isArray(v)||!hasOnly(v as Record<string,unknown>,['today','week','month']))throw new ValidationError('Invalid usage summary');
- const total=(t:unknown,provider=false)=>{if(!t||typeof t!=='object'||Array.isArray(t))throw new ValidationError('Invalid usage total');const r=t as Record<string,unknown>;if(!hasOnly(r,provider?['provider','costUsd','tokens','unknownPrice']:['costUsd','tokens','unknownPrice','providers'])||!isAmount(r.costUsd)||!Number.isSafeInteger(r.tokens)||!isAmount(r.tokens)||typeof r.unknownPrice!=='boolean'||provider&&!isKeyProvider(r.provider))throw new ValidationError('Invalid usage total');};
+ const total=(t:unknown,provider=false)=>{if(!t||typeof t!=='object'||Array.isArray(t))throw new ValidationError('Invalid usage total');const r=t as Record<string,unknown>,{cachedTokens,...required}=r;if(!hasOnly(required,provider?['provider','costUsd','tokens','unknownPrice']:['costUsd','tokens','unknownPrice','providers'])||cachedTokens!==undefined&&(!Number.isSafeInteger(cachedTokens)||!isAmount(cachedTokens))||!isAmount(r.costUsd)||!Number.isSafeInteger(r.tokens)||!isAmount(r.tokens)||typeof r.unknownPrice!=='boolean'||provider&&!isKeyProvider(r.provider))throw new ValidationError('Invalid usage total');};
  for(const p of Object.values(v)){total(p);const providers=(p as {providers:unknown}).providers;if(!Array.isArray(providers)||providers.length>3)throw new ValidationError('Invalid usage providers');for(const entry of providers)total(entry,true);}
  return v as import('./protocol.js').UsageSummary;
 }

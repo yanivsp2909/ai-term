@@ -134,7 +134,7 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 ### Usage panel (under the preview, left)
 - **Columns:** today / week / month.
   - `spend` row: bold values.
-  - `tokens` row: ink-2, compact (`1.9M`).
+  - `tokens` row: ink-2, compact (`1.9M`). When a period has cache reads, its cached share follows in ink-3: `80.8K (71.0K cached)` when every column fits that, else `80.8K (71.0K)` with `(…) cached ·` before the hint line, else the totals alone. Columns share the panel after the labels, at most 23 cells each (B23, 2026-10-13).
   - `budget` row: the limit per period or `none`, with `b add` (key cap + accent) at the end.
 - **Scope:** API-key sessions only. Subscription sessions aren't counted.
 - **`u`:** opens Usage details (by provider, by model, by agent; v0.1 can ship without it).

@@ -14,7 +14,7 @@ async function append(path:string,record:UsageRecord):Promise<void>{
 }
 // Each record is capped, but a long-lived forger could still push a sum past 2^53; saturate rather than emit an invalid summary.
 const plus=(a:number,b:number)=>Math.min(Number.MAX_SAFE_INTEGER,a+b);
-function empty():UsagePeriod{return {costUsd:0,tokens:0,unknownPrice:false,providers:[]};}
+function empty():UsagePeriod{return {costUsd:0,tokens:0,cachedTokens:0,unknownPrice:false,providers:[]};}
 export class UsageStore extends EventEmitter {
  private days=new Map<string,UsagePeriod>();private unsaved:UsageRecord[]=[];private queue:Promise<void>=Promise.resolve();private writeFailing=false;private loadFailed=false;private warned=false;
  private readonly folder:string;
@@ -35,16 +35,16 @@ export class UsageStore extends EventEmitter {
  private dateKey(date:Date):string{return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;}
  private aggregate(record:UsageRecord):void{
   const key=this.dateKey(new Date(record.ts));let day=this.days.get(key);if(!day){day=empty();this.days.set(key,day);}
-  let provider=day.providers.find(p=>p.provider===record.provider);if(!provider){provider={provider:record.provider,costUsd:0,tokens:0,unknownPrice:false};day.providers.push(provider);}
-  for(const total of [day,provider]){total.tokens=plus(total.tokens,record.inputTokens+record.outputTokens);total.costUsd+=record.costUsd??0;total.unknownPrice ||= record.costUsd===null;}
+  let provider=day.providers.find(p=>p.provider===record.provider);if(!provider){provider={provider:record.provider,costUsd:0,tokens:0,cachedTokens:0,unknownPrice:false};day.providers.push(provider);}
+  for(const total of [day,provider]){total.tokens=plus(total.tokens,record.inputTokens+record.outputTokens);total.cachedTokens=plus(total.cachedTokens??0,record.cachedTokens??0);total.costUsd+=record.costUsd??0;total.unknownPrice ||= record.costUsd===null;}
  }
  summary():UsageSummary{
   const now=this.now(),today=new Date(now.getFullYear(),now.getMonth(),now.getDate()),week=new Date(today);week.setDate(week.getDate()-((week.getDay()+6)%7));const month=new Date(now.getFullYear(),now.getMonth(),1),end=this.dateKey(now);
   const result:UsageSummary={today:empty(),week:empty(),month:empty()};
   // Incremental per-day buckets keep every export O(1); calendar rollovers sum only days, not all records.
   for(const [date,day]of this.days){if(date>end)continue;for(const [key,start]of [['today',today],['week',week],['month',month]]as const)if(date>=this.dateKey(start)){
-   const total=result[key];total.costUsd+=day.costUsd;total.tokens=plus(total.tokens,day.tokens);total.unknownPrice ||= day.unknownPrice;
-   for(const source of day.providers){let target=total.providers.find(v=>v.provider===source.provider);if(!target){target={provider:source.provider,costUsd:0,tokens:0,unknownPrice:false};total.providers.push(target);}target.costUsd+=source.costUsd;target.tokens=plus(target.tokens,source.tokens);target.unknownPrice ||= source.unknownPrice;}
+   const total=result[key];total.costUsd+=day.costUsd;total.tokens=plus(total.tokens,day.tokens);total.cachedTokens=plus(total.cachedTokens??0,day.cachedTokens??0);total.unknownPrice ||= day.unknownPrice;
+   for(const source of day.providers){let target=total.providers.find(v=>v.provider===source.provider);if(!target){target={provider:source.provider,costUsd:0,tokens:0,cachedTokens:0,unknownPrice:false};total.providers.push(target);}target.costUsd+=source.costUsd;target.tokens=plus(target.tokens,source.tokens);target.cachedTokens=plus(target.cachedTokens??0,source.cachedTokens??0);target.unknownPrice ||= source.unknownPrice;}
   }}return result;
  }
  async flush():Promise<void>{await this.queue;}

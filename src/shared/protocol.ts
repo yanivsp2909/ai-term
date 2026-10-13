@@ -23,7 +23,8 @@ export type AuthRef = {kind:'account'} | {kind:'key';keyId:string};
 export type AuthView = {kind:'account'} | {kind:'key';keyId:string;provider:KeyProvider;keyLabel:string;last4:string};
 export interface Budgets {daily:number|null;weekly:number|null;monthly:number|null}
 export interface ModelPrice {input:number;output:number;cacheRead?:number}
-export interface UsageTotal {costUsd:number;tokens:number;unknownPrice:boolean}
+// cachedTokens is the cache-read share already inside tokens; optional only for summaries from older daemons.
+export interface UsageTotal {costUsd:number;tokens:number;cachedTokens?:number;unknownPrice:boolean}
 export interface UsagePeriod extends UsageTotal {providers:({provider:KeyProvider}&UsageTotal)[]}
 export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePeriod}
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
