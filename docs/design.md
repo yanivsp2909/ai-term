@@ -204,7 +204,16 @@ A path field with completion. It sets the folder for the next agent only. A fold
 ### /resume, /shell, /clean and /help
 - `/resume` acts on the selected exited/failed AI agent, preserving its folder, model, auth, effort and mode. Claude continues the stored conversation UUID; older records without it show a note. Codex opens its own resume picker in that folder. A running agent or shell gets a note.
 - `/shell` starts a plain login shell in the current `/cd` folder, selected with a preview afterward.
-- `/clean` asks `remove N finished agents? y/n`; y removes only those exited/failed list records. n or Esc cancels. Running sessions and project files are untouched.
+- `/clean` asks `remove N finished agents? y/n`; y removes only those exited/failed list records. n or Esc cancels. Running sessions and project files are untouched. It never deletes worktrees: the result line adds `kept N worktrees · /worktrees reviews them`.
+
+### Worktree question and /worktrees (v0.3.2)
+- **After `x`** on an agent with a worktree, one small surface box above the command bar, titled `Worktree ai/<slug>`. Lines: the folder (ink-3); the agent when shown from /worktrees (`agent <name> · <glyph> <word>`); the state; quiet notes (ink-3); the question.
+  - **Clean:** `✓ nothing would be lost` (status-done), then `remove worktree and branch ai/<slug>? k keep · d delete`. Keep is the default: k, Esc and ⏎ keep.
+  - **Loss:** `! would be lost: 3 changed files · 2 untracked · 4 commits not in main` (status-waiting), then `type ai/<slug> and ⏎ to delete · k or Esc keeps` and an input row `› …█`. k and ⏎ keep while the input is empty; Esc always keeps. A wrong name shows `type ai/<slug> exactly to delete` (status-error). Pastes are ignored here.
+  - **Notes:** `N ignored files go with it`; `folder already deleted by hand; git still lists it`; `its base branch is gone; commits counted from where it started`; `base not recorded; compared with your checkout's <branch>`.
+  - **Results** in the note line: `worktree kept: <path>`, `✓ deleted worktree and branch ai/<slug>`, `worktree kept: <path> · <fixed reason>` for a refused worktree (no question is asked), or the failed step `Worktree removed; branch delete failed · ai/<slug>`. If the worktree changed since it was shown, it is checked again and the question shows `Changed since you confirmed; check again`.
+- **`/worktrees`:** a surface popup like Help, titled `Worktrees N`. Two lines per worktree: `ai/<slug>  <folder>` (bold when selected, with surface-2 fill and the accent `▎` bar), then its state with glyph and word: `✓ nothing would be lost`, `! <loss>`, `■ Worktree is locked`, `<agent glyph> <word> · Stop the agent first`, or `✗ <fixed reason>` (status-error), followed by `· agent <name> · <glyph> <word>` when its agent still exists. Footer: `↑↓ select · ⏎ keep or delete · Esc close`. ⏎ opens the same question over the list; the list reloads after it.
+- Nothing animates; `checking what would be lost` and `deleting` are static lines.
 - `/help` lists registry commands and the key table in a calm surface overlay. ↑↓ scrolls, PgUp/PgDn pages, Esc closes; long lines wrap at narrow widths. Homepage keys remain isolated from agents.
 
 ## Inside a session
@@ -227,7 +236,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 | c / /copy / /copy all | cleaned whole session; c and /copy disclose last reply comes with v0.2; c only shortcuts in an empty field |
 | PgUp PgDn · End | scroll the preview · follow live (End: empty field only; otherwise cursor to end) |
 | d / r / s | diff (v0.7) / rename / stop the selected agent (s asks first) |
-| x | remove an exited or failed agent from the list |
+| x | remove an exited or failed agent from the list, then keep or delete its worktree (keep is the default) |
 | b / u | budget / usage details |
 | / / Tab | command menu / complete selected command and cycle argument values |
 | /help ↑↓ / PgUp / PgDn / Esc | scroll / page up / page down / close |
