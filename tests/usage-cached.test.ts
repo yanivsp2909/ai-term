@@ -58,3 +58,9 @@ it('the tokens row shows the cached share in the widest form that fits the panel
  // The 100-column layout uses the stacked narrow panel: totals stay, nothing overflows the box.
  const narrow=view(100,usage({cachedTokens:71000},{cachedTokens:71000}));expect(plainText(narrow)).toContain('≈ today $0.16 80.8K');
 });
+it('a spend wider than its column is shortened, never cut into a wrong number',()=>{
+ const p=(costUsd:number)=>({costUsd,tokens:1000,cachedTokens:0,unknownPrice:false,providers:[]});
+ const text=plainText(renderHomepage({cols:112,rows:45,sessions:[],selectedId:null,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0,usage:{today:p(1.5),week:p(1234.56),month:p(123456.78)},budgets:{daily:null,weekly:null,monthly:null}},theme));
+ const spend=text.split('\n').find(line=>line.includes('≈ spend'))??'';
+ expect(spend).toContain('$1.50');expect(spend).toContain('$1235');expect(spend).not.toContain('$1234.5');expect(spend).toMatch(/\$123\.5K|\$123457/);
+});
