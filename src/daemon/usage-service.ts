@@ -36,7 +36,7 @@ export class UsageService extends EventEmitter {
  }
  private scheduleMidnight():void{const now=new Date(),next=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1);this.midnight=setTimeout(()=>{this.emit('updated',this.summary());this.scheduleMidnight();},next.getTime()-now.getTime());this.midnight.unref();}
  registerStatus(sessionId:string,engine:StatusEngine='claude-code'):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.registerStatus(sessionId,engine)};}
- nextStatusSeq(sessionId:string):number|null{return this.receiver.nextStatusSeq(sessionId);}
+ enqueueStatus(sessionId:string,apply:(seq:number)=>void):boolean{return this.receiver.enqueueStatus(sessionId,apply);}
  register(context:UsageContext):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.register(context)};}
  revoke(sessionId:string):void{this.receiver.revoke(sessionId);this.parser.revoke(sessionId);this.recordLimits.delete(sessionId);}
  summary():UsageSummary{return this.store.summary();}

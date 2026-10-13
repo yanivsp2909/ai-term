@@ -31,7 +31,7 @@ export class Mirror {
             // xterm's parser keeps OSC terminators apart from a bell: onBell fires only for a BEL outside any sequence.
             this.terminal.onBell(()=>signal({kind:'bell'}));
             this.terminal.onTitleChange(title=>signal({kind:'title',title}));
-            this.terminal.parser.registerOscHandler(9,text=>{signal({kind:'osc9',text});return true;});
+            this.terminal.parser.registerOscHandler(9,text=>{signal({kind:'osc9',text});return false;});
         }
         this.terminal.onData(data => { if (!this.attached)
             reply(data); });

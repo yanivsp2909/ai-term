@@ -27,8 +27,12 @@ export class UsageReceiver {
  port():number{return this.address().port;}
  register(context:UsageContext):string{const token=randomBytes(32).toString('hex');this.credentials.set(token,{...context});return token;}
  registerStatus(id:string,engine:StatusEngine='claude-code'):string{if(!isUUID(id))throw new Error('Invalid session UUID');if(!Object.hasOwn(STATUS_ROUTES,engine))throw new Error('Invalid status engine');const token=randomBytes(32).toString('hex');this.statusCredentials.set(token,{id,engine,seq:0,queue:Promise.resolve()});return token;}
- // Terminal signals the daemon reads from a session's mirror share the request sequence, so status follows arrival order across both.
- nextStatusSeq(id:string):number|null{for(const context of this.statusCredentials.values())if(context.id===id)return ++context.seq;return null;}
+ // Terminal signals from a session's mirror join its request queue: a status body that arrived first (a notify still being read)
+ // is applied first, so a later signal cannot make it stale. The queue never rejects, or every later request would wait forever.
+ enqueueStatus(id:string,apply:(seq:number)=>void):boolean{
+  for(const context of this.statusCredentials.values())if(context.id===id){const seq=++context.seq;context.queue=context.queue.then(()=>apply(seq)).catch(()=>this.log.error('Status signal failed'));return true;}
+  return false;
+ }
  revoke(sessionId:string):void{for(const [token,context]of this.statusCredentials)if(context.id===sessionId)this.statusCredentials.delete(token);for(const [token,context]of this.credentials)if(context.sessionId===sessionId)this.credentials.delete(token);}
  revokeAll():void{this.credentials.clear();this.statusCredentials.clear();}
  private authorize(value:unknown):UsageContext|null{

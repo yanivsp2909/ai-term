@@ -41,10 +41,10 @@ it('status-notify gives up within its bound when the daemon never answers or is 
  const gone=await receiver();const port=gone.port;await gone.close();
  await expect(statusNotify([JSON.stringify({type:'agent-turn-complete'})],{AITERM_STATUS_TOKEN:TOKEN,AITERM_STATUS_PORT:String(port)})).resolves.toBeUndefined();
 });
-it('ai status-notify exits 0 with no output on any input, so Codex never breaks on it',async()=>{
- const loader=createRequire(import.meta.url).resolve('tsx'),entry=resolve('src/cli/index.ts');
- for(const args of [['status-notify','{AITERMCANARY'],['status-notify'],['status-notify',JSON.stringify({type:'agent-turn-complete','input-messages':['AITERMCANARY']})]]){
-  const result=await new Promise<{code:number|null;stdout:string;stderr:string}>(done=>{execFile(process.execPath,['--import',loader,entry,...args],{env:{PATH:process.env.PATH??'',AI_TERM_HOME:'/nonexistent-ai-term-home'},timeout:10000},(error,stdout,stderr)=>{done({code:error?(typeof error.code==='number'?error.code:-1):0,stdout,stderr});});});
-  expect(result).toEqual({code:0,stdout:'',stderr:''});
- }
-},30000);
+// One child only: each source-mode child compiles the CLI through tsx, and several in parallel with the suite starve timing tests.
+// Bad input, missing credentials and unknown types are covered in-process above; this proves the CLI wrapper on the full failing path.
+it('ai status-notify exits 0 with no output when its POST fails, so Codex never breaks on it',async()=>{
+ const loader=createRequire(import.meta.url).resolve('tsx'),entry=resolve('src/cli/index.ts'),gone=await receiver(),port=gone.port;await gone.close();
+ const result=await new Promise<{code:number|null;stdout:string;stderr:string}>(done=>{execFile(process.execPath,['--import',loader,entry,'status-notify',JSON.stringify({type:'agent-turn-complete','input-messages':['AITERMCANARY'],'last-assistant-message':'AITERMCANARY'})],{env:{PATH:process.env.PATH??'',AI_TERM_HOME:'/nonexistent-ai-term-home',AITERM_STATUS_TOKEN:TOKEN,AITERM_STATUS_PORT:String(port)},timeout:10000},(error,stdout,stderr)=>{done({code:error?(typeof error.code==='number'?error.code:-1):0,stdout,stderr});});});
+ expect(result).toEqual({code:0,stdout:'',stderr:''});
+},15000);

@@ -13,8 +13,9 @@ export type CodexRun='working'|'action'|'ready'|null;
 export function codexTitle(title:string):{run:CodexRun;leftPercent:number|null}{
  const parts=title.split(' | ').map(part=>part.trim());
  const run=parts.some(part=>part.startsWith('[ ! ] Action Required'))?'action':parts.some(part=>/^(?:\S\s)?(?:Working|Thinking)\b/u.test(part))?'working':parts.some(part=>/^(?:\S\s)?Ready\b/u.test(part))?'ready':null;
- const match=title.match(/(?:^| )Context (\d{1,3})% left(?: |$)/),left=match?Number(match[1]):null;
- return {run,leftPercent:left!==null&&left<=100?left:null};
+ // A whole title part only, so a thread or folder name containing the phrase cannot set context.
+ const left=parts.map(part=>part.match(/^Context (\d{1,3})% left$/)).find(match=>match)?.[1],leftPercent=left===undefined?null:Number(left);
+ return {run,leftPercent:leftPercent!==null&&leftPercent<=100?leftPercent:null};
 }
 // Codex's approval-requested notification texts (tui/src/notifications, rust-v0.160.1). Turn-complete OSC 9 carries a reply preview and is left to notify.
 export function isCodexApproval(text:string):boolean{return text.startsWith('Approval requested')||text.startsWith('Codex wants to edit');}

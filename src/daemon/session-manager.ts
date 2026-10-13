@@ -152,7 +152,10 @@ export class SessionManager extends EventEmitter {
         const live: Live = { info,...(statusTelemetry?{statusState:initialStatus(now)}:{}), mirror: new Mirror(this.size.cols, this.size.rows, reply, agent?.engine==='codex'?signal=>this.codexSignal(live,signal):undefined), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         this.sessions.set(info.id, live);
         try {
-            if(statusTelemetry&&agent?.engine==='codex')Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
+            if(statusTelemetry&&agent?.engine==='codex'){
+                Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
+                if(!recipe.args.some(arg=>arg.startsWith('notify=')))this.log.error('Codex notify left off: node or ai path has characters outside the safe set; done and last reply need it');
+            }
             if(statusTelemetry&&agent?.engine==='claude-code'){
                 const settings=await writeClaudeSettings(this.paths.root,info.id,statusTelemetry.port,process.execPath,this.cliEntry);
                 const extra=buildStatusArgs(settings),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);
@@ -229,27 +232,35 @@ export class SessionManager extends EventEmitter {
     }
     private ingressStatus(id:string,update:{event:ClaudeStatusEvent;reply?:string}|null):void{
         const live=this.sessions.get(id);if(!live?.statusState||live.mirrorFailed||['exited','error'].includes(live.statusState.status)||!update)return;
-        this.applyStatus(live,reduceStatus(live.statusState,update.event),update.reply);
+        // A reply stays the newest reply even when its status event lost to a newer one.
+        if(update.reply!==undefined)live.lastReply=update.reply;
+        this.applyStatus(live,reduceStatus(live.statusState,update.event));
     }
-    private applyStatus(live:Live,next:StatusState,reply?:string):void{
+    private applyStatus(live:Live,next:StatusState):void{
         if(!live.statusState||next===live.statusState)return;
         live.statusState=next;
         Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
-        if(reply!==undefined)live.lastReply=reply;
         this.event({kind:'session.updated',session:{...live.info}});
         void this.persist();
     }
-    // Codex terminal signals and Enter from the attached owner. Each applies only when it changes what a card would show, so a
-    // repainting title cannot reset statusSince or flood state writes, and it takes the next request sequence so status follows arrival order.
-    private codexStatus(live:Live,event:{kind:'running'}|{kind:'waiting';reason:'permission'}|{kind:'context';percent:number}):void{
-        const state=live.statusState;if(!state||live.mirrorFailed||['exited','error'].includes(state.status))return;
-        const preview=reduceStatus(state,{...event,seq:state.seq+1,at:state.statusSince});
-        if(preview.status===state.status&&preview.statusDetail===state.statusDetail&&preview.ctxPercent===state.ctxPercent)return;
-        const seq=this.usage?.nextStatusSeq(live.info.id);if(seq===null||seq===undefined)return;
-        this.applyStatus(live,reduceStatus(state,{...event,seq,at:new Date().toISOString()}));
+    // Codex terminal signals and Enter from the attached owner wait behind status requests that arrived earlier. Each applies only
+    // when it changes what a card would show, so a repainting title cannot reset statusSince or flood state writes.
+    private codexStatus(live:Live,event:{kind:'running'}|{kind:'waiting';reason:'permission'}|{kind:'context';percent:number},when?:(state:StatusState)=>boolean):void{
+        this.usage?.enqueueStatus(live.info.id,seq=>{
+            const state=live.statusState;if(!state||live.mirrorFailed||['exited','error'].includes(state.status)||when&&!when(state))return;
+            const next=reduceStatus(state,{...event,seq,at:new Date().toISOString()});
+            if(next.status===state.status&&next.statusDetail===state.statusDetail&&next.ctxPercent===state.ctxPercent)return;
+            this.applyStatus(live,next);
+        });
     }
     private codexSignal(live:Live,signal:MirrorSignal):void{
-        if(signal.kind==='bell'||signal.kind==='osc9'&&isCodexApproval(signal.text)){this.codexStatus(live,{kind:'waiting',reason:'permission'});return;}
+        // Signals run inside the mirror's parser; a failure here must not mark the terminal mirror failed and stop the agent.
+        try{this.readCodexSignal(live,signal);}catch{this.log.error('Codex status signal failed');}
+    }
+    private readCodexSignal(live:Live,signal:MirrorSignal):void{
+        // A bare bell counts only during a turn: with osc9 Codex itself never rings, so a stray bell after done is not an approval.
+        if(signal.kind==='bell'){this.codexStatus(live,{kind:'waiting',reason:'permission'},state=>state.status==='running');return;}
+        if(signal.kind==='osc9'&&isCodexApproval(signal.text)){this.codexStatus(live,{kind:'waiting',reason:'permission'});return;}
         if(signal.kind!=='title')return;
         const title=codexTitle(signal.title),previous=live.codexRun;live.codexRun=title.run;
         if(title.leftPercent!==null)this.codexStatus(live,{kind:'context',percent:100-title.leftPercent});
@@ -296,7 +307,8 @@ export class SessionManager extends EventEmitter {
     input(id:string,data:Buffer):void {
         const live=this.sessions.get(id);if(!live?.attached)return;live.host?.write(data);
         // Enter after a finished turn or an answered prompt starts work; plain CR or the kitty-protocol Enter (CSI 13 u).
-        if(live.info.engine==='codex'&&(live.statusState?.status==='done'||live.statusState?.status==='waiting')&&(data.includes(0x0d)||data.includes('\x1b[13u')||data.includes('\x1b[13;1u')))this.codexStatus(live,{kind:'running'});
+        // A bracketed paste may carry newlines without submitting anything.
+        if(live.info.engine==='codex'&&!data.includes('\x1b[200~')&&(data.includes(0x0d)||data.includes('\x1b[13u')||data.includes('\x1b[13;1u')))this.codexStatus(live,{kind:'running'},state=>state.status==='done'||state.status==='waiting');
     }
     async attach(id:string,cols:number,rows:number,publish:(snapshot:string,size:{cols:number;rows:number},modes:TerminalModes)=>void):Promise<void> {
         const live=this.sessions.get(id);if(!live||!isSize(cols,rows)||this.closing)throw new Error('Invalid attach');

@@ -13,7 +13,7 @@ it('Codex status resolves identity from its own credential and engine path, alwa
   expect(await send(receiver.port(),codex,{path:'/v1/status/claude'})).toEqual({status:204,body:''});
   expect(await send(receiver.port(),claude,{path:'/v1/status/codex'})).toEqual({status:204,body:''});
   expect(updates).toHaveLength(1);
-  const signals:number[]=[];expect(receiver.enqueueStatus(codexId,seq=>signals.push(seq))).toBe(true);expect(receiver.enqueueStatus(randomUUID(),()=>{throw new Error('unknown');})).toBe(false);await expect.poll(()=>signals).toEqual([4]);
+  const signals:number[]=[];expect(receiver.enqueueStatus(codexId,seq=>signals.push(seq))).toBe(true);expect(receiver.enqueueStatus(randomUUID(),()=>{throw new Error('unknown');})).toBe(false);await expect.poll(()=>signals).toEqual([2]);
   receiver.revoke(codexId);expect(await send(receiver.port(),codex)).toEqual({status:204,body:''});expect(updates).toHaveLength(1);expect(receiver.enqueueStatus(codexId,()=>{throw new Error('revoked');})).toBe(false);
  }finally{await receiver.close();}
 });
