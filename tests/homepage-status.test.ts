@@ -27,11 +27,14 @@ it.each([
 });
 it('ctx shows only when known, rounds, and turns status-waiting from 85%',()=>{
  expect(cardText(agent(),NOW,W).ctx).toBeNull();
- expect(cardText(agent({ctxPercent:62.4}),NOW,W).ctx).toEqual({text:'ctx 62%',color:'ink-3'});
- expect(cardText(agent({ctxPercent:84.4}),NOW,W).ctx).toEqual({text:'ctx 84%',color:'ink-3'});
- expect(cardText(agent({ctxPercent:85}),NOW,W).ctx).toEqual({text:'ctx 85%',color:'status-waiting'});
- const frame=renderHomepage(view([agent({ctxPercent:91})]),theme),line=rowText(frame,3);expect(line).toContain('ctx 91%');
- const x=line.indexOf('ctx 91%');expect(frame[3]?.[x]?.fg).toBe(theme.colors['status-waiting']);
+ expect(cardText(agent({ctxPercent:62.4}),NOW,40).ctx).toEqual({text:'ctx 62%',color:'ink-3'});
+ expect(cardText(agent({ctxPercent:84.4}),NOW,40).ctx).toEqual({text:'ctx 84%',color:'ink-3'});
+ expect(cardText(agent({ctxPercent:85}),NOW,40).ctx).toEqual({text:'ctx 85%',color:'status-waiting'});
+ // The 36-column panel follows the approved mockup: the full model text, two cells, then just the number.
+ expect(cardText(agent({ctxPercent:62}),NOW,W)).toMatchObject({model:'opus-5.5 · claude code',ctx:{text:'62%',color:'ink-3'}});
+ expect(cardText(agent({ctxPercent:62,model:'a-very-long-model-name-x'}),NOW,W).ctx).toBeNull();
+ const frame=renderHomepage(view([agent({ctxPercent:91})]),theme),line=rowText(frame,3);expect(line).toContain('opus-5.5 · claude code  91%');
+ const x=line.indexOf('91%');expect(frame[3]?.[x]?.fg).toBe(theme.colors['status-waiting']);
 });
 it('quiet starts 10 s after the newest output, tool or status change and counts seconds, then minutes',()=>{
  expect(quietSeconds(agent({lastOutputAt:ago(9999),statusSince:ago(20000)}),NOW)).toBeNull();
@@ -63,7 +66,7 @@ it('narrow cards drop ctx, age and activity before the status word',()=>{
  // At normal widths a long reason is clipped by the row, never dropped.
  expect(cardText(agent({status:'waiting',statusDetail:'turn failed: max_output_tokens'}),NOW,W).line3).toBe('turn failed: max_output_tokens');
  const roomy=cardText(agent({status:'waiting',statusDetail:'permission',ctxPercent:90,statusSince:ago(7200000)}),NOW,W);
- expect(roomy.status.text).toBe('● waiting 2h');expect(roomy.ctx?.text).toBe('ctx 90%');
+ expect(roomy.status.text).toBe('● waiting 2h');expect(roomy.ctx?.text).toBe('90%');
  for(const cols of [60,80,99]){const text=plainText(renderHomepage(view([agent({status:'waiting',statusDetail:'permission',ctxPercent:90})],{cols,rows:30}),theme));expect(text).toContain('● waiting');expect(text).toContain('asks: permission');expect(text).toContain('ctx 90%');}
 });
 it('top line counts waiting, running, to review and failed with glyphs; zero counts are hidden',()=>{
