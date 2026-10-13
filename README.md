@@ -33,7 +33,7 @@ Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source
 | `ai daemon stop` | Stop the background service and all its sessions |
 | `ai debug stats` | Print ten one-second numeric RAM/CPU diagnostics; no daemon connection; a closed output pipe exits quietly |
 | `ai debug usage` | Ask the running daemon for its receiver port and last ten minutes of allowlisted numeric telemetry; never headers, credentials or bodies |
-| `ai debug ls` | List session IDs, status and title |
+| `ai debug ls` | List session IDs, status, statusDetail, ctx=<used% or ?> and title |
 | `ai debug shell [cwd]` | Create a debug shell in the folder (current folder if omitted) |
 | `ai debug attach <id>` | Attach directly; Ctrl+E returns to the shell |
 | `ai debug stop <id>` | Stop one session |
@@ -51,7 +51,7 @@ Homepage slash commands:
 | `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
 | `/resume` | Continue selected finished Claude conversation; Codex opens its own folder-filtered resume picker |
 | `/shell` | Start a plain login shell in the /cd folder |
-| `/copy` | Copy last reply from v0.2; until then copy the same cleaned whole session as `/copy all`, with an explicit note |
+| `/copy` | Copy Claude last reply from its Stop hook when present; otherwise cleaned whole session with the fallback note |
 | `/copy all` | Copy cleaned selected-agent scrollback and screen; up to 5 MiB, oldest content cut if needed |
 | `/clean` | Confirm y/n before removing all exited/failed list records; reports removed/failed counts and first failure; running agents and files untouched |
 | `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
@@ -64,7 +64,7 @@ Homepage slash commands:
 | Enter | Slash menu picks highlighted command (`/theme`, `/effort`, `/mode` insert argument prefixes); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
 | Tab | Complete the highlighted slash command; with an argument, cycle its values |
 | `p` | Empty field toggles preview |
-| `c` | Empty field copies last reply from v0.2; until then the cleaned whole session with a note; with field text, types c |
+| `c` | Empty field copies Claude last reply when present; otherwise cleaned session with the fallback note; with field text, types c |
 | `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
@@ -94,13 +94,15 @@ Claude effort: `CLI default`, `low`, `medium`, `high`, `xhigh`, `max`. Codex eff
 
 Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
 
-`/copy all` copies the selected running/finished agent or shell from parsed mirror cells through the clipboard. Soft-wrapped rows join; generic cleanup strips box-drawing borders at line edges, drops decoration-only box/rule/spinner lines, collapses blank runs and trims the ends. Code indentation and internal borders stay. The 5 MiB UTF-8 cap keeps the newest text; the note says `✓ copied N lines from <name>` and adds a warning when oldest content was cut. `/copy` and empty-field `c` copy the same cleaned whole session for now and add `· last reply only comes with v0.2`. Exact last reply awaits Claude's Stop hook and Codex notify; the screen is never used to guess it. Copy text is never logged or saved. The mirror is in memory, so a daemon restart cannot restore previous terminal output.
+`/copy all` copies the selected running/finished agent or shell from parsed mirror cells through the clipboard. Soft-wrapped rows join; generic cleanup strips box-drawing borders at line edges, drops decoration-only box/rule/spinner lines, collapses blank runs and trims the ends. Code indentation and internal borders stay. The 5 MiB UTF-8 cap keeps the newest text; the note says `✓ copied N lines from <name>` and adds a warning when oldest content was cut. `/copy` and empty-field `c` request Claude's last `Stop.last_assistant_message` when available (v0.2.2, memory-only, at most 256 KB, terminal controls removed). This preserves reply/code whitespace. Otherwise they copy the same cleaned session with `· last reply only comes with v0.2`; Codex last-reply ingress waits for v0.2.3. `/copy all` always keeps whole-session behavior. The screen is never used to guess a reply. Copy text is never logged or saved. The mirror is in memory, so a daemon restart cannot restore previous terminal output.
 
 Paste into the command bar or the start box's first-message row: more than one line or more than 200 characters appears as `[pasted · N lines]`. The start box also shows the first line, clipped to fit. Full pasted text and newlines become the first message; Backspace deletes the token whole, and typing before/after it works. Small pastes stay literal. Letter shortcuts stay off while the field has text. The combined first message is limited to 16 KB (16,384 UTF-8 bytes): an oversized insertion adds nothing and says `too long for a first message (16 KB): start the agent, then paste inside`. Pasted text stays in memory and is never logged or saved.
 
 The Usage panel marks estimates with `≈`. Unknown model prices show `price ?`; the spend row includes known costs only. Foundry overrides apply their input rate to all input tokens without assuming a cache discount. Historical estimates keep the price used at ingestion. If settings cannot be read, a persistent warning appears and ingestion uses the last good prices until settings recover. Each session accepts at most 120 unique usage records per 60-second window; excess records are dropped with one fixed log line per window. Existing sessions need to be restarted to receive telemetry settings.
 
 Key and engine failures show fixed reasons without private error text. A malformed key metadata entry is skipped and warned about; valid keys remain usable, and skipped metadata stays on disk for later cleanup.
+
+Claude agent sessions, including subscriptions, receive per-session HTTP hooks and AI Term's own status line. `ai status-line` reads bounded Claude JSON on stdin, prints model · ctx N%, and sends numeric context to the existing local server with the credential from its env. It replaces the user's Claude status line only inside AI Term sessions. Paths containing spaces or shell characters leave that status line off. `ai debug ls` exposes permission/question/turn-failure reasons and context; waiting and done agents remain live. Restart the daemon and create a new session to get hooks.
 
 Native Keychain tests are opt-in: `AITERM_NATIVE_KEYCHAIN_TEST=1 npm test -- tests/keys-store.test.ts`. Normal `npm test` skips only those two native tests and prints the reason; fake-vault tests still run.
 

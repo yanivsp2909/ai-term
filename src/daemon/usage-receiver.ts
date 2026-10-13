@@ -1,6 +1,7 @@
 import {createServer,type IncomingMessage,type ServerResponse,type Server} from 'node:http';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 import type {AddressInfo} from 'node:net';
+import {isUUID} from '../shared/validate.js';
 import type {UsageContext} from './usage-parse.js';
 const MAX_BODY=1024*1024;
 // An oversized body is read and thrown away up to this bound before the 413, because closing with unread
@@ -19,7 +20,7 @@ export class UsageReceiver {
  address():AddressInfo{const a=this.server.address();if(!a||typeof a==='string')throw new Error('Usage receiver unavailable');return a;}
  port():number{return this.address().port;}
  register(context:UsageContext):string{const token=randomBytes(32).toString('hex');this.credentials.set(token,{...context});return token;}
- registerStatus(id:string):string{const token=randomBytes(32).toString('hex');this.statusCredentials.set(token,{id,seq:0});return token;}
+ registerStatus(id:string):string{if(!isUUID(id))throw new Error('Invalid session UUID');const token=randomBytes(32).toString('hex');this.statusCredentials.set(token,{id,seq:0});return token;}
  revoke(sessionId:string):void{for(const [token,context]of this.statusCredentials)if(context.id===sessionId)this.statusCredentials.delete(token);for(const [token,context]of this.credentials)if(context.sessionId===sessionId)this.credentials.delete(token);}
  revokeAll():void{this.credentials.clear();this.statusCredentials.clear();}
  private authorize(value:unknown):UsageContext|null{
