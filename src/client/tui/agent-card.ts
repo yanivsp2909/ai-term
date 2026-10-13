@@ -4,7 +4,7 @@ import { textWidth } from '../../shared/unicode-width.js';
 import type { ColorName } from './theme.js';
 // design.md status marks. The card says "done"; the top line counts the same agents as "to review".
 export const marks: Record<Status, [string, ColorName, string]> = { starting: ['◐', 'status-running', 'starting'], running: ['◐', 'status-running', 'running'], waiting: ['●', 'status-waiting', 'waiting'], done: ['✓', 'status-done', 'done'], exited: ['■', 'status-idle', 'exited'], error: ['✗', 'status-error', 'failed'] };
-const QUIET_AFTER_MS = 10000, CTX_WARN = 85, MIN_NAME = 4, MIN_MODEL = 10;
+const QUIET_AFTER_MS = 10000, CTX_WARN = 85, MIN_NAME = 4, CTX_GAP = 2;
 // Below this text width a card keeps only name, status and auth: ctx and activity go before the status word does.
 const NARROW = 20;
 export interface Styled { text: string; color: ColorName }
@@ -42,8 +42,10 @@ export function cardText(session: SessionInfo, now: number, width: number): Card
   const dontAsk = session.permission === 'dontAsk' ? '! ' : '', withAge = `${dontAsk}${glyph} ${shell ? '' : word + ' '}${age(session, now)}`;
   const status = { text: !shell && textWidth(withAge) + 1 + MIN_NAME > width ? `${dontAsk}${glyph} ${word}` : withAge, color, bold: session.status === 'waiting' };
   const model = shell ? 'shell' : `${session.model ?? 'CLI default'} · ${session.engine === 'codex' ? 'codex' : 'claude code'}`;
-  const ctxText = session.ctxPercent === null || shell ? null : `ctx ${Math.round(session.ctxPercent)}%`;
-  const ctx = ctxText && !narrow && MIN_MODEL + 1 + ctxText.length <= width ? { text: ctxText, color: (session.ctxPercent ?? 0) >= CTX_WARN ? 'status-waiting' as const : 'ink-3' as const } : null;
+  // Full `ctx NN%` when it fits beside the whole model text; else the mockup's bare `NN%`; else none. The model is never clipped for it.
+  const percent = session.ctxPercent === null || shell || narrow ? null : `${Math.round(session.ctxPercent)}%`;
+  const ctxText = percent === null ? null : [`ctx ${percent}`, percent].find(text => textWidth(model) + CTX_GAP + text.length <= width) ?? null;
+  const ctx = ctxText ? { text: ctxText, color: (session.ctxPercent ?? 0) >= CTX_WARN ? 'status-waiting' as const : 'ink-3' as const } : null;
   const auth = session.auth.kind === 'key' ? `API key ····${session.auth.last4}` : shell ? '' : ownLoginLabel(session.authMethod);
   if (shell) return { status, model, ctx, activity: null, auth, line3: session.statusDetail === word ? word : `${word} · ${session.statusDetail}` };
   const act = narrow ? null : activity(session, now), joined = act && auth ? `${act.text} · ${auth}` : null;
