@@ -22,9 +22,9 @@ const trace = { size: null, outerInput: [], childInput: [], autoQuitSent: false,
   exitedAfterMs: null, processAliveAtExitEvent: null, killSignals: [], inputBytesOmitted: 0, childClosedAfterMs: null };
 let spawnedAt = 0, childEnded = false, inputCaptured = 0, outputTail = '', quitTimer;
 // Trace recognized reports only, with a byte cap and a one-second startup window. This cannot
-// print pasted/typed text; anything outside terminal reports or exact quit keys is count-only.
+// print pasted/typed text; anything outside terminal reports is count-only.
 // eslint-disable-next-line no-control-regex -- terminal input framing
-const REPORT = /(?:\x1b\](?:10|11);rgb:[0-9a-fA-F/]+(?:\x07|\x1b\\)|\x1b\[[0-9?;:<>]*[cRuIOy]|\x1b\[<\d+;\d+;\d+[Mm]|\x1b:qa!\r|ZZ|ZQ)/g;
+const REPORT = /(?:\x1b\](?:10|11);rgb:[0-9a-fA-F/]+(?:\x07|\x1b\\)|\x1b\[[?>][\d;]*c|\x1b\[\?\d+u|\x1b\[\??\d+;\d+R|\x1b\[[IO]|\x1b\[\?\d+;\d+\$y|\x1b\[<\d+;\d+;\d+[Mm])/g;
 const captures = new Map();
 function capture(entries, data) {
   if (!traceEnabled || !spawned || trace.autoQuitSent || performance.now() - spawnedAt > 1000) return;
