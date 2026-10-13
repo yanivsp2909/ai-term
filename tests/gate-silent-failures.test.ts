@@ -91,4 +91,6 @@ it('L2: only an older daemon refusing clicks.subscribe is ignored; a lost connec
   await refused.start(); await refused.stop();
   const lost = new Homepage(new Client(new Error('Daemon request timed out')), { stdin: new TTY(), stdout: new TTY(), signals: new EventEmitter(), cwd: '/tmp' });
   await expect(lost.start()).rejects.toThrow('Daemon request timed out');
+  // start() stops the homepage with the error, which also rejects done.
+  await expect(lost.done).rejects.toThrow('Daemon request timed out');
 });
