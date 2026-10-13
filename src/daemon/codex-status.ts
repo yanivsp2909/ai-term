@@ -1,10 +1,13 @@
 import type {ClaudeStatusEvent} from '../shared/protocol.js';
 import {capReply} from '../shared/last-reply.js';
+import {isCodexTitleReply} from '../shared/codex-title.js';
 export interface CodexUpdate {event:ClaudeStatusEvent;reply?:string}
 // Bodies come from ai status-notify. Only the type and the last reply are read; anything else is ignored.
 export function parseCodexStatus(raw:unknown,seq:number,at:string):CodexUpdate|null{
  if(!raw||typeof raw!=='object'||Array.isArray(raw)||!('type'in raw)||raw.type!=='agent-turn-complete')return null;
  const reply='last-assistant-message'in raw&&typeof raw['last-assistant-message']==='string'?capReply(raw['last-assistant-message']):undefined;
+ // status-notify already drops thread-title turns; this keeps a body from any other sender to the same rule.
+ if(reply!==undefined&&isCodexTitleReply(reply))return null;
  return {event:{seq,at,kind:'done'},...(reply!==undefined?{reply}:{})};
 }
 export type CodexRun='working'|'action'|'ready'|null;

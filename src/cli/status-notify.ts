@@ -1,5 +1,6 @@
 import {request} from 'node:http';
 import {capReply} from '../shared/last-reply.js';
+import {isCodexTitleReply} from '../shared/codex-title.js';
 // Codex passes the whole notify payload as one argv element; macOS caps argv well below this anyway.
 const MAX_PAYLOAD_BYTES=4*1024*1024;
 const FORWARDED_TYPES=new Set(['agent-turn-complete']);
@@ -8,7 +9,10 @@ export function notifyBody(payload:string):string|null{
  if(Buffer.byteLength(payload)>MAX_PAYLOAD_BYTES)return null;
  let raw:unknown;try{raw=JSON.parse(payload);}catch{return null;}
  if(!raw||typeof raw!=='object'||Array.isArray(raw)||!('type'in raw)||typeof raw.type!=='string'||!FORWARDED_TYPES.has(raw.type))return null;
- const reply='last-assistant-message'in raw&&typeof raw['last-assistant-message']==='string'?capReply(raw['last-assistant-message']):undefined;
+ const message='last-assistant-message'in raw&&typeof raw['last-assistant-message']==='string'?raw['last-assistant-message']:undefined;
+ // A thread-title turn is dropped whole: forwarding it would end the user's running turn and replace their reply.
+ if(message!==undefined&&isCodexTitleReply(message))return null;
+ const reply=message!==undefined?capReply(message):undefined;
  return JSON.stringify({type:raw.type,...(reply!==undefined?{'last-assistant-message':reply}:{})});
 }
 // Codex runs notify for every finished turn and must never hang or break on it: every failure ends quietly.
