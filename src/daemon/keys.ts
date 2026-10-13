@@ -5,9 +5,22 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import type { KeyProvider, KeyView, DeploymentTest } from '../shared/protocol.js';
-import { ENV_KEY_NAMES, isEndpoint, isSecret, isUUID, validateKeyView, validateDeploymentTests } from '../shared/validate.js';
+import { ENV_KEY_NAMES, isEndpoint, isSecret, isUUID, isValidModelId, validateKeyView, validateDeploymentTests } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
 export class KeyError extends Error {}
+// B12: settings.json is writable by anything running as the user, so a Foundry key's endpoint and deployments are
+// stored with the secret in its Keychain entry, and only those bound values ever decide where the secret goes.
+export interface FoundryBinding { endpoint: string; deployments: string[] }
+const FOUNDRY_CHANGED='Foundry key details changed outside AI Term; add the key again',FOUNDRY_UNBOUND='Foundry key must be added again to bind its endpoint';
+function foundryEntry(secret:string,binding:FoundryBinding):string{return JSON.stringify({v:1,secret,endpoint:binding.endpoint,deployments:binding.deployments});}
+// A bare secret (saved before binding existed) or anything malformed is unbound: never trusted on first use.
+function parseFoundryEntry(raw:string):{secret:string;binding:FoundryBinding}|null{
+ let value:unknown;try{value=JSON.parse(raw);}catch{return null;}
+ if(!value||typeof value!=='object'||Array.isArray(value))return null;
+ const v=value as Record<string,unknown>;
+ if(Object.keys(v).length!==4||v.v!==1||!isSecret(v.secret)||!isEndpoint(v.endpoint)||!Array.isArray(v.deployments)||!v.deployments.length||v.deployments.length>40||!v.deployments.every(isValidModelId))return null;
+ return {secret:v.secret,binding:{endpoint:v.endpoint,deployments:[...v.deployments]}};
+}
 // Real provider keys are far longer; below this, four characters would give away too much of the secret.
 const MIN_SUFFIX_SECRET=16;
 export interface KeyVault { read(account:string):Promise<string|null>; write(account:string,secret:string):Promise<void>; remove(account:string):Promise<void> }
@@ -36,7 +49,8 @@ export class KeyStore extends EventEmitter {
   if(key.provider==='foundry'&&(!isEndpoint(key.endpoint)||!key.deployments?.length))throw new KeyError('Foundry needs an endpoint and deployments');
   const account=`${key.provider}:${key.id}`;
   return this.serial(async()=>{
-   try{await this.vault.write(account,request.secret);}catch{throw new KeyError('OS keychain unavailable; key was not saved',{cause:new Error('Keychain write failed')});}
+   const stored=key.provider==='foundry'?foundryEntry(request.secret,{endpoint:key.endpoint??'',deployments:key.deployments??[]}):request.secret;
+   try{await this.vault.write(account,stored);}catch{throw new KeyError('OS keychain unavailable; key was not saved',{cause:new Error('Keychain write failed')});}
    try{await this.settings.update(async settings=>{const keys=Array.isArray(settings.keys)?settings.keys.map(validateKeyView):[];if(keys.length>=100)throw new Error('Too many keys');return {...settings,keys:[...keys,key]};});}
    catch{try{await this.vault.remove(account);}catch{throw new KeyError('Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',{cause:new Error('Keychain cleanup failed')});}throw new KeyError('Key metadata could not be saved');}
    return key;
@@ -44,12 +58,20 @@ export class KeyStore extends EventEmitter {
  }
  async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);try{await this.vault.remove(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable; key was not removed',{cause:new Error('Keychain remove failed')});}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
  async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');try{return await this.vault.read(`${provider}:${id}`)!==null;}catch{throw new KeyError('OS keychain unavailable',{cause:new Error('Keychain read failed')});}}
- async withSecret<T>(id:string,use:(secret:string)=>T|Promise<T>):Promise<T>{
+ // For a Foundry key, use receives the Keychain-bound endpoint and deployments; callers must send the secret only there.
+ async withSecret<T>(id:string,use:(secret:string,binding:FoundryBinding|null)=>T|Promise<T>):Promise<T>{
   const key=await this.view(id);let secret:string|null;
   try{secret=await this.vault.read(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable',{cause:new Error('Keychain read failed')});}
-  if(!secret||!isSecret(secret))throw new KeyError('Key is missing from the OS keychain');
+  if(!secret)throw new KeyError('Key is missing from the OS keychain');
+  let binding:FoundryBinding|null=null;
+  if(key.provider==='foundry'){
+   const entry=parseFoundryEntry(secret);if(!entry)throw new KeyError(FOUNDRY_UNBOUND);
+   if(entry.binding.endpoint!==key.endpoint||entry.binding.deployments.join('\n')!==(key.deployments??[]).join('\n'))throw new KeyError(FOUNDRY_CHANGED);
+   secret=entry.secret;binding=entry.binding;
+  }
+  if(!isSecret(secret))throw new KeyError('Key is missing from the OS keychain');
   // eslint-disable-next-line no-useless-assignment -- Drop our reference after the one permitted use.
-  try{return await use(secret);}finally{secret=null;}
+  try{return await use(secret,binding);}finally{secret=null;}
  }
  async saveTest(id:string,results:DeploymentTest[]):Promise<void>{validateDeploymentTests(results);await this.serial(async()=>{await this.view(id);await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).map(k=>k.id===id?{...k,lastTest:results}:k)}));});}
  private async envFile(path:string):Promise<Map<string,string>>{
@@ -80,3 +102,4 @@ export class KeyStore extends EventEmitter {
   }finally{entries.clear();}
  }
 }
+export const FOUNDRY_KEY_ERRORS=[FOUNDRY_CHANGED,FOUNDRY_UNBOUND] as const;

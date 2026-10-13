@@ -166,7 +166,9 @@ export class SessionManager extends EventEmitter {
                 const extra=buildStatusArgs(settings),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);
                 Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
             }
-            if(agent?.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,secret=>{
+            if(agent?.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
+                // B12: argv was built from settings.json's copy; the secret goes only to the endpoint bound to it in the Keychain.
+                if(keyView?.provider==='foundry'&&(!binding||!recipe.args.includes(`model_providers.aiterm_foundry.base_url="${binding.endpoint}"`)||!agent.model||!binding.deployments.includes(agent.model)))throw new KeyError('Foundry key details changed outside AI Term; add the key again');
                 recipe.env=buildSpawnEnv(agent.engine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env);
                 if(telemetry)Object.assign(recipe.env,buildUsageEnv(agent.engine,telemetry));
                 if(statusTelemetry)Object.assign(recipe.env,buildStatusEnv(statusTelemetry));

@@ -8,7 +8,7 @@ import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
 import { enginesStatus } from './engines.js';
-import { KeyStore, KeyError } from './keys.js';
+import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
 import packageInfo from '../../package.json' with { type: 'json' };
@@ -184,7 +184,8 @@ export class DaemonServer {
                 case 'keys.test': {
                     const key=await this.keys.view(request.keyId);
                     if(key.provider!=='foundry'||!key.endpoint||!key.deployments)throw new KeyError('Only Foundry keys have deployment tests');
-                    const results=await this.keys.withSecret(key.id,secret=>testFoundry(key.endpoint??'',key.deployments??[],secret));
+                    // Only the Keychain-bound endpoint and deployments, never settings.json's copy (B12).
+                    const results=await this.keys.withSecret(key.id,(secret,binding)=>{if(!binding)throw new KeyError('Only Foundry keys have deployment tests');return testFoundry(binding.endpoint,binding.deployments,secret);});
                     await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
                 }
                 case 'engines.status':
@@ -283,7 +284,7 @@ export class DaemonServer {
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
-                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT'
+                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS
             ]);
             const message = error instanceof Error && (fixed.has(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });
