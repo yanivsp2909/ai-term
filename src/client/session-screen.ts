@@ -8,6 +8,7 @@ export class SessionScreen {
  readonly passthrough:Passthrough;
  private readonly renderer:BodyRenderer;
  private frameTimer:ReturnType<typeof setTimeout>|undefined;
+ private syncExpired=false;
  private syncTimer:ReturnType<typeof setTimeout>|undefined;
  private lastFrame=-Infinity;
  private blocked=false;
@@ -34,13 +35,15 @@ export class SessionScreen {
  resize(cols:number,rows:number):void{this.terminal.resize(cols,rows);this.renderer.invalidate();this.full=true;this.changed();}
  private request(expired=false):void{
   if(this.disposed||this.blocked||this.frameTimer||!this.dirty)return;
-  if(this.terminal.modes.synchronizedOutputMode&&!expired){this.syncTimer??=setTimeout(()=>{this.syncTimer=undefined;this.request(true);},150);return;}
+  if(this.terminal.modes.synchronizedOutputMode&&!expired){this.syncTimer??=setTimeout(()=>{this.syncTimer=undefined;this.syncExpired=true;this.request(true);},150);return;}
   if(this.syncTimer){clearTimeout(this.syncTimer);this.syncTimer=undefined;}
   const wait=8-(performance.now()-this.lastFrame);
   if(wait>0)this.frameTimer=setTimeout(()=>{this.frameTimer=undefined;this.draw();},wait);else this.draw();
  }
  private draw():void{
   if(this.disposed||this.blocked)return;
+  if(this.terminal.modes.synchronizedOutputMode&&!this.syncExpired){this.request();return;}
+  this.syncExpired=false;
   try{
    this.dirty=false;this.renderer.cursorVisible=this.passthrough.cursorVisible();
    const bar=this.bar();let output=this.full?'\x1b[0m\x1b[H\x1b[2J':'';

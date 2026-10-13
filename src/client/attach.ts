@@ -31,7 +31,7 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
   if(!stdin.isTTY){options.debugLog?.info('attach reason=stdin not a TTY inputBytes=0');throw new AttachError('stdin not a TTY',new Error('Attach requires an interactive stdin'));}
   if(!isUUID(id)||!stdout.isTTY){options.debugLog?.info('attach reason=error inputBytes=0');throw new AttachError('error',new Error('Attach requires a session UUID and an interactive terminal'));}
   const originalRaw=stdin.isRaw??false;
-  const probe=options.bar==='on'?await terminalProbe(stdin,stdout):null;
+  const probe=options.bar==='on'&&(stdout.rows??24)>1?await terminalProbe(stdin,stdout):null;
   if(options.bar==='on'&&!probe)options.fallbackLog?.('Bar startup probe failed; using raw passthrough for this attach');
   let screen:SessionScreen|undefined;
   let barSession:SessionInfo|undefined;const others=new Map<string,SessionInfo>();

@@ -175,7 +175,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - **Popup** with sections:
   - **KEYS** (OS keychain): label, endpoint, `key ····last4`, plus `+ add key` (paste, or import from .env).
   - **ENGINES:** Claude Code / Codex, each with `✓ installed` and `✓ logged in` (or `✗ not logged in` with `/login`).
-  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget, notifications (`on`/`off`, n toggles; default on). Permissions remain Ask-only as saved defaults. If notifications can't be sent, a fixed `notifications unavailable: …` line follows.
+  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget, notifications (`on`/`off`, n toggles; default on), attached bar (`off`/`on`, h toggles; default off, applies at next attach). Permissions remain Ask-only as saved defaults. If notifications can't be sent, a fixed `notifications unavailable: …` line follows.
 - **Footer:** `keys are never shown in full and never written to .env`.
 
 ### /login
@@ -210,9 +210,10 @@ A path field with completion. It sets the folder for the next agent only. A fold
 
 - **v0.1, full screen:** AI Term draws nothing; the agent owns every cell. **Ctrl+E** goes to the homepage and the agent keeps running.
 - **v0.2, frame bar:** one row on top, surface background.
-  - **Left:** status glyph + name (bold) + `engine · model` + `· branch`.
+  - **Left:** status glyph + word + name (bold) + `engine · model`. Branch is deferred until worktrees (v0.3).
   - **Right:** `others ◐ 2  ✓ 1  ✗ 1` + `^E home`.
-  - The agent gets one row less.
+  - Opt-in with `/settings` → `bar: on` (`h`); default off while the Terminal.app spike exit remains unexplained. Off is full-height raw passthrough. Failed startup probe falls back to raw for that attach.
+  - The agent gets one row less and follows terminal resizes. Counts drop first at narrow widths, then model; glyph and status word remain. Nothing animates; redraw only when text/cells change.
 - **v0.3, splits:** panes side by side, each with a one-row header (glyph, name, model, branch); the focused pane's header is surface-2 with an accent underline. The bottom row shows `each pane is its own agent in its own worktree` and the pane keys.
 
 ## Keyboard (homepage)
