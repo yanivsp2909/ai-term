@@ -71,7 +71,7 @@ export async function checkWorktree(root: string, record: WorktreeRecord, agent:
     if (found.main) return refuse('Main checkout is never deleted');
     if (!found.matchesRepo) return refuse('Worktree does not match its repo');
     if (!found.onBranch) return refuse('Worktree is not on its ai/ branch');
-    const loss: WorktreeLoss = { changed: found.changed, untracked: found.untracked, ignored: found.ignored, commits: found.commits, base: found.base, baseSource: found.baseSource, missing: found.missing };
+    const loss: WorktreeLoss = { changed: found.changed, untracked: found.untracked, ignored: found.ignored, repos: found.repos, commits: found.commits, base: found.base, baseSource: found.baseSource, missing: found.missing };
     if (found.locked) return refuse('Worktree is locked', { loss });
     if (found.elsewhere) return refuse('Branch is checked out elsewhere', { loss });
     return { view: { ...view, loss, fingerprint: found.fingerprint }, repo };

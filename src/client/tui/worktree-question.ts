@@ -19,6 +19,7 @@ export function lossText(loss: WorktreeLoss): string {
 // What the user should know that is not lost work: how the base was chosen, a folder already gone, ignored files.
 export function lossNotes(loss: WorktreeLoss): string[] {
   return [
+    loss.repos ? `${plural(loss.repos, 'untracked folder is a git repository', 'untracked folders are git repositories')}; their history goes too` : '',
     loss.missing ? 'folder already deleted by hand; git still lists it' : '',
     loss.baseSource === 'start commit' ? 'its base branch is gone; commits counted from where it started' : '',
     loss.baseSource === 'checkout' ? `base not recorded; compared with your checkout's ${loss.base}` : '',

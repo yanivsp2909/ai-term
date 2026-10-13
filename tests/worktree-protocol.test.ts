@@ -24,7 +24,7 @@ it('worktree requests take only a safe absolute path, a 64-hex fingerprint and a
  ]) await expect(validateRequest({ id, ...bad })).rejects.toThrow();
 });
 it('worktree views from the daemon are validated field by field', () => {
- const view = { path:'/tmp/tree', branch:'ai/agent', agent:{ id, title:'agent', status:'exited' }, loss:{ changed:1, untracked:2, ignored:0, commits:3, base:'main', baseSource:'recorded', missing:false }, fingerprint };
+ const view = { path:'/tmp/tree', branch:'ai/agent', agent:{ id, title:'agent', status:'exited' }, loss:{ changed:1, untracked:2, ignored:0, repos:0, commits:3, base:'main', baseSource:'recorded', missing:false }, fingerprint };
  expect(validateSuccess({ id, ok:true, worktrees:[view, { path:'/tmp/other', refusal:"Not in AI Term's record" }] }).worktrees).toHaveLength(2);
  for (const bad of [{ ...view, refusal:'anything else' }, { ...view, extra:1 }, { ...view, loss:{ ...view.loss, changed:-1 } }, { ...view, loss:{ ...view.loss, base:'main)%(x' } }, { ...view, agent:{ ...view.agent, pid:1 } }, { ...view, path:'tree' }])
   expect(() => validateSuccess({ id, ok:true, worktree:bad })).toThrow();

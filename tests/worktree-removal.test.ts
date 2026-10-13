@@ -43,7 +43,7 @@ it('new agents record repo, base branch and base commit; the record outlives the
  expect(state.worktrees).toEqual([{ path:agent.worktree, branch:'ai/agent', repo:await realpath(repo), baseBranch:'main', baseCommit:head, createdAt:expect.any(String) }]);
  await sessions.remove(agent.id);
  const reloaded = await manager(paths), views = await reloaded.worktreeViews();
- expect(views).toEqual([{ path:agent.worktree, branch:'ai/agent', loss:{ changed:0, untracked:0, ignored:0, commits:0, base:'main', baseSource:'recorded', missing:false }, fingerprint:expect.stringMatching(/^[0-9a-f]{64}$/) }]);
+ expect(views).toEqual([{ path:agent.worktree, branch:'ai/agent', loss:{ changed:0, untracked:0, ignored:0, repos:0, commits:0, base:'main', baseSource:'recorded', missing:false }, fingerprint:expect.stringMatching(/^[0-9a-f]{64}$/) }]);
 });
 it('a v0.3.1 session record becomes a legacy record whose repo is found through git and checked against the folder hash', async () => {
  const { repo, home, paths } = await fixture(), started = await prepareWorktree(home, repo, 'old agent'), now = new Date().toISOString();

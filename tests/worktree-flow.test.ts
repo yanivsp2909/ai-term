@@ -9,8 +9,8 @@ import type { RequestBody } from '../src/client/connection.js';
 import headless from '@xterm/headless';
 const now = new Date().toISOString(), fingerprint = 'b'.repeat(64);
 const session = (title: string, worktree?: string): SessionInfo => ({ id:randomUUID(), title, engine:'codex', model:'gpt', auth:{ kind:'account' }, cwd:'/tmp', ...(worktree ? { worktree, branch:`ai/${title}` } : {}), permission:'ask', status:'exited', statusDetail:'exit 0', statusSince:now, createdAt:now, lastOutputAt:null, exitCode:0, ctxPercent:null });
-const clean: WorktreeView = { path:'/tmp/trees/agent', branch:'ai/agent', loss:{ changed:0, untracked:0, ignored:2, commits:0, base:'main', baseSource:'recorded', missing:false }, fingerprint };
-const lossy: WorktreeView = { ...clean, loss:{ changed:3, untracked:2, ignored:0, commits:4, base:'main', baseSource:'recorded', missing:false } };
+const clean: WorktreeView = { path:'/tmp/trees/agent', branch:'ai/agent', loss:{ changed:0, untracked:0, ignored:2, repos:0, commits:0, base:'main', baseSource:'recorded', missing:false }, fingerprint };
+const lossy: WorktreeView = { ...clean, loss:{ changed:3, untracked:2, ignored:0, repos:0, commits:4, base:'main', baseSource:'recorded', missing:false } };
 class TTY extends EventEmitter { isTTY = true; isRaw = false; columns = 130; rows = 45; output = ''; setRawMode(v: boolean) { this.isRaw = v; } resume() {} pause() {} write(data: string | Buffer) { this.output += data.toString(); return true; } }
 // The homepage writes only changed cells, so read the screen through a terminal emulator rather than the byte stream.
 async function screen(tty: TTY): Promise<string> { const terminal = new headless.Terminal({ cols:130, rows:45, allowProposedApi:true }); try { await new Promise<void>(resolve => terminal.write(tty.output, resolve)); return Array.from({ length:45 }, (_, y) => terminal.buffer.active.getLine(y)?.translateToString() ?? '').join('\n'); } finally { terminal.dispose(); } }
@@ -39,8 +39,8 @@ const escape = async (tty: TTY) => { press(tty, '\x1b'); await new Promise(resol
 
 it('describes loss plainly, with singular forms and base notes', () => {
  expect(lossText(lossy.loss!)).toBe('3 changed files · 2 untracked · 4 commits not in main');
- expect(lossText({ changed:1, untracked:1, ignored:0, commits:1, base:'main', baseSource:'recorded', missing:false })).toBe('1 changed file · 1 untracked · 1 commit not in main');
- expect(lossText({ changed:0, untracked:0, ignored:0, commits:2, base:'abc1234', baseSource:'start commit', missing:true })).toBe('2 commits since its start (abc1234)');
+ expect(lossText({ changed:1, untracked:1, ignored:0, repos:0, commits:1, base:'main', baseSource:'recorded', missing:false })).toBe('1 changed file · 1 untracked · 1 commit not in main');
+ expect(lossText({ changed:0, untracked:0, ignored:0, repos:0, commits:2, base:'abc1234', baseSource:'start commit', missing:true })).toBe('2 commits since its start (abc1234)');
 });
 it('x on a clean worktree asks one question; Esc, k and Enter keep, and none of them delete', async () => {
  for (const keep of ['esc', 'k', '\r']) {

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, readFile, realpath } from 'node:fs/promises';
+import { basename, isAbsolute, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
 
@@ -9,14 +10,19 @@ export class GitError extends Error {
 }
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // An explicit env prevents inherited GIT_DIR/GIT_WORK_TREE, hooks and routing from targeting a different checkout.
-function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', maxBuffer = 1024 * 1024): Promise<string> {
+interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; literal?: boolean }
+function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true }: RunOptions = {}): Promise<string> {
     if (!isSafeAbsolutePath(cwd)) return Promise.reject(new GitError(failure));
     return new Promise((resolve, reject) => {
-        execFile('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', ...args], {
+        const child = execFile('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', ...args], {
             // Optional locks off: a read-only status must not rewrite the agent's index while it is inspected.
-            cwd, env: { PATH: '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0' },
-            timeout: 10_000, maxBuffer, encoding: 'utf8',
+            // Literal pathspecs: file names from a repo reach ls-files/check-ignore after --, and ":(...)" magic must stay a name.
+            cwd, env: { PATH: '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}) },
+            timeout, maxBuffer, encoding: 'utf8',
         }, (error, stdout) => error ? reject(new GitError(failure)) : resolve(stdout));
+        // A failed stdin write (git exited early) surfaces through the exit callback above.
+        child.stdin?.on('error', () => undefined);
+        child.stdin?.end(input ?? '');
     });
 }
 export async function repoTopLevel(cwd: string): Promise<string | null> {
@@ -65,27 +71,55 @@ export async function branchNames(cwd: string): Promise<string[]> {
 export async function checkoutDirty(cwd: string): Promise<boolean> {
     return (await run(cwd, ['status', '--porcelain', '--untracked-files=normal', '--'])).length > 0;
 }
-// A worktree reports its own top level and the repository it belongs to; an agent can rewrite its .git file, so both are compared.
-async function identity(cwd: string): Promise<{ top: string; common: string }> {
-    const [top, common, rest] = (await run(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'])).split('\n');
-    if (!isSafeAbsolutePath(top) || !isSafeAbsolutePath(common) || rest !== '') throw new GitError('Git check failed');
-    return { top, common };
+// A worktree reports its own top level, admin dir and the repository it belongs to; an agent can rewrite its .git file, so all are compared.
+async function identity(cwd: string): Promise<{ top: string; common: string; gitDir: string }> {
+    const [top, common, gitDir, rest] = (await run(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir', '--absolute-git-dir'])).split('\n');
+    if (!isSafeAbsolutePath(top) || !isSafeAbsolutePath(common) || !isSafeAbsolutePath(gitDir) || rest !== '') throw new GitError('Git check failed');
+    return { top, common, gitDir };
+}
+// git records each linked worktree's own .git path in <admin dir>/gitdir; a .git file borrowed from a sibling points back elsewhere.
+async function ownsAdminDir(path: string, gitDir: string): Promise<boolean> {
+    const recorded = await readFile(join(gitDir, 'gitdir'), 'utf8').catch((error: unknown) => { if (isFsError(error, 'ENOENT')) return ''; throw error; });
+    return recorded.replace(/\n$/, '') === join(path, '.git');
 }
 export async function repoCommonDir(cwd: string): Promise<string> { return (await identity(cwd)).common; }
-interface Changes { changed: number; untracked: number; ignored: number; raw: string }
+interface Changes { changed: number; untracked: number; ignored: number; repos: number; raw: string }
+const BIG = 16 * 1024 * 1024, CHUNK = 200;
+// Index entries flagged assume-unchanged (lowercase tag) or skip-worktree (S) are invisible to status, and plain
+// git worktree remove trusts status too, so any such entry counts as changed.
+async function hiddenEntries(path: string): Promise<{ count: number; raw: string }> {
+    const raw = await run(path, ['ls-files', '-v', '-z', '--'], 'Git check failed', { maxBuffer: BIG });
+    return { count: raw.split('\0').filter(entry => entry && (entry[0] === 'S' || /^[a-z]/.test(entry))).length, raw };
+}
+// Ignore rules in info/exclude, core.excludesFile or an uncommitted .gitignore can be written from inside the worktree,
+// so they could turn any work into "ignored". Only a match from a .gitignore committed in the repo keeps a path ignored.
+async function committedIgnores(path: string, ignored: string[]): Promise<number> {
+    // Names go through stdin (-z needs --stdin); output is source, line, pattern, name per match. check-ignore refuses
+    // literal pathspec mode, so each name is prefixed with ./ instead, which keeps a leading ":(...)" from being magic.
+    const input = ignored.map(name => `./${name}\0`).join(''), sources = new Map<string, string>();
+    const fields = (await run(path, ['check-ignore', '-v', '-z', '--stdin'], 'Git check failed', { maxBuffer: BIG, input, literal: false })).split('\0');
+    for (let j = 0; j + 3 < fields.length; j += 4) sources.set((fields[j + 3] ?? '').replace(/^\.\//, ''), fields[j] ?? '');
+    const candidates = [...new Set(sources.values())].filter(source => source && !isAbsolute(source) && basename(source) === '.gitignore'), tracked = new Set<string>();
+    for (let i = 0; i < candidates.length; i += CHUNK)
+        for (const name of (await run(path, ['ls-files', '-z', '--', ...candidates.slice(i, i + CHUNK)], 'Git check failed', { maxBuffer: BIG })).split('\0')) if (name) tracked.add(name);
+    return ignored.filter(name => tracked.has(sources.get(name) ?? '')).length;
+}
 async function changes(path: string): Promise<Changes> {
     // -z keeps names with newlines intact; a rename or copy carries its old name as one extra field.
-    const raw = await run(path, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching', '--'], 'Git check failed', 16 * 1024 * 1024);
-    const fields = raw.split('\0'), counts = { changed: 0, untracked: 0, ignored: 0, raw };
+    const raw = await run(path, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching', '--'], 'Git check failed', { maxBuffer: BIG });
+    const fields = raw.split('\0'), counts = { changed: 0, untracked: 0, ignored: 0, repos: 0, raw }, ignored: string[] = [];
     for (let i = 0; i < fields.length; i++) {
         const entry = fields[i] ?? '';
         if (!entry) continue;
         if (entry.length < 4 || entry[2] !== ' ') throw new GitError('Git check failed');
         const code = entry.slice(0, 2);
-        if (code === '??') counts.untracked++;
-        else if (code === '!!') counts.ignored++;
+        // With --untracked-files=all only a nested repository stays a folder entry; its whole history goes with it.
+        if (code === '??') { counts.untracked++; if (entry.endsWith('/')) counts.repos++; }
+        else if (code === '!!') ignored.push(entry.slice(3));
         else { counts.changed++; if (/[RC]/.test(code)) i++; }
     }
+    const hidden = await hiddenEntries(path), kept = ignored.length ? await committedIgnores(path, ignored) : 0;
+    counts.changed += hidden.count; counts.ignored = kept; counts.untracked += ignored.length - kept; counts.raw += `\0\0${hidden.raw}`;
     return counts;
 }
 // for-each-ref takes the branch as a pattern after --, and its ahead-behind atom counts commits on it that the base lacks.
@@ -98,7 +132,7 @@ async function commitsAhead(repo: string, branch: string, base: string): Promise
 export interface WorktreeBase { branch?: string; commit?: string }
 export interface WorktreeInspection {
     main: boolean; locked: boolean; missing: boolean; onBranch: boolean; elsewhere: boolean; matchesRepo: boolean;
-    changed: number; untracked: number; ignored: number; commits: number;
+    changed: number; untracked: number; ignored: number; repos: number; commits: number;
     base: string; baseSource: 'recorded' | 'start commit' | 'checkout'; fingerprint: string;
 }
 async function resolveBase(repo: string, listed: GitWorktree[], base: WorktreeBase): Promise<{ ref: string; label: string; source: WorktreeInspection['baseSource'] }> {
@@ -121,16 +155,16 @@ export async function inspectWorktree(repo: string, path: string, branch: string
     const main = listed[0]?.path === path || path === repo, missing = Boolean(entry.prunable) || await folderMissing(path);
     const result: WorktreeInspection = {
         main, locked: Boolean(entry.locked), missing, onBranch: entry.branch === branch, elsewhere: listed.some(item => item !== entry && item.branch === branch),
-        matchesRepo: true, changed: 0, untracked: 0, ignored: 0, commits: 0, base: '', baseSource: 'recorded', fingerprint: '',
+        matchesRepo: true, changed: 0, untracked: 0, ignored: 0, repos: 0, commits: 0, base: '', baseSource: 'recorded', fingerprint: '',
     };
     if (main) return result;
     let raw = '';
     if (!missing) {
         const [own, original] = await Promise.all([identity(path).catch(() => null), identity(repo)]);
-        result.matchesRepo = own !== null && own.top === path && own.common === original.common;
+        result.matchesRepo = own !== null && own.top === path && own.common === original.common && await ownsAdminDir(path, own.gitDir);
         if (!result.matchesRepo) return result;
         const found = await changes(path);
-        result.changed = found.changed; result.untracked = found.untracked; result.ignored = found.ignored; raw = found.raw;
+        result.changed = found.changed; result.untracked = found.untracked; result.ignored = found.ignored; result.repos = found.repos; raw = found.raw;
     }
     const resolved = await resolveBase(repo, listed, base);
     result.base = resolved.label; result.baseSource = resolved.source;
@@ -141,7 +175,9 @@ export async function inspectWorktree(repo: string, path: string, branch: string
 // Deletion argv (architecture S14). Plain remove and -d let git refuse dirty trees and unmerged branches by itself;
 // the forced pair is called only after the user typed the branch name for the exact loss they were shown.
 function deletable(path: string): void { if (!isSafeAbsolutePath(path)) throw new GitError('Worktree remove failed'); }
-export async function removeWorktree(repo: string, path: string): Promise<void> { deletable(path); await run(repo, ['worktree', 'remove', '--', path], 'Worktree remove failed'); }
-export async function forceRemoveWorktree(repo: string, path: string): Promise<void> { deletable(path); await run(repo, ['worktree', 'remove', '--force', '--', path], 'Worktree remove failed'); }
+// A large tree takes a while to delete; a timeout part way through would leave it half removed.
+const REMOVE_TIMEOUT = 300_000;
+export async function removeWorktree(repo: string, path: string): Promise<void> { deletable(path); await run(repo, ['worktree', 'remove', '--', path], 'Worktree remove failed', { timeout: REMOVE_TIMEOUT }); }
+export async function forceRemoveWorktree(repo: string, path: string): Promise<void> { deletable(path); await run(repo, ['worktree', 'remove', '--force', '--', path], 'Worktree remove failed', { timeout: REMOVE_TIMEOUT }); }
 export async function deleteBranch(repo: string, branch: string): Promise<void> { if (!isWorktreeBranch(branch)) throw new GitError('Branch delete failed'); await run(repo, ['branch', '-d', '--', branch], 'Branch delete failed'); }
 export async function forceDeleteBranch(repo: string, branch: string): Promise<void> { if (!isWorktreeBranch(branch)) throw new GitError('Branch delete failed'); await run(repo, ['branch', '-D', '--', branch], 'Branch delete failed'); }

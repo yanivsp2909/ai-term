@@ -39,7 +39,7 @@ export interface WorktreeRecord {path:string;branch:string;repo?:string;baseBran
 export type WorktreeRefusal = "Not in AI Term's record" | 'Outside the worktrees folder' | 'Path has a symlink' | 'Original repo unknown' | 'Worktree does not match its repo' |
     'Main checkout is never deleted' | 'Git does not list this worktree' | 'Worktree is not on its ai/ branch' | 'Worktree is locked' | 'Branch is checked out elsewhere' |
     'Stop the agent first' | 'Worktree is busy' | 'Git check failed';
-export interface WorktreeLoss {changed:number;untracked:number;ignored:number;commits:number;base:string;baseSource:'recorded'|'start commit'|'checkout';missing:boolean}
+export interface WorktreeLoss {changed:number;untracked:number;ignored:number;repos:number;commits:number;base:string;baseSource:'recorded'|'start commit'|'checkout';missing:boolean}
 // fingerprint identifies exactly what was shown; a delete must send it back unchanged.
 export interface WorktreeView {path:string;branch?:string;agent?:{id:string;title:string;status:Status};loss?:WorktreeLoss;fingerprint?:string;refusal?:WorktreeRefusal}
 // Ignored files go with any delete but are not counted as loss; a folder already gone has no files left to lose.
