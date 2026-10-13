@@ -4,7 +4,7 @@ import { lstat, mkdir, realpath, readdir, chmod } from 'node:fs/promises';
 import { privateDirectory, isFsError } from '../shared/paths.js';
 import { availableWorktreeSlug, isSafeAbsolutePath, worktreeSlug } from '../shared/validate.js';
 import type { WorktreePreview } from '../shared/protocol.js';
-import { addWorktree, branchNames, checkoutDirty, GitError, headCommit, repoTopLevel } from './git.js';
+import { addWorktree, branchNames, checkoutDirty, currentBranch, GitError, headCommit, repoTopLevel } from './git.js';
 
 const queues = new Map<string, Promise<unknown>>();
 export function repoDirectory(top: string): string {
@@ -34,13 +34,17 @@ async function inspect(root: string, cwd: string, title: string): Promise<Worktr
 export async function previewWorktree(root: string, cwd: string, title: string): Promise<WorktreePreview> {
     const { top: _top, ...preview } = await inspect(root, cwd, title); void _top; return preview;
 }
-export interface WorktreeStart {cwd: string; worktree?: string; branch?: string; worktreeNote?: import('../shared/protocol.js').WorktreeNote}
-// Starts from different socket clients share one reservation queue. No cleanup ever removes a tree or branch.
-export function prepareWorktree(root: string, cwd: string, title: string): Promise<WorktreeStart> {
-    const next = (queues.get(root) ?? Promise.resolve()).then(() => create(root, cwd, title));
+// repo and base are for the daemon's worktree record only; they never become session fields.
+export interface WorktreeStart {cwd: string; worktree?: string; branch?: string; worktreeNote?: import('../shared/protocol.js').WorktreeNote; repo?: string; baseBranch?: string; baseCommit?: string}
+// Starts and deletions from different socket clients share one queue per home, so a slug is never reused mid-deletion.
+export function serialize<T>(root: string, task: () => Promise<T>): Promise<T> {
+    const next = (queues.get(root) ?? Promise.resolve()).then(task);
     const settled = next.then(() => undefined, () => undefined); queues.set(root, settled);
     void settled.then(() => { if (queues.get(root) === settled) queues.delete(root); });
     return next;
+}
+export function prepareWorktree(root: string, cwd: string, title: string): Promise<WorktreeStart> {
+    return serialize(root, () => create(root, cwd, title));
 }
 async function create(root: string, cwd: string, title: string): Promise<WorktreeStart> {
     const plan = await inspect(root, cwd, title);
@@ -52,6 +56,8 @@ async function create(root: string, cwd: string, title: string): Promise<Worktre
         await privateDirectory(worktrees);
         const repo = join(worktrees, repoDirectory(plan.top)); await privateDirectory(repo);
         const used = await occupied(canonical, plan.top);
+        // Read before anything is created, so a failure here never leaves an unrecorded worktree behind.
+        const baseBranch = await currentBranch(plan.top);
         // A concurrent external git process may reserve a branch too. Recheck only collisions; other failures fall back.
         for (let attempt = 0; attempt < 5; attempt++) {
             const slug = availableWorktreeSlug(title, used), branch = `ai/${slug}`, path = join(repo, slug);
@@ -76,7 +82,7 @@ async function create(root: string, cwd: string, title: string): Promise<Worktre
                 await chmod(current, 0o700);
             }
             if (!inside(path, await realpath(target))) throw new Error('Unsafe worktree cwd');
-            return {cwd: target, worktree: path, branch};
+            return {cwd: target, worktree: path, branch, repo: plan.top, baseCommit: plan.head, ...(baseBranch ? {baseBranch} : {})};
         }
     } catch { return {cwd, worktreeNote: 'worktree off: creation failed'}; }
     return {cwd, worktreeNote: 'worktree off: creation failed'};

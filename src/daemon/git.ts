@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { isFsError } from '../shared/paths.js';
-import { isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
+import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
 
 export class GitError extends Error {
     constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed') { super(message); }
@@ -54,6 +54,11 @@ export async function listWorktrees(cwd: string): Promise<GitWorktree[]> {
         return { path, ...(head ? { head } : {}), ...(branch ? { branch } : {}), ...(flag('locked') ? { locked: true } : {}), ...(flag('prunable') ? { prunable: true } : {}) };
     });
 }
+// The branch the checkout at top has now, when it is a plain name; undefined for a detached HEAD.
+export async function currentBranch(top: string): Promise<string | undefined> {
+    const branch = (await listWorktrees(top)).find(entry => entry.path === top)?.branch;
+    return isPlainBranch(branch) ? branch : undefined;
+}
 export async function branchNames(cwd: string): Promise<string[]> {
     return (await run(cwd, ['for-each-ref', '--format=%(refname)', '--', 'refs/heads/'])).trim().split('\n').filter(ref=>ref.startsWith('refs/heads/')).map(ref=>ref.slice(11));
 }
@@ -90,8 +95,6 @@ async function commitsAhead(repo: string, branch: string, base: string): Promise
     if (!match?.[1]) throw new GitError('Git check failed');
     return Number(match[1]);
 }
-// Only plain branch names reach a --format atom, so a stored name can never add or close an atom.
-const SAFE_BRANCH = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/;
 export interface WorktreeBase { branch?: string; commit?: string }
 export interface WorktreeInspection {
     main: boolean; locked: boolean; missing: boolean; onBranch: boolean; elsewhere: boolean; matchesRepo: boolean;
@@ -100,11 +103,11 @@ export interface WorktreeInspection {
 }
 async function resolveBase(repo: string, listed: GitWorktree[], base: WorktreeBase): Promise<{ ref: string; label: string; source: WorktreeInspection['baseSource'] }> {
     const branches = await branchNames(repo), commit = base.commit && COMMIT.test(base.commit) ? base.commit : undefined;
-    if (base.branch && SAFE_BRANCH.test(base.branch) && branches.includes(base.branch)) return { ref: `refs/heads/${base.branch}`, label: base.branch, source: 'recorded' };
+    if (isPlainBranch(base.branch) && branches.includes(base.branch)) return { ref: `refs/heads/${base.branch}`, label: base.branch, source: 'recorded' };
     if (commit) return { ref: commit, label: commit.slice(0, 7), source: base.branch ? 'start commit' : 'recorded' };
     // Older records have no base: compare with what the original checkout has now.
     const current = listed.find(entry => entry.path === repo)?.branch;
-    if (current && SAFE_BRANCH.test(current) && branches.includes(current)) return { ref: `refs/heads/${current}`, label: current, source: 'checkout' };
+    if (isPlainBranch(current) && branches.includes(current)) return { ref: `refs/heads/${current}`, label: current, source: 'checkout' };
     return { ref: 'HEAD', label: 'HEAD', source: 'checkout' };
 }
 async function folderMissing(path: string): Promise<boolean> {

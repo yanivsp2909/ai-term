@@ -8,10 +8,11 @@ import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
-import type { SessionInfo, SessionEvent, TerminalModes, CreateSession, ClaudeStatusEvent } from '../shared/protocol.js';
-import { isUUID, isTitle, isSize, validCwd, validateSession } from '../shared/validate.js';
+import type { SessionInfo, SessionEvent, TerminalModes, CreateSession, ClaudeStatusEvent, WorktreeRecord, WorktreeView } from '../shared/protocol.js';
+import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
-import { prepareWorktree } from './worktrees.js';
+import { prepareWorktree, serialize } from './worktrees.js';
+import { checkWorktree, deleteWorktree, unrecordedFolders, WorktreeError } from './worktree-removal.js';
 import { atomicWrite, readState } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
@@ -45,6 +46,9 @@ export class SessionManager extends EventEmitter {
     private closing = false;
     private warnings = new Map<string, string>();
     private resuming=new Set<string>();
+    // Worktrees AI Term created, by path. A record outlives its agent and goes only when its worktree is deleted.
+    private worktreeRecords=new Map<string,WorktreeRecord>();
+    private busyWorktrees=new Set<string>();
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
@@ -79,7 +83,17 @@ export class SessionManager extends EventEmitter {
             }
             this.sessions.set(info.id, { info, mirror: new Mirror(this.size.cols, this.size.rows, () => { }), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() });
         }
+        this.loadWorktreeRecords('worktrees' in state && Array.isArray(state.worktrees) ? state.worktrees as unknown[] : []);
         await this.persist();
+    }
+    private loadWorktreeRecords(raw: unknown[]): void {
+        for (const entry of raw) {
+            try { const record = validateWorktreeRecord(entry); this.worktreeRecords.set(record.path, record); }
+            catch { this.log.error('Invalid worktree record skipped; that worktree is kept'); }
+        }
+        // v0.3.1 kept worktree metadata only on session records; those become records without repo or base.
+        for (const { info } of this.sessions.values())
+            if (info.worktree && info.branch && !this.worktreeRecords.has(info.worktree)) this.worktreeRecords.set(info.worktree, { path: info.worktree, branch: info.branch, createdAt: info.createdAt });
     }
     list(): SessionInfo[] { return [...this.sessions.values()].map(s => ({ ...s.info })); }
     get(id: string): SessionInfo { const live = this.sessions.get(id); if (!live)
@@ -93,7 +107,7 @@ export class SessionManager extends EventEmitter {
     activeCount(): number { return this.list().filter(s => !['exited','error'].includes(s.status)).length; }
     private event(event: SessionEvent): void { this.emit('event', event); }
     private persist(): Promise<void> {
-        const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: s.info.engine, model: s.info.model, auth: s.info.auth.kind==='key'?{kind:'key',keyId:s.info.auth.keyId}:{ kind: 'account' }, cwd: s.info.cwd, permission: s.info.permission, ...(s.info.effort!==undefined?{effort:s.info.effort}:{}), ...(s.info.conversationId?{conversationId:s.info.conversationId}:{}) } })) };
+        const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: s.info.engine, model: s.info.model, auth: s.info.auth.kind==='key'?{kind:'key',keyId:s.info.auth.keyId}:{ kind: 'account' }, cwd: s.info.cwd, permission: s.info.permission, ...(s.info.effort!==undefined?{effort:s.info.effort}:{}), ...(s.info.conversationId?{conversationId:s.info.conversationId}:{}) } })), worktrees: [...this.worktreeRecords.values()] };
         this.saving = this.saving.then(async () => {
             try { await this.writeState(this.paths.state, data); }
             catch {
@@ -113,8 +127,10 @@ export class SessionManager extends EventEmitter {
         if(saved.conversationId&&this.list().some(s=>s.conversationId===saved.conversationId&&!['exited','error'].includes(s.status)))throw new Error('Conversation already running');
         const identity=saved.conversationId??saved.id;if(this.resuming.has(identity))throw new Error('Conversation already starting');
         const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const};
-        this.resuming.add(identity);
-        try{return await this.create({engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},{...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{})});}finally{this.resuming.delete(identity);}
+        // A resume and a delete of one worktree exclude each other until the other has finished.
+        if(saved.worktree&&this.busyWorktrees.has(saved.worktree))throw new Error('Worktree is busy');
+        this.resuming.add(identity);if(saved.worktree)this.busyWorktrees.add(saved.worktree);
+        try{return await this.create({engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},{...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{})});}finally{this.resuming.delete(identity);if(saved.worktree)this.busyWorktrees.delete(saved.worktree);}
     }
     async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{conversationId?:string;worktree?:string;branch?:string}): Promise<SessionInfo> {
         const cwdValid=await validCwd(request.cwd);
@@ -147,7 +163,10 @@ export class SessionManager extends EventEmitter {
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
             try {
-                if((await new SettingsStore(this.paths.root).get()).worktrees!=='off')Object.assign(info,await prepareWorktree(this.paths.root,request.cwd,info.title));
+                if((await new SettingsStore(this.paths.root).get()).worktrees!=='off'){
+                    const {repo,baseBranch,baseCommit,...start}=await prepareWorktree(this.paths.root,request.cwd,info.title);Object.assign(info,start);
+                    if(start.worktree&&start.branch&&repo)this.worktreeRecords.set(start.worktree,{path:start.worktree,branch:start.branch,repo,...(baseBranch?{baseBranch}:{}),...(baseCommit?{baseCommit}:{}),createdAt:now});
+                }
             } catch { info.worktreeNote='worktree off: git check failed'; }
             if(info.worktreeNote)this.log.info(info.worktreeNote);
         }
@@ -308,6 +327,41 @@ export class SessionManager extends EventEmitter {
     async remove(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
         throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; await removeClaudeSettings(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
+    // A worktree shared by resumed agents belongs to whichever is still live, else the newest record.
+    private worktreeAgent(path:string):SessionInfo|undefined{
+        const agents=[...this.sessions.values()].map(s=>s.info).filter(info=>info.worktree===path);
+        return agents.find(info=>!['exited','error'].includes(info.status))??agents.sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];
+    }
+    private async viewWorktree(record:WorktreeRecord):Promise<WorktreeView>{
+        const {view}=await checkWorktree(this.paths.root,record,this.worktreeAgent(record.path),this.busyWorktrees.has(record.path));
+        if(view.refusal==='Git check failed')this.log.error('Worktree check failed');
+        return view;
+    }
+    async worktreeViews():Promise<WorktreeView[]>{
+        const views:WorktreeView[]=[];
+        for(const record of this.worktreeRecords.values())views.push(await this.viewWorktree(record));
+        for(const path of await unrecordedFolders(this.paths.root,new Set(this.worktreeRecords.keys())))views.push({path,refusal:"Not in AI Term's record"});
+        return views;
+    }
+    async checkWorktree(path:string):Promise<WorktreeView>{
+        const record=this.worktreeRecords.get(path);
+        return record?this.viewWorktree(record):{path,refusal:"Not in AI Term's record"};
+    }
+    async deleteWorktree(path:string,fingerprint:string,confirm?:string):Promise<void>{
+        const record=this.worktreeRecords.get(path);
+        if(!record)throw new WorktreeError("Not in AI Term's record");
+        if(this.busyWorktrees.has(path))throw new WorktreeError('Worktree is busy');
+        this.busyWorktrees.add(path);
+        try{
+            // The agent is read inside the queue, so a start or resume that finished first is seen.
+            await serialize(this.paths.root,()=>deleteWorktree(this.paths.root,record,this.worktreeAgent(path),{fingerprint,...(confirm?{confirm}:{})}));
+            this.worktreeRecords.delete(path);
+        }catch(error){
+            // The worktree itself is gone once its step succeeded; the kept branch stays in git for the user.
+            if(error instanceof WorktreeError&&error.message==='Worktree removed; branch delete failed')this.worktreeRecords.delete(path);
+            throw error;
+        }finally{this.busyWorktrees.delete(path);await this.persist();}
+    }
     async rename(id: string, title: string): Promise<SessionInfo> { const live = this.sessions.get(id); if (!live || !isTitle(title))
         throw new Error('Invalid session or title'); live.info.title = title; await this.persist(); this.event({ kind: 'session.updated', session: { ...live.info } }); return { ...live.info }; }
     async previewSize(cols: number, rows: number): Promise<void> { if (!isSize(cols, rows))

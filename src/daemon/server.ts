@@ -3,6 +3,7 @@ import type { Paths } from '../shared/paths.js';
 import { listenPrivate, closePrivate, type SocketIdentity } from './private-socket.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type NotifierState,type NotificationAuthorization, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
 import { previewWorktree } from './worktrees.js';
+import { WORKTREE_DELETE_ERRORS } from './worktree-removal.js';
 import { activateTerminal } from './terminal-activate.js';
 import type { TerminalBundle } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
@@ -217,6 +218,16 @@ export class DaemonServer {
                 case 'worktrees.preview':
                     this.control(peer,{id:request.id,ok:true,worktreePreview:(await this.settings.get()).worktrees==='off'?{}:await previewWorktree(this.paths.root,request.cwd,request.title)});
                     break;
+                case 'worktrees.list':
+                    this.control(peer,{id:request.id,ok:true,worktrees:await this.manager.worktreeViews()});
+                    break;
+                case 'worktrees.check':
+                    this.control(peer,{id:request.id,ok:true,worktree:await this.manager.checkWorktree(request.path)});
+                    break;
+                case 'worktrees.delete':
+                    await this.manager.deleteWorktree(request.path,request.fingerprint,request.confirm);
+                    this.control(peer,{id:request.id,ok:true,deletedWorktree:request.path});
+                    break;
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
@@ -298,7 +309,7 @@ export class DaemonServer {
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
-                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS
+                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...WORKTREE_DELETE_ERRORS
             ]);
             const message = error instanceof Error && (fixed.has(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.

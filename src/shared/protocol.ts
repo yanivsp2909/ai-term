@@ -34,6 +34,14 @@ export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelP
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
+// The daemon's own record of a worktree it created; it outlives the agent. Older v0.3.1 records lack repo and base.
+export interface WorktreeRecord {path:string;branch:string;repo?:string;baseBranch?:string;baseCommit?:string;createdAt:string}
+export type WorktreeRefusal = "Not in AI Term's record" | 'Outside the worktrees folder' | 'Path has a symlink' | 'Original repo unknown' | 'Worktree does not match its repo' |
+    'Main checkout is never deleted' | 'Git does not list this worktree' | 'Worktree is not on its ai/ branch' | 'Worktree is locked' | 'Branch is checked out elsewhere' |
+    'Stop the agent first' | 'Worktree is busy' | 'Git check failed';
+export interface WorktreeLoss {changed:number;untracked:number;ignored:number;commits:number;base:string;baseSource:'recorded'|'start commit'|'checkout';missing:boolean}
+// fingerprint identifies exactly what was shown; a delete must send it back unchanged.
+export interface WorktreeView {path:string;branch?:string;agent?:{id:string;title:string;status:Status};loss?:WorktreeLoss;fingerprint?:string;refusal?:WorktreeRefusal}
 export type TerminalBundle = 'com.apple.Terminal' | 'com.googlecode.iterm2' | 'com.mitchellh.ghostty' | 'com.github.wez.wezterm';
 export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; effort?:Effort|null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean };
 export interface SessionInfo {
@@ -90,6 +98,8 @@ export type Request = {
   | { kind: 'keys.scanEnvFile'; path: string }
   | { kind: 'keys.importEnv'; path: string; names: string[] }
   | {kind:'worktrees.preview';cwd:string;title:string}
+  | {kind:'worktrees.list'} | {kind:'worktrees.check';path:string}
+  | {kind:'worktrees.delete';path:string;fingerprint:string;confirm?:string}
   | ({ kind: 'sessions.create' } & CreateSession) | {
     kind: 'sessions.preview';
     sessionId: string | null;
@@ -136,6 +146,9 @@ export interface SuccessResponse {
     usage?:UsageSummary;usageDiagnostics?:UsageDiagnostics;
     worktreePreview?: WorktreePreview;
     keptWorktree?: string;
+    worktrees?: WorktreeView[];
+    worktree?: WorktreeView;
+    deletedWorktree?: string;
     settings?: Settings;
     engines?: EnginesStatus;
     notifier?: NotifierState;

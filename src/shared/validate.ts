@@ -80,6 +80,11 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['cwd','title'];
             if(!(await validCwd(v.cwd))||!isTitle(v.title))throw new ValidationError('Invalid worktree preview');
             break;
+        case 'worktrees.list': fields=[]; break;
+        case 'worktrees.check': case 'worktrees.delete':
+            fields=v.kind==='worktrees.check'?['path']:['path','fingerprint','confirm'];
+            if(!isSafeAbsolutePath(v.path)||v.kind==='worktrees.delete'&&(!isFingerprint(v.fingerprint)||v.confirm!==undefined&&!isWorktreeBranch(v.confirm)))throw new ValidationError('Invalid worktree request');
+            break;
         case 'sessions.create':
             fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
@@ -144,6 +149,9 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.found!==undefined){if(!Array.isArray(v.found)||v.found.some(f=>!f||typeof f!=='object'||Object.keys(f).some(k=>!['name','provider'].includes(k))||!Object.hasOwn(ENV_KEY_NAMES,String(f.name))||ENV_KEY_NAMES[f.name as string]!==f.provider))throw new ValidationError('Invalid env names');}
     if(v.worktreePreview!==undefined)validateWorktreePreview(v.worktreePreview);
     if(v.keptWorktree!==undefined&&!isSafeAbsolutePath(v.keptWorktree))throw new ValidationError('Invalid kept worktree');
+    if(v.deletedWorktree!==undefined&&!isSafeAbsolutePath(v.deletedWorktree))throw new ValidationError('Invalid deleted worktree');
+    if(v.worktree!==undefined)validateWorktreeView(v.worktree);
+    if(v.worktrees!==undefined){if(!Array.isArray(v.worktrees)||v.worktrees.length>500)throw new ValidationError('Invalid worktrees');v.worktrees.forEach(validateWorktreeView);}
     if(v.settings!==undefined)validateSettings(v.settings);
     if(v.engines!==undefined) { if (!v.engines || typeof v.engines !== 'object' || !('claudeCode' in v.engines) || !('codex' in v.engines)) throw new ValidationError('Invalid engines status'); validateEngineStatus(v.engines.claudeCode); validateEngineStatus(v.engines.codex); }
     if(v.notifier!==undefined&&!['ready','not built','launch failed'].includes(String(v.notifier)))throw new ValidationError('Invalid notifier state');
@@ -337,3 +345,26 @@ export function validateWorktreePreview(value:unknown):import('./protocol.js').W
  return v as import('./protocol.js').WorktreePreview;
 }
 export function isTerminalBundle(value:unknown):value is import('./protocol.js').TerminalBundle{return typeof value==='string'&&['com.apple.Terminal','com.googlecode.iterm2','com.mitchellh.ghostty','com.github.wez.wezterm'].includes(value);}
+// Only plain branch names are stored or put into a git --format atom, so a name can never add or close an atom.
+export function isPlainBranch(value:unknown):value is string{return typeof value==='string'&&/^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/.test(value);}
+const COMMIT_ID=/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+export function isFingerprint(value:unknown):value is string{return typeof value==='string'&&/^[0-9a-f]{64}$/.test(value);}
+const WORKTREE_REFUSALS=["Not in AI Term's record",'Outside the worktrees folder','Path has a symlink','Original repo unknown','Worktree does not match its repo','Main checkout is never deleted','Git does not list this worktree','Worktree is not on its ai/ branch','Worktree is locked','Branch is checked out elsewhere','Stop the agent first','Worktree is busy','Git check failed'];
+const count=(n:unknown)=>Number.isSafeInteger(n)&&Number(n)>=0;
+// Records come from state.json, which only the daemon writes; still, a malformed one must never steer a deletion.
+export function validateWorktreeRecord(value:unknown):import('./protocol.js').WorktreeRecord{
+ if(!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid worktree record');
+ const v=value as Record<string,unknown>;
+ if(Object.keys(v).some(k=>!['path','branch','repo','baseBranch','baseCommit','createdAt'].includes(k))||!isSafeAbsolutePath(v.path)||!isWorktreeBranch(v.branch)||v.repo!==undefined&&!isSafeAbsolutePath(v.repo)||
+  v.baseBranch!==undefined&&!isPlainBranch(v.baseBranch)||v.baseCommit!==undefined&&(typeof v.baseCommit!=='string'||!COMMIT_ID.test(v.baseCommit))||
+  typeof v.createdAt!=='string'||!Number.isFinite(Date.parse(v.createdAt)))throw new ValidationError('Invalid worktree record');
+ return v as unknown as import('./protocol.js').WorktreeRecord;
+}
+export function validateWorktreeView(value:unknown):import('./protocol.js').WorktreeView{
+ if(!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid worktree view');
+ const v=value as Record<string,unknown>,agent=v.agent as Record<string,unknown>|undefined,loss=v.loss as Record<string,unknown>|undefined;
+ if(Object.keys(v).some(k=>!['path','branch','agent','loss','fingerprint','refusal'].includes(k))||!isSafeAbsolutePath(v.path)||v.branch!==undefined&&!isWorktreeBranch(v.branch)||v.fingerprint!==undefined&&!isFingerprint(v.fingerprint)||v.refusal!==undefined&&!WORKTREE_REFUSALS.includes(String(v.refusal))||
+  agent!==undefined&&(!agent||typeof agent!=='object'||Object.keys(agent).some(k=>!['id','title','status'].includes(k))||!isUUID(agent.id)||!isTitle(agent.title)||!['starting','running','waiting','done','exited','error'].includes(String(agent.status)))||
+  loss!==undefined&&(!loss||typeof loss!=='object'||Object.keys(loss).some(k=>!['changed','untracked','ignored','commits','base','baseSource','missing'].includes(k))||!count(loss.changed)||!count(loss.untracked)||!count(loss.ignored)||!count(loss.commits)||typeof loss.base!=='string'||!/^[A-Za-z0-9._/-]{1,200}$/.test(loss.base)||!['recorded','start commit','checkout'].includes(String(loss.baseSource))||typeof loss.missing!=='boolean'))throw new ValidationError('Invalid worktree view');
+ return v as unknown as import('./protocol.js').WorktreeView;
+}
