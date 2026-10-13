@@ -44,3 +44,6 @@ it('a terminal with one row uses raw because a bar leaves no agent rows',async()
 it('lone Escape reaches a mouse-enabled bar session after the existing ambiguity timeout',async()=>{
  const tty=new TTY(),connection=new Connection(),done=attach(connection,id,{stdin:tty,stdout:tty,signals:new EventEmitter(),bar:'on'});await tick();connection.sent.length=0;tty.emit('data',Buffer.from([27]));await new Promise(r=>setTimeout(r,45));expect(Buffer.concat(connection.sent)).toEqual(Buffer.from([27]));tty.emit('data',Buffer.from([5]));await done;
 });
+it('probe output errors restore raw mode and return an attach error rather than leaving terminal state behind',async()=>{
+ const tty=new TTY(),connection=new Connection();tty.write=()=>{throw new Error('probe output failed');};await expect(attach(connection,id,{stdin:tty,stdout:tty,signals:new EventEmitter(),bar:'on'})).rejects.toThrow('probe output failed');expect(tty.isRaw).toBe(false);
+});
