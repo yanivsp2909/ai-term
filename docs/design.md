@@ -110,7 +110,7 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 - **Card** (3 lines, 1 blank cell of padding):
   - Logo badge: 4 cols × 2 rows, surface-2 fill, two bold letters (CL Claude, GP GPT, KI Kimi, GR Grok, DS DeepSeek, GL GLM). The badges stay in the app too: no real provider logos without written permission (D51).
   - Line 1: name (bold when selected), right-aligned status glyph + word + age (`4m`, `2h`, `3d`).
-  - Line 2: `model · engine` (ink-2), right-aligned `ctx NN%` (ink-3; status-waiting from 85%). ctx appears only when the engine reports it (v0.2+).
+  - Line 2: `model · engine · ai/<slug>` (ink-2; branch drops before model at narrow widths), right-aligned `ctx NN%` (ink-3; status-waiting from 85%). ctx appears only when the engine reports it (v0.2+).
   - Line 3, auth for Claude/Codex: `own login · sub`, `own login · API key`, `own login`, or `API key ····last4`. Their status word stays on line 1; a red `!` marks Don't ask, with its full word in the selected preview title. Debug shell cards keep their existing activity line. Later activity details follow:
     - waiting: the question in status-waiting
     - running: the last activity in ink-3 (v0.1 shows the task you typed; live activity from v0.2)
@@ -158,6 +158,7 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 - **Box:** surface fill, accent border, title `Start a new agent`. Rows: model (+ `/model`), folder (+ `/cd`), branch (`auto` from v0.3), mode (`ask` → `auto` → `don't ask` for Claude; Codex `ask` ↔ `don't ask`; Don't ask shown in status-error with `!`), effort (`CLI default` or the selected CLI's documented level), first message ("your text above is its first message").
 - **Keys:** ↑↓ selects rows; m model, c folder, e effort; Tab cycles the available modes. ⏎ starts, Esc returns to editing. Mode is per session and resets to Ask after start/cancel.
 - **First-message row:** paste tokens carry over from the command bar and can be inserted here too. Show the token plus its first line, clipped by the row width; never flatten or truncate its stored contents. Esc restores the draft with tokens intact.
+- **Worktree preview (v0.3.1):** one quiet line `new worktree · ai/<slug> from <short HEAD>`; dirty checkouts add `uncommitted changes in your checkout aren't included`. The preview is read-only; the start rechecks branch/path availability.
 - **After starting:** the new agent is selected and the preview shows it starting.
 
 ### /model picker
@@ -175,7 +176,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - **Popup** with sections:
   - **KEYS** (OS keychain): label, endpoint, `key ····last4`, plus `+ add key` (paste, or import from .env).
   - **ENGINES:** Claude Code / Codex, each with `✓ installed` and `✓ logged in` (or `✗ not logged in` with `/login`).
-  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget, notifications (`on`/`off`, n toggles; default on), attached bar (`off`/`on`, h toggles; default off, applies at next attach). Permissions remain Ask-only as saved defaults. The notifications row adds permission words: `on · allowed`, `on · blocked: turn on AI Term in System Settings → Notifications`, `on · not asked yet: you'll be asked at the first notification`, or `on · permission unknown`. If notifications can't be sent, a fixed `notifications unavailable: …` line follows.
+  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget, notifications (`on`/`off`, n toggles; default on), worktrees (`on`/`off`, w toggles; default on), attached bar (`off`/`on`, h toggles; default off, applies at next attach). Permissions remain Ask-only as saved defaults. The notifications row adds permission words: `on · allowed`, `on · blocked: turn on AI Term in System Settings → Notifications`, `on · not asked yet: you'll be asked at the first notification`, or `on · permission unknown`. If notifications can't be sent, a fixed `notifications unavailable: …` line follows.
 - **Footer:** `keys are never shown in full and never written to .env`.
 
 ### /login
@@ -210,10 +211,10 @@ A path field with completion. It sets the folder for the next agent only. A fold
 
 - **v0.1, full screen:** AI Term draws nothing; the agent owns every cell. **Ctrl+E** goes to the homepage and the agent keeps running.
 - **v0.2, frame bar:** one row on top, surface background.
-  - **Left:** status glyph + word + name (bold) + `engine · model`. Branch is deferred until worktrees (v0.3).
+  - **Left:** status glyph + word + name (bold) + `engine · model`. Worktree agents append `· ai/<slug>`.
   - **Right:** `others ◐ 2  ✓ 1  ✗ 1` + `^E home`.
   - Opt-in with `/settings` → `bar: on` (`h`); default off while the Terminal.app spike exit remains unexplained. Off is full-height raw passthrough. Failed startup probe falls back to raw for that attach.
-  - The agent gets one row less and follows terminal resizes. Counts drop first at narrow widths, then model; glyph and status word remain. Nothing animates; redraw only when text/cells change.
+  - The agent gets one row less and follows terminal resizes. Counts drop first at narrow widths, then branch, then model; glyph and status word remain. Nothing animates; redraw only when text/cells change.
 - **v0.3, splits:** panes side by side, each with a one-row header (glyph, name, model, branch); the focused pane's header is surface-2 with an accent underline. The bottom row shows `each pane is its own agent in its own worktree` and the pane keys.
 
 ## Keyboard (homepage)

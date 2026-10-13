@@ -37,7 +37,7 @@ Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source
 | `ai daemon stop` | Stop the background service and all its sessions |
 | `ai debug stats` | Print ten one-second numeric RAM/CPU diagnostics; no daemon connection; a closed output pipe exits quietly |
 | `ai debug usage` | Ask the running daemon for its receiver port and last ten minutes of allowlisted numeric telemetry; never headers, credentials or bodies |
-| `ai debug ls` | List session IDs, status, statusDetail, ctx=<used% or ?> and title (Claude and Codex agents) |
+| `ai debug ls` | List session IDs, status, statusDetail, ctx=<used% or ?>, title and `· ai/<slug>` branch (Claude and Codex agents) |
 | `ai debug shell [cwd]` | Create a debug shell in the folder (current folder if omitted) |
 | `ai debug attach <id>` | Attach directly; Ctrl+E returns to the shell |
 | `ai debug stop <id>` | Stop one session |
@@ -57,7 +57,7 @@ Homepage slash commands:
 | `/shell` | Start a plain login shell in the /cd folder |
 | `/copy` | Copy the agent's last reply (Claude Stop hook, Codex notify) when present; otherwise cleaned whole session with the fallback note |
 | `/copy all` | Copy cleaned selected-agent scrollback and screen; up to 5 MiB, oldest content cut if needed |
-| `/clean` | Confirm y/n before removing all exited/failed list records; reports removed/failed counts and first failure; running agents and files untouched |
+| `/clean` | Confirm y/n before removing all exited/failed list records; reports removed/failed counts and first failure; running agents and files untouched; worktree paths are reported as kept |
 | `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
 | `/theme graphite\|slate\|ink\|auto\|light` | Save the theme |
 | `/exit` | Quit client; sessions keep running |
@@ -72,7 +72,7 @@ Homepage slash commands:
 | `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
-| `x` | Empty field removes an exited/failed session |
+| `x` | Empty field removes an exited/failed session; its worktree and branch are kept, with `worktree kept: <path>` shown once |
 | PgUp / PgDn / End | Preview scroll / follow live (End only while the command field is empty) |
 | Mouse wheel / drag-release | Preview scroll / copy selection; a click alone does not copy |
 | Esc | Close popup; in the command field drop a selection first, then clear the field; discards masked key input |
@@ -89,6 +89,7 @@ Homepage slash commands:
 | Ctrl+E | Inside session returns home, keeping session running; inside pasted text it is pasted |
 | SIGTERM / SIGHUP / SIGQUIT | Client cleanup and exit 143 / 129 / 131; sessions keep running |
 | Start box ↑↓ / `m` / `c` / `e` / Tab / Enter | Select row / model / folder / effort / cycle Ask → auto → Don't ask (Claude) or Ask ↔ Don't ask (Codex) / start |
+| Start box worktree line | `new worktree · ai/<slug> from <short HEAD>`; a dirty checkout adds `uncommitted changes in your checkout aren't included` |
 | Start box message row | Type/paste to edit first message; multiline or over 200 chars becomes `[pasted · N lines]` |
 | Model picker ←→ / ↑↓ / Enter / Esc | Switch provider tab (Tab also goes right) / choose model / select / back; typing searches all tabs |
 | Effort or mode picker ↑↓ / Tab / Enter / Esc | Select / cycle / apply / back; CLI default effort passes nothing |
@@ -100,13 +101,14 @@ Homepage slash commands:
 | `/settings` ↑↓ / Enter / `x` / `t` | Select key/action/default row / activate (key row tests) / remove selected key / test |
 | `/settings` `d` / `f` / `e` / Tab | Save default model+engine / folder / effort / cycle theme; permission default is always Ask |
 | `/settings` `n` or notifications row Enter | Turn macOS notifications on or off (default on; saved with the other settings). If the helper is missing or failed to launch, the panel says `notifications unavailable: …` |
+| `/settings` `w` or worktrees row Enter | Toggle `worktrees: on` / `off` (default on); applies to new agents |
 | `/settings` `h` or bar row Enter | Toggle `bar: off` / `on` (default off); takes effect on the next attach |
 | `/settings` `p` or price row Enter | Foundry deployment price override: deployment, input and output USD per 1M; ↑↓ fields, Enter saves, Esc cancels |
 | Import names ↑↓ / Space / Enter | Select name / toggle inclusion / import chosen keys |
 
 Claude effort: `CLI default`, `low`, `medium`, `high`, `xhigh`, `max`. Codex effort: `CLI default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`, `persistent`. These are CLI-supported values; individual models may accept fewer. `/settings` can save effort. Mode is per session and resets to Ask after start/cancel; auto and Don't ask cannot be saved as defaults. Older Claude records without a conversation UUID show a note instead of resuming.
 
-The attached bar is opt-in: `/settings` → `bar: on` (`h`). It uses one surface row for glyph + status word, bold name, engine/model, others’ counts and `^E home`; the agent gets the rows below. At narrow widths counts drop first, then model. Nothing animates. `bar: off` uses the original full-height raw passthrough. A failed startup probe uses raw for that attach and logs once. Redraw keeps link text but loses OSC 8 targets, curly/colored underlines and inline images. The Terminal.app spike’s clean vim exit is still unexplained; leave the default off until the trace and feel checks below are understood.
+The attached bar is opt-in: `/settings` → `bar: on` (`h`). It uses one surface row for glyph + status word, bold name, engine/model, `· ai/<slug>` branch, others’ counts and `^E home`; the agent gets the rows below. At narrow widths counts drop first, then branch, then model. Nothing animates. `bar: off` uses the original full-height raw passthrough. A failed startup probe uses raw for that attach and logs once. Redraw keeps link text but loses OSC 8 targets, curly/colored underlines and inline images. The Terminal.app spike’s clean vim exit is still unexplained; leave the default off until the trace and feel checks below are understood.
 
 Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
 
@@ -124,11 +126,15 @@ Codex agent sessions, including subscriptions, get status through argv only; not
 
 Notifications (v0.2.4b, macOS): with sound, titled "AI Term", body `<agent name> · waiting: permission|question|turn failed` or `<agent name> · done`. Waiting always notifies; done only when no `ai` client is attached to that agent; once per change. The body never carries prompts, replies, tool input, error text or paths. The first one asks for permission (Allow). `/settings` shows `on · allowed`, `on · blocked: turn on AI Term in System Settings → Notifications`, `on · not asked yet: you'll be asked at the first notification`, or `on · permission unknown`. Authorization is read without prompting at daemon start, when settings opens, and at most once a minute, then cached; blocked permission suppresses helper launches and logs once. Direct and Launch Services status reads both returned denied on this Mac; a failed or unverified read reports unknown. Turn them off with `n` in `/settings`.
 
-Clicking a notification (v0.2.7) opens that agent. With an `ai` homepage open, it selects the agent there (Enter attaches, as always; if you're inside another agent, it is selected when you go home). With no `ai` open, a new Terminal window opens running `ai --attach <id>`. A click for a removed or finished agent does nothing (the daemon logs it). The click never sends text to an agent or approves anything. It doesn't bring your terminal window forward: that would need Automation permission, which AI Term doesn't ask for. Terminal's own preferences decide whether it opens a window or a tab. Rebuild the helper (`npm run build:notifier`) and restart the daemon to get clicks. The daemon launches the helper with `/usr/bin/open -n -g -a <helper> --args …` and never waits on it; a missing or failing helper is logged once and shown in `/settings`. Focus and Do Not Disturb apply as usual.
+Clicking a notification (v0.2.7) opens that agent. With an `ai` homepage open, it selects the agent there (Enter attaches, as always; if you're inside another agent, it is selected when you go home). With no `ai` open, a new Terminal window opens running `ai --attach <id>`. A click for a removed or finished agent does nothing (the daemon logs it). The click never sends text to an agent or approves anything. For known terminals (Terminal.app, iTerm2, Ghostty, WezTerm), the daemon activates the app with `/usr/bin/open -b <fixed bundle id>`, and the client writes `CSI 5 t` to raise its own window. This uses Launch Services without AppleScript or Automation permission. Window raising depends on terminal support; Terminal.app needs a manual replay on this machine. An unknown `TERM_PROGRAM` selects only and notes `selected <name> from a notification`. Terminal's own preferences decide whether it opens a window or a tab. Rebuild the helper (`npm run build:notifier`) and restart the daemon to get clicks. The daemon launches the helper with `/usr/bin/open -n -g -a <helper> --args …` and never waits on it; a missing or failing helper is logged once and shown in `/settings`. Focus and Do Not Disturb apply as usual.
 
 Native Keychain tests are opt-in: `AITERM_NATIVE_KEYCHAIN_TEST=1 npm test -- tests/keys-store.test.ts`. Normal `npm test` skips only those two native tests and prints the reason; fake-vault tests still run.
 
 The bundled price snapshot is trimmed from Models.dev to Anthropic, OpenAI and Azure. To regenerate after an intentional download: `curl -q --fail https://models.dev/api.json -o /tmp/ai-term-models.json`, then `npx tsx scripts/update-prices.ts /tmp/ai-term-models.json`.
+
+New AI agents in a git repository start on their own `ai/<slug>` branch and worktree by default. Worktrees live at `~/.ai-term/worktrees/<repo-name>-<10-character path hash>/<slug>`, outside your checkout; the agent uses the same relative subfolder selected with `/cd`. The start box previews the branch and source HEAD. Only committed HEAD content is included: dirty and untracked files stay in your checkout, and gitignored files such as `node_modules` and `.env` are absent. Install dependencies or configure local files inside the new worktree as needed; AI Term does not copy them. Claude Code and Codex may ask to trust each new folder (not tested with real logins in this step).
+
+`/settings` → `worktrees: off` (`w`) starts new agents in `/cd` directly. Non-repositories, repositories without commits and git failures also start in place, with a fixed one-line reason on the card. Plain `/shell` and login sessions stay in `/cd`. `/resume` reuses the finished agent's saved worktree. `x` and `/clean` remove list records only, keeping every worktree and branch; deletion is a later step.
 
 ## Docs
 - `AGENTS.md`: rules for every coding agent working here
