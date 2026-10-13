@@ -51,7 +51,7 @@ export class BodyRenderer {
     this.valid = false; this.cursor = '';
   }
   // Returns the escape string for every changed cell plus the cursor, or '' when nothing changed.
-  frame(): string {
+  frame(forceCursor=false): string {
     const buffer = this.term.buffer.active, cols = this.term.cols, rows = this.term.rows;
     let out = '', lastStyle = '';
     for (let y = 0; y < rows; y++) {
@@ -78,7 +78,7 @@ export class BodyRenderer {
     }
     this.valid = true;
     const cursor = `\x1b[${buffer.cursorY + 1 + this.top};${Math.min(buffer.cursorX, cols - 1) + 1}H${this.cursorVisible ? '\x1b[?25h' : ''}`;
-    if (!out && cursor === this.cursor) return '';
+    if (!out && cursor === this.cursor && !forceCursor) return '';
     this.cursor = cursor;
     // Hide the cursor while painting: terminals without synchronized output (Terminal.app) would
     // otherwise show it jumping across the changed cells.

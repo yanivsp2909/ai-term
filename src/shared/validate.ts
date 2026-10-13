@@ -148,6 +148,10 @@ export function validateModes(value:unknown):import('./protocol.js').TerminalMod
     const m=value as Record<string,unknown>;
     for(const key of ['applicationCursorKeys','applicationKeypad','bracketedPaste','focusEvents','cursorVisible'])if(typeof m[key]!=='boolean')throw new ValidationError('Invalid terminal modes');
     if(!['none','x10','vt200','drag','any'].includes(String(m.mouseTracking))||!['default','utf8','sgr','urxvt'].includes(String(m.mouseEncoding)))throw new ValidationError('Invalid terminal modes');
+    if(m.cursorShape!==undefined&&(!Number.isInteger(m.cursorShape)||Number(m.cursorShape)<0||Number(m.cursorShape)>6))throw new ValidationError('Invalid cursor shape');
+    if(m.title!==undefined&&(typeof m.title!=='string'||m.title.length>1024||/[\p{C}\p{Zl}\p{Zp}]/u.test(m.title)))throw new ValidationError('Invalid terminal title');
+    if(m.kittyFlags!==undefined&&(!Array.isArray(m.kittyFlags)||m.kittyFlags.length<1||m.kittyFlags.length>64||m.kittyFlags.some(v=>!Number.isInteger(v)||v<0||v>31)))throw new ValidationError('Invalid kitty flags');
+    if(m.themeReports!==undefined&&typeof m.themeReports!=='boolean')throw new ValidationError('Invalid theme reports');
     return m as unknown as import('./protocol.js').TerminalModes;
 }
 

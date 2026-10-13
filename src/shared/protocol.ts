@@ -154,6 +154,7 @@ export interface TerminalModes {
     applicationCursorKeys:boolean; applicationKeypad:boolean; bracketedPaste:boolean;
     mouseTracking:'none'|'x10'|'vt200'|'drag'|'any';
     mouseEncoding:'default'|'utf8'|'sgr'|'urxvt'; focusEvents:boolean; cursorVisible:boolean;
+    cursorShape?:number;title?:string;kittyFlags?:number[];themeReports?:boolean;
 }
 export type SessionEvent = {
     kind: 'daemon.warning'; text: string;

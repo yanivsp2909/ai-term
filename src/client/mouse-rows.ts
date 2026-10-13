@@ -32,27 +32,42 @@ export class MouseRewriter {
     const data = this.carry.length ? Buffer.concat([this.carry, chunk]) : chunk;
     this.carry = Buffer.alloc(0);
     if (!tracking) return data;
-    // Bracketed paste content is text, never a mouse report.
-    const text = data.toString('latin1');
-    if (this.paste || text.includes(PASTE_START)) return this.passPaste(data, text);
-    if (encoding === 'sgr') return Buffer.from(text.replace(SGR, (_all, b: string, x: string, y: string, final: string) => {
-      const row = this.shift(Number(b), Number(y), final === 'm');
-      if (row === null) { this.dropped++; return ''; }
-      return `\x1b[<${b};${x};${row}${final}`;
-    }), 'latin1');
-    if (encoding === 'urxvt') return Buffer.from(text.replace(URXVT, (_all, b: string, x: string, y: string) => {
-      const button = Number(b) - 32, row = this.shift(button, Number(y), (button & 3) === 3);
-      if (row === null) { this.dropped++; return ''; }
-      return `\x1b[${b};${x};${row}M`;
-    }), 'latin1');
-    return this.legacy(data, encoding === 'utf8');
+    const result:Buffer[]=[];let at=0;
+    while(at<data.length){
+      if(this.paste){
+        const end=data.indexOf(PASTE_END,at);
+        if(end>=0){result.push(data.subarray(at,end+PASTE_END.length));at=end+PASTE_END.length;this.paste=false;continue;}
+        let suffix=0;
+        for(let n=1;n<PASTE_END.length&&n<=data.length-at;n++)if(data.subarray(data.length-n).equals(Buffer.from(PASTE_END.slice(0,n))))suffix=n;
+        result.push(data.subarray(at,data.length-suffix));this.carry=data.subarray(data.length-suffix);break;
+      }
+      if(data[at]!==27){result.push(data.subarray(at,at+1));at++;continue;}
+      const text=data.subarray(at).toString('latin1');
+      if(PASTE_START.startsWith(text)||'\x1b[M'.startsWith(text)||encoding==='sgr'&&'\x1b[<'.startsWith(text)||encoding==='urxvt'&&text==='\x1b['){this.carry=data.subarray(at);break;}
+      if(text.startsWith(PASTE_START)){result.push(data.subarray(at,at+PASTE_START.length));at+=PASTE_START.length;this.paste=true;continue;}
+      if((encoding==='default'||encoding==='utf8')&&text.startsWith('\x1b[M')){
+        let end=at+3,count=0;
+        while(count<3&&end<data.length){const first=data[end]??0;end+=encoding==='utf8'&&first>=0xc0?2:1;count++;}
+        if(count<3||end>data.length){this.carry=data.subarray(at);break;}
+        result.push(this.legacy(data.subarray(at,end),encoding==='utf8'));at=end;continue;
+      }
+      const pattern=encoding==='sgr'?SGR:URXVT;pattern.lastIndex=0;
+      // eslint-disable-next-line no-restricted-properties -- RegExp matching, not a subprocess.
+      const match=pattern.exec(text);
+      if(match?.index===0){
+        const [,b='',x='',y='',final='M']=match;const button=Number(b)-(encoding==='urxvt'?32:0);
+        const row=this.shift(button,Number(y),encoding==='sgr'?final==='m':(button&3)===3);
+        if(row===null)this.dropped++;else result.push(Buffer.from(`\x1b[${encoding==='sgr'?'<':''}${b};${x};${row}${final}`,'latin1'));
+        at+=match[0].length;continue;
+      }
+      // Keep only a bounded unfinished mouse candidate; unrelated escape keys pass immediately.
+      // eslint-disable-next-line no-control-regex -- Mouse control sequence prefix.
+      if(text.length<64&&(encoding==='sgr'? /^\x1b\[<[\d;]*$/.test(text):encoding==='urxvt'&&/^\x1b\[[\d;]*$/.test(text))){this.carry=data.subarray(at);break;}
+      result.push(data.subarray(at,at+1));at++;
+    }
+    return Buffer.concat(result);
   }
-  private passPaste(data: Buffer, text: string): Buffer {
-    const start = text.indexOf(PASTE_START), end = text.indexOf(PASTE_END);
-    if (end >= 0 && (start < 0 || end > start)) this.paste = false;
-    else this.paste = true;
-    return data;
-  }
+  flush():Buffer{const pending=this.carry;this.carry=Buffer.alloc(0);return pending;}
   // X10/normal (`CSI M b x y`, each value + 32 in one byte) and UTF-8 1005 (values as UTF-8 code points).
   private legacy(data: Buffer, utf8: boolean): Buffer {
     const out: number[] = [];

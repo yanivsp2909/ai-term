@@ -10,5 +10,5 @@ export function enterModes(m:TerminalModes):string {
   // Resetting any tracking mode clears the active one in xterm; enable last.
   const tracking=[9,1000,1002,1003].map(code=>set(code,false)).join('')+(mouse?set(mouse,true):'');
   const mouseEncoding=[1005,1006,1015].map(code=>set(code,false)).join('')+(encoding?set(encoding,true):'');
-  return set(1,m.applicationCursorKeys)+(m.applicationKeypad?'\x1b=':'\x1b>')+set(2004,m.bracketedPaste)+tracking+mouseEncoding+set(1004,m.focusEvents)+set(25,m.cursorVisible);
+  return set(1,m.applicationCursorKeys)+(m.applicationKeypad?'\x1b=':'\x1b>')+set(2004,m.bracketedPaste)+tracking+mouseEncoding+set(1004,m.focusEvents)+set(25,m.cursorVisible)+(m.cursorShape!==undefined?`${csi}${m.cursorShape} q`:'')+(m.title!==undefined?`\x1b]2;${m.title}\x1b\\`:'')+(m.kittyFlags?`${csi}=0u`+m.kittyFlags.slice(1).map(flags=>`${csi}>${flags}u`).join(''):'')+(m.themeReports!==undefined?set(2031,m.themeReports):'');
 }

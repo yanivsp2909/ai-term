@@ -9,7 +9,7 @@ import { Connection } from '../src/client/connection.js';
 import { getPaths,isFsError } from '../src/shared/paths.js';
 import { RESET_MODES } from '../src/client/terminal-modes.js';
 
-it('real terminal query replies and startup noise stay attached; Ctrl+E detaches from live vim and reattach preserves text',async()=>{
+it.each(['off','on'] as const)('bar %s: real terminal query replies and startup noise stay attached; Ctrl+E detaches from live vim and reattach preserves text',async(bar)=>{
  const root=await mkdtemp(join(tmpdir(),'ai-term-terminal-')),paths=getPaths(root),entry=resolve('src/cli/index.ts');
  const env={PATH:'/usr/bin:/bin',HOME:root,SHELL:'/bin/sh',AI_TERM_HOME:root,TERM:'xterm-256color',TERM_PROGRAM:'Apple_Terminal',COLORTERM:'truecolor'};
  const daemon=spawn(process.execPath,['--import','tsx',entry,'daemon'],{env,stdio:'ignore'}),exited=new Promise<void>(r=>daemon.once('exit',()=>r()));
@@ -24,7 +24,7 @@ it('real terminal query replies and startup noise stay attached; Ctrl+E detaches
  };
  try{
   await expect.poll(async()=>{try{return (await lstat(paths.socket)).isSocket();}catch(error){if(isFsError(error,'ENOENT'))return false;throw error;}},{timeout:5000}).toBe(true);
-  client=await Connection.connect(paths,{entry,autoStart:false});const created=await client.request({kind:'sessions.create',engine:'shell',cwd:root});const id=created.session?.id;if(!id)throw new Error('No shell ID');
+  client=await Connection.connect(paths,{entry,autoStart:false});await client.request({kind:'settings.set',patch:{bar}});const created=await client.request({kind:'sessions.create',engine:'shell',cwd:root});const id=created.session?.id;if(!id)throw new Error('No shell ID');
   const first=open(id);await expect.poll(first.output).toContain('\x1b[?1049h');
   const noise='\x1b[?1;2c\x1b[>0;276;0c\x1b[1;1R\x1b]10;rgb:ffff/ffff/ffff\x07\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[?0u\x1b[I\x1b[O\x1b[?2004h\x1b=';
   first.child.write(noise.slice(0,18));first.child.write(noise.slice(18));await new Promise(r=>setTimeout(r,150));expect(first.finished()).toBe(false);first.child.write('\x15');

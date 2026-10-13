@@ -44,8 +44,9 @@ export class SessionScreen {
   try{
    this.dirty=false;this.renderer.cursorVisible=this.passthrough.cursorVisible();
    const bar=this.bar();let output=this.full?'\x1b[0m\x1b[H\x1b[2J':'';
-   if(this.full||bar!==this.barPrevious){output+=bar;this.barPrevious=bar;}
-   this.full=false;output+=this.renderer.frame();
+   const barChanged=this.full||bar!==this.barPrevious;
+   if(barChanged){output+=bar;this.barPrevious=bar;}
+   this.full=false;output+=this.renderer.frame(barChanged);
    if(output)this.send('\x1b[?2026h'+output+'\x1b[?2026l');
    this.lastFrame=performance.now();
   }catch(error){this.failed(error instanceof Error?error:new Error('Session render failed'));}

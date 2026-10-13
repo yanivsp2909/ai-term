@@ -10,6 +10,7 @@ export class Mirror {
     readonly terminal: headless.Terminal;
     private readonly addon: serialize.SerializeAddon;
     private attached = false;
+    private appearance:Pick<TerminalModes,'cursorShape'|'title'|'kittyFlags'|'themeReports'>={};
     private cursorVisible=true;
     private mouseEncoding:TerminalModes['mouseEncoding']='default';
     constructor(cols: number, rows: number, reply: (data: string) => void, signal?: (signal: MirrorSignal) => void) {
@@ -20,13 +21,20 @@ export class Mirror {
         // The public modes API omits cursor visibility and mouse encoding.
         for(const final of ['h','l'])this.terminal.parser.registerCsiHandler({prefix:'?',final},params=>{
             for(const param of params) {
+                if(param===2031)this.appearance.themeReports=final==='h';
                 if(param===25)this.cursorVisible=final==='h';
                 const encoding=param===1005?'utf8':param===1006?'sgr':param===1015?'urxvt':null;
                 if(encoding&&(final==='h'||this.mouseEncoding===encoding))this.mouseEncoding=final==='h'?encoding:'default';
             }
             return false; // Let xterm apply the mode too.
         });
-        this.terminal.parser.registerEscHandler({final:'c'},()=>{this.cursorVisible=true;this.mouseEncoding='default';return false;});
+        this.terminal.parser.registerEscHandler({final:'c'},()=>{this.cursorVisible=true;this.mouseEncoding='default';this.appearance={};return false;});
+        const parser=this.terminal.parser;
+        parser.registerCsiHandler({intermediates:' ',final:'q'},params=>{const shape=params[0];if(typeof shape==='number'&&shape>=0&&shape<=6)this.appearance.cursorShape=shape;return false;});
+        this.terminal.onTitleChange(title=>{this.appearance.title=title.replace(/[\p{C}\p{Zl}\p{Zp}]/gu,'').slice(0,1024);});
+        parser.registerCsiHandler({prefix:'>',final:'u'},params=>{const stack=this.appearance.kittyFlags??[0],flags=params[0];if(typeof flags==='number'&&flags>=0&&flags<=31&&stack.length<64)this.appearance.kittyFlags=[...stack,flags];return true;});
+        parser.registerCsiHandler({prefix:'<',final:'u'},params=>{const stack=this.appearance.kittyFlags??[0],count=typeof params[0]==='number'&&params[0]>0?params[0]:1;this.appearance.kittyFlags=stack.slice(0,Math.max(1,stack.length-count));return true;});
+        parser.registerCsiHandler({prefix:'=',final:'u'},params=>{const stack=this.appearance.kittyFlags??[0],flags=params[0],how=params[1]??1;const current=stack.at(-1)??0;if(typeof flags==='number'&&flags>=0&&flags<=31){stack[stack.length-1]=how===1?flags:how===2?current|flags:current&~flags;this.appearance.kittyFlags=stack;}return true;});
         if(signal){
             // xterm's parser keeps OSC terminators apart from a bell: onBell fires only for a BEL outside any sequence.
             this.terminal.onBell(()=>signal({kind:'bell'}));
@@ -38,7 +46,7 @@ export class Mirror {
     }
     modes():TerminalModes {
         const modes=this.terminal.modes;
-        return {applicationCursorKeys:modes.applicationCursorKeysMode,applicationKeypad:modes.applicationKeypadMode,bracketedPaste:modes.bracketedPasteMode,mouseTracking:modes.mouseTrackingMode,mouseEncoding:this.mouseEncoding,focusEvents:modes.sendFocusMode,cursorVisible:this.cursorVisible};
+        return {...this.appearance,applicationCursorKeys:modes.applicationCursorKeysMode,applicationKeypad:modes.applicationKeypadMode,bracketedPaste:modes.bracketedPasteMode,mouseTracking:modes.mouseTrackingMode,mouseEncoding:this.mouseEncoding,focusEvents:modes.sendFocusMode,cursorVisible:this.cursorVisible};
     }
     setAttached(attached: boolean): void { this.attached = attached; }
     write(data: string): Promise<void> { return new Promise(resolve => this.terminal.write(data, resolve)); }

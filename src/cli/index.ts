@@ -134,7 +134,7 @@ async function main(): Promise<void> {
             process.stdout.write('Session stopped.\n');
         }
         if(action==='attach'&&args[2]){
-            const {attach}=await import('../client/attach.js');
+            const {configuredAttach:attach}=await import('../client/configured-attach.js');
             try{
                 const reason=await attach(client,args[2],{debugLog:process.env.AI_TERM_DEBUG==='1'?new Logger(paths.log):undefined});
                 process.stdout.write(`back in your shell (${reason})\n`);

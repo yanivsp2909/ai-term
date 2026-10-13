@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
 import type { RequestBody } from '../connection.js';
-import { attach, type AttachReason } from '../attach.js';
+import { type AttachReason } from '../attach.js';
+import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
 import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
 import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText } from '../../shared/validate.js';
@@ -643,6 +644,6 @@ export class Homepage {
   }
 }
 export async function homepage(connection: import('../connection.js').Connection): Promise<void> {
-  const home = new Homepage(connection, { truecolor: process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', attachSession: id => attach(connection, id) });
+  const home = new Homepage(connection, { truecolor: process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', attachSession: id => configuredAttach(connection, id) });
   await Promise.all([home.start(), home.done]);
 }

@@ -60,6 +60,7 @@ export function installPassthrough(term: headless.Terminal, facts: OuterFacts, o
   p.registerCsiHandler({ prefix: '?', final: 'u' }, () => { if (facts.kitty) reply(`\x1b[?${kittyStack.at(-1) ?? 0}u`); return true; });
   p.registerCsiHandler({ prefix: '>', final: 'u' }, params => {
     if (!facts.kitty) return drop('kitty push (outer terminal lacks it)');
+    if(kittyStack.length>=64)return drop('kitty stack limit');
     const flags = typeof params[0] === 'number' ? params[0] : 0; kittyStack.push(flags); out(`\x1b[>${flags}u`); return true;
   });
   p.registerCsiHandler({ prefix: '<', final: 'u' }, params => {
@@ -81,7 +82,7 @@ export function installPassthrough(term: headless.Terminal, facts: OuterFacts, o
     const op = params[0];
     if (op === 22 || op === 23) { out(`\x1b[${params.map(String).join(';')}t`); return true; }
     if (op === 18) { reply(`\x1b[8;${term.rows};${term.cols}t`); return true; }
-    return drop(`XTWINOPS ${String(op)}`);
+    return drop('XTWINOPS unsupported');
   });
 
   // OSC: titles, cwd, notifications and palette changes are position-free and go out unchanged.
