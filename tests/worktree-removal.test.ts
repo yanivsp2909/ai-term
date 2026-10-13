@@ -182,3 +182,11 @@ it('an invalid stored record is skipped with a log line and its folder is kept',
  expect((await sessions.worktreeViews()).map(v => basename(v.path))).toEqual(['agent']);
  expect(await readFile(paths.log, 'utf8')).toContain('Invalid worktree record skipped; that worktree is kept');
 });
+it('hidden index changes and exclude-file tricks need the typed confirmation instead of one keypress', async () => {
+ const { repo, paths } = await fixture(), sessions = await manager(paths), agent = await finishedAgent(sessions, repo);
+ await writeFile(join(agent.worktree, 'tracked.txt'), 'edited'); await git(agent.worktree, 'update-index', '--assume-unchanged', '--', 'tracked.txt');
+ await writeFile(join(agent.worktree, 'notes.md'), 'work'); await writeFile(join(repo, '.git', 'info', 'exclude'), '*\n');
+ const view = await sessions.checkWorktree(agent.worktree); expect(view.loss).toMatchObject({ changed:1, untracked:1 });
+ await expect(sessions.deleteWorktree(agent.worktree, view.fingerprint ?? '')).rejects.toThrow('Type the branch name to confirm');
+ expect(await readFile(join(agent.worktree, 'tracked.txt'), 'utf8')).toBe('edited'); expect(await readFile(join(agent.worktree, 'notes.md'), 'utf8')).toBe('work');
+});

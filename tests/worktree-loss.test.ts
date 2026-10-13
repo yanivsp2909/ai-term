@@ -101,3 +101,34 @@ it('the fingerprint changes when what would be lost changes, and inspection neve
  expect(await inspectWorktree(repo, wt, 'ai/agent', base)).toMatchObject({ fingerprint:third?.fingerprint });
  expect(await status(repo)).toBe(before);
 });
+// Review findings (v0.3.2): loss hidden from git status, or moved into ignored by rules the agent can write.
+it('changes hidden with assume-unchanged or skip-worktree count as changed', async () => {
+ const { repo, wt, base } = await fixture();
+ await writeFile(join(wt, 'a.txt'), 'edited'); await git(wt, 'update-index', '--assume-unchanged', '--', 'a.txt');
+ await writeFile(join(wt, 'c.txt'), 'edited'); await git(wt, 'update-index', '--skip-worktree', '--', 'c.txt');
+ expect((await git(wt, 'status', '--porcelain', '--')).stdout).toBe('');
+ expect(await inspectWorktree(repo, wt, 'ai/agent', base)).toMatchObject({ changed:2 });
+});
+it('files hidden by info/exclude, a repo core.excludesFile or an uncommitted .gitignore count as untracked', async () => {
+ const { temp, repo, wt, base } = await fixture();
+ await writeFile(join(wt, 'notes.md'), 'work'); await writeFile(join(repo, '.git', 'info', 'exclude'), 'notes.md\n');
+ expect(await inspectWorktree(repo, wt, 'ai/agent', base)).toMatchObject({ untracked:1, ignored:0 });
+ await writeFile(join(temp, 'excludes'), 'draft.txt\n'); await git(repo, 'config', 'core.excludesFile', join(temp, 'excludes')); await writeFile(join(wt, 'draft.txt'), 'work');
+ expect(await inspectWorktree(repo, wt, 'ai/agent', base)).toMatchObject({ untracked:2, ignored:0 });
+ await mkdir(join(wt, 'sub')); await writeFile(join(wt, 'sub', '.gitignore'), '*\n'); await writeFile(join(wt, 'sub', 'work.txt'), 'work');
+ expect(await inspectWorktree(repo, wt, 'ai/agent', base)).toMatchObject({ untracked:4, ignored:0 });
+ await writeFile(join(wt, 'ignored-cache'), 'regenerable');
+ expect(await inspectWorktree(repo, wt, 'ai/agent', base)).toMatchObject({ untracked:4, ignored:1 });
+});
+it('a nested git repository is called out among untracked entries', async () => {
+ const { temp, repo, wt, base } = await fixture();
+ await git(temp, 'init', '-q', '-b', 'main', '--', join(wt, 'nested')); await git(join(wt, 'nested'), 'commit', '-q', '--allow-empty', '-m', 'inner', '--');
+ expect(await inspectWorktree(repo, wt, 'ai/agent', base)).toMatchObject({ untracked:1, repos:1 });
+});
+it('a .git file pointed at a sibling worktree of the same repo does not match', async () => {
+ const { temp, repo, wt, base } = await fixture(), sibling = join(temp, 'sibling');
+ await git(repo, 'worktree', 'add', '-q', '-bai/sibling', '--', sibling, 'HEAD');
+ const siblingGit = (await git(sibling, 'rev-parse', '--absolute-git-dir')).stdout.trim();
+ await writeFile(join(wt, '.git'), `gitdir: ${siblingGit}\n`);
+ expect(await inspectWorktree(repo, wt, 'ai/agent', base)).toMatchObject({ matchesRepo:false });
+});
