@@ -1,6 +1,72 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 1aa2d47 fix: restrict exit trace to terminal response formats (GREEN)
+Roadmap step: v0.2.6 partial — BLOCKED at task 1 (hands-off Terminal.app exit trace pending)
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 3a0c949 after git pull --ff-only (already up to date). Baseline: 114 files / 671 passed / two existing opt-in native Keychain skips (9.45 s).
+
+## What works
+- Existing product behavior remains unchanged. Read PROGRESS first, then current diagnostic/test, AGENTS, README, full bar spike report and spike startup/exit/query/mouse/renderer paths, design/tokens, architecture, current attach and daemon/shared width modules. No product changes or notifier changes.
+- Yaniv supplied the first real Terminal.app diagnostic: OSC 10 `rgb:e6ce/e6ce/e6ce`, OSC 11 `rgb:213d/2743/33e7`, DA1 `CSI ?1;2c`; no extra probe bytes, kitty false, startup 6.745 ms, child 4430 bytes, child exit code 0/signal 0, reason program exited. This proves the probe succeeded, but does not show post-probe input, EOF, size or elapsed time to exit. The clean exit alone cannot name what made vim quit.
+- Replayed those exact three replies through an outer node-pty driver on this Mac; unchanged spike and diagnostic both kept vim open, accepted typing and only quit after explicit Esc + :qa!. Also tested 20x4, 120x40 and 220x60 outer PTYs, plus late DA1, CPR, OSC colors, focus in/out and SGR mouse reports. None reproduced the spontaneous exit. These are headless startup checks, not pixel/feel verification or latency measurements.
+- Read node-pty's macOS spawn and exit handling: it allocates its own PTY/termios and rows/cols; its macOS kqueue/waitpid callback is the source of the reported exit. The new trace checks whether the PID is still alive at that callback, without claiming this bookkeeping is the cause.
+- Task 1 diagnostic expansion: RED c1d8a05 → GREEN c36b7ea.
+  - `cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace` is hands-off: do not type, paste, click or resize. If vim survives, it sends Esc + :qa! automatically after 2500 ms; autoQuitSent distinguishes that from an earlier exit.
+  - One BAR_DIAGNOSTIC JSON line now includes PTY size; timestamped recognized post-probe terminal reports from outer stdin and child.write; omitted-byte counts; stdin end/close; child close/exit timing; input-read-error presence; whether the child PID was alive at node-pty's exit callback; kill signals; and vim's VimLeavePre values (dying, exiting, actual lines/columns, an allowlisted qa/q/other command category).
+  - Captures at most 4096 bytes across both streams, in memory only, during the first second. Explicit response grammars only; ordinary or encoded typed keys are count-only. The optional VimLeavePre file is temporary, numeric/category-only, removed with the temp directory; no runtime keys, accounts, agents or real daemon used.
+  - Headless exact-reply trace ran: 120x39 child PTY; no outer input after probe; mirror CPR/DA2 replies; autoQuitSent true; vimLeave dying 0/exiting 0/quitCommand qa; exit after 2513 ms; PID no longer alive at callback. No spontaneous exit.
+- Fresh-context TypeScript reviewer at high: two real findings, both got failing-test and fix commits.
+  - MEDIUM fragmented replies disappeared from the trace: RED 8fd05e8 (ESC[ / I split across reads loses focus reply) → GREEN df2de77 (bounded per-stream assembly recognizes it).
+  - HIGH broad CSI grammar could print kitty-encoded typed letters; bare ZZ/ZQ also matched ordinary text: RED 0fc1167 (synthetic encoded text leaked) → GREEN 1aa2d47 (exact terminal response formats, no ordinary keys). No additional material findings.
+- Final verification after all review fixes, all exit 0:
+  - `npm run typecheck`: `> tsc --noEmit`
+  - `npm run lint`: `> eslint .`
+  - `npm run build`: `ESM ⚡️ Build success in 17ms`
+  - Targeted tests/bar-diagnostic.test.ts: 2 passed.
+  - `npm test -- --reporter=dot` twice consecutively: `Test Files 114 passed (114)` / `Tests 672 passed | 2 skipped (674)` / 9.82 s then 9.67 s.
+  - Existing daemon-core flood test still emits node-pty EIO/EBADF stderr in baseline/final suites. Both exit 0. Unchanged native Keychain opt-in skips not enabled.
+  - git diff --check clean. Only scripts/diagnose-bar.mjs, tests/bar-diagnostic.test.ts and this handover changed. No new dependencies; no protected paths or product code changed.
+
+## What's next
+- BLOCKER: no spontaneous-exit reproduction or proven cause. Yaniv explicitly authorized one more diagnostic run and requires stopping for its result.
+- Need the single BAR_DIAGNOSTIC line from `cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace` in Terminal.app, with no input during the run. The diagnostic automatically quits surviving vim after 2.5 s. Do not label task 1 fixed until its actual cause is reproduced and covered by a test.
+- Then finish original tasks 2–5 and task 6 in order: shared width agreement in attached client mirror (table already exists), renderer/query/mouse/input fast path, themed bar/rows−1, saved bar on/off and failed-probe raw fallback, docs; notifier --status + verified identity or unknown fallback + asynchronous cached permission checks/settings/denied suppression.
+- Performance agent and product latency gate remain unreached; echo/vim raw/redraw p95 not measured. No bar ships. Next roadmap step after v0.2.6 remains click-through notifications; not part of this session.
+
+## Manual checks
+- Exact Terminal.app replies, varied sizes and late query/focus/mouse reports: ran headlessly; no spontaneous exit. Trace, fragmented reports, encoded-key omission: ran with real outer PTYs.
+- `cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace` — needs Yaniv now: hands-off Terminal.app exit trace; it auto-quits. Reply with one BAR_DIAGNOSTIC line.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: /shell then vim, typing and :q.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: /shell then /usr/bin/top, q quits.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: Claude Code typing/permission checks; real login not run.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: Codex typing/permission checks; real login not run.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: multiline paste, Ctrl+E in pasted text stays text.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: vim mouse click/wheel, bar press/release ignored.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: resize preserves rows−1 PTY.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: Ctrl+E goes home, agent keeps running.
+- `cd ~/ai-term && node dist/cli/index.js` — needs Yaniv after implementation: /settings bar off, attach original raw path; setting not built.
+- Notifier direct-launch authorization parity: not reached; no --status mode exists yet, no permission conclusion made.
+
+## Gotchas
+- No cause is established. Optional query absence, a clean PTY exit code, and 4430 drawn bytes do not show why vim exited. Do not invent a fix from these observations.
+- Trace mode adds only an exit autocmd and controlled delayed quit to vim; spike files remain unchanged. It retains bounded input in memory to assemble replies but emits only known terminal reports. The user must use a hands-off run for this trace to distinguish unexpected input.
+- Shared Unicode 11 table already exists in daemon/preview mirrors; confirm attached client integration later. D39 and 2031 reset already exist. RTK.md absent. These stale notes remain documented in preceding handover.
+- No real ~/.ai-term, ~/.claude, ~/.codex, ~/.ssh, keychain or .env access; no computer use; no network except git pull/push; no user daemon stopped. No other editing agent spawned; reviewer read-only. Session is Codex, not Claude/Opus.
+- Follow the original task-6 notifier override only after task 5, the 2 ms latency gate, two final quiet full suites, high fresh-context review and separate RED/GREEN commits for real findings.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Vim exit hooks (`scripts/diagnose-bar.mjs`): VimLeavePre runs immediately before vim exits and exposes v:dying/v:exiting. Numeric values and a small allowlisted command category help distinguish a regular quit from abnormal termination without exporting the editor's contents or command history.
+- Incremental report capture (`scripts/diagnose-bar.mjs`): a PTY data event can end halfway through a terminal response. The diagnostic assembles up to 4 KB per combined streams in memory and emits only explicit response formats, so read boundaries cannot hide a reply or turn an encoded key into recorded text.
+
+---
+
+## Previous checkpoint (3a0c949, retained)
+
+## Checkpoint
 Last commit: 5167cad fix: keep diagnostic vim writes in temporary cwd (GREEN)
 Roadmap step: v0.2 bar + notification authorization partial — BLOCKED at task 1 (Terminal.app diagnostic pending)
 Branch: main. This handover is the last commit; its own hash is in git log.
