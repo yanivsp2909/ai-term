@@ -5,7 +5,7 @@ export interface StatusState extends Pick<SessionInfo,'status'|'statusDetail'|'s
 export function initialStatus(at:string):StatusState{return {seq:0,status:'starting',statusDetail:'starting',statusSince:at,ctxPercent:null,lastActivity:null,exitCode:null,permissionBackupAllowed:true};}
 export function reduceStatus(state:StatusState,event:ClaudeStatusEvent):StatusState {
  if(state.status==='exited'||state.status==='error')return state;
- if(event.kind!=='exit'&&event.seq<=state.seq)return state;
+ if(event.kind!=='exit'&&event.seq<=state.seq&&!(state.status==='starting'&&state.seq===0&&event.seq===0&&event.kind==='running'))return state;
  const next={...state,seq:Math.max(state.seq,event.seq)};
  if(event.kind==='context')return {...next,ctxPercent:event.percent};
  if(event.kind==='waiting'&&event.backup&&!state.permissionBackupAllowed)return next;
