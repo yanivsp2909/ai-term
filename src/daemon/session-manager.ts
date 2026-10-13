@@ -19,6 +19,7 @@ import { KeyStore, KeyError } from './keys.js';
 import { checkEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
+import { OutputClock } from './output-clock.js';
 interface Live {
     info: SessionInfo;
     host?: PtyHost;
@@ -29,6 +30,7 @@ interface Live {
     lastReply?:string;
     codexRun?:CodexRun;
     pasting?:boolean;
+    outputClock?:OutputClock;
     queuedBytes:number;
     paused:boolean;
     attached:boolean;
@@ -151,6 +153,8 @@ export class SessionManager extends EventEmitter {
             dropping = true;
         };
         const live: Live = { info,...(statusTelemetry?{statusState:initialStatus(now)}:{}), mirror: new Mirror(this.size.cols, this.size.rows, reply, agent?.engine==='codex'?signal=>this.codexSignal(live,signal):undefined), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
+        // Fresh lastOutputAt for the homepage's quiet timer; never persisted, and silent once the session ended.
+        live.outputClock=new OutputClock(()=>{if(!['exited','error'].includes(info.status))this.event({kind:'session.updated',session:{...info}});});
         this.sessions.set(info.id, live);
         try {
             if(statusTelemetry&&agent?.engine==='codex'){
@@ -186,7 +190,8 @@ export class SessionManager extends EventEmitter {
                         info.statusSince = info.lastOutputAt;
                         await this.persist();
                         this.event({ kind: 'session.updated', session: { ...info } });
-                    }
+                        live.outputClock?.sent();
+                    } else live.outputClock?.output();
                     this.emit('output', info.id, Buffer.from(data));
                 }).catch(async () => {
                     if(live.mirrorFailed)return;
@@ -202,7 +207,7 @@ export class SessionManager extends EventEmitter {
                 });
             });
             host.pty.onExit(event => {
-                this.usage?.revoke(info.id);
+                this.usage?.revoke(info.id);live.outputClock?.dispose();
                 // Set terminal precedence synchronously: queued hook bodies must not win a process-exit race.
                 if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:live.statusState.seq+1,at:new Date().toISOString(),kind:'exit',status:'exited',detail:'exited',exitCode:event.exitCode});
                 live.output = live.output.then(async () => {
@@ -221,7 +226,7 @@ export class SessionManager extends EventEmitter {
         }
         catch (error) {
             this.usage?.revoke(info.id);
-            if(error instanceof KeyError){this.sessions.delete(info.id);live.mirror.dispose();throw error;}
+            if(error instanceof KeyError){this.sessions.delete(info.id);live.outputClock?.dispose();live.mirror.dispose();throw error;}
             info.status = 'error';
             info.statusDetail = 'spawn failed';
             // Spawn errors can include argv or child output, so keep diagnostics fixed for every session.
@@ -241,7 +246,7 @@ export class SessionManager extends EventEmitter {
         if(!live.statusState||next===live.statusState)return;
         live.statusState=next;
         Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
-        this.event({kind:'session.updated',session:{...live.info}});
+        this.event({kind:'session.updated',session:{...live.info}});live.outputClock?.sent();
         void this.persist();
     }
     // Codex terminal signals and Enter from the attached owner wait behind status requests that arrived earlier. Each applies only
@@ -288,7 +293,7 @@ export class SessionManager extends EventEmitter {
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
     async remove(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
-        throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; await removeClaudeSettings(this.paths.root,id);live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
+        throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; await removeClaudeSettings(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
     async rename(id: string, title: string): Promise<SessionInfo> { const live = this.sessions.get(id); if (!live || !isTitle(title))
         throw new Error('Invalid session or title'); live.info.title = title; await this.persist(); this.event({ kind: 'session.updated', session: { ...live.info } }); return { ...live.info }; }
     async previewSize(cols: number, rows: number): Promise<void> { if (!isSize(cols, rows))
@@ -347,7 +352,7 @@ export class SessionManager extends EventEmitter {
         const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
         for(const [index,result]of stopped.entries())if(result.status==='rejected')this.log.error(`Session stop failed: ${ids[index]}`);
         await this.saving;
-        for(const live of this.sessions.values())live.mirror.dispose();
+        for(const live of this.sessions.values()){live.outputClock?.dispose();live.mirror.dispose();}
         this.log.off('writeFailed',this.onLogFailure);this.log.off('writeRecovered',this.onLogRecovery);
     }
 }

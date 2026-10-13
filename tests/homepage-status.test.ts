@@ -22,7 +22,7 @@ it.each([
  ['failed by signal',{status:'error',statusDetail:'signal SIGKILL',exitCode:null},'✗ failed 0m','status-error',{text:'signal SIGKILL',color:'status-error'}],
 ] as const)('a %s card has glyph, word and age, and its activity',(_name,over,status,color,activity)=>{
  const card=cardText(agent(over),NOW,W);
- expect(card.status).toMatchObject({text:status,color});expect(card.status.bold).toBe(over.status==='waiting');
+ expect(card.status).toMatchObject({text:status,color});expect(card.status.bold).toBe('status' in over&&over.status==='waiting');
  expect(card.activity).toEqual(activity);
 });
 it('ctx shows only when known, rounds, and turns status-waiting from 85%',()=>{

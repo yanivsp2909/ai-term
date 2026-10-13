@@ -15,7 +15,8 @@ import { copyText } from './clipboard.js';
 import { cleanSessionText } from './copy-clean.js';
 import { BACKGROUND_QUERY, BackgroundReplies, createTheme, type Theme } from './theme.js';
 import { diffFrame, type Frame } from './grid.js';
-import { homepageLayout, renderHomepage, sortSessions, filteredCommands } from './layout.js';
+import { homepageLayout, renderHomepage, sortSessions, filteredCommands, visibleCards } from './layout.js';
+import { nextCardTick } from './agent-card.js';
 import { CredentialsPanel } from './credentials.js';
 import { modelChoices, ownLoginLabel } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
@@ -78,6 +79,7 @@ export class Homepage {
   private previewCells?: Frame;
   private nextPreview = 0;
   private drawTimer?: ReturnType<typeof setTimeout>;
+  private cardTimer?: ReturnType<typeof setTimeout>;
   private blocked = false;
   private forceRedraw = true;
   private drag: Point | null = null;
@@ -130,7 +132,7 @@ export class Homepage {
     this.previous = null; this.previewCells = undefined; this.forceRedraw = true; this.blocked = false;
   }
   private leave(): void {
-    if (this.drawTimer) clearTimeout(this.drawTimer); if (this.inputTimer) clearTimeout(this.inputTimer);
+    if (this.drawTimer) clearTimeout(this.drawTimer); if (this.inputTimer) clearTimeout(this.inputTimer); if (this.cardTimer) clearTimeout(this.cardTimer); this.cardTimer = undefined;
     this.parser.dispose();
     this.stdin.off('data', this.onData); this.stdin.off('error', this.onError); this.stdout.off('error', this.onError); this.stdout.off('drain', this.onDrain);
     this.signals.off('SIGWINCH', this.onResize); this.signals.off('SIGINT', this.onSignal); this.signals.off('SIGTERM', this.onTerm); this.signals.off('SIGHUP', this.onHup); this.signals.off('SIGQUIT', this.onQuit); this.signals.off('uncaughtException', this.onError); this.signals.off('unhandledRejection', this.onError); this.signals.off('exit', this.onExit);
@@ -583,6 +585,13 @@ export class Homepage {
     }
     this.previewCells = undefined; this.draw(true);
   }
+  // "quiet Ns" changes with time alone: wake once at the next 10 s crossing, then once a second only while a visible card shows it.
+  private scheduleCardTick(cards: readonly import('../../shared/protocol.js').SessionInfo[]): void {
+    if (this.cardTimer) clearTimeout(this.cardTimer); this.cardTimer = undefined;
+    const wait = nextCardTick(cards, Date.now()); if (wait === null) return;
+    // A few ms past the boundary so the floored second has really changed when the frame is drawn.
+    this.cardTimer = setTimeout(() => { this.cardTimer = undefined; this.draw(true); }, wait + 5);
+  }
   private draw(immediate = false): void {
     if (!this.showing || this.ended || this.blocked) return;
     const now = performance.now();
@@ -603,6 +612,7 @@ export class Homepage {
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);
       if(this.usageForm)grid=drawUsageForm(grid,this.usageForm.lines(),this.usageFormError,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
+      this.scheduleCardTick(visibleCards({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, previewVisible: this.visible }));
       if (output) this.blocked = !this.stdout.write(output);
     } catch (error) { this.onError(error); }
   }
