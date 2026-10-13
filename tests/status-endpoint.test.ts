@@ -19,12 +19,12 @@ it('large valid Claude bodies are accepted; consumer failure still returns empty
  let count=0;const logs:string[]=[],receiver=new UsageReceiver(async()=>{}, {error:text=>logs.push(text)},async()=>{count++;if(count===2)throw new Error('AITERMCANARY');});await receiver.listen();const token=receiver.registerStatus(randomUUID());
  try{for(let i=0;i<2;i++)expect(await send(receiver.port(),token,{body:JSON.stringify({hook_event_name:'PreToolUse',tool_input:'AITERMCANARY'.repeat(150000)})})).toEqual({status:204,body:''});expect(count).toBe(2);expect(logs).toEqual(['Status receiver request failed']);}finally{await receiver.close();}
 });
-it('revocation while receiving a body discards it, and sequence follows request arrival rather than completion',async()=>{
+it('revocation while receiving a body discards it, and consumption follows request arrival even when bodies finish in reverse',async()=>{
  const updates:{id:string;seq:number}[]=[],receiver=new UsageReceiver(async()=>{}, {error:()=>{}},async(id,_body,seq)=>{updates.push({id,seq});});await receiver.listen();expect(()=>receiver.registerStatus('--bad')).toThrow('Invalid session UUID');const id=randomUUID(),token=receiver.registerStatus(id);
  try{
   let complete:()=>void=()=>{};
   const held=new Promise<number>((resolve,reject)=>{const req=request({hostname:'127.0.0.1',port:receiver.port(),path:'/v1/status/claude',method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token,'transfer-encoding':'chunked'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode??0));});req.on('error',reject);req.write('{');complete=()=>req.end('}');});
-  await new Promise(r=>setTimeout(r,20));expect(await send(receiver.port(),token)).toEqual({status:204,body:''});complete();expect(await held).toBe(204);expect(updates.map(u=>u.seq)).toEqual([2,1]);
+  await new Promise(r=>setTimeout(r,20));const later=send(receiver.port(),token);await new Promise(r=>setTimeout(r,20));complete();expect(await held).toBe(204);expect(await later).toEqual({status:204,body:''});expect(updates.map(u=>u.seq)).toEqual([1,2]);
   let finish:()=>void=()=>{};const pending=new Promise<number>((resolve,reject)=>{const req=request({hostname:'127.0.0.1',port:receiver.port(),path:'/v1/status/claude',method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token,'transfer-encoding':'chunked'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode??0));});req.on('error',reject);req.write('{');finish=()=>req.end('}');});
   await new Promise(r=>setTimeout(r,20));receiver.revoke(id);finish();expect(await pending).toBe(204);expect(updates).toHaveLength(2);
  }finally{await receiver.close();}
