@@ -6,6 +6,8 @@ export function compactTokens(value:number):string{return value>=1e6?(value/1e6)
 const LABEL_W=8,MAX_SLOT=23;
 // The cache-read share already inside the total: ' (71.0K cached)', or ' (71.0K)' when only the number fits.
 function cachedText(period:UsagePeriod|undefined,form:'words'|'number'|'total'):string{const cached=period?.cachedTokens??0;return cached>0&&form!=='total'?` (${compactTokens(cached)}${form==='words'?' cached':''})`:'';}
+// Cents when they fit, then whole dollars, then thousands: a clipped '$1234.5' would read as a different amount.
+function spend(usd:number,width:number):string{return [`$${usd.toFixed(2)}`,`$${Math.round(usd)}`,`$${(usd/1000).toFixed(1)}K`,`$${Math.round(usd/1000)}K`].find(text=>text.length<=width)??`$${Math.round(usd/1000)}K`;}
 export function budgetWarning(usage:UsageSummary|undefined|null,budgets:Budgets|undefined):string{
  if(!usage||!budgets)return '';for(const [key,period,label]of [['daily','today','today'],['weekly','week','week'],['monthly','month','month']]as const){const limit=budgets[key];if(limit!==null&&usage[period].costUsd>limit)return `budget: ${label} $${usage[period].costUsd.toFixed(2)} / $${limit}`;}return '';
 }
@@ -24,7 +26,7 @@ export function drawUsage(grid:Grid,x:number,y:number,width:number,usage:UsageSu
  grid.text(x,y+1,'≈ spend',colors['ink-3']);grid.text(x,y+2,'tokens',colors['ink-3']);grid.text(x,y+3,'budget',colors['ink-3']);
  for(const [i,period]of ['today','week','month'].entries()){
   const col=x+(columns[i]??LABEL_W),summary=periods[i],w=room(i);grid.text(col,y,period,colors['ink-3']);
-  grid.text(col,y+1,summary?'$'+summary.costUsd.toFixed(2):'—',colors.ink,colors.bg,true,w);
+  grid.text(col,y+1,summary?spend(summary.costUsd,w):'—',colors.ink,colors.bg,true,w);
   const end=grid.text(col,y+2,summary?compactTokens(summary.tokens):'—',colors['ink-2'],colors.bg,false,w);grid.text(end,y+2,cachedText(summary,form),colors['ink-3'],colors.bg,false,col+w-end);
   const limit=budgets?.[(['daily','weekly','monthly']as const)[i]??'daily'];grid.text(col,y+3,limit===undefined||limit===null?'none':'$'+limit,colors['ink-3'],colors.bg,false,w);
  }

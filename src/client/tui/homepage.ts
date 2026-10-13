@@ -333,7 +333,8 @@ export class Homepage {
     });this.credentials=panel;this.draw(true);await panel.load();
   }
   private openBox(kind: AgentBox['kind'], message = '',messageField?:MessageField): void {
-    const draft=messageField?.copy()??new MessageField();if(!messageField)draft.text=message;
+    // The box edits its first message only at the end; a cursor or selection left in the bar would act there unseen.
+    const draft=messageField?.copy()??new MessageField();if(!messageField)draft.text=message;else draft.moveToEnd(true);
     this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,messageField:draft,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
     this.returnToStart = false;if(kind==='effort'||kind==='mode')this.valueChoices();else this.resetModelTabs();this.draw(true);
   }
@@ -578,6 +579,8 @@ export class Homepage {
   private fieldMouse(event: Extract<InputEvent, { kind: 'mouse' }>): boolean {
     const { cols, rows } = this.size(), press = !event.release && !(event.button & 32) && (event.button & 3) === 0;
     const view = { ...this.field.view(), start: this.fieldScroll }, index = fieldIndexAt(view, cols, Math.max(FIELD_X, event.x));
+    // A new press always starts over: a drag whose release was lost (an overlay opened mid-drag) must not capture it.
+    if (press) this.fieldDrag = null;
     if (press && event.y === rows - 3 && event.x >= 1 && event.x <= cols - 2) { this.fieldDrag = { x: event.x, index }; this.field.select(index, index); this.draw(true); return true; }
     const start = this.fieldDrag;
     if (!start) { if (press && this.field.selection) { this.field.clearSelection(); this.draw(true); } return false; }
