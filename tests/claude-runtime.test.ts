@@ -33,7 +33,8 @@ it.each([false,true])('subscription Claude earlyContext=%s sessions get private 
   expect(JSON.stringify((await client.request({kind:'sessions.list'})).sessions)).not.toContain('AITERMCANARY');
   expect((await client.request({kind:'sessions.text',sessionId:session.id})).copy?.text).not.toContain('AITERMCANARY');
   expect((await client.request({kind:'sessions.text',sessionId:session.id,lastReply:true})).copy).toMatchObject({text:'AITERMCANARY last reply',source:'last-reply'});
-  async function files(folder:string):Promise<string[]>{const text:string[]=[];for(const e of await readdir(folder,{withFileTypes:true})){const path=join(folder,e.name);if(e.isDirectory())text.push(...await files(path));else if(e.isFile())text.push(await readFile(path,'utf8'));}return text;}
+  // Atomic state writes rename a temp file that readdir may still list; its contents reappear under the final name.
+  async function files(folder:string):Promise<string[]>{const text:string[]=[];for(const e of await readdir(folder,{withFileTypes:true})){const path=join(folder,e.name);if(e.isDirectory())text.push(...await files(path));else if(e.isFile())try{text.push(await readFile(path,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}return text;}
   expect((await files(root)).join('')).not.toMatch(/AITERMCANARY/);expect((await files(root)).join('')).not.toContain(token);
   await m.stop(session.id);expect(m.get(session.id).status).toBe('exited');await send({hook_event_name:'PermissionRequest'});expect(m.get(session.id).status).toBe('exited');
   expect((await client.request({kind:'sessions.text',sessionId:session.id,lastReply:true})).copy?.text).toBe('AITERMCANARY last reply');
