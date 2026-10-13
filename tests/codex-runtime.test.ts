@@ -41,12 +41,14 @@ it.each(['subscription','api-key'] as const)('Codex %s sessions get notify argv,
   expect((await send({type:'agent-turn-complete','last-assistant-message':'AITERMCANARY reply','input-messages':['AITERMCANARY prompt']})).status).toBe(204);
   await expect.poll(()=>m.get(id).status).toBe('done');
   // A spinner repeating the same Working title after the turn ended is not a new turn.
-  await emit(id,'\x1b]0;Working | Context 80% left\x07\x1b]0;Ready | Context 78% left\x07');expect(m.get(id)).toMatchObject({status:'done',ctxPercent:22});
+  await emit(id,'\x1b]0;Working | Context 80% left\x07\x1b]0;Ready | Context 78% left\x07');await expect.poll(()=>m.get(id)).toMatchObject({status:'done',ctxPercent:22});
   // Keys typed while nobody is attached never reach the agent and never change status.
   m.input(id,Buffer.from('\r'));await settle();expect(m.get(id).status).toBe('done');
   await m.attach(id,80,24,()=>undefined);
   // Plain keys, a pasted newline and a stray bell after the turn ended are not a new turn.
-  m.input(id,Buffer.from('x'));m.input(id,Buffer.from('\x1b[200~line one\rline two\x1b[201~'));await emit(id,'stray\x07');await settle();expect(m.get(id).status).toBe('done');
+  m.input(id,Buffer.from('x'));m.input(id,Buffer.from('\x1b[200~line one\rline two\x1b[201~'));
+  // A long paste arrives in several chunks; only the first carries the start marker.
+  m.input(id,Buffer.from('\x1b[200~first'));m.input(id,Buffer.from('\rmiddle\r'));m.input(id,Buffer.from('last\r\x1b[201~'));await emit(id,'stray\x07');await settle();expect(m.get(id).status).toBe('done');
   m.input(id,Buffer.from('\r'));await expect.poll(()=>m.get(id).status).toBe('running');
   await emit(id,'\x1b]9;Approval requested: curl https://example.com AITERMCANARY\x07');await expect.poll(()=>m.get(id)).toMatchObject({status:'waiting',statusDetail:'permission'});
   m.input(id,Buffer.from('\r'));await expect.poll(()=>m.get(id).status).toBe('running');
