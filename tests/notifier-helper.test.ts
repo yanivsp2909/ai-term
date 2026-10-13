@@ -21,7 +21,7 @@ it.skipIf(!built)('the helper accepts only its three fields within their caps an
  for(const args of [base,replace('--title','x'.repeat(80)),replace('--body','😀'.repeat(200))]){const result=run([...args,'--check']);expect(result.status).toBe(0);expect(result.stderr).toBe('');}
  const invalid=[
   replace('--session','AITERMCANARY'),replace('--session','-bad'),replace('--title','x'.repeat(81)),replace('--title','😀'.repeat(81)),
-  replace('--body','x'.repeat(201)),replace('--title',''),replace('--body','AITERMCANARY\n'),replace('--title','‮AITERMCANARY'),replace('--body','AITERMCANARY\u0007'),
+  replace('--body','x'.repeat(201)),replace('--title',''),replace('--body','AITERMCANARY\n'),replace('--title','\u202eAITERMCANARY'),replace('--body','AITERMCANARY\u0007'),
   [...base,'--unknown'],[...base,'--session',session],[...base,'--check'],[...base,'--body'],base.slice(0,4),
   // The spike's click and lifetime flags are gone from the product helper.
   [...base,'--socket','/tmp/click.sock'],[...base,'--temp-dir','/tmp'],[...base,'--lifetime','10'],[...base,'--probe-click'],[...base,'--exit-after-post'],
