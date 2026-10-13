@@ -150,6 +150,7 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 - **Line under it:** left, the defaults for the next agent: `model · engine   folder   auth   effort   permission   worktree` (worktree appears from v0.3). Auth uses the next agent's `own login · sub/API key` or `key ····last4`; folder is clipped before auth. Right, the key hints. Keys appear only here, not repeated in panels.
 - **⏎ with text:** opens the **Start a new agent** box (below).
 - **Paste:** more than one line or 200 characters renders as one `[pasted · N lines]` token. Its exact contents and newlines stay in memory. Backspace removes a token whole; typed text can surround it. The combined first message is limited to 16,384 UTF-8 bytes; an insertion over the limit adds nothing and notes `too long for a first message (16 KB): start the agent, then paste inside`. Small pastes stay literal.
+- **Cursor and selection (2026-10-13, Yaniv's request):** ←/→ move by character, Alt+←/→ by word, Home/End and Ctrl+A/Ctrl+E to the ends (End with an empty field still follows the preview live). Typing and paste insert at the cursor; Backspace/Delete work at it. A paste token is one step and is deleted whole. A mouse drag in the field, or Shift+←/→, selects (accent 38%, the block cursor hides while text is selected); typing or paste replaces the selection, Backspace/Delete remove it, Esc or a click clears it (a second Esc clears the field). Ctrl+U clears the field; Alt+Backspace (or Ctrl+W) deletes the previous word. A field drag never copies; ↑↓ keep selecting agents only while the field is empty.
 - **⏎ with an empty field:** goes inside the selected agent.
 - **`/` at the start:** opens the filtered command menu. ↑↓ moves the selected-card highlight through commands, wrapping; typing resets to the first match. Each row shows command and argument hint, a short description, and current value at the right in ink-3. ⏎ picks the highlighted command; `/theme`, `/effort` and `/mode` insert their argument prefix. Tab completes the highlighted command, then cycles supported argument values. Esc closes. Outside the menu ↑↓ selects agents.
 
@@ -222,7 +223,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 | ⏎ | empty field: go inside the selected agent · with text: start a new agent |
 | p | hide / show preview (only when the command field is empty) |
 | c / /copy / /copy all | cleaned whole session; c and /copy disclose last reply comes with v0.2; c only shortcuts in an empty field |
-| PgUp PgDn · End | scroll the preview · follow live |
+| PgUp PgDn · End | scroll the preview · follow live (End: empty field only; otherwise cursor to end) |
 | d / r / s | diff (v0.7) / rename / stop the selected agent (s asks first) |
 | x | remove an exited or failed agent from the list |
 | b / u | budget / usage details |

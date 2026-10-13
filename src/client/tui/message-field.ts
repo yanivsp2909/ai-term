@@ -47,24 +47,30 @@ export class MessageField {
   private removeTo(position: number): void { this.anchor = position; this.replace([]); }
   backspace(): void { if (this.selection) this.replace([]); else if (this.caret > 0) this.removeTo(this.caret - 1); }
   deleteForward(): void { if (this.selection) this.replace([]); else if (this.caret < this.units.length) this.removeTo(this.caret + 1); }
-  // Spaces before the caret, then one word; a paste token counts as one word.
-  deleteWord(): void {
-    if (this.selection) { this.replace([]); return; }
-    let start = this.caret;
-    while (start > 0 && isSpace(this.units[start - 1])) start--;
-    if (start > 0 && typeof this.units[start - 1] !== 'string') start--;
-    else while (start > 0 && typeof this.units[start - 1] === 'string' && !isSpace(this.units[start - 1])) start--;
-    this.removeTo(start);
+  // Spaces, then one word, in the direction of travel; a paste token counts as one word.
+  private wordEdge(delta: -1 | 1): number {
+    const unit = (i: number) => this.units[delta < 0 ? i - 1 : i], inside = (i: number) => delta < 0 ? i > 0 : i < this.units.length;
+    let i = this.caret;
+    while (inside(i) && isSpace(unit(i))) i += delta;
+    if (inside(i) && typeof unit(i) !== 'string') return i + delta;
+    while (inside(i) && typeof unit(i) === 'string' && !isSpace(unit(i))) i += delta;
+    return i;
   }
+  deleteWord(): void { if (this.selection) this.replace([]); else this.removeTo(this.wordEdge(-1)); }
   clear(): void { this.units = []; this.caret = 0; this.anchor = null; }
   clearSelection(): void { this.anchor = null; }
+  private moveTo(position: number, extend: boolean): void {
+    if (extend) this.anchor ??= this.caret; else this.anchor = null;
+    this.caret = Math.max(0, Math.min(this.units.length, position));
+  }
   // Shift extends from the caret; a plain arrow collapses a selection to its edge, as text fields do.
   move(delta: -1 | 1, extend: boolean): void {
     const selection = this.selection;
-    if (extend) this.anchor ??= this.caret;
-    else { this.anchor = null; if (selection) { this.caret = delta < 0 ? selection[0] : selection[1]; return; } }
-    this.caret = Math.max(0, Math.min(this.units.length, this.caret + delta));
+    if (!extend && selection) { this.anchor = null; this.caret = delta < 0 ? selection[0] : selection[1]; return; }
+    this.moveTo(this.caret + delta, extend);
   }
+  moveWord(delta: -1 | 1): void { this.moveTo(this.wordEdge(delta), false); }
+  moveToEnd(end: boolean): void { this.moveTo(end ? this.units.length : 0, false); }
   select(anchor: number, caret: number): void {
     const clamp = (n: number) => Math.max(0, Math.min(this.units.length, n));
     this.anchor = clamp(anchor); this.caret = clamp(caret);

@@ -70,12 +70,14 @@ Homepage slash commands:
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
 | `x` | Empty field removes an exited/failed session |
-| PgUp / PgDn / End | Preview scroll / follow live |
+| PgUp / PgDn / End | Preview scroll / follow live (End only while the command field is empty) |
 | Mouse wheel / drag-release | Preview scroll / copy selection; a click alone does not copy |
 | Esc | Close popup; in the command field drop a selection first, then clear the field; discards masked key input |
 | Backspace | Delete the selection, or the character before the cursor; a paste token goes whole |
 | Delete | Delete the selection, or the character after the cursor; a paste token goes whole |
 | ← / → | Command field: move the cursor one character; a paste token is one step |
+| Alt+← / Alt+→ | Command field: move the cursor by word (also ESC b / ESC f); a paste token counts as one word |
+| Home / End · Ctrl+A / Ctrl+E | Command field: cursor to the start / end. End with an empty field follows the preview live instead |
 | Shift+← / Shift+→ | Command field: extend a selection from the cursor |
 | Command field drag | Select text, paste tokens whole (selection color = accent 38%); a click places the cursor and clears a selection; typing or paste replaces a selection; never copies |
 | Ctrl+U | Clear the command field |
