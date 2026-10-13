@@ -4,6 +4,7 @@ import { mkdtemp, open, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { privateDirectory } from '../shared/paths.js';
 import { isStatusCommandPath } from '../shared/validate.js';
+import { sourceTsconfig, TSX_PIN } from './env.js';
 // D43: a click with no ai client open starts ai in a new Terminal window, inside that agent. Terminal opens a .command
 // file as a document through Launch Services, so no AppleScript and no Automation permission is involved.
 export interface AiCommand { node: string; entry: string; loader?: string }
@@ -22,12 +23,13 @@ const later: Delay = callback => { setTimeout(callback, CLEANUP_DELAY_MS).unref(
 // A fixed interpreter, the absolute node + ai CLI paths (strict path alphabet: no quotes, spaces or shell characters)
 // and the validated UUID. Quoting is defence in depth; the alphabet already rules out anything the shell would expand.
 export function terminalCommandFile(command: AiCommand, sessionId: string): string {
-    const source = command.entry.endsWith('.ts');
+    const source = command.entry.endsWith('.ts'), tsconfig = sourceTsconfig(command.entry);
     if (!SESSION_ID.test(sessionId) || !isStatusCommandPath(command.node) || !isStatusCommandPath(command.entry)
-        || !(command.entry.endsWith('.js') || source && isStatusCommandPath(command.loader)))
+        || !(command.entry.endsWith('.js') || source && isStatusCommandPath(command.loader) && isStatusCommandPath(tsconfig)))
         throw new Error('Invalid terminal command');
-    const loader = source ? ` --import '${command.loader ?? ''}'` : '';
-    return `#!/bin/sh\nrm -f -- "$0"\nexec '${command.node}'${loader} '${command.entry}' --attach '${sessionId}'\n`;
+    // Source mode pins AI Term's tsconfig: Terminal starts the script in the home folder, whose tsconfig tsx would read.
+    const pin = source ? `${TSX_PIN} 'TSX_TSCONFIG_PATH=${tsconfig}' ` : '', loader = source ? ` --import '${command.loader ?? ''}'` : '';
+    return `#!/bin/sh\nrm -f -- "$0"\nexec ${pin}'${command.node}'${loader} '${command.entry}' --attach '${sessionId}'\n`;
 }
 export class TerminalLauncher {
     constructor(private readonly root: string, private readonly command: AiCommand, private readonly log: { info(text: string): void; error(text: string): void },

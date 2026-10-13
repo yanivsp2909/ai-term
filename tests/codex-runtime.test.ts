@@ -33,7 +33,7 @@ it.each(['subscription','api-key'] as const)('Codex %s sessions get notify argv,
   const session=await m.create({engine:'codex',model:null,auth:{kind:'account'},cwd:root,permission:'ask'}),id=session.id;
   const token=env.AITERM_STATUS_TOKEN;if(!token)throw new Error('Missing status token');expect(token).toMatch(/^[a-f0-9]{64}$/);expect(env.AITERM_STATUS_PORT).toMatch(/^\d+$/);
   const loader=createRequire(import.meta.url).resolve('tsx');
-  expect(argv).toContain(`notify=["${process.execPath}","--import","${loader}","${entry}","status-notify"]`);
+  expect(argv).toContain(`notify=["/usr/bin/env","TSX_TSCONFIG_PATH=${resolve(entry,'..','..','..','tsconfig.json')}","${process.execPath}","--import","${loader}","${entry}","status-notify"]`);
   expect(argv).toContain('tui.notification_method="osc9"');expect(argv.filter(a=>a==='--no-daemon')).toHaveLength(1);expect(argv.join('\n')).not.toContain(token);
   const send=(body:unknown)=>fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/status/codex`,{method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token},body:JSON.stringify(body)});
   // Signals inside the very first output and the starting→running promotion settle on one running record.

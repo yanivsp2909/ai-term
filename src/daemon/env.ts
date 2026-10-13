@@ -11,6 +11,7 @@ export function buildShellEnv(base: NodeJS.ProcessEnv): Record<string, string> {
     return result;
 }
 
+import { dirname, resolve } from 'node:path';
 import type { AgentEngine, Permission, Effort } from '../shared/protocol.js';
 import { isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath } from '../shared/validate.js';
 export const CLAUDE_AUTH_VARS = ['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES','ANTHROPIC_PROFILE','ANTHROPIC_FEDERATION_RULE_ID','ANTHROPIC_ORGANIZATION_ID','ANTHROPIC_WORKSPACE_ID','ANTHROPIC_AWS_*','ANTHROPIC_BEDROCK_*','ANTHROPIC_VERTEX_*','ANTHROPIC_FOUNDRY_*','AWS_BEARER_TOKEN_BEDROCK','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_SIMPLE',
@@ -34,12 +35,18 @@ const PERMISSION_ARGS:Record<AgentEngine,Partial<Record<Permission,readonly stri
     codex:{ask:['--ask-for-approval=on-request','--sandbox=workspace-write'],dontAsk:['--ask-for-approval=never','--sandbox=workspace-write']},
 };
 export interface CodexStatusCommand {node:string;entry:string;loader?:string}
+// Source mode only: tsx reads tsconfig.json from the current folder, which for status commands is the agent's project, and a
+// project's tsconfig `paths` could swap AI Term's imports for project code. Pinning AI Term's own tsconfig (two levels above
+// src/cli/index.ts) closes that. Built mode runs plain JS and needs nothing.
+export function sourceTsconfig(entry:string):string{return resolve(dirname(entry),'..','..','tsconfig.json');}
+export const TSX_PIN='/usr/bin/env';
 // Codex status needs no file and no credential in argv: notify inherits the session env (AITERM_STATUS_TOKEN/PORT),
 // and the TUI's own terminal signals are read by the daemon mirror (osc9, since TERM_PROGRAM=AITerm makes auto pick BEL).
 function codexStatusArgs(command:CodexStatusCommand):string[]{
     const source=command.entry.endsWith('.ts');
     // Paths go inside a TOML string array, so only the strict path alphabet (no quotes, spaces or brackets) may enter it.
-    const notify=isStatusCommandPath(command.node)&&isStatusCommandPath(command.entry)&&(!source||isStatusCommandPath(command.loader))?[command.node,...(source&&command.loader?['--import',command.loader]:[]),command.entry,'status-notify']:null;
+    const tsconfig=sourceTsconfig(command.entry);
+    const notify=isStatusCommandPath(command.node)&&isStatusCommandPath(command.entry)&&(!source||isStatusCommandPath(command.loader)&&isStatusCommandPath(tsconfig))?[...(source&&command.loader?[TSX_PIN,`TSX_TSCONFIG_PATH=${tsconfig}`]:[]),command.node,...(source&&command.loader?['--import',command.loader]:[]),command.entry,'status-notify']:null;
     return [...(notify?['-c',`notify=[${notify.map(part=>`"${part}"`).join(',')}]`]:[]),'-c','tui.notifications=["agent-turn-complete","approval-requested"]','-c','tui.notification_method="osc9"','-c','tui.notification_condition="always"','-c','tui.terminal_title=["activity","run-state","context-remaining"]'];
 }
 export function buildArgs(request:{engine:AgentEngine;model:string|null;permission:Permission;effort?:Effort|null;conversationId?:string;resume?:boolean;firstMessage?:string;foundryEndpoint?:string;openaiKey?:boolean;codexStatus?:CodexStatusCommand}):string[] {

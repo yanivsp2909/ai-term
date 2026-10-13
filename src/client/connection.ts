@@ -4,6 +4,8 @@ import { constants } from 'node:fs';
 import { open, lstat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
 import { validateSuccess } from '../shared/validate.js';
 import type { Paths } from '../shared/paths.js';
 import { preparePaths, isFsError } from '../shared/paths.js';
@@ -11,6 +13,12 @@ import { FrameDecoder, encodeControl, encodeData, decodeControl, PROTOCOL_VERSIO
 import packageInfo from '../../package.json' with { type: 'json' };
 export type RequestBody = Request extends infer R ? R extends Request ? Omit<R, 'id'> : never : never;
 export class DaemonRequestError extends Error {}
+// Source mode: a bare `--import tsx` resolves from the caller's folder, and tsx reads that folder's tsconfig.json. The absolute
+// loader and AI Term's own folder (two levels above src/cli/index.ts) keep both inside AI Term.
+export function daemonCommand(entry: string): { args: string[]; cwd?: string } {
+    if (!entry.endsWith('.ts')) return { args: [entry, 'daemon'] };
+    return { args: ['--import', createRequire(import.meta.url).resolve('tsx'), entry, 'daemon'], cwd: resolve(dirname(entry), '..', '..') };
+}
 export class Connection extends EventEmitter {
     private pending = new Map<string, {
         resolve: (value: SuccessResponse) => void;
@@ -122,8 +130,8 @@ export class Connection extends EventEmitter {
                 if (!stat.isFile() || stat.uid !== process.getuid?.())
                     throw new Error('Unsafe daemon log', { cause: error });
                 await file.chmod(0o600);
-                const args = options.entry.endsWith('.ts') ? ['--import', 'tsx', options.entry, 'daemon'] : [options.entry, 'daemon'];
-                const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env: { ...process.env, AI_TERM_HOME: paths.root } });
+                const command = daemonCommand(options.entry);
+                const child = spawn(process.execPath, command.args, { detached: true, stdio: 'ignore', env: { ...process.env, AI_TERM_HOME: paths.root }, ...(command.cwd ? { cwd: command.cwd } : {}) });
                 child.on('error', error => { startupError = error; });
                 child.unref();
             }

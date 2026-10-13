@@ -101,7 +101,8 @@ it('the generated .command holds only a fixed interpreter, the absolute ai CLI a
   expect(terminalCommandFile({ node: '/opt/node/bin/node', entry: '/Users/test/ai-term/dist/cli/index.js' }, id)).toBe(
     `#!/bin/sh\nrm -f -- "$0"\nexec '/opt/node/bin/node' '/Users/test/ai-term/dist/cli/index.js' --attach '${id}'\n`);
   expect(terminalCommandFile({ node: '/opt/node/bin/node', entry: '/Users/test/ai-term/src/cli/index.ts', loader: '/Users/test/ai-term/node_modules/tsx/dist/loader.mjs' }, id)).toBe(
-    `#!/bin/sh\nrm -f -- "$0"\nexec '/opt/node/bin/node' --import '/Users/test/ai-term/node_modules/tsx/dist/loader.mjs' '/Users/test/ai-term/src/cli/index.ts' --attach '${id}'\n`);
+    // Source mode pins AI Term's tsconfig (v0.2 gate); tests/gate-source-mode.test.ts explains why.
+    `#!/bin/sh\nrm -f -- "$0"\nexec /usr/bin/env 'TSX_TSCONFIG_PATH=/Users/test/ai-term/tsconfig.json' '/opt/node/bin/node' --import '/Users/test/ai-term/node_modules/tsx/dist/loader.mjs' '/Users/test/ai-term/src/cli/index.ts' --attach '${id}'\n`);
   for (const [command, session] of [
     [{ node: '/opt/node/bin/node', entry: '/x/index.js' }, 'AITERMCANARY'], [{ node: '/opt/node/bin/node', entry: '/x/index.js' }, id.toUpperCase()],
     [{ node: "/opt/no'de", entry: '/x/index.js' }, id], [{ node: '/opt/node', entry: '/x/my ai/index.js' }, id], [{ node: 'node', entry: '/x/index.js' }, id],

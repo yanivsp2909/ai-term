@@ -10,7 +10,7 @@ it('Codex status argv adds notify and terminal signals as single -c elements aft
 });
 it('source sessions put the validated tsx loader in the notify array; resume keeps status before the subcommand',()=>{
  const codexStatus={node:'/n/node',entry:'/repo/src/cli/index.ts',loader:'/repo/node_modules/tsx/dist/loader.mjs'};
- expect(buildArgs({engine:'codex',model:'gpt-5',permission:'dontAsk',codexStatus})).toEqual([...HEAD,'-c','notify=["/n/node","--import","/repo/node_modules/tsx/dist/loader.mjs","/repo/src/cli/index.ts","status-notify"]',...TUI,'--model=gpt-5','--ask-for-approval=never','--sandbox=workspace-write']);
+ expect(buildArgs({engine:'codex',model:'gpt-5',permission:'dontAsk',codexStatus})).toEqual([...HEAD,'-c','notify=["/usr/bin/env","TSX_TSCONFIG_PATH=/repo/tsconfig.json","/n/node","--import","/repo/node_modules/tsx/dist/loader.mjs","/repo/src/cli/index.ts","status-notify"]',...TUI,'--model=gpt-5','--ask-for-approval=never','--sandbox=workspace-write']);
  const resumed=buildArgs({engine:'codex',model:null,permission:'ask',resume:true,codexStatus});expect(resumed.indexOf('resume')).toBeGreaterThan(resumed.indexOf('tui.terminal_title=["activity","run-state","context-remaining"]'));
 });
 it('any unsafe notify path leaves notify off but keeps the terminal signals',()=>{
