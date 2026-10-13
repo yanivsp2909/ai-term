@@ -54,3 +54,7 @@ it('preserves an untracked relative subfolder without copying its files',async()
  const {repo,home}=await fixture();await mkdir(join(repo,'untracked-sub'));await writeFile(join(repo,'untracked-sub','local.txt'),'local');
  const started=await prepareWorktree(home,join(repo,'untracked-sub'),'empty');expect(started.branch).toBe('ai/empty');expect(started.cwd).toBe(join(started.worktree??'','untracked-sub'));expect((await lstat(started.cwd)).mode&0o777).toBe(0o700);await expect(lstat(join(started.cwd,'local.txt'))).rejects.toMatchObject({code:'ENOENT'});
 });
+it('a branch and tag with the same name still reserve the branch slug',async()=>{
+ const {repo,home}=await fixture();await run('/usr/bin/git',['branch','--','ai/codex'],{cwd:repo});await run('/usr/bin/git',['tag','--','ai/codex'],{cwd:repo});
+ expect(await previewWorktree(home,repo,'Codex')).toMatchObject({branch:'ai/codex-2'});expect(await prepareWorktree(home,repo,'Codex')).toMatchObject({branch:'ai/codex-2'});
+});
