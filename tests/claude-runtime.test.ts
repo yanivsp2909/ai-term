@@ -23,7 +23,9 @@ it('subscription Claude sessions get private hooks, live status/context/activity
   const token=env.AITERM_STATUS_TOKEN;if(!token)throw new Error('Missing status token');expect(token).toMatch(/^[a-f0-9]{64}$/);expect(argv.join('')).not.toContain(token);expect(env.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
   const file=argv.find(a=>a.startsWith('--settings='))?.slice('--settings='.length);if(!file)throw new Error('Missing settings');expect(await readFile(file,'utf8')).not.toContain(token);expect((await stat(file)).mode&0o777).toBe(0o600);expect(await readFile(file,'utf8')).toContain('status-line');
   const send=(body:unknown)=>fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/status/claude`,{method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token},body:JSON.stringify(body)});
+  await send({hook_event_name:'AITermContext',used_percentage:5});expect(m.get(session.id).status).toBe('running');
   for(const [body,status,detail]of [[{hook_event_name:'PreToolUse',tool_name:'Bash',tool_input:'AITERMCANARY'},'running','running'],[{hook_event_name:'PermissionRequest',sessionId:'forged'},'waiting','permission'],[{hook_event_name:'PostToolUse',tool_name:'Bash'},'running','running'],[{hook_event_name:'Stop',last_assistant_message:'AITERMCANARY last reply'},'done','done']]as const){expect((await send(body)).status).toBe(204);await expect.poll(()=>m.get(session.id)).toMatchObject({status,statusDetail:detail});}
+  await send({hook_event_name:'PermissionRequest'});expect(m.activeCount()).toBe(1);await send({hook_event_name:'Stop'});
   expect(m.activeCount()).toBe(1);expect(m.sessionRoots()).toHaveLength(1);expect(m.get(session.id).lastActivity?.tool).toBe('Bash');
   await send({hook_event_name:'AITermContext',used_percentage:30});await expect.poll(()=>m.get(session.id).ctxPercent).toBe(30);
   expect(JSON.stringify((await client.request({kind:'sessions.list'})).sessions)).not.toContain('AITERMCANARY');
