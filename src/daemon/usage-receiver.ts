@@ -10,7 +10,7 @@ const MAX_BODY=1024*1024;
 const MAX_DISCARD=4*MAX_BODY;
 export class UsageReceiver {
  private readonly server:Server;
- private statusCredentials=new Map<string,{id:string;seq:number}>();
+ private statusCredentials=new Map<string,{id:string;seq:number;queue:Promise<void>}>();
  private credentials=new Map<string,UsageContext>();
  constructor(private readonly consume:(route:string,body:unknown,context:UsageContext)=>Promise<void>,private readonly log:{error(text:string):void},private readonly consumeStatus?:(id:string,body:unknown,seq:number)=>Promise<void>){
   this.server=createServer((req,res)=>{void this.handle(req,res).catch(()=>{const status=this.isStatusPath(req.url);this.log.error(status?'Status receiver request failed':'Usage receiver request failed');if(!res.headersSent){if(status)this.statusAnswer(res);else this.answer(res,500);}else res.destroy();});});
@@ -20,7 +20,7 @@ export class UsageReceiver {
  address():AddressInfo{const a=this.server.address();if(!a||typeof a==='string')throw new Error('Usage receiver unavailable');return a;}
  port():number{return this.address().port;}
  register(context:UsageContext):string{const token=randomBytes(32).toString('hex');this.credentials.set(token,{...context});return token;}
- registerStatus(id:string):string{if(!isUUID(id))throw new Error('Invalid session UUID');const token=randomBytes(32).toString('hex');this.statusCredentials.set(token,{id,seq:0});return token;}
+ registerStatus(id:string):string{if(!isUUID(id))throw new Error('Invalid session UUID');const token=randomBytes(32).toString('hex');this.statusCredentials.set(token,{id,seq:0,queue:Promise.resolve()});return token;}
  revoke(sessionId:string):void{for(const [token,context]of this.statusCredentials)if(context.id===sessionId)this.statusCredentials.delete(token);for(const [token,context]of this.credentials)if(context.sessionId===sessionId)this.credentials.delete(token);}
  revokeAll():void{this.credentials.clear();this.statusCredentials.clear();}
  private authorize(value:unknown):UsageContext|null{
@@ -30,23 +30,26 @@ export class UsageReceiver {
  }
  private isStatusPath(path:string|undefined):boolean{return !['/v1/metrics','/v1/logs'].includes(path??'');}
  private statusAnswer(res:ServerResponse):void{res.writeHead(204,{'connection':'close'});res.end();}
- private authorizeStatus(value:unknown):{id:string;seq:number}|null{
+ private authorizeStatus(value:unknown):{id:string;seq:number;queue:Promise<void>}|null{
   if(typeof value!=='string'||value.length!==64)return null;const incoming=Buffer.from(value);if(incoming.length!==64)return null;
   for(const [token,context]of this.statusCredentials)if(timingSafeEqual(incoming,Buffer.from(token)))return context;return null;
  }
  private async handleStatus(req:IncomingMessage,res:ServerResponse):Promise<void>{
   const context=this.authorizeStatus(req.headers['x-ai-term-session']);
   if(req.url!=='/v1/status/claude'||req.method!=='POST'||req.headers.host!==`127.0.0.1:${this.port()}`||Object.hasOwn(req.headers,'origin')||req.headers['content-type']!=='application/json'||!context){this.statusAnswer(res);req.resume();return;}
-  const seq=++context.seq;let bytes=0;const chunks:Buffer[]=[];
+  const seq=++context.seq,previous=context.queue;let release=()=>{};context.queue=new Promise<void>(resolve=>{release=resolve;});let bytes=0;const chunks:Buffer[]=[];
+  try{
   const body=await new Promise<Buffer|null>((resolve,reject)=>{
    req.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>4*MAX_BODY){chunks.length=0;}else chunks.push(chunk);});
    req.on('end',()=>resolve(bytes>4*MAX_BODY?null:Buffer.concat(chunks)));req.on('error',reject);
   });
+  await previous;
   if(body&&this.authorizeStatus(req.headers['x-ai-term-session'])===context){
    let raw:unknown;try{raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));}catch{this.statusAnswer(res);return;}
    await this.consumeStatus?.(context.id,raw,seq);
   }
   this.statusAnswer(res);
+  }finally{release();}
  }
  private answer(res:ServerResponse,status:number):void{res.writeHead(status,{'content-type':'application/json','connection':'close'});res.end(status===200?'{}':'');}
  private async handle(req:IncomingMessage,res:ServerResponse):Promise<void>{
