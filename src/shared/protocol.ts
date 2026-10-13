@@ -4,9 +4,9 @@ export const PROTOCOL_VERSION = 1;
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 export const MAX_COPY_BYTES = 5 * 1024 * 1024;
 export const COPY_CHUNK_BYTES = 1024 * 1024;
-export interface SessionText {sessionId:string;text:string;truncated:boolean}
+export interface SessionText {sessionId:string;text:string;truncated:boolean;source?:'last-reply'|'session'}
 export type Engine = 'claude-code' | 'codex' | 'shell'; // Shell spawning remains internal; the homepage can display it.
-export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'idle' | 'exited' | 'error';
+export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'exited' | 'error';
 export type ThemeName = 'graphite' | 'slate' | 'ink' | 'auto' | 'light';
 export type AgentEngine = 'claude-code' | 'codex';
 export type Permission = 'ask' | 'auto' | 'dontAsk';
@@ -49,8 +49,13 @@ export interface SessionInfo {
     exitCode: number | null;
     createdAt: string;
     lastOutputAt: string | null;
-    ctxPercent: null;
+    ctxPercent: number|null;
+    lastActivity?:{tool:string;at:string}|null; // Missing on legacy records; new records use null.
 }
+export type ClaudeStatusEvent = {seq:number;at:string} & (
+    {kind:'running';tool?:string} | {kind:'waiting';reason:'permission'|'question'|'turn failed';error?:string;backup?:boolean} |
+    {kind:'done'} | {kind:'context';percent:number|null} | {kind:'exit';status:'exited'|'error';detail:string;exitCode:number|null}
+);
 // This Mac (§10). Numbers only: no process name, command line, user or pid ever crosses the socket.
 // cpuPercent is a share of the whole machine (0–100) for the machine and for each session alike.
 export interface SessionStats { sessionId: string; cpuPercent: number; rssBytes: number }
@@ -80,8 +85,10 @@ export type Request = {
     kind: 'sessions.preview';
     sessionId: string | null;
 } | {
-    kind: 'sessions.stop' | 'sessions.remove' | 'sessions.resume' | 'sessions.text';
+    kind: 'sessions.stop' | 'sessions.remove' | 'sessions.resume';
     sessionId: string;
+} | {
+    kind:'sessions.text'; sessionId:string; lastReply?:boolean;
 } | {
     kind: 'sessions.rename';
     sessionId: string;

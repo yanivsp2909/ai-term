@@ -169,7 +169,7 @@ describe('field validators', () => {
     for (const value of [null, [], 'session'])
       expect(() => validateSession(value)).toThrow('Invalid daemon session');
     for (const patch of [{ id: 'x' }, { title: '' }, { engine: 'bash' }, { model: '-x' }, { cwd: 'tmp' }, { cwd: '/tmp\0' }, { auth: { kind: 'key' } }, { permission: 'yolo' }, { status: 'gone' },
-      { statusDetail: 3 }, { statusDetail: 'x'.repeat(4097) }, { statusSince: 'yesterday' }, { createdAt: 3 }, { lastOutputAt: 'never' }, { ctxPercent: 5 }, { exitCode: 1.5 }, { authMethod: 'oauth' }])
+      { statusDetail: 3 }, { statusDetail: 'x'.repeat(4097) }, { statusSince: 'yesterday' }, { createdAt: 3 }, { lastOutputAt: 'never' }, { ctxPercent: 105 }, { exitCode: 1.5 }, { authMethod: 'oauth' }])
       expect(() => validateSession({ ...session, ...patch }), JSON.stringify(patch).slice(0, 40)).toThrow('Invalid daemon session');
   });
   it('validateSystemStats refuses a session entry that is not an object', () => {

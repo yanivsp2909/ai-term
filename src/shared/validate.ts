@@ -92,11 +92,12 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if (v.sessionId !== null && !isUUID(v.sessionId))
                 throw new ValidationError('Invalid session UUID');
             break;
+        case 'sessions.text':
+            fields=['sessionId','lastReply'];if(!isUUID(v.sessionId)||v.lastReply!==undefined&&typeof v.lastReply!=='boolean')throw new ValidationError('Invalid session UUID');break;
         case 'sessions.detach':
         case 'sessions.stop':
         case 'sessions.remove':
         case 'sessions.resume':
-        case 'sessions.text':
         case 'sessions.rename':
             fields = v.kind === 'sessions.rename' ? ['sessionId', 'title'] : ['sessionId'];
             if (!isUUID(v.sessionId) || (v.kind === 'sessions.rename' && !isTitle(v.title)))
@@ -204,9 +205,9 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
         !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
         !isAuthView(s.auth) || !(s.engine==='shell'?s.permission==='ask':isPermissionForEngine(s.engine,s.permission)) || s.effort!==undefined && !isEffortForEngine(s.engine,s.effort) || s.conversationId!==undefined && (s.engine!=='claude-code'||!isUUID(s.conversationId)) ||
-        (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'idle', 'exited', 'error'].includes(s.status)) ||
+        (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
-        !(s.lastOutputAt === null || date(s.lastOutputAt)) || s.ctxPercent !== null ||
+        !(s.lastOutputAt === null || date(s.lastOutputAt)) || !(s.ctxPercent===null||isShare(s.ctxPercent)) || s.lastActivity!==undefined&&s.lastActivity!==null&&!isActivity(s.lastActivity) ||
         !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod))) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }
@@ -291,6 +292,10 @@ export function validateSessionText(value:unknown):import('./protocol.js').Sessi
  if(!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid session text');const v=value as Record<string,unknown>;
  // Only newline survives among C0/C1 controls; terminal escape sequences cannot reach the clipboard.
  // eslint-disable-next-line no-control-regex -- Newlines alone are allowed in clipboard text.
- if(Object.keys(v).some(k=>!['sessionId','text','truncated','more'].includes(k))||!isUUID(v.sessionId)||typeof v.text!=='string'||Buffer.byteLength(v.text)>MAX_COPY_BYTES||/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/u.test(v.text)||typeof v.truncated!=='boolean'||v.more!==undefined&&typeof v.more!=='boolean')throw new ValidationError('Invalid session text');
+ if(Object.keys(v).some(k=>!['sessionId','text','truncated','more','source'].includes(k))||!isUUID(v.sessionId)||typeof v.text!=='string'||Buffer.byteLength(v.text)>MAX_COPY_BYTES||/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/u.test(v.text)||typeof v.truncated!=='boolean'||v.more!==undefined&&typeof v.more!=='boolean'||v.source!==undefined&&!['last-reply','session'].includes(String(v.source)))throw new ValidationError('Invalid session text');
  return v as unknown as import('./protocol.js').SessionText & {more?:boolean};
 }
+
+export function isActivity(value:unknown):boolean{if(!value||typeof value!=='object'||Array.isArray(value))return false;const v=value as Record<string,unknown>;return Object.keys(v).length===2&&isToolName(v.tool)&&typeof v.at==='string'&&Number.isFinite(Date.parse(v.at));}
+export function isToolName(value:unknown):value is string{return typeof value==='string'&&/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(value)&&!value.includes('sk-');}
+export function isStatusCommandPath(value:unknown):value is string{return typeof value==='string'&&value.length<=4096&&/^\/[A-Za-z0-9_./-]+$/.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
