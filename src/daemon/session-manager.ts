@@ -195,7 +195,7 @@ export class SessionManager extends EventEmitter {
                     this.emit('output', info.id, Buffer.from(data));
                 }).catch(async () => {
                     if(live.mirrorFailed)return;
-                    live.mirrorFailed=true;this.usage?.revoke(info.id);
+                    live.mirrorFailed=true;this.usage?.revoke(info.id);live.outputClock?.dispose();
                     info.status='error';info.statusDetail='terminal mirror failed';info.exitCode=null;info.statusSince=new Date().toISOString();
                     this.log.error('Session terminal mirror failed');
                     await this.persist();this.event({kind:'session.updated',session:{...info}});

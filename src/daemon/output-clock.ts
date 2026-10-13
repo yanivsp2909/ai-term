@@ -16,7 +16,7 @@ export class OutputClock {
   if(now-this.last>=this.interval&&this.timer===undefined){this.last=now;this.publish();return;}
   this.timer??=this.schedule(()=>{this.timer=undefined;if(this.disposed)return;this.last=this.now();this.publish();},Math.max(0,this.last+this.interval-now));
  }
- // A status event already carried the newest output time; the interval restarts from it.
- sent():void{this.last=this.now();}
+ // A status event already carried the newest output time: the interval restarts from it and a pending trailing publish is redundant.
+ sent():void{this.last=this.now();if(this.timer!==undefined)this.cancel(this.timer);this.timer=undefined;}
  dispose():void{this.disposed=true;if(this.timer!==undefined)this.cancel(this.timer);this.timer=undefined;}
 }

@@ -14,7 +14,9 @@ export function age(session: SessionInfo, now: number): string { return compact(
 // Quiet means no output, tool or status change for 10 s while running. lastOutputAt reaches the client at most every 5 s (output-clock.ts).
 export function quietSince(session: SessionInfo): number | null {
   if (session.status !== 'running' || session.engine === 'shell') return null;
-  return Math.max(...[session.lastOutputAt, session.lastActivity?.at, session.statusSince].map(time => time ? Date.parse(time) : -Infinity).filter(Number.isFinite));
+  const times = [session.lastOutputAt, session.lastActivity?.at, session.statusSince].map(time => time ? Date.parse(time) : NaN).filter(Number.isFinite);
+  // Unreadable times mean no quiet label at all, never an "Infinity" label or a NaN timer.
+  return times.length ? Math.max(...times) : null;
 }
 export function quietSeconds(session: SessionInfo, now: number): number | null { const since = quietSince(session); return since === null || now - since < QUIET_AFTER_MS ? null : Math.floor((now - since) / 1000); }
 // One redraw at the next 10 s crossing, then once a second while a card shows quiet; null when nothing will change.
@@ -22,7 +24,8 @@ export function nextCardTick(sessions: readonly SessionInfo[], now: number): num
   let next: number | null = null;
   for (const session of sessions) {
     const since = quietSince(session); if (since === null) continue;
-    const elapsed = now - since, wait = elapsed < QUIET_AFTER_MS ? QUIET_AFTER_MS - elapsed : 1000 - elapsed % 1000;
+    // Past a minute the label counts minutes, so it only needs a redraw at the next minute.
+    const elapsed = now - since, wait = elapsed < QUIET_AFTER_MS ? QUIET_AFTER_MS - elapsed : elapsed < 60000 ? 1000 - elapsed % 1000 : 60000 - elapsed % 60000;
     next = next === null ? wait : Math.min(next, wait);
   }
   return next;
