@@ -105,9 +105,10 @@ export async function validateRequest(value: unknown): Promise<Request> {
                 throw new ValidationError('Invalid session UUID or title');
             break;
         case 'usage.subscribe':
+        case 'clicks.subscribe':
         case 'system.subscribe':
             fields = ['on'];
-            if (typeof v.on !== 'boolean') throw new ValidationError('system.subscribe needs on: boolean');
+            if (typeof v.on !== 'boolean') throw new ValidationError(`${v.kind} needs on: boolean`);
             break;
         case 'layout.previewSize':
             fields = ['cols', 'rows'];

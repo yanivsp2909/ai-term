@@ -29,7 +29,8 @@ async function receiver(sessions: SessionInfo[], options: { client?: boolean; no
   return { paths, socket: join(paths.run, CLICK_SOCKET), selected, opened, logs, clicks };
 }
 function send(path: string, bytes: string | Buffer, end = true): Promise<void> {
-  return new Promise((done, fail) => { const socket = createConnection(path, () => { socket.write(bytes); if (end) socket.end(); }); socket.on('error', fail); socket.on('close', () => done()); socket.resume(); });
+  // The receiver hangs up on an oversized write; the sender's EPIPE is expected then, and the log line is what counts.
+  return new Promise(done => { const socket = createConnection(path, () => { socket.write(bytes); if (end) socket.end(); }); socket.on('error', () => undefined); socket.on('close', () => done()); socket.resume(); });
 }
 const payload = (id: string) => `{"clicked":"${id}"}\n`;
 

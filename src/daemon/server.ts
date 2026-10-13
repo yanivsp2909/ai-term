@@ -1,9 +1,6 @@
-import { createServer, createConnection, type Socket, type Server } from 'node:net';
-import { lstat, unlink, chmod, rename } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createServer, type Socket, type Server } from 'node:net';
 import type { Paths } from '../shared/paths.js';
-import { isFsError } from '../shared/paths.js';
+import { listenPrivate, closePrivate, type SocketIdentity } from './private-socket.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type NotifierState,type NotificationAuthorization, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
@@ -24,38 +21,17 @@ interface Peer {
     refreshing: boolean;
     lagged: boolean;
     stats: boolean; usage:boolean;
+    clicks: boolean;
     queue: Promise<void>;
     snapshotId?: string;
 }
-export async function socketAnswers(path: string): Promise<boolean> {
-    return new Promise((resolve, reject) => {
-        const socket = createConnection(path);
-        let settled = false;
-        const finish = (alive: boolean) => { if (!settled) {
-            settled = true;
-            socket.destroy();
-            resolve(alive);
-        } };
-        socket.setTimeout(300, () => finish(true)); // A hung listener still owns the address; never unlink it.
-        socket.once('connect', () => finish(true));
-        socket.once('error', error => { if (isFsError(error, 'ENOENT') || isFsError(error, 'ECONNREFUSED'))
-            finish(false);
-        else {
-            settled = true;
-            socket.destroy();
-            reject(error);
-        } });
-    });
-}
+export { socketAnswers } from './private-socket.js';
 export class DaemonServer {
     private server: Server;
     private readonly settings: SettingsStore;
     private peers = new Set<Peer>();
     private owners=new Map<string,Peer>();
-    private socketIdentity: {
-        ino: number;
-        dev: number;
-    } | undefined;
+    private socketIdentity: SocketIdentity | undefined;
     private readonly sampler: SystemSampler;
     private closed = false;
     constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService, private readonly notifier?:{state():NotifierState;permission?():NotificationAuthorization;refreshPermission?():Promise<NotificationAuthorization>}) {
@@ -100,42 +76,11 @@ export class DaemonServer {
     }
     async listen(): Promise<void> {
         await this.settings.get();
-        try {
-            const stat = await lstat(this.paths.socket);
-            if (!stat.isSocket() || stat.uid !== process.getuid?.())
-                throw new Error('Unsafe socket path');
-            if (await socketAnswers(this.paths.socket))
-                throw new Error('Daemon socket already in use');
-            const current = await lstat(this.paths.socket);
-            if (current.ino !== stat.ino || current.dev !== stat.dev)
-                throw new Error('Socket changed during stale check');
-            await unlink(this.paths.socket);
-        }
-        catch (error) {
-            if (!isFsError(error, 'ENOENT'))
-                throw error;
-        }
-        // libuv unlinks a pipe server's bound path on close(), whatever is there by then (B6). Binding a
-        // private temp name and renaming it into place means close() only ever unlinks that temp name.
-        const temp = join(dirname(this.paths.socket), `.${randomBytes(3).toString('hex')}.sock`);
-        await new Promise<void>((resolve, reject) => {
-            this.server.once('error', reject);
-            // Unix sockets start with 0777 & ~umask. Create as 0600 before clients can lstat it.
-            const previousMask=process.umask(0o177);
-            try{this.server.listen(temp, () => { this.server.off('error', reject); resolve(); });}
-            finally{process.umask(previousMask);}
-        });
-        try {
-            await chmod(temp, 0o600);
-            await rename(temp, this.paths.socket);
-        }
-        catch (error) {
-            await new Promise<void>(resolve => this.server.close(() => resolve()));
-            throw error;
-        }
-        const stat = await lstat(this.paths.socket);
-        this.socketIdentity = { ino: stat.ino, dev: stat.dev };
+        this.socketIdentity = await listenPrivate(this.server, this.paths.socket);
     }
+    // Homepage clients that route notification clicks (they send clicks.subscribe). None open → the click opens Terminal.
+    clickClients(): number { return [...this.peers].filter(peer => peer.hello && peer.clicks && !peer.socket.destroyed).length; }
+    selectSession(sessionId: string): void { for (const peer of this.peers) if (peer.hello && peer.clicks) this.control(peer, { kind: 'session.select', sessionId }); }
     private async sendText(peer:Peer,id:string,copy:SessionText):Promise<void>{
         const bytes=Buffer.from(copy.text,'utf8');let start=0;
         do{
@@ -147,7 +92,7 @@ export class DaemonServer {
         }while(start<bytes.length);
     }
     private accept(socket: Socket): void {
-        const peer: Peer = { socket, closing:false, hello: false, attached:null, preview: null, refreshing: false, lagged: false, stats: false, usage:false, queue: Promise.resolve() };
+        const peer: Peer = { socket, closing:false, hello: false, attached:null, preview: null, refreshing: false, lagged: false, stats: false, usage:false, clicks:false, queue: Promise.resolve() };
         this.peers.add(peer);
         const decoder = new FrameDecoder();
         let queued = 0;let queuedBytes=0;
@@ -230,6 +175,7 @@ export class DaemonServer {
                 case 'usage.summary':this.control(peer,{id:request.id,ok:true,usage:this.usage?.summary()});break;
                 case 'usage.diagnostics':this.control(peer,{id:request.id,ok:true,usageDiagnostics:this.usage?.diagnostics()});break;
                 case 'usage.subscribe':peer.usage=request.on;this.control(peer,{id:request.id,ok:true});break;
+                case 'clicks.subscribe':peer.clicks=request.on;this.control(peer,{id:request.id,ok:true});break;
                 case 'keys.list': this.control(peer,{id:request.id,ok:true,keys:await this.keys.list()}); break;
                 case 'keys.add': this.control(peer,{id:request.id,ok:true,key:await this.keys.add(request)}); break;
                 case 'keys.remove': await this.keys.remove(request.keyId); this.control(peer,{id:request.id,ok:true}); break;
@@ -358,16 +304,6 @@ export class DaemonServer {
         this.sampler.setSubscribers(0);
         for (const peer of this.peers)
             peer.socket.destroy();
-        if (this.server.listening)
-            await new Promise<void>((resolve, reject) => this.server.close(error => error ? reject(error) : resolve()));
-        try {
-            const stat = await lstat(this.paths.socket);
-            if (stat.ino === this.socketIdentity?.ino && stat.dev === this.socketIdentity.dev)
-                await unlink(this.paths.socket);
-        }
-        catch (error) {
-            if (!isFsError(error, 'ENOENT'))
-                throw error;
-        }
+        await closePrivate(this.server, this.paths.socket, this.socketIdentity);
     }
 }

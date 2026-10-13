@@ -5,6 +5,10 @@ import { SessionManager } from './session-manager.js';
 import { UsageService } from './usage-service.js';
 import { DaemonServer } from './server.js';
 import { Notifier, notifierAppPath, notificationsSetting } from './notifier.js';
+import { ClickReceiver, CLICK_SOCKET } from './click-receiver.js';
+import { TerminalLauncher } from './terminal-launch.js';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import type { StatusState } from './status-reducer.js';
 import type { SessionInfo } from '../shared/protocol.js';
 export async function runDaemon(entry?:string): Promise<void> {
@@ -17,6 +21,14 @@ export async function runDaemon(entry?:string): Promise<void> {
     const notifier = new Notifier(entry ? notifierAppPath(entry) : null, log, notificationsSetting(paths.root));
     const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage,notifier);
     manager.on('statusChanged', (session: SessionInfo, previous: StatusState, next: StatusState, attached: boolean) => notifier.transition(session, previous, next, attached));
+    // Notification clicks: select the agent in an open homepage, otherwise open Terminal inside it (D43).
+    const launcher = entry ? new TerminalLauncher(paths.root, { node: process.execPath, entry, ...(entry.endsWith('.ts') ? { loader: createRequire(import.meta.url).resolve('tsx') } : {}) }, log) : null;
+    const clicks = new ClickReceiver(join(paths.run, CLICK_SOCKET), {
+        session: id => manager.list().find(session => session.id === id) ?? null,
+        hasClient: () => server.clickClients() > 0,
+        select: id => server.selectSession(id),
+        openTerminal: async id => { if (!launcher) throw new Error('No ai entry for Terminal'); await launcher.open(id); },
+    }, log);
     let closing = false;
     let idleSince: number | null = null;
     let idle: ReturnType<typeof setInterval> | undefined;
@@ -33,7 +45,7 @@ export async function runDaemon(entry?:string): Promise<void> {
             process.exitCode = 1;
         }
         try {
-            for(const cleanup of [()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close()]) {
+            for(const cleanup of [()=>clicks.close(),()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close()]) {
                 try{await cleanup();}catch{try{log.error('Shutdown cleanup failed');}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
             }
         } finally {
@@ -52,6 +64,11 @@ export async function runDaemon(entry?:string): Promise<void> {
         await manager.load();
         if (!closing)
             await server.listen();
+        // Clicks are optional: a failure here is logged and AI Term runs on without click-through.
+        if (!closing) {
+            try { await launcher?.sweep(); await clicks.listen(); }
+            catch { log.error('Notification click route unavailable'); }
+        }
         if (!closing) {
             log.info('Daemon started');
             idle = setInterval(() => {

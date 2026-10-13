@@ -109,6 +109,9 @@ export type Request = {
     rows: number;
 } | {
     kind: 'usage.subscribe'; on:boolean;
+} | {
+    // A homepage that handles notification clicks; while one is connected a click selects the agent there.
+    kind: 'clicks.subscribe'; on:boolean;
 } | {kind:'usage.summary'|'usage.diagnostics'} | {
     kind: 'system.subscribe';
     on: boolean;
@@ -173,6 +176,9 @@ export type SessionEvent = {
 } | {
     kind: 'session.removed';
     sessionId: string;
+} | {
+    // A notification click: clicks.subscribe clients select this agent. Carries the UUID only.
+    kind: 'session.select'; sessionId: string;
 } | {
     kind: 'usage.updated'; usage:UsageSummary;
 } | {
