@@ -12,7 +12,7 @@ it('S6 removes every own-provider auth/routing variable, leaves other provider v
  }
 });
 it('B2/D41 Codex account env keeps AZURE_OPENAI_API_KEY and strips every other listed Codex variable; key rows unchanged',()=>{
- const stripped=['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_URL','OPENAI_ORG_ID','OPENAI_ORGANIZATION','OPENAI_PROJECT_ID','AITERM_FOUNDRY_KEY'];
+ const stripped=['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_URL','OPENAI_ORG_ID','OPENAI_ORGANIZATION','OPENAI_PROJECT_ID','AITERM_FOUNDRY_KEY','CODEX_ACCESS_TOKEN','OPENAI_FEDERATION_RULE_ID','OPENAI_IDENTITY_TOKEN_FILE'];
  expect(CODEX_AUTH_VARS).toEqual(stripped);
  const all={...base,AZURE_OPENAI_API_KEY:'azure',...Object.fromEntries(stripped.map(key=>[key,'private']))};
  const account=buildSpawnEnv('codex',{kind:'account'},all);
