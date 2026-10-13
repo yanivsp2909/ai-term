@@ -26,7 +26,7 @@ process.stdin.on('data', onProbeInput);
 nodePty.spawn = (file, args, options) => {
   spawned = true;
   process.stdin.off('data', onProbeInput);
-  const child = originalSpawn(file, args, { ...options, cwd: root, env: {
+  const child = originalSpawn(file, args, { ...options, cwd: home, env: {
     PATH: '/usr/bin:/bin', HOME: home, LANG: 'en_US.UTF-8', TERM: 'xterm-256color',
     COLORTERM: 'truecolor', TERM_PROGRAM: 'AITerm',
   } });
