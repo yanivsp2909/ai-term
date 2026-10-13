@@ -1,6 +1,105 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 8e7b717 test: await the stopped homepage's done promise in the L2 case
+Roadmap step: v0.2.7 done (notification click-through) + v0.2 release gate done. **v0.2 is closed** on automated evidence; the click/banner and Foundry re-add checks below are Yaniv's manual checks.
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started at 70fdae4 after git pull --ff-only (already up to date). Baseline 118 files / 720 passed / 2 opt-in Keychain skips. Final 126 files / 767 passed / same 2 skips. Session: Claude Code, Opus 5.5.
+Prompt vs code: B12 and B21 are not recorded anywhere in the repo (no Bugs section has them); the prompt's descriptions were used. architecture §12.1 said a click "brings your terminal forward", which needs Automation; not done, and §12.1 now says so.
+
+## What works
+- Part A, click-through (pushed before part B):
+  - Helper (RED 307d59d → GREEN 7e20924). userInfo carries the session UUID. Delegates are set before app.run(), so a cold relaunch gets the click. Only the default action counts. It sends exactly `{"clicked":"<uuid>"}\n` to `<home>/run/click.sock` after these checks: home and run are 0700, owned and not symlinks (lstat); the socket is 0600 and owned; the peer uid matches. One-second bound, SIGPIPE off, fixed errors. `--click <uuid>` runs the same send. No click and no argv: exit 2 after 3 s.
+  - Daemon (RED 21a6f4d → GREEN 5bb1f00). `click-receiver.ts` gives the click socket its own listener, bound through the shared `private-socket.ts` (extracted from server.ts, B6 temp-bind and rename). Limits: 128 bytes, one line, strict JSON, lowercase UUID, 1 s deadline, 4 connections. Unknown and finished agents are dropped with a log line; at most one action per second. A homepage that sent `clicks.subscribe` gets `session.select`; otherwise `terminal-launch.ts` handles D43. The `.command` is `/bin/sh` + the absolute node/ai paths + the UUID, written 0700 in a mkdtemp folder under the 0700 `launch/`. The daemon runs `execFile('/usr/bin/open',['-a','Terminal',file])`; the file deletes itself when it runs, with a 60 s fallback and a sweep at start.
+  - Client (RED cb10ced → GREEN 5e5ddcc). The homepage selects only and never attaches; an unknown id is ignored. `ai --attach <uuid>` validates the UUID before connecting, then opens the homepage inside that agent; a gone or finished agent stays home with a note. README and architecture §12.1/§3/§4 are updated (1e93ef6).
+- Part B, release gate. Three fresh-context reviewers (security-reviewer, security-bounty-hunter via general-purpose, silent-failure-hunter) worked on a read-only snapshot of 1e93ef6; a researcher read the official docs for B21. Every confirmed finding below has a failing test commit, then a fix commit:
+  - **HIGH (bounty), source-mode code execution.** tsx read tsconfig.json from the agent's project folder, so a repo's `paths` could make the Claude status line or Codex notify (which runs outside Codex's sandbox) execute repo code. Reproduced (marker file). RED e3fcf00 → GREEN e636574: in source mode, `/usr/bin/env TSX_TSCONFIG_PATH=<repo>/tsconfig.json` is pinned in the status line, the notify argv and the `.command`; daemon auto-start uses the absolute loader with the repo as cwd. Built mode is unaffected.
+  - **MEDIUM, B12.** RED de0475c → GREEN ac48a28, docs c0f8d17. Details below.
+  - **MEDIUM-LOW (security), notification starvation.** One flapping agent could fill the global 10-a-minute budget. RED c66af09 → GREEN 1d6a662: each agent is also capped at 3 a minute.
+  - **MEDIUM (silent-failure):**
+    - M1: an orphaned Keychain entry wasn't named anywhere; the log now names the `provider:uuid` account.
+    - M2: a failed request is logged with its kind and the fixed reason.
+    - M4: the Claude status line being left off is logged.
+    - M5 (part): click-route startup failures log a fixed cause.
+    - LOW L2: only an older daemon's `DaemonRequestError` for `clicks.subscribe` is ignored.
+    - RED 9be64de → GREEN 8ec5b01; test follow-up 8e7b717.
+  - **LOW (bounty), S12/S15.** `Expect: <other>` got Node's 417, and cell text kept U+2028/2029. RED f4e603e → GREEN 38b9482.
+  - **B21.** RED 438f87a → GREEN 6bf35dc (+ d6653a5 for the pinned list). Details below.
+- **B12 outcome.** A Foundry Keychain entry is `{v:1,secret,endpoint,deployments}`. withSecret refuses a changed settings.json copy (`Foundry key details changed outside AI Term; add the key again`) or an unbound or legacy entry (`Foundry key must be added again to bind its endpoint`), with no trust on first use. `keys.test` probes only the bound values. A spawn refuses argv whose base_url or deployment isn't bound, which also closes a time-of-check/use gap between two reads.
+- **B21 outcome** (code.claude.com/docs/en/env-vars and learn.chatgpt.com/docs/config-file/environment-variables, 2026-10-13). Each list is scrubbed for its own CLI only:
+  - Claude: `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `CLAUDE_CODE_USE_MANTLE`, the five `CLAUDE_CODE_SKIP_*_AUTH`, `ANTHROPIC_CUSTOM_HEADERS`, `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, `CLAUDE_CODE_CLIENT_CERT/KEY/KEY_PASSPHRASE`.
+  - Codex: `CODEX_ACCESS_TOKEN`, `OPENAI_FEDERATION_RULE_ID`, `OPENAI_IDENTITY_TOKEN_FILE`.
+  - Not added: `ANTHROPIC_UNIX_SOCKET` and the `*_FILE_DESCRIPTOR` names are not on the official page. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` stay inherited per the §7.3 table. Generic AWS/GCP/proxy/CA variables stay too.
+
+### Not fixed, with reasons
+- **Silent M3** (a corrupt state.json stops the daemon with only "Daemon failed"): v0.1 startup path outside the v0.2 surface. Logging raw errors risks S5; it needs per-stage fixed reasons. Next step.
+- **Silent M5 (rest).**
+  - The helper can't report a failed click: a GUI app's stderr is lost, and a fallback launch would need ai's state.
+  - A homepage attached to another agent counts as "open": the prompt says select, and the selection waits for Ctrl+E (documented).
+  - No visible note on select: calmer option.
+- **Silent L1:** `open` without -W can't see a helper failure. Already documented in v0.2.4b.
+- **L3:** status bodies dropped by size, timeout or JSON get no log; a log line wouldn't restore the lost Stop.
+- **L4:** stage-specific spawn logs; diagnostic only.
+- **L5:** the importEnv rollback message hides the first reason.
+- **L6:** a post-rename fsync failure in atomicWrite.
+- **L7:** Foundry readiness on any 2xx; the user chose the host.
+- L3–L7 are rare, low-impact or need a design. Listed for later.
+- **Bounty LOW 3:** another macOS user can read agent argv via setuid `ps`, including the Codex usage credential (D52, pinned) and the first message (v0.1.6 argv delivery, pinned). Forging only inflates that session's usage. Reopening needs Yaniv.
+- **Bounty LOW 6:** clicks always reach `~/.ai-term`; a daemon on another AI_TERM_HOME gets none. Documented in §12.1, and the wrong helper-env comment is corrected (32fd75a).
+- **Security note:** a project's own `.claude/settings.json` `env` or Codex config can still reroute a key session after folder trust. This is the documented §7.3 Known limit; AI Term doesn't read CLI config.
+
+### Final checks (all exit 0)
+```text
+npm run typecheck   > tsc --noEmit
+npm run lint        > eslint .
+npm run build       ESM ⚡️ Build success in 22ms
+npm run build:notifier  Notifier built and ad-hoc signed: /Users/yanivsp/ai-term/build/notifier/AI Term.app
+npm test -- --reporter=dot (3 consecutive runs, exit 0 each)
+ Test Files  126 passed (126)
+      Tests  767 passed | 2 skipped (769)
+   Duration  11.00s / 10.83s / 10.92s
+S8 grep: no exec( / execSync( / shell: true (only RegExp .exec in mouse-rows.ts:56, passthrough.ts:121)
+sk- in src: only redaction/filters (log.ts, validate.ts, status-line.ts, usage-parse.ts) and "--ask-for-approval" in env.ts
+permission flags outside src/daemon/env.ts: none
+git diff --check 70fdae4..HEAD: clean
+```
+One earlier run exited 1 on an unhandled rejection from a new test (fixed in 8e7b717); the node-pty EBADF stderr is the known baseline line.
+
+## What's next
+- v0.2 is closed. Next roadmap step: v0.3 (splits + worktrees), only when Yaniv starts it.
+- Carry-overs: silent-failure M3 startup reasons; L3–L7 above. The Terminal.app bar spike exit stays open (bar default off, nonblocking per Yaniv).
+
+## Manual checks
+- Rebuild and restart, needs Yaniv (stops running agents): `cd ~/ai-term && npm run build && npm run build:notifier && node dist/cli/index.js daemon stop && node dist/cli/index.js`
+- Click with ai open, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`. Start two agents and select one; when the other's banner appears, click it. The other agent is selected, and Enter attaches.
+- Click with ai closed, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`. Start an agent with a task, `/exit`, wait for its `done` banner and click it. A new Terminal window (or tab, per Terminal preferences) opens `ai` inside that agent; Ctrl+E goes home.
+- Same without a banner, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js debug ls` and copy an id, `/exit` any ai, then `cd ~/ai-term && "build/notifier/AI Term.app/Contents/MacOS/AITermNotifier" --click <id>`.
+- Click for a removed agent, needs Yaniv: `cd ~/ai-term && "build/notifier/AI Term.app/Contents/MacOS/AITermNotifier" --click "$(uuidgen | tr A-Z a-z)" && tail -1 ~/.ai-term/logs/daemon.log`. Nothing opens; the log says `Notification click for unknown agent dropped`.
+- Foundry key after B12, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`. In /settings, test (`t`) the existing Foundry key: it must refuse with `Foundry key must be added again to bind its endpoint`. Remove it (`x`), add it again (`a`), then `t`: deployments test as before.
+- Ran headlessly: built-helper click payload and refusals (temp socket); daemon receiver, routing branches and the exact `.command` (stub launcher); homepage select and `--attach` (fake connection); B12/B21/source-mode/Expect cases. No banner was posted, no Terminal was opened, no real key or login was used.
+
+## Gotchas
+- Older Foundry keys refuse until re-added; that's deliberate (no trust on first use). Re-adding needs the key again, or an .env import.
+- The Keychain item ACL trusts the node binary, so a same-user node process could still read entries (D35 boundary). B12 binds where a key goes; it doesn't hide the key from the user's own processes.
+- The click socket is `~/.ai-term/run/click.sock`. The helper honours AI_TERM_HOME only for direct `--click` runs; real clicks always use `~/.ai-term`.
+- `server.ts` now binds through `private-socket.ts`; `socketAnswers` is re-exported from server.ts for existing imports.
+- In source mode, status commands depend on `/usr/bin/env` and the repo's tsconfig.json path passing the strict path alphabet; otherwise they're left off (logged).
+- Review snapshot worktree was in the session scratchpad and has been removed; the unrelated `/private/tmp/ait-review` worktree from an earlier session is untouched.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Cold-launch delivery (`native/notifier/Notifier.swift`): when a banner is clicked after its app exited, macOS relaunches the app without argv and delivers the click to whatever UNUserNotificationCenter delegate exists while launch finishes. That's why the delegate is set before `app.run()`, and why the route to the daemon must be a fixed path rather than an argument.
+- Document launch (`src/daemon/terminal-launch.ts`): `open -a Terminal file.command` asks Launch Services to open a file with Terminal, as a double-click would. Terminal runs it in a new shell. No Apple Events and no Automation permission are involved, unlike AppleScript `do script`.
+- Peer credentials (`native/notifier/Notifier.swift`, `getpeereid`): a Unix socket can report the uid of the process at the other end. The helper checks it's the user's own, in addition to the file's owner and mode.
+- Secret binding (`src/daemon/keys.ts`): data that decides where a secret may go is stored inside the secret's own protected entry. A writable side file (settings.json) can then only be compared against it, never trusted.
+- Module resolution pinning (`src/daemon/env.ts` `sourceTsconfig`): tsx resolves path aliases from the tsconfig.json of the current folder. Commands that run inside someone else's project pin their own tsconfig with `TSX_TSCONFIG_PATH`.
+
+---
+## Previous checkpoint (v0.2.6, retained)
+
+## Checkpoint
 Last commit: 7186961 docs: record measured product bar latency gate on this Mac
 Roadmap step: v0.2.6 done — tasks 2–6 delivered; task 1 Terminal.app spike exit remains open by Yaniv's explicit nonblocking override.
 Branch: main. This handover is the last commit; its own hash is in git log.
