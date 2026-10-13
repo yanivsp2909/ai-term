@@ -31,7 +31,8 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
   if(!stdin.isTTY){options.debugLog?.info('attach reason=stdin not a TTY inputBytes=0');throw new AttachError('stdin not a TTY',new Error('Attach requires an interactive stdin'));}
   if(!isUUID(id)||!stdout.isTTY){options.debugLog?.info('attach reason=error inputBytes=0');throw new AttachError('error',new Error('Attach requires a session UUID and an interactive terminal'));}
   const originalRaw=stdin.isRaw??false;
-  const probe=options.bar==='on'&&(stdout.rows??24)>1?await terminalProbe(stdin,stdout):null;
+  const probed=options.bar==='on'&&(stdout.rows??24)>1?await terminalProbe(stdin,stdout):null;
+  const probe=probed?.success?probed:null;
   if(options.bar==='on'&&!probe)options.fallbackLog?.('Bar startup probe failed; using raw passthrough for this attach');
   let screen:SessionScreen|undefined;
   let barSession:SessionInfo|undefined;const others=new Map<string,SessionInfo>();
@@ -126,7 +127,7 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
       active=!ended;
       if(screen){await screen.write(result.snapshot);await screen.write(enterModes(modes));}else{writeOutput(result.snapshot);writeOutput(enterModes(modes));}
       for(const data of buffered)writeOutput(data);buffered.length=0;
-      if(probe&&probe.input.length)onData(probe.input);
+      if(probed?.input.length)onData(probed.input);
       if(result.session&&(result.session.status==='exited'||result.session.status==='error')){exitCode=validateExitCode(result.session.exitCode);end(undefined,'session exited');}
     }
     await done;
