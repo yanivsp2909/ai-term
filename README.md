@@ -23,6 +23,8 @@ Ask passes explicit ask flags. New Claude agents keep a conversation UUID for `/
 
 Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source. If the `ai` binary is installed, the same arguments work with `ai`.
 
+`npm run build:notifier` builds the macOS notification helper (needs `swiftc` from the Xcode Command Line Tools) into `build/notifier/AI Term.app`, ad-hoc signed, always at that path so macOS keeps your Allow across rebuilds. Without `swiftc` it prints `Notifier not built: …` and AI Term works without notifications.
+
 | Subcommand | Action |
 |---|---|
 | `ai` | Open homepage; start/connect to the background daemon |
@@ -115,6 +117,8 @@ Key and engine failures show fixed reasons without private error text. A malform
 Claude agent sessions, including subscriptions, receive per-session HTTP hooks and AI Term's own status line. `ai status-line` reads bounded Claude JSON on stdin, prints model · ctx N%, and sends numeric context to the existing local server with the credential from its env. It replaces the user's Claude status line only inside AI Term sessions. Paths containing spaces or shell characters leave that status line off. `ai debug ls` exposes permission/question/turn-failure reasons and context; waiting and done agents remain live. Restart the daemon and create a new session to get hooks.
 
 Codex agent sessions, including subscriptions, get status through argv only; nothing is written to `~/.codex`. Each session passes `-c notify=[<node>, <ai cli>, "status-notify"]` (left off if a path contains spaces or shell characters) plus `tui.notifications`, `tui.notification_method="osc9"`, `tui.notification_condition="always"` and `tui.terminal_title=["activity","run-state","context-remaining"]`. `ai status-notify` sends turn-complete to the daemon (done) with the last reply, kept in memory only. Codex's own thread-title turn (a last message that is only `{"title": …}`) is ignored, so it never ends a turn or replaces the reply. The daemon's own mirror reads Codex's "Approval requested" OSC 9, a bare bell or the `[ ! ] Action Required` title as waiting (permission), a change to Working as running, and `Context N% left` as ctx. Enter typed while attached after done or waiting marks it running. Restart the daemon and create a new Codex session to get status.
+
+Notifications (v0.2.4b, macOS): with sound, titled "AI Term", body `<agent name> · waiting: permission|question|turn failed` or `<agent name> · done`. Waiting always notifies; done only when no `ai` client is attached to that agent; once per change. The body never carries prompts, replies, tool input, error text or paths. The first one asks for permission (Allow). Turn them off with `n` in `/settings`. Clicking a notification does nothing yet. The daemon launches the helper with `/usr/bin/open -n -g -a <helper> --args …` and never waits on it; a missing or failing helper is logged once and shown in `/settings`. Focus and Do Not Disturb apply as usual.
 
 Native Keychain tests are opt-in: `AITERM_NATIVE_KEYCHAIN_TEST=1 npm test -- tests/keys-store.test.ts`. Normal `npm test` skips only those two native tests and prints the reason; fake-vault tests still run.
 

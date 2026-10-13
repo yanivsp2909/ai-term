@@ -175,7 +175,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - **Popup** with sections:
   - **KEYS** (OS keychain): label, endpoint, `key ····last4`, plus `+ add key` (paste, or import from .env).
   - **ENGINES:** Claude Code / Codex, each with `✓ installed` and `✓ logged in` (or `✗ not logged in` with `/login`).
-  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget. Permissions remain Ask-only as saved defaults.
+  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget, notifications (`on`/`off`, n toggles; default on). Permissions remain Ask-only as saved defaults. If notifications can't be sent, a fixed `notifications unavailable: …` line follows.
 - **Footer:** `keys are never shown in full and never written to .env`.
 
 ### /login
