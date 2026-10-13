@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Paths } from '../shared/paths.js';
 import { isFsError } from '../shared/paths.js';
-import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
+import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type NotifierState, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings.js';
@@ -58,7 +58,7 @@ export class DaemonServer {
     } | undefined;
     private readonly sampler: SystemSampler;
     private closed = false;
-    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService) {
+    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService, private readonly notifier?:{state():NotifierState}) {
         this.settings = new SettingsStore(paths.root,()=>manager.keyMetadataWarning());
         keys.on('warning',()=>manager.keyMetadataWarning());
         usage?.on('updated',summary=>{for(const peer of this.peers)if(peer.hello&&peer.usage)this.control(peer,{kind:'usage.updated',usage:summary});});
@@ -242,7 +242,7 @@ export class DaemonServer {
                     await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
                 }
                 case 'engines.status':
-                    this.control(peer, { id: request.id, ok: true, engines: await enginesStatus() });
+                    this.control(peer, { id: request.id, ok: true, engines: await enginesStatus(), notifier: this.notifier?.state() ?? 'not built' });
                     break;
                 case 'settings.get':
                     this.control(peer, { id: request.id, ok: true, settings: await this.settings.get() });

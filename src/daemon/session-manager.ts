@@ -244,9 +244,11 @@ export class SessionManager extends EventEmitter {
     }
     private applyStatus(live:Live,next:StatusState):void{
         if(!live.statusState||next===live.statusState)return;
-        live.statusState=next;
+        const previous=live.statusState;live.statusState=next;
         Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
         this.event({kind:'session.updated',session:{...live.info}});live.outputClock?.sent();
+        // Notifications listen here; a listener failure must never stop status from applying.
+        try{this.emit('statusChanged',{...live.info},previous,next,live.attached);}catch{this.log.error('Status listener failed');}
         void this.persist();
     }
     // Codex terminal signals and Enter from the attached owner wait behind status requests that arrived earlier. Each applies only

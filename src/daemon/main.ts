@@ -4,6 +4,10 @@ import { Logger } from './log.js';
 import { SessionManager } from './session-manager.js';
 import { UsageService } from './usage-service.js';
 import { DaemonServer } from './server.js';
+import { SettingsStore } from './settings.js';
+import { Notifier, notifierAppPath } from './notifier.js';
+import type { StatusState } from './status-reducer.js';
+import type { SessionInfo } from '../shared/protocol.js';
 export async function runDaemon(entry?:string): Promise<void> {
     // Private files for the daemon; sessions get the user's own umask back (session-manager).
     const userUmask = process.umask(0o077);
@@ -11,7 +15,10 @@ export async function runDaemon(entry?:string): Promise<void> {
     await preparePaths(paths);
     const log = new Logger(paths.log), release = await acquireLock(paths.pid);
     const usage=new UsageService(paths.root,log);
-    const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage);
+    // Notifications default to on; the setting is read at each notification so /settings changes apply at once.
+    const settings = new SettingsStore(paths.root), notifier = new Notifier(entry ? notifierAppPath(entry) : null, log, async () => (await settings.get()).notifications !== false);
+    const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage,notifier);
+    manager.on('statusChanged', (session: SessionInfo, previous: StatusState, next: StatusState, attached: boolean) => notifier.transition(session, previous, next, attached));
     let closing = false;
     let idleSince: number | null = null;
     let idle: ReturnType<typeof setInterval> | undefined;

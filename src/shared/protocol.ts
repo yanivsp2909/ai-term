@@ -112,6 +112,8 @@ export type Request = {
     kind: 'system.subscribe';
     on: boolean;
 });
+// Whether the daemon can post notifications; only these fixed states cross the socket.
+export type NotifierState = 'ready' | 'not built' | 'launch failed';
 export interface SuccessResponse {
     id: string;
     ok: true;
@@ -122,6 +124,7 @@ export interface SuccessResponse {
     usage?:UsageSummary;usageDiagnostics?:UsageDiagnostics;
     settings?: Settings;
     engines?: EnginesStatus;
+    notifier?: NotifierState;
     keys?: KeyView[];
     key?: KeyView;
     results?: DeploymentTest[];
