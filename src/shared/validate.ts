@@ -54,7 +54,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             break;
         case 'settings.get':
             if(v.refreshNotifications!==undefined&&typeof v.refreshNotifications!=='boolean')throw new ValidationError('Invalid notification refresh');
-            fields = [];
+            fields = ['refreshNotifications'];
             break;
         case 'settings.set':
             fields = ['patch'];
