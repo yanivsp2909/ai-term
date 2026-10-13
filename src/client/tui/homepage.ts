@@ -281,14 +281,14 @@ export class Homepage {
   private async copySelected(session:SessionInfo|null,all=false):Promise<void>{
     if(!session){this.showNote('select an agent first');return;}
     let copy:ReturnType<typeof validateSessionText>;
-    try{const result=await this.connection.request({kind:'sessions.text',sessionId:session.id});copy=validateSessionText(result.copy);if(copy.sessionId!==session.id||copy.more===true)throw new Error('Invalid session text');}
+    try{const result=await this.connection.request({kind:'sessions.text',sessionId:session.id,...(!all&&session.engine==='claude-code'?{lastReply:true}:{})});copy=validateSessionText(result.copy);if(copy.sessionId!==session.id||copy.more===true)throw new Error('Invalid session text');}
     catch{this.showNote('Copy failed: session text unavailable');return;}
     if(this.ended)return;
-    const text=cleanSessionText(copy.text);
+    const text=copy.source==='last-reply'?copy.text:cleanSessionText(copy.text);
     try{await (this.options.copy??copyText)(text);}
     catch{(this.options.copyLog??new Logger(getPaths().log)).error('Clipboard copy failed');this.showNote('Copy failed: clipboard unavailable');return;}
     const lines=text?text.split('\n').length:0;
-    if(!this.ended)this.showNote(`✓ copied ${lines} lines from ${session.title}${copy.truncated?' (oldest lines cut at 5 MB)':''}${all?'':' · last reply only comes with v0.2'}`,2000,true);
+    if(!this.ended)this.showNote(`✓ copied ${lines} lines from ${session.title}${copy.truncated?' (oldest lines cut at 5 MB)':''}${all||copy.source==='last-reply'?'':' · last reply only comes with v0.2'}`,2000,true);
   }
   private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title};}
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
