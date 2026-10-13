@@ -24,7 +24,7 @@ it('bar drops counts before model, keeps glyph and status word, uses surface and
  expect(wide[0]?.every(c=>c.bg===theme.colors.surface)).toBe(true);expect(wide[0]?.filter(c=>c.bold).map(c=>c.char).join('')).toContain('fix login');
 });
 it('query policy mirrors screen queries, forwards input modes and copy, drops clipboard reads, links, pixels and images',async()=>{
- const term=new headless.Terminal({cols:80,rows:23,allowProposedApi:true});const out:string[]=[],reply:string[]=[];
+ const term=new headless.Terminal({cols:80,rows:23,allowProposedApi:true,windowOptions:{getWinSizeChars:true}});const out:string[]=[],reply:string[]=[];
  installPassthrough(term,{kitty:true,foreground:'rgb:ffff/ffff/ffff',background:'rgb:0000/0000/0000'},data=>out.push(data),data=>reply.push(data));term.onData(data=>reply.push(data));
  try{await new Promise<void>(r=>term.write('\x1b[?2004h\x1b[?1006h\x1b[?1016h\x1b[>4;2m\x1b[>3u\x1b[?u\x1b]10;?\x07\x1b]11;?\x07\x1b]4;1;?\x07\x1b]12;?\x07\x1b]52;c;?\x07\x1b]52;c;YWJj\x07\x1b]8;;https://example.com\x07link\x1b]8;;\x07\x1b[18t\x1b[14t\x1b[2;4H\x1b[6n\x1b[c',r));
  expect(out.join('')).toContain('\x1b[?2004h');expect(out.join('')).toContain('\x1b]52;c;YWJj');expect(out.join('')).not.toContain('c;?');expect(out.join('')).not.toContain('example.com');expect(out.join('')).not.toContain('1016h');
@@ -43,7 +43,7 @@ it.each(['sgr','urxvt','default','utf8'] as const)('mouse %s shifts agent rows a
 it('screen draws changed cells only, resizes below row one and restores cursor',async()=>{
  const output:string[]=[];const screen=new SessionScreen(40,5,{kitty:false},data=>{output.push(data);return true;},()=>{},()=>'',()=>{});
  try{await screen.write('hello');expect(output.join('')).toContain('\x1b[2;1H');output.length=0;await screen.write('\x1b[1;1Hhello');expect(output).toHaveLength(0);
- screen.resize(30,7);expect(screen.terminal.rows).toBe(7);await screen.write('x');expect(output.join('')).toContain('\x1b[?2026h');
+ screen.resize(30,7);expect(screen.terminal.rows).toBe(7);await screen.write('x');await new Promise(r=>setTimeout(r,12));expect(output.join('')).toContain('\x1b[?2026h');
  }finally{screen.dispose();}
 });
 it('user input flags xterm synchronously and floods are capped at eight milliseconds',async()=>{
