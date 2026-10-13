@@ -49,14 +49,20 @@ it('a click selects that agent; Enter then attaches it, so selecting never attac
   } finally { await home.stop(); }
 });
 
-it('a click for an agent this homepage does not know, or a malformed event, changes nothing', async () => {
+it('a click for an agent this homepage does not know changes nothing', async () => {
   const a = agent('alpha'), b = agent('beta'), { tty, client, home, attached } = await fixture([a, b]);
   try {
     client.emit('event', { kind: 'session.select', sessionId: randomUUID() });
-    client.emit('event', { kind: 'session.select', sessionId: 'AITERMCANARY' });
     tty.emit('data', Buffer.from('\r'));
     await vi.waitFor(() => expect(attached).toEqual([sortSessions([a, b])[0]?.id]));
   } finally { await home.stop(); }
+});
+
+it('a malformed select event is an invalid daemon event, like any other', async () => {
+  const { client, home, attached } = await fixture([agent('alpha')]);
+  client.emit('event', { kind: 'session.select', sessionId: 'AITERMCANARY' });
+  await expect(home.done).rejects.toThrow('Invalid selected session');
+  expect(attached).toEqual([]);
 });
 
 it('an older daemon without click routing still opens the homepage', async () => {

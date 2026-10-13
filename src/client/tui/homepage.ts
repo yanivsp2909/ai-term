@@ -31,7 +31,7 @@ interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawM
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
 export interface HomepageConnection extends EventEmitter { request(body: RequestBody): Promise<SuccessResponse> }
-interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason> }
+interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason>; attachOnStart?: string }
 const ENTER_HOME = RESET_MODES + '\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1002h\x1b[?1006h\x1b[?2004h';
 export class Homepage {
   readonly done: Promise<void>;
@@ -126,6 +126,10 @@ export class Homepage {
       this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];
       if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length)await this.openCredentials('login');
       this.draw(true);await this.updatePreview(true);await this.subscribeStats(true);await this.subscribeUsage(true);
+      // Notification clicks select agents here while this homepage is open. An older daemon refuses the request;
+      // its clicks then open a new Terminal window instead, which is all this homepage needs to know.
+      await this.connection.request({ kind: 'clicks.subscribe', on: true }).catch(() => undefined);
+      if (this.options.attachOnStart) this.attachOnStart(this.options.attachOnStart);
     } catch (error) { await this.stop(error instanceof Error ? error : new Error('Homepage failed')); throw error; }
   }
   private enter(): void {
@@ -540,6 +544,11 @@ export class Homepage {
       } else if (v.kind === 'session.previewResized') {
         if (!isUUID(v.sessionId) || !isSize(v.cols, v.rows)) throw new Error('Invalid preview dimensions');
         if (!this.attached && v.sessionId === this.selectedId) this.enqueue(() => this.updatePreview(false));
+      } else if (v.kind === 'session.select') {
+        // A notification click. Selecting never attaches; an agent this homepage doesn't list is ignored.
+        if (!isUUID(v.sessionId)) throw new Error('Invalid selected session');
+        const id = v.sessionId;
+        if (this.sessions.some(s => s.id === id) && id !== this.selectedId) { this.selectedId = id; this.drag = null; this.previewCells = undefined; if (!this.attached) this.enqueue(() => this.updatePreview(false)); }
       } else if (v.kind === 'session.removed') {
         if (!isUUID(v.sessionId)) throw new Error('Invalid removed session');
         this.sessions = this.sessions.filter(s => s.id !== v.sessionId); this.previews.get(v.sessionId)?.dispose(); this.previews.delete(v.sessionId);
@@ -554,6 +563,12 @@ export class Homepage {
       this.draw();
     } catch (error) { this.onError(error); }
   };
+  // ai --attach <id>: straight into that agent, as if selected and entered. Gone or finished agents stay home with a note.
+  private attachOnStart(id: string): void {
+    if (!this.sessions.some(s => s.id === id)) { this.showNote('That agent is gone'); return; }
+    this.selectedId = id; this.previewCells = undefined;
+    this.enqueue(() => this.openSelected());
+  }
   private async openSelected(): Promise<void> {
     const id = this.selectedId, session = this.sessions.find(s => s.id === id);
     if (session && (session.status === 'exited' || session.status === 'error')) { this.showNote(`${session.title} has exited · x removes it`); return; }
@@ -643,7 +658,7 @@ export class Homepage {
     } catch (error) { this.onError(error); }
   }
 }
-export async function homepage(connection: import('../connection.js').Connection): Promise<void> {
-  const home = new Homepage(connection, { truecolor: process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', attachSession: id => configuredAttach(connection, id) });
+export async function homepage(connection: import('../connection.js').Connection, attachOnStart?: string): Promise<void> {
+  const home = new Homepage(connection, { truecolor: process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', attachSession: id => configuredAttach(connection, id), ...(attachOnStart ? { attachOnStart } : {}) });
   await Promise.all([home.start(), home.done]);
 }

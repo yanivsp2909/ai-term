@@ -21,6 +21,14 @@ async function main(): Promise<void> {
         finally { client.close(); }
         return;
     }
+    // A notification click with no ai open runs this in a new Terminal window (D43).
+    if (args[0] === '--attach') {
+        if (args.length !== 2 || !isUUID(args[1])) { usage(); return; }
+        const client = await Connection.connect(getPaths(), { entry });
+        try { const { homepage } = await import('../client/tui/homepage.js'); await homepage(client, args[1]); }
+        finally { client.close(); }
+        return;
+    }
     if (args.length === 1 && args[0] === '--version') {
         process.stdout.write(`${packageInfo.version}\n`);
         return;
