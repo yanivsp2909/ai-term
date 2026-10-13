@@ -9,24 +9,47 @@ const MAX_BODY=1024*1024;
 const MAX_DISCARD=4*MAX_BODY;
 export class UsageReceiver {
  private readonly server:Server;
+ private statusCredentials=new Map<string,{id:string;seq:number}>();
  private credentials=new Map<string,UsageContext>();
- constructor(private readonly consume:(route:string,body:unknown,context:UsageContext)=>Promise<void>,private readonly log:{error(text:string):void}){
-  this.server=createServer((req,res)=>{void this.handle(req,res).catch(()=>{this.log.error('Usage receiver request failed');if(!res.headersSent)this.answer(res,500);else res.destroy();});});
-  this.server.requestTimeout=5000;this.server.headersTimeout=5000;this.server.on('clientError',(_error,socket)=>{socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');});
+ constructor(private readonly consume:(route:string,body:unknown,context:UsageContext)=>Promise<void>,private readonly log:{error(text:string):void},private readonly consumeStatus?:(id:string,body:unknown,seq:number)=>Promise<void>){
+  this.server=createServer((req,res)=>{void this.handle(req,res).catch(()=>{const status=this.isStatusPath(req.url);this.log.error(status?'Status receiver request failed':'Usage receiver request failed');if(!res.headersSent){if(status)this.statusAnswer(res);else this.answer(res,500);}else res.destroy();});});
+  this.server.requestTimeout=5000;this.server.headersTimeout=5000;this.server.on('clientError',(_error,socket)=>{socket.end('HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n');});
  }
  async listen():Promise<void>{await new Promise<void>((resolve,reject)=>{this.server.once('error',reject);this.server.listen(0,'127.0.0.1',()=>{this.server.off('error',reject);resolve();});});}
  address():AddressInfo{const a=this.server.address();if(!a||typeof a==='string')throw new Error('Usage receiver unavailable');return a;}
  port():number{return this.address().port;}
  register(context:UsageContext):string{const token=randomBytes(32).toString('hex');this.credentials.set(token,{...context});return token;}
- revoke(sessionId:string):void{for(const [token,context]of this.credentials)if(context.sessionId===sessionId)this.credentials.delete(token);}
- revokeAll():void{this.credentials.clear();}
+ registerStatus(id:string):string{const token=randomBytes(32).toString('hex');this.statusCredentials.set(token,{id,seq:0});return token;}
+ revoke(sessionId:string):void{for(const [token,context]of this.statusCredentials)if(context.id===sessionId)this.statusCredentials.delete(token);for(const [token,context]of this.credentials)if(context.sessionId===sessionId)this.credentials.delete(token);}
+ revokeAll():void{this.credentials.clear();this.statusCredentials.clear();}
  private authorize(value:unknown):UsageContext|null{
   if(typeof value!=='string'||value.length!==64)return null;const incoming=Buffer.from(value,'utf8');if(incoming.length!==64)return null;
   for(const [token,context]of this.credentials)if(timingSafeEqual(incoming,Buffer.from(token,'utf8')))return context;
   return null;
  }
+ private isStatusPath(path:string|undefined):boolean{return !['/v1/metrics','/v1/logs'].includes(path??'');}
+ private statusAnswer(res:ServerResponse):void{res.writeHead(204,{'connection':'close'});res.end();}
+ private authorizeStatus(value:unknown):{id:string;seq:number}|null{
+  if(typeof value!=='string'||value.length!==64)return null;const incoming=Buffer.from(value);if(incoming.length!==64)return null;
+  for(const [token,context]of this.statusCredentials)if(timingSafeEqual(incoming,Buffer.from(token)))return context;return null;
+ }
+ private async handleStatus(req:IncomingMessage,res:ServerResponse):Promise<void>{
+  const context=this.authorizeStatus(req.headers['x-ai-term-session']);
+  if(req.url!=='/v1/status/claude'||req.method!=='POST'||req.headers.host!==`127.0.0.1:${this.port()}`||Object.hasOwn(req.headers,'origin')||req.headers['content-type']!=='application/json'||!context){this.statusAnswer(res);req.resume();return;}
+  const seq=++context.seq;let bytes=0;const chunks:Buffer[]=[];
+  const body=await new Promise<Buffer|null>((resolve,reject)=>{
+   req.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes>4*MAX_BODY){chunks.length=0;}else chunks.push(chunk);});
+   req.on('end',()=>resolve(bytes>4*MAX_BODY?null:Buffer.concat(chunks)));req.on('error',reject);
+  });
+  if(body&&this.authorizeStatus(req.headers['x-ai-term-session'])===context){
+   let raw:unknown;try{raw=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body));}catch{this.statusAnswer(res);return;}
+   await this.consumeStatus?.(context.id,raw,seq);
+  }
+  this.statusAnswer(res);
+ }
  private answer(res:ServerResponse,status:number):void{res.writeHead(status,{'content-type':'application/json','connection':'close'});res.end(status===200?'{}':'');}
  private async handle(req:IncomingMessage,res:ServerResponse):Promise<void>{
+  if(this.isStatusPath(req.url)){await this.handleStatus(req,res);return;}
   if(req.headers.host!==`127.0.0.1:${this.port()}`){this.answer(res,421);req.resume();return;}
   if(Object.hasOwn(req.headers,'origin')){this.answer(res,403);req.resume();return;}
   if(req.method!=='POST'||!['/v1/metrics','/v1/logs'].includes(req.url??'')){this.answer(res,404);req.resume();return;}
