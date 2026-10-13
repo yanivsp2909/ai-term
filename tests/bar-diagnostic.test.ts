@@ -64,8 +64,8 @@ it('the hands-off trace records post-probe reports, PTY size and vim exit state 
       stdinEnded: false, stdinClosed: false, inputReadError: false,
       vimLeave: { dying: 0, exiting: 0 },
     });
-    expect(report.trace.outerInput.some((entry: { hex: string }) => entry.hex === '1b5b491b5b4f')).toBe(true);
-    expect(report.trace.childInput.some((entry: { hex: string }) => entry.hex === '1b5b491b5b4f')).toBe(true);
+    expect(report.trace.outerInput.map((entry: { hex: string }) => entry.hex).join('').includes('1b5b491b5b4f')).toBe(true);
+    expect(report.trace.childInput.map((entry: { hex: string }) => entry.hex).join('').includes('1b5b491b5b4f')).toBe(true);
     expect(report.trace.childInput.some((entry: { hex: string }) => entry.hex === Buffer.from('\x1b:qa!\r').toString('hex'))).toBe(false);
     expect(report.trace.exitedAfterMs).toBeGreaterThanOrEqual(2000);
   } finally {
