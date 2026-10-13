@@ -1,6 +1,6 @@
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import type { SessionInfo, WorktreeLoss, WorktreeRecord, WorktreeRefusal, WorktreeView } from '../shared/protocol.js';
+import { wouldLose, type SessionInfo, type WorktreeLoss, type WorktreeRecord, type WorktreeRefusal, type WorktreeView } from '../shared/protocol.js';
 import { isFsError } from '../shared/paths.js';
 import { isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
 import { deleteBranch, forceDeleteBranch, forceRemoveWorktree, GitError, inspectWorktree, removeWorktree, repoCommonDir } from './git.js';
@@ -14,7 +14,6 @@ export const WORKTREE_DELETE_ERRORS: readonly WorktreeDeleteError[] = ["Not in A
     'Changed since you confirmed; check again', 'Worktree remove failed; branch kept', 'Worktree removed; branch delete failed'];
 export class WorktreeError extends Error { constructor(message: WorktreeDeleteError) { super(message); } }
 type Agent = Pick<SessionInfo, 'id' | 'title' | 'status'>;
-export function wouldLose(loss: WorktreeLoss): boolean { return loss.changed + loss.untracked + loss.commits > 0; }
 
 async function realDirectory(path: string): Promise<WorktreeRefusal | null> {
     const stat = await lstat(path);

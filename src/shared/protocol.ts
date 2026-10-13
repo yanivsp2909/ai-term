@@ -42,6 +42,8 @@ export type WorktreeRefusal = "Not in AI Term's record" | 'Outside the worktrees
 export interface WorktreeLoss {changed:number;untracked:number;ignored:number;commits:number;base:string;baseSource:'recorded'|'start commit'|'checkout';missing:boolean}
 // fingerprint identifies exactly what was shown; a delete must send it back unchanged.
 export interface WorktreeView {path:string;branch?:string;agent?:{id:string;title:string;status:Status};loss?:WorktreeLoss;fingerprint?:string;refusal?:WorktreeRefusal}
+// Ignored files go with any delete but are not counted as loss; a folder already gone has no files left to lose.
+export function wouldLose(loss: WorktreeLoss): boolean { return loss.changed + loss.untracked + loss.commits > 0; }
 export type TerminalBundle = 'com.apple.Terminal' | 'com.googlecode.iterm2' | 'com.mitchellh.ghostty' | 'com.github.wez.wezterm';
 export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; effort?:Effort|null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean };
 export interface SessionInfo {

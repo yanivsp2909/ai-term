@@ -25,6 +25,8 @@ import { modelChoices, ownLoginLabel } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
 import { BudgetForm, PriceForm, drawUsageForm } from './usage-forms.js';
+import {WorktreeQuestion} from './worktree-question.js';
+import {WorktreesPanel} from './worktrees-panel.js';
 import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,type CommandContext} from './commands.js';
 import {drawHelp,wrapHelpLines} from './help.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
@@ -51,6 +53,8 @@ export class Homepage {
   private field = new CommandField();
   private menuChoice = 0;
   private effort:Effort|null=null;private permission:Permission='ask';private cleanIds:string[]|null=null;private helpOffset:number|null=null;
+  // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
+  private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   private theme: Theme = createTheme('graphite');
   private background?: string;
   private backgroundResolve?: () => void;
@@ -157,7 +161,7 @@ export class Homepage {
   }
   async stop(error?: Error): Promise<void> {
     if (this.ended) return;
-    this.ended = true; this.loading = null; this.credentials?.dispose();this.usageForm=undefined;
+    this.ended = true; this.loading = null; this.credentials?.dispose();this.usageForm=undefined;this.worktreeUi=undefined;
     if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve?.();
     if (this.noteTimer) clearTimeout(this.noteTimer);
     this.connection.off('event', this.onEvent); this.connection.off('output', this.onOutput); this.connection.off('disconnected', this.onDisconnect);
@@ -209,9 +213,10 @@ export class Homepage {
   }
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
-    if (event.kind === 'mouse') { if(this.helpOffset===null&&!this.box&&!this.credentials&&!this.cleanIds)this.mouse(event); return; }
+    if (event.kind === 'mouse') { if(this.helpOffset===null&&!this.box&&!this.credentials&&!this.cleanIds&&!this.worktreeUi)this.mouse(event); return; }
     if (event.kind === 'paste') {
-      if(this.helpOffset!==null||this.cleanIds)return;
+      // A paste never reaches the worktree question: deleting work needs the branch name typed.
+      if(this.helpOffset!==null||this.cleanIds||this.worktreeUi)return;
       if(event.tooLong){if(this.box?.kind==='start')this.box.messageNote=FIRST_MESSAGE_TOO_LONG;else this.pasteNote=FIRST_MESSAGE_TOO_LONG;this.draw(true);return;}
       this.pasteNote='';
       if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});}
@@ -228,12 +233,14 @@ export class Homepage {
       return;
     }
     if(this.helpOffset!==null){if(event.key==='escape')this.helpOffset=null;else{const page=Math.max(1,this.size().rows-8),delta=event.key==='up'?-1:event.key==='down'?1:event.key==='page-up'?-page:event.key==='page-down'?page:0;this.helpOffset=Math.max(0,Math.min(Math.max(0,wrapHelpLines(helpLines(this.commandContext()),Math.min(this.size().cols,110)-6).length-page),this.helpOffset+delta));}this.draw(true);return;}
+    if(this.worktreeUi){const ui=this.worktreeUi;this.enqueue(()=>ui.key(event.key));return;}
     if(this.cleanIds){
       const ids=this.cleanIds;
       if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{
-        let failure='',removed=0,failed=0;const kept:string[]=[];for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status)){
-          try{const result=await this.connection.request({kind:'sessions.remove',sessionId:id});if(result.keptWorktree)kept.push(`worktree kept: ${result.keptWorktree}`);removed++;}catch(error){failed++;if(!failure)failure=error instanceof Error?error.message:'Record could not remove';}
-        }}this.showNote(`removed ${removed}, ${failed} failed${failure?' · '+failure:''}${kept.length?' · '+kept.join(' · '):''}`);
+        // /clean never deletes worktrees: it removes list records only and counts the worktrees it kept.
+        let failure='',removed=0,failed=0,kept=0;for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status)){
+          try{const result=await this.connection.request({kind:'sessions.remove',sessionId:id});if(result.keptWorktree)kept++;removed++;}catch(error){failed++;if(!failure)failure=error instanceof Error?error.message:'Record could not remove';}
+        }}this.showNote(`removed ${removed}, ${failed} failed${failure?' · '+failure:''}${kept?` · kept ${kept} worktree${kept===1?'':'s'} · /worktrees reviews them`:''}`);
       });}else if(event.key==='n'||event.key==='escape'){this.cleanIds=null;this.showNote('');}return;
     }
     if(this.usageForm){const form=this.usageForm;if(event.key==='escape'){this.usageForm=undefined;this.usageFormError='';}else if(event.key==='enter')this.enqueue(async()=>{try{if(form instanceof BudgetForm){const budgets=form.values();await this.connection.request({kind:'settings.set',patch:{budgets}});this.budgets=budgets;}else{const {model,price}=form.values(),settings=(await this.connection.request({kind:'settings.get'})).settings;await this.connection.request({kind:'settings.set',patch:{priceOverrides:{...settings?.priceOverrides,[model]:price}}});}this.usageForm=undefined;}catch(error){this.usageFormError=error instanceof Error?error.message:'Settings could not save';}this.draw(true);});else form.key(event.key);this.draw(true);return;}
@@ -285,13 +292,26 @@ export class Homepage {
       case 'stop': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.confirmId = session.id; this.showNote(`stop ${session.title}? y/n`); } break; }
       case 'rename': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.renameId = session.id; this.field.text = session.title; this.showNote('rename: type a name, ⏎ save · Esc cancel'); } break; }
       case 'copy': {const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.copySelected(selected));break;}
-      case 'remove': { const session = this.sessions.find(s => s.id === this.selectedId); if (session && ['exited', 'error'].includes(session.status)) this.enqueue(() => this.operation({ kind: 'sessions.remove', sessionId: session.id })); break; }
+      case 'remove': { const session = this.sessions.find(s => s.id === this.selectedId); if (session && ['exited', 'error'].includes(session.status)) this.enqueue(() => this.removeSession(session.id)); break; }
     }
     this.draw(true);
   }
   private async operation(body: RequestBody): Promise<void> {
-    try { const result=await this.connection.request(body); this.showNote(result.keptWorktree?`worktree kept: ${result.keptWorktree}`:''); }
+    try { await this.connection.request(body); this.showNote(''); }
     catch (error) { this.showNote(error instanceof Error ? error.message : 'Operation failed'); }
+  }
+  // The record goes first; its worktree then gets one keep/delete question, and keeping is the default.
+  private async removeSession(id:string):Promise<void>{
+    let kept:string|undefined;
+    try{kept=(await this.connection.request({kind:'sessions.remove',sessionId:id})).keptWorktree;}
+    catch(error){this.showNote(error instanceof Error?error.message:'Operation failed');return;}
+    if(!kept){this.showNote('');return;}
+    const question:WorktreeQuestion=new WorktreeQuestion(kept,body=>this.connection.request(body),()=>this.draw(true),note=>{if(this.worktreeUi===question)this.worktreeUi=undefined;this.showNote(note);});
+    this.worktreeUi=question;await question.load();
+  }
+  private async openWorktrees():Promise<void>{
+    const panel:WorktreesPanel=new WorktreesPanel(body=>this.connection.request(body),()=>this.draw(true),()=>{if(this.worktreeUi===panel)this.worktreeUi=undefined;this.draw(true);});
+    this.worktreeUi=panel;this.draw(true);await panel.load();
   }
   private async copySelected(session:SessionInfo|null,all=false):Promise<void>{
     if(!session){this.showNote('select an agent first');return;}
@@ -313,6 +333,7 @@ export class Homepage {
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
     if(command==='/copy'){if(argument&&argument!=='all'){this.showNote('/copy or /copy all');return;}await this.copySelected(copyTarget,argument==='all');return;}
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
+    if(command==='/worktrees'){if(argument){this.showNote('/worktrees takes no argument');return;}await this.openWorktrees();return;}
     if(command==='/clean'){if(argument){this.showNote('/clean takes no argument');return;}this.cleanIds=this.sessions.filter(s=>['exited','error'].includes(s.status)).map(s=>s.id);if(!this.cleanIds.length){this.cleanIds=null;this.showNote('No finished agents to remove');}else this.showNote(`remove ${this.cleanIds.length} finished agents? y/n`);return;}
     if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));}catch(error){this.showNote(error instanceof Error?error.message:'Shell could not start');}return;}
     if(command==='/resume'){if(argument){this.showNote('/resume uses the selected agent');return;}const session=this.sessions.find(s=>s.id===this.selectedId);if(!session||!['exited','error'].includes(session.status)){this.showNote('Select an exited or failed agent to resume');return;}if(session.engine==='shell'){this.showNote('A shell has no AI conversation to resume');return;}if(session.engine==='claude-code'&&!session.conversationId){this.showNote('This older Claude agent has no conversation ID');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.resume',sessionId:session.id}));if(session.engine==='codex')this.showNote('Codex resume picker · choose its conversation');}catch(error){this.showNote(error instanceof Error?error.message:'Resume failed');}return;}
@@ -662,6 +683,7 @@ export class Homepage {
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);
       if(this.usageForm)grid=drawUsageForm(grid,this.usageForm.lines(),this.usageFormError,this.theme);
+      if(this.worktreeUi)grid=this.worktreeUi.draw(grid,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
       this.scheduleCardTick(visibleCards({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, previewVisible: this.visible }));
       if (output) this.blocked = !this.stdout.write(output);

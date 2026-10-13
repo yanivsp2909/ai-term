@@ -98,7 +98,7 @@ describe('agent sessions', () => {
     await expect(m.create(agent(engine, paths.root))).rejects.toThrow(message);
     expect(spawn).not.toHaveBeenCalled();
     expect(m.list()).toEqual([]);
-    expect(JSON.parse(await readFile(paths.state, 'utf8'))).toEqual({ sessions: [] });
+    expect(JSON.parse(await readFile(paths.state, 'utf8'))).toEqual({ sessions: [], worktrees: [] });
   });
   it('names each engine by default and records how it is billed', async () => {
     const paths = await home(), m = await manager(paths);

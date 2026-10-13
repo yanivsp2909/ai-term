@@ -57,7 +57,8 @@ Homepage slash commands:
 | `/shell` | Start a plain login shell in the /cd folder |
 | `/copy` | Copy the agent's last reply (Claude Stop hook, Codex notify) when present; otherwise cleaned whole session with the fallback note |
 | `/copy all` | Copy cleaned selected-agent scrollback and screen; up to 5 MiB, oldest content cut if needed |
-| `/clean` | Confirm y/n before removing all exited/failed list records; reports removed/failed counts and first failure; running agents and files untouched; worktree paths are reported as kept |
+| `/clean` | Confirm y/n before removing all exited/failed list records; reports removed/failed counts and first failure; running agents and files untouched; never deletes worktrees: says `kept N worktrees · /worktrees reviews them` |
+| `/worktrees` | Popup listing every worktree AI Term created, including those whose agent is gone: branch, folder, what deleting would lose, and its agent if one still exists. ⏎ opens the keep/delete question |
 | `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
 | `/theme graphite\|slate\|ink\|auto\|light` | Save the theme |
 | `/exit` | Quit client; sessions keep running |
@@ -72,7 +73,10 @@ Homepage slash commands:
 | `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
-| `x` | Empty field removes an exited/failed session; its worktree and branch are kept, with `worktree kept: <path>` shown once |
+| `x` | Empty field removes an exited/failed session; if it had a worktree, one keep/delete question follows (keep is the default) |
+| Worktree question, clean | `remove worktree and branch ai/<slug>? k keep · d delete`; `k`, Esc or Enter keep and show `worktree kept: <path>`; `d` deletes the worktree and branch |
+| Worktree question, with loss | Lists what would be lost (`3 changed files · 2 untracked · 4 commits not in main`); type the branch name and press Enter to delete; `k` or Enter on an empty field, or Esc, keep. A paste never fills it |
+| `/worktrees` ↑↓ / Enter / Esc | Select a worktree / open its keep/delete question / close |
 | PgUp / PgDn / End | Preview scroll / follow live (End only while the command field is empty) |
 | Mouse wheel / drag-release | Preview scroll / copy selection; a click alone does not copy |
 | Esc | Close popup; in the command field drop a selection first, then clear the field; discards masked key input |
@@ -94,7 +98,7 @@ Homepage slash commands:
 | Model picker ←→ / ↑↓ / Enter / Esc | Switch provider tab (Tab also goes right) / choose model / select / back; typing searches all tabs |
 | Effort or mode picker ↑↓ / Tab / Enter / Esc | Select / cycle / apply / back; CLI default effort passes nothing |
 | Help ↑↓ / PgUp / PgDn / Esc | Scroll lines / previous page / next page / close |
-| `/clean` y / n / Esc | Confirm finished-record removal / cancel / cancel |
+| `/clean` y / n / Esc | Confirm finished-record removal (worktrees are kept) / cancel / cancel |
 | Folder picker Tab / Enter | Complete directory / accept existing folder |
 | `/login` ↑↓ / Enter | Choose provider, then account or API key; key form Enter advances/saves; secret field is masked |
 | `/settings` `a` or `+` / `i` / `l` | Add key / import env file / open provider login |
@@ -134,7 +138,23 @@ The bundled price snapshot is trimmed from Models.dev to Anthropic, OpenAI and A
 
 New AI agents in a git repository start on their own `ai/<slug>` branch and worktree by default. Worktrees live at `~/.ai-term/worktrees/<repo-name>-<10-character path hash>/<slug>`, outside your checkout; the agent uses the same relative subfolder selected with `/cd`. The start box previews the branch and source HEAD. Only committed HEAD content is included: dirty and untracked files stay in your checkout, and gitignored files such as `node_modules` and `.env` are absent. Install dependencies or configure local files inside the new worktree as needed; AI Term does not copy them. Claude Code and Codex may ask to trust each new folder (not tested with real logins in this step).
 
-`/settings` → `worktrees: off` (`w`) starts new agents in `/cd` directly. Non-repositories, repositories without commits and git failures also start in place, with a fixed one-line reason on the card. Plain `/shell` and login sessions stay in `/cd`. `/resume` reuses the finished agent's saved worktree. `x` and `/clean` remove list records only, keeping every worktree and branch; deletion is a later step.
+`/settings` → `worktrees: off` (`w`) starts new agents in `/cd` directly. Non-repositories, repositories without commits and git failures also start in place, with a fixed one-line reason on the card. Plain `/shell` and login sessions stay in `/cd`. `/resume` reuses the finished agent's saved worktree.
+
+Removing worktrees (v0.3.2). AI Term keeps its own record of every worktree it creates, with the repo and the branch and commit it started from; the record outlives the agent. `x` removes the agent's list record, then asks once about its worktree:
+- **Nothing would be lost:** `remove worktree and branch ai/<slug>? k keep · d delete`. Keep is the default: `k`, Esc and Enter keep. `d` runs `git worktree remove` then `git branch -d`, never forced, so git refuses by itself if anything changed.
+- **Something would be lost:** the question lists it plainly: changed files (modified, staged, deleted), untracked files, and commits on `ai/<slug>` that aren't in the branch it was made from (merged work counts as safe). To delete anyway, type the branch name and press Enter. `k` or Enter on an empty field, or Esc, keeps it. One keypress never deletes work, and a paste never fills the name. Only then does AI Term force the remove and use `-D`, and only if nothing changed since you saw the list.
+- Ignored files (`node_modules`, `.env`) go with any delete. They aren't counted as loss, but the question says how many there are; an ignored folder counts once.
+- The question also notes when a folder was already deleted by hand, when the base branch is gone (commits are then counted from where the agent started), and, for agents started before v0.3.2, that the base wasn't recorded and your checkout's current branch is used instead.
+
+AI Term refuses, with a fixed reason and without touching anything:
+- a path it has no record of
+- a path outside `~/.ai-term/worktrees`, or one with a symlink in it
+- a record pointing at a main checkout, or a repo that doesn't match the worktree's folder
+- a worktree git doesn't list, a locked worktree, or one no longer on its own `ai/<slug>` branch (for example renamed)
+- a branch checked out somewhere else
+- a running or waiting agent: stop it first
+
+If a step fails, it stops and says which step (`Worktree remove failed; branch kept` or `Worktree removed; branch delete failed`). It never deletes files itself and never touches another worktree or branch. `/clean` only removes list records and says how many worktrees it kept. `/worktrees` lists them all for later; folders in `~/.ai-term/worktrees` that no record claims (from agents removed before v0.3.2) appear as `✗ Not in AI Term's record` and are never deleted by AI Term. Remove those yourself with `git worktree remove` if you don't need them.
 
 ## Docs
 - `AGENTS.md`: rules for every coding agent working here
