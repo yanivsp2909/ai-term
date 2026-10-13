@@ -108,7 +108,7 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 - **Title:** `Agents N` (N in ink-3).
 - **Cards:** one per session, newest first, except that waiting agents always sort to the top.
 - **Card** (3 lines, 1 blank cell of padding):
-  - Logo badge: 4 cols × 2 rows, surface-2 fill, two bold letters (CL Claude, GP GPT, KI Kimi, GR Grok, DS DeepSeek, GL GLM). Real logos come in the app (v0.5) and in terminals with image support.
+  - Logo badge: 4 cols × 2 rows, surface-2 fill, two bold letters (CL Claude, GP GPT, KI Kimi, GR Grok, DS DeepSeek, GL GLM). The badges stay in the app too: no real provider logos without written permission (D51).
   - Line 1: name (bold when selected), right-aligned status glyph + word + age (`4m`, `2h`, `3d`).
   - Line 2: `model · engine` (ink-2), right-aligned `ctx NN%` (ink-3; status-waiting from 85%). ctx appears only when the engine reports it (v0.2+).
   - Line 3, auth for Claude/Codex: `own login · sub`, `own login · API key`, `own login`, or `API key ····last4`. Their status word stays on line 1; a red `!` marks Don't ask, with its full word in the selected preview title. Debug shell cards keep their existing activity line. Later activity details follow:

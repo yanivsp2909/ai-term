@@ -485,16 +485,49 @@ Fixed failure details (B16/B17): socket operations return exact allowlisted mana
 
 ## 12. Later versions, outline
 
-- **v0.2 Frame bar + live status.** The client draws one row above an attached session and gives the PTY one row less. Status comes from Claude Code HTTP hooks passed per session with `--settings=<sessions/<id>/claude-settings.json>`:
-  - `UserPromptSubmit` → running
-  - `PostToolUse` → running
-  - `Notification` matching `permission_prompt|elicitation_dialog|agent_needs_input` → waiting
-  - `Stop` → done
-  - `StopFailure` → done, with detail
-  
-  Codex uses `-c notify=[…]` with a helper, and OSC 9 as a secondary signal. A status endpoint in the daemon follows S12, with a per-session token (HMAC of a per-launch secret, passed in env, never argv). The endpoint always answers 204 with an empty body, so the status channel can never make decisions. Also in v0.2: macOS notifications for waiting/done, and the context-left % where the engine reports it.
-- **v0.3 Splits + worktrees.** Several attached sessions in one client screen. One git worktree per agent session on branch `ai/<slug>`, with git via `execFile` and `--` before refs and paths. Branch names are validated strictly. Deleting a worktree with uncommitted, untracked or unmerged work needs explicit confirmation.
-- **v0.4 AI Term's agent.** Vercel AI SDK + Models.dev; tools read, write, edit, bash, search; Ask / Don't ask; reads `AGENTS.md`; `/model` (keyed models only); exact cost; hard budget.
+- **v0.2 Live status + notifications.** Full plan below (12.1). Built on the v0.2.0 spike (`docs/spikes/v0.2-status.md`).
+
+### 12.1 v0.2 plan (draft, 2026-10-12)
+
+**Decided:** V1 to V4 (D36 to D39). Proposed: everything else, which stands unless Yaniv objects.
+
+**Statuses.** `starting · running · waiting · done · exited · error`.
+- `waiting` carries a reason in `statusDetail`: `permission`, `question` or `turn failed: <error>` (D38).
+- `ctxPercent` = context used, or null.
+- A per-session reducer applies events in `seq` order. A process exit always wins, and events after an exit are ignored.
+- Idle exit counts waiting and done sessions as live (review L4), so an agent waiting for you is never stopped.
+
+**One local HTTP server** (built in v0.1.8 for usage, extended here):
+- S12 rules, plus per-path body caps: `/v1/status/claude` 4 MiB (Claude puts whole files and replies in hook bodies; parse, keep only the mapped fields, drop the rest unread); `/v1/status/codex` 64 KB.
+- **Every response is 204 with an empty body**, errors included. Claude reads any 2xx JSON body as a decision (approve / block / stop).
+- Per-session credential `AITERM_STATUS_TOKEN`: random, in the session env only (never argv, never a file), mapped to the AI Term `sessionId` in the daemon, compared in constant time. The sessionId always comes from the credential, never from the body.
+
+**Claude Code ingress** (per session, nothing in `~/.claude`). Yaniv's TUI run confirmed: http hooks arrive after the trust prompt (UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd), and the status line gets `used_percentage` with a 1,000,000 window. With `--permission-mode=default` (Yaniv, 2026-10-12): `PermissionRequest` fired in the same second as `PreToolUse`, and `Notification permission_prompt` 6 s later, both over http. Waiting = PermissionRequest is confirmed.
+- `sessions/<id>/claude-settings.json` (0600, in a 0700 dir), passed as one argv element `--settings=<path>`. Deleted with the session.
+- `http` hooks to `/v1/status/claude` with header `x-ai-term-session: $AITERM_STATUS_TOKEN` and `allowedEnvVars: ["AITERM_STATUS_TOKEN"]`. Every hook has `timeout: 2`.
+- Events → status: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure` → running. `PermissionRequest` → waiting (permission). `Notification` (`elicitation_dialog`, `elicitation_url_dialog`, `agent_needs_input`) → waiting (question); `permission_prompt` is a late backup only. `Stop` → done. `StopFailure` → waiting (turn failed: `error`). `SessionEnd` → nothing; the process exit decides.
+- **Context % (D37):** the same settings file sets `statusLine` to AI Term's own command (`ai status-line`). It reads Claude's status JSON on stdin, reports `used_percentage` to the daemon, and prints `model · ctx N%`. This replaces your own Claude status line inside AI Term sessions only. The command string is built only from absolute paths that pass a strict character check; if a path fails it, the status line is left off.
+- **Known gaps:** Esc interrupt fires no hook, and hooks are withheld until the workspace trust dialog is accepted. No guessing in v0.2: a running card with no output shows `quiet Ns`, so you can see it.
+
+**Codex ingress** (argv only, nothing in `~/.codex`):
+- `--no-daemon` whenever any `-c` is passed (also needed for v0.1.7 Foundry).
+- `-c notify=[<node>, <ai cli>, "status-notify"]`: a tiny `ai` subcommand that POSTs the payload to `/v1/status/codex` with the session credential from its env → done.
+- `-c tui.notifications=["agent-turn-complete","approval-requested"]`, `-c tui.notification_method="osc9"`, `-c tui.notification_condition="always"`.
+- The daemon's mirror (never the client, S15 holds) watches OSC 9 "Approval requested", bare BEL and the `[ ! ] Action Required` title → waiting (permission); ⏎ typed by the owner after done/waiting → running.
+- **Context %:** `-c tui.terminal_title=["activity","run-state","context-remaining"]`; the mirror reads "Context N% left" from the title. Works for subscription sessions too, no OTel needed. Confirmed live: titles `Ready | Context 100% left`, `Starting …`, `Working …`; notify fired `agent-turn-complete` (client codex-tui); OSC 9 carried the turn-complete text; no bare BEL. Approval signals still unverified live: in `workspace-write`, writing to /tmp is allowed by Codex's sandbox, so it never asked. v0.2.3 should trigger one with a network command instead.
+
+**Notifications (D36).** A tiny Swift helper app built from source at install, ad-hoc signed, so notifications say "AI Term".
+- Fires with sound, one per change, never repeated: always on → waiting (including turn failed); on → done only when you are not attached to that agent (D42).
+- Clicking one brings your terminal forward and selects that agent. If no `ai` client is open, it opens a new Terminal window running `ai` inside that agent (D43).
+- A spike (v0.2.1) proves it first: identity, permission prompt, click callback. Fallback if it fails: sound and notification without click-through until the v0.5 app.
+- v0.2.1 findings (partial, `docs/spikes/v0.2-notifier.md`): builds and signs fine; a cold click relaunches the helper without its argv, so the real helper reaches the daemon through a fixed, private socket path, never one passed at launch. D43: evaluate the generated `.command` route first (no Automation permission).
+
+**Homepage.** Cards show the waiting reason, `ctx N%` and a one-line activity (last tool name or `quiet Ns`). Top-right counts include waiting. Design pass in Claude Design before the UI step (D21).
+
+**Bar inside sessions (D39).** One row on top of an attached session: status glyph, name, `engine · model`, others' counts, `^E home`. The agent gets one row less. Raw passthrough can't keep a row (agents paint and clear every row), so the client redraws the agent's screen itself from a client-side mirror with our cell renderer (the tmux model; v0.3 splits need the same). The v0.2.1b spike passed (go with limits: +0.5–0.6 ms p95, cell-exact; loses OSC 8 targets, curly underlines, inline images; OSC 52 writes pass, reads are dropped; needs a modern character-width table in both the client and daemon mirrors). It was gated on: typing echo p95 within 2 ms of raw passthrough, and vim, htop, Claude Code, Codex, mouse, paste and kitty keys all work. If it fails, the fallback is status in the window title and the bar waits for the v0.5 app.
+
+- **v0.3 Splits + worktrees.** Several attached sessions in one client screen. One git worktree per agent session on branch `ai/<slug>`, stored outside the repo at `~/.ai-term/worktrees/<repo>/<agent>` (D44), with git via `execFile` and `--` before refs and paths. Branch names are validated strictly. Deleting a worktree with uncommitted, untracked or unmerged work needs explicit confirmation.
+- **v0.4 AI Term's agent (our own harness).** Vercel AI SDK + Models.dev; tools read, write, edit, bash, search; Ask / Don't ask; reads `AGENTS.md`; `/model` (keyed models only); exact cost; hard budget. Every API key runs here (D47). Loads your skills (`SKILL.md`, lazily), subagents, slash commands and MCP servers (AI SDK MCP client); MCP secrets in the keychain, MCP OAuth through AI Term's own login. Reading those files needs D48.
 - **v0.5 The app.** An Electron terminal that opens straight into `ai`. Renderer sandboxed (`contextIsolation`, no `nodeIntegration`, `sandbox`), narrow typed preload, CSP, no navigation, links http/https only.
 
 ---
@@ -550,5 +583,10 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D43 | Clicking a notification with no ai open starts ai in a new Terminal window, inside that agent. | Pinned |
 | D44 | Worktrees live outside the repo: ~/.ai-term/worktrees/<repo>/<agent>. | Pinned |
 | D45 | Usage cost uses public list prices (Models.dev), Azure included, marked estimated; per-deployment overrides optional in /settings. | Pinned |
-| D46 | This Mac refreshes every 1 s while the homepage is open (was 2 s). Not faster: sampling ps twice a second doubles the cost and makes the percentages jumpier, not more accurate. RAM matches Activity Monitor's "Memory Used". | Pinned |
+| D46 | This Mac refreshes every 1 s while the homepage is open (was 2 s). Not faster: sampling `ps` twice a second doubles the cost and makes the percentages jumpier, not more accurate. RAM matches Activity Monitor's App + Wired + Compressed exactly; its "Memory Used" headline reads ~1 GB higher and purgeable (~116 MiB) doesn't explain it (v0.1.7f), still open. | Pinned (Yaniv asked for ≤1 s; 1 s agreed as the floor) |
+| D47 | Official CLIs run only on their own logins: Claude Code on a Claude subscription, Codex on a ChatGPT account. Every API key (Anthropic, OpenAI, Foundry, any provider) runs on AI Term's agent from v0.4; until then keys run on the CLIs. A fallback setting, off by default, can still send a key to a CLI. | Pinned (Yaniv, 2026-10-12); fallback setting proposed |
+| D48 | AI Term's agent may read your skills, subagents and slash commands where the CLIs keep them: an allowlist of folders under `~/.claude`, `~/.codex` and `~/.agents`, read-only, never credentials, settings, history or `~/.claude.json`. S11 gets this one exception. | Needs Yaniv |
+| D49 | Anything that spends tokens as a job (add-ons, `/brain`, `/review`, `/fork`, `/init`) asks first: what runs, engine and model, an estimated token range (low–high) and price range. On a subscription it shows the token range and "uses your plan's limits" instead of a price. ⏎ runs, Esc cancels; afterwards it shows the real numbers. Open-ended work (starting an agent, chatting with one) shows the model's price per 1M tokens and the budget cap instead, because a range there would be made up. Budgets still stop work before a request crosses them. | Pinned (Yaniv, 2026-10-12); open-ended exception proposed |
+| D50 | `/send <agent> <text>` is the one deliberate exception to D22: an explicit command that sends text to a running agent. Plain keys on the homepage still never reach an agent. | Pinned (Yaniv, 2026-10-12: "all of them") |
+| D51 | Names and logos: plain text "runs Claude Code / Codex" only. Never Anthropic or OpenAI names in our product name or logo, nothing that suggests a partnership, no real provider logos without written permission; the letter badges stay. Never bundle or preinstall Claude Code. | Pinned (from Anthropic's Claude Code legal page, 2026-10-12) |
 | D52 | Codex's runtime usage header goes in the invocation-local `-c` exporter config; use an env header only if the installed Codex documents support for it. Credentials never enter logs, responses or persisted recipes. | Pinned |
