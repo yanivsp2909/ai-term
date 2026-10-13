@@ -354,12 +354,13 @@ From v0.4, key sessions default to AI Term's own agent. A setting sends them to 
 - `ANTHROPIC_PROFILE`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_WORKSPACE_ID`
 - `ANTHROPIC_AWS_*`, `ANTHROPIC_BEDROCK_*`, `ANTHROPIC_VERTEX_*`, `ANTHROPIC_FOUNDRY_*`, `AWS_BEARER_TOKEN_BEDROCK`
 - `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_SIMPLE`
+- B21 (official env-vars page, 2026-10-13): `CLAUDE_CODE_USE_ANTHROPIC_AWS`, `CLAUDE_CODE_USE_MANTLE`, `CLAUDE_CODE_SKIP_BEDROCK_AUTH`, `CLAUDE_CODE_SKIP_VERTEX_AUTH`, `CLAUDE_CODE_SKIP_FOUNDRY_AUTH`, `CLAUDE_CODE_SKIP_MANTLE_AUTH`, `CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH`, `ANTHROPIC_CUSTOM_HEADERS` (can carry `Authorization`), `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY`, `CLAUDE_CODE_CLIENT_KEY_PASSPHRASE`. Generic `AWS_*`, `GOOGLE_APPLICATION_CREDENTIALS`, proxies and CA variables stay: Claude uses the cloud ones only after a removed `CLAUDE_CODE_USE_*` switch. `CLAUDE_CONFIG_DIR` stays inherited (table below).
 
 `CODEX_AUTH_VARS` (removed for every Codex session):
 - `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`
 - `OPENAI_ORG_ID`, `OPENAI_ORGANIZATION`, `OPENAI_PROJECT_ID`
 - `AITERM_FOUNDRY_KEY`
-- plus anything v0.1.1 finds Codex reads
+- B21 (official Codex environment-variables page, 2026-10-13): `CODEX_ACCESS_TOKEN`, `OPENAI_FEDERATION_RULE_ID`, `OPENAI_IDENTITY_TOKEN_FILE`. `CODEX_HOME` stays inherited (table below). The current page no longer names `OPENAI_BASE_URL`/`OPENAI_ORG_ID`/`OPENAI_ORGANIZATION`/`OPENAI_PROJECT_ID`; they stay removed. Variables a user's own `config.toml` names (`env_key`, `env_http_headers`) can't be listed; they apply exactly as in Terminal.app.
 
 `AZURE_OPENAI_API_KEY` is not on the list (D41): your Codex config may route Azure through it, so Codex account sessions keep it. Like any variable a session keeps, the agent and the commands it runs can read it, exactly as in Terminal.app. A Codex key session still removes it, so a key session gets only its own key.
 
