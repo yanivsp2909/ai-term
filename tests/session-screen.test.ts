@@ -83,3 +83,6 @@ it('agent sync expires after 150 ms and bar text stays unchanged during repeated
  const out:string[]=[];const screen=new SessionScreen(20,3,{kitty:false},s=>{out.push(s);},()=>{},()=>'<BAR>',()=>{});
  try{screen.input();await screen.write('a');screen.input();await screen.write('\x1b[?2026hb');const before=out.length;await new Promise(r=>setTimeout(r,170));expect(out.length).toBeGreaterThan(before);expect(out.join('').split('<BAR>')).toHaveLength(2);}finally{screen.dispose();}
 });
+it('narrow bar drops the model while retaining engine before clipping the name',()=>{
+ const text=frameBar(30,{title:'fix login',engine:'codex',model:'gpt-6.1-sol',status:'running'},[],theme)[0]?.map(c=>c.char).join('')??'';expect(text).toContain('codex');expect(text).not.toContain('gpt-6.1-sol');
+});
