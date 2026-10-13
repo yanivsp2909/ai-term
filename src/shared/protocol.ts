@@ -53,7 +53,7 @@ export interface SessionInfo {
     lastActivity?:{tool:string;at:string}|null; // Missing on legacy records; new records use null.
 }
 export type ClaudeStatusEvent = {seq:number;at:string} & (
-    {kind:'running';tool?:string} | {kind:'waiting';reason:'permission'|'question'|'turn failed';error?:string;backup?:boolean} |
+    {kind:'running';tool?:string;phase?:'turn-start'|'tool-start'|'tool-finish'} | {kind:'waiting';reason:'permission'|'question'|'turn failed';error?:string;backup?:boolean} |
     {kind:'done'} | {kind:'context';percent:number|null} | {kind:'exit';status:'exited'|'error';detail:string;exitCode:number|null}
 );
 // This Mac (§10). Numbers only: no process name, command line, user or pid ever crosses the socket.
