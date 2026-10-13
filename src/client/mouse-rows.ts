@@ -67,7 +67,7 @@ export class MouseRewriter {
     }
     return Buffer.concat(result);
   }
-  flush():Buffer{const pending=this.carry;this.carry=Buffer.alloc(0);return pending;}
+  flushEscape():Buffer{if(this.carry.length!==1||this.carry[0]!==27)return Buffer.alloc(0);const pending=this.carry;this.carry=Buffer.alloc(0);return pending;}
   // X10/normal (`CSI M b x y`, each value + 32 in one byte) and UTF-8 1005 (values as UTF-8 code points).
   private legacy(data: Buffer, utf8: boolean): Buffer {
     const out: number[] = [];

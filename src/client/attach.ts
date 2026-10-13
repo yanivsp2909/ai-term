@@ -64,7 +64,7 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
       if(escapeTimer)clearTimeout(escapeTimer);
       screen?.input();const result=filter.push(data);send(screen?mouse.push(result.data):result.data);
       if(result.home){end(undefined,'home key');return;}
-      escapeTimer=setTimeout(()=>{try{send(screen?mouse.push(filter.flush()):filter.flush());}catch(error){end(error instanceof Error?error:new Error('Input failed'));}},30);
+      escapeTimer=setTimeout(()=>{try{const pending=filter.flush();if(screen){send(mouse.push(pending));send(mouse.flushEscape());}else send(pending);}catch(error){end(error instanceof Error?error:new Error('Input failed'));}},30);
     }catch(error){end(error instanceof Error?error:new Error('Input failed'));}
   };
   const writeOutput=(data:string|Buffer)=>{
