@@ -17,8 +17,9 @@ export type Launcher = (file: string, args: readonly string[], done: (error: Err
 // receives --args; -g keeps it from taking focus from the terminal. The spike saw it launch with the right bundle id.
 const OPEN = '/usr/bin/open', LAUNCH_TIMEOUT_MS = 10_000;
 // Codex status comes partly from terminal output an agent controls, so a flapping card must not launch helpers without
-// bound: at most one per agent every 5 s, and 10 a minute in all. Waiting agents stay visible on the homepage.
-const SESSION_GAP_MS = 5_000, WINDOW_MS = 60_000, WINDOW_LAUNCHES = 10;
+// bound: at most one per agent every 5 s and 3 per agent a minute, and 10 a minute in all. The per-agent minute keeps
+// one flapping agent from using up the budget other agents' real alerts need. Waiting agents stay visible on the homepage.
+const SESSION_GAP_MS = 5_000, WINDOW_MS = 60_000, WINDOW_LAUNCHES = 10, SESSION_WINDOW_LAUNCHES = 3;
 const launchHelper: Launcher = (file, args, done) => {
   // open never hands its environment to the app; a fixed PATH keeps the daemon's environment out of it anyway.
   execFile(file, [...args], { timeout: LAUNCH_TIMEOUT_MS, env: { PATH: '/usr/bin:/bin' } }, error => done(error));
@@ -34,7 +35,7 @@ export function notificationsSetting(root: string): () => Promise<boolean> {
 export class Notifier {
   private launchFailed = false;
   private readonly logged = new Set<string>();
-  private readonly lastLaunch = new Map<string, number>();
+  private readonly sessionLaunches = new Map<string, number[]>();
   private recent: number[] = [];
   constructor(private readonly app: string | null, private readonly log: { error(text: string): void }, private readonly enabled: () => Promise<boolean>,
     private readonly launch: Launcher = launchHelper, private readonly exists: (app: string) => boolean = helperExists, private readonly now: () => number = Date.now,private readonly authorization=new NotificationPermission(app,text=>this.once(text))) {}
@@ -59,11 +60,12 @@ export class Notifier {
     catch { failed(); }
   }
   private allowed(sessionId: string): boolean {
-    const now = this.now(), last = this.lastLaunch.get(sessionId);
+    const now = this.now();
     this.recent = this.recent.filter(at => now - at < WINDOW_MS);
-    for (const [id, at] of this.lastLaunch) if (now - at >= SESSION_GAP_MS) this.lastLaunch.delete(id);
-    if (last !== undefined && now - last < SESSION_GAP_MS || this.recent.length >= WINDOW_LAUNCHES) return false;
-    this.lastLaunch.set(sessionId, now); this.recent.push(now); return true;
+    for (const [id, times] of this.sessionLaunches) { const kept = times.filter(at => now - at < WINDOW_MS); if (kept.length) this.sessionLaunches.set(id, kept); else this.sessionLaunches.delete(id); }
+    const mine = this.sessionLaunches.get(sessionId) ?? [], last = mine.at(-1);
+    if (last !== undefined && now - last < SESSION_GAP_MS || mine.length >= SESSION_WINDOW_LAUNCHES || this.recent.length >= WINDOW_LAUNCHES) return false;
+    this.sessionLaunches.set(sessionId, [...mine, now]); this.recent.push(now); return true;
   }
   private once(text: string): void { if (this.logged.has(text)) return; this.logged.add(text); this.log.error(text); }
 }
