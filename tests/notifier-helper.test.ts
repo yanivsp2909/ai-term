@@ -22,6 +22,8 @@ it.skipIf(!built)('the helper accepts only its three fields within their caps an
  const invalid=[
   replace('--session','AITERMCANARY'),replace('--session','-bad'),replace('--title','x'.repeat(81)),replace('--title','😀'.repeat(81)),
   replace('--body','x'.repeat(201)),replace('--title',''),replace('--body','AITERMCANARY\n'),replace('--title','\u202eAITERMCANARY'),replace('--body','AITERMCANARY\u0007'),
+  // The same characters the daemon removes from names: separators, private use and unassigned code points.
+  replace('--body','a\u2028b'),replace('--body','a\u2029b'),replace('--body','a\ue000b'),replace('--title','a\u{10FFFD}b'),replace('--body','a\u0378b'),
   [...base,'--unknown'],[...base,'--session',session],[...base,'--check'],[...base,'--body'],base.slice(0,4),
   // The spike's click and lifetime flags are gone from the product helper.
   [...base,'--socket','/tmp/click.sock'],[...base,'--temp-dir','/tmp'],[...base,'--lifetime','10'],[...base,'--probe-click'],[...base,'--exit-after-post'],

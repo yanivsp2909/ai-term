@@ -86,3 +86,22 @@ it('the session manager reports each status change with whether a client is atta
   const response=validateSuccess(await client.request({kind:'engines.status'}));expect(response.notifier).toBe('not built');
  }finally{client?.close();await server.close();await m.shutdown();await usage.close();vi.restoreAllMocks();await rm(root,{recursive:true,force:true});}
 });
+it('agent output flipping a card between running and waiting cannot launch helpers without bound',async()=>{
+ let clock=0;const calls:string[][]=[],logs:string[]=[];
+ const notifier=new Notifier(APP,{error:text=>logs.push(text)},async()=>true,(_file,args,done)=>{calls.push([...args]);done(null);},()=>true,()=>clock);
+ const session=agent(),other=agent();
+ // One agent: at most one notification per 5 s.
+ for(let i=0;i<20;i++){notifier.transition(session,running,waiting,false);clock+=100;}
+ await vi.waitFor(()=>expect(calls).toHaveLength(1));
+ clock+=5000;notifier.transition(session,running,waiting,false);await vi.waitFor(()=>expect(calls).toHaveLength(2));
+ // All agents together: at most 10 a minute.
+ for(let i=0;i<30;i++){notifier.transition(agent(),running,waiting,false);clock+=10;}
+ await new Promise(r=>setTimeout(r,20));expect(calls).toHaveLength(10);
+ expect(logs).toEqual(['Notifications rate limited']);
+ clock+=60000;notifier.transition(other,running,waiting,false);await vi.waitFor(()=>expect(calls).toHaveLength(11));
+});
+it('a later successful launch clears the launch failed state',async()=>{
+ const f=fixture();
+ f.notifier.transition(agent(),running,waiting,false);await vi.waitFor(()=>expect(f.calls).toHaveLength(1));f.calls[0]?.done(new Error('x'));expect(f.notifier.state()).toBe('launch failed');
+ f.notifier.transition(agent(),running,waiting,false);await vi.waitFor(()=>expect(f.calls).toHaveLength(2));f.calls[1]?.done(null);expect(f.notifier.state()).toBe('ready');
+});
