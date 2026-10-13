@@ -2,7 +2,7 @@
 export function buildShellEnv(base: NodeJS.ProcessEnv): Record<string, string> {
     const result: Record<string, string> = {};
     for (const [key, value] of Object.entries(base)) {
-        if (value !== undefined && !/^npm_/.test(key) && !/^AI_TERM_/.test(key) && !['INIT_CWD', 'NODE_ENV'].includes(key))
+        if (value !== undefined && !/^npm_/.test(key) && !/^AI_TERM_/.test(key) && !['INIT_CWD', 'NODE_ENV','AITERM_STATUS_TOKEN','AITERM_STATUS_PORT'].includes(key))
             result[key] = value;
     }
     Object.assign(result, { TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'AITerm' });
@@ -61,3 +61,6 @@ export function buildUsageArgs(engine:AgentEngine,telemetry:UsageTelemetry):stri
  // rust-v0.160.1 explicitly configures HTTP log exporter headers; no env header route is documented.
  return ['-c','otel.log_user_prompt=false','-c',`otel.exporter={otlp-http={endpoint="http://127.0.0.1:${telemetry.port}/v1/logs",protocol="json",headers={"x-ai-term-session"="${telemetry.credential}"}}}`];
 }
+
+export function buildStatusEnv(telemetry:UsageTelemetry):Record<string,string>{validTelemetry(telemetry);return {AITERM_STATUS_TOKEN:telemetry.credential,AITERM_STATUS_PORT:String(telemetry.port)};}
+export function buildStatusArgs(path:string):string[]{if(!path.startsWith('/')||path.includes('\0')||path.length>4096)throw new Error('Invalid Claude settings path');return [`--settings=${path}`];}
