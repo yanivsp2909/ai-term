@@ -9,7 +9,7 @@ import {Logger} from '../src/daemon/log.js';
 import {DaemonServer} from '../src/daemon/server.js';
 import {Connection} from '../src/client/connection.js';
 import * as engines from '../src/daemon/engines.js';
-it('subscription Claude sessions get private hooks, live status/context/activity, explicit replies and revocation',async()=>{
+it.each([false,true])('subscription Claude earlyContext=%s sessions get private hooks, live status/context/activity, explicit replies and revocation',async(earlyContext)=>{
  const root=await mkdtemp('/tmp/ai-claude-runtime-'),paths=getPaths(root);await preparePaths(paths);
  const log=new Logger(paths.log),usage=new UsageService(root,log),m=new SessionManager(paths,log,undefined,undefined,undefined,undefined,usage,resolve('src/cli/index.ts')),server=new DaemonServer(paths,m,log,undefined,undefined,usage);
  let client:Connection|undefined,argv:string[]=[],env:NodeJS.ProcessEnv={},output:((text:string)=>void)|undefined;
@@ -19,10 +19,12 @@ it('subscription Claude sessions get private hooks, live status/context/activity
  vi.spyOn(process,'kill').mockImplementation(()=>{for(const exit of exits)exit({exitCode:0});return true;});
  try{
   await usage.start();await m.load();await server.listen();client=await Connection.connect(paths,{entry:'/unused',autoStart:false});
-  const session=await m.create({engine:'claude-code',model:'sonnet',auth:{kind:'account'},cwd:root,permission:'ask'});output?.('ready');await m.snapshot(session.id);
+  const session=await m.create({engine:'claude-code',model:'sonnet',auth:{kind:'account'},cwd:root,permission:'ask'});
+  if(!earlyContext){output?.('ready');await m.snapshot(session.id);}
   const token=env.AITERM_STATUS_TOKEN;if(!token)throw new Error('Missing status token');expect(token).toMatch(/^[a-f0-9]{64}$/);expect(argv.join('')).not.toContain(token);expect(env.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
   const file=argv.find(a=>a.startsWith('--settings='))?.slice('--settings='.length);if(!file)throw new Error('Missing settings');expect(await readFile(file,'utf8')).not.toContain(token);expect((await stat(file)).mode&0o777).toBe(0o600);expect(await readFile(file,'utf8')).toContain('status-line');
   const send=(body:unknown)=>fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/status/claude`,{method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token},body:JSON.stringify(body)});
+  if(earlyContext){await send({hook_event_name:'AITermContext',used_percentage:1});output?.('ready');await m.snapshot(session.id);}
   await send({hook_event_name:'AITermContext',used_percentage:5});expect(m.get(session.id).status).toBe('running');
   for(const [body,status,detail]of [[{hook_event_name:'PreToolUse',tool_name:'Bash',tool_input:'AITERMCANARY'},'running','running'],[{hook_event_name:'PermissionRequest',sessionId:'forged'},'waiting','permission'],[{hook_event_name:'PostToolUse',tool_name:'Bash'},'running','running'],[{hook_event_name:'Stop',last_assistant_message:'AITERMCANARY last reply'},'done','done']]as const){expect((await send(body)).status).toBe(204);await expect.poll(()=>m.get(session.id)).toMatchObject({status,statusDetail:detail});}
   await send({hook_event_name:'PermissionRequest'});expect(m.activeCount()).toBe(1);await send({hook_event_name:'Stop'});
