@@ -28,6 +28,7 @@ interface Live {
     statusState?:StatusState;
     lastReply?:string;
     codexRun?:CodexRun;
+    pasting?:boolean;
     queuedBytes:number;
     paused:boolean;
     attached:boolean;
@@ -307,8 +308,11 @@ export class SessionManager extends EventEmitter {
     input(id:string,data:Buffer):void {
         const live=this.sessions.get(id);if(!live?.attached)return;live.host?.write(data);
         // Enter after a finished turn or an answered prompt starts work; plain CR or the kitty-protocol Enter (CSI 13 u).
-        // A bracketed paste may carry newlines without submitting anything.
-        if(live.info.engine==='codex'&&!data.includes('\x1b[200~')&&(data.includes(0x0d)||data.includes('\x1b[13u')||data.includes('\x1b[13;1u')))this.codexStatus(live,{kind:'running'},state=>state.status==='done'||state.status==='waiting');
+        if(live.info.engine!=='codex')return;
+        // A bracketed paste may carry newlines without submitting anything, and a long one spans several chunks.
+        const start=data.lastIndexOf('\x1b[200~'),end=data.lastIndexOf('\x1b[201~'),inPaste=live.pasting||start>=0||end>=0;
+        live.pasting=start>end||(start<0&&end<0&&live.pasting===true);
+        if(!inPaste&&(data.includes(0x0d)||data.includes('\x1b[13u')||data.includes('\x1b[13;1u')))this.codexStatus(live,{kind:'running'},state=>state.status==='done'||state.status==='waiting');
     }
     async attach(id:string,cols:number,rows:number,publish:(snapshot:string,size:{cols:number;rows:number},modes:TerminalModes)=>void):Promise<void> {
         const live=this.sessions.get(id);if(!live||!isSize(cols,rows)||this.closing)throw new Error('Invalid attach');
