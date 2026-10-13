@@ -34,7 +34,7 @@ Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source
 | `ai daemon stop` | Stop the background service and all its sessions |
 | `ai debug stats` | Print ten one-second numeric RAM/CPU diagnostics; no daemon connection; a closed output pipe exits quietly |
 | `ai debug usage` | Ask the running daemon for its receiver port and last ten minutes of allowlisted numeric telemetry; never headers, credentials or bodies |
-| `ai debug ls` | List session IDs, status, statusDetail, ctx=<used% or ?> and title |
+| `ai debug ls` | List session IDs, status, statusDetail, ctx=<used% or ?> and title (Claude and Codex agents) |
 | `ai debug shell [cwd]` | Create a debug shell in the folder (current folder if omitted) |
 | `ai debug attach <id>` | Attach directly; Ctrl+E returns to the shell |
 | `ai debug stop <id>` | Stop one session |
@@ -52,7 +52,7 @@ Homepage slash commands:
 | `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
 | `/resume` | Continue selected finished Claude conversation; Codex opens its own folder-filtered resume picker |
 | `/shell` | Start a plain login shell in the /cd folder |
-| `/copy` | Copy Claude last reply from its Stop hook when present; otherwise cleaned whole session with the fallback note |
+| `/copy` | Copy the agent's last reply (Claude Stop hook, Codex notify) when present; otherwise cleaned whole session with the fallback note |
 | `/copy all` | Copy cleaned selected-agent scrollback and screen; up to 5 MiB, oldest content cut if needed |
 | `/clean` | Confirm y/n before removing all exited/failed list records; reports removed/failed counts and first failure; running agents and files untouched |
 | `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
@@ -65,7 +65,7 @@ Homepage slash commands:
 | Enter | Slash menu picks highlighted command (`/theme`, `/effort`, `/mode` insert argument prefixes); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
 | Tab | Complete the highlighted slash command; with an argument, cycle its values |
 | `p` | Empty field toggles preview |
-| `c` | Empty field copies Claude last reply when present; otherwise cleaned session with the fallback note; with field text, types c |
+| `c` | Empty field copies the agent's last reply (Claude or Codex) when present; otherwise cleaned session with the fallback note; with field text, types c |
 | `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
@@ -104,6 +104,8 @@ The Usage panel marks estimates with `≈`. Unknown model prices show `price ?`;
 Key and engine failures show fixed reasons without private error text. A malformed key metadata entry is skipped and warned about; valid keys remain usable, and skipped metadata stays on disk for later cleanup.
 
 Claude agent sessions, including subscriptions, receive per-session HTTP hooks and AI Term's own status line. `ai status-line` reads bounded Claude JSON on stdin, prints model · ctx N%, and sends numeric context to the existing local server with the credential from its env. It replaces the user's Claude status line only inside AI Term sessions. Paths containing spaces or shell characters leave that status line off. `ai debug ls` exposes permission/question/turn-failure reasons and context; waiting and done agents remain live. Restart the daemon and create a new session to get hooks.
+
+Codex agent sessions, including subscriptions, get status through argv only; nothing is written to `~/.codex`. Each session passes `-c notify=[<node>, <ai cli>, "status-notify"]` (left off if a path contains spaces or shell characters) plus `tui.notifications`, `tui.notification_method="osc9"`, `tui.notification_condition="always"` and `tui.terminal_title=["activity","run-state","context-remaining"]`. `ai status-notify` sends turn-complete to the daemon (done) with the last reply, kept in memory only. The daemon's own mirror reads Codex's "Approval requested" OSC 9, a bare bell or the `[ ! ] Action Required` title as waiting (permission), a change to Working as running, and `Context N% left` as ctx. Enter typed while attached after done or waiting marks it running. Restart the daemon and create a new Codex session to get status.
 
 Native Keychain tests are opt-in: `AITERM_NATIVE_KEYCHAIN_TEST=1 npm test -- tests/keys-store.test.ts`. Normal `npm test` skips only those two native tests and prints the reason; fake-vault tests still run.
 
