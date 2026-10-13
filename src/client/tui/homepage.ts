@@ -1,3 +1,4 @@
+import { terminalBundle, RAISE_WINDOW } from '../../shared/terminal-app.js';
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
 import { DaemonRequestError, type RequestBody } from '../connection.js';
@@ -5,7 +6,7 @@ import { type AttachReason } from '../attach.js';
 import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
 import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText } from '../../shared/validate.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText, validateWorktreePreview } from '../../shared/validate.js';
 import { getPaths } from '../../shared/paths.js';
 import { Logger, redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
@@ -31,7 +32,7 @@ interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawM
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
 export interface HomepageConnection extends EventEmitter { request(body: RequestBody): Promise<SuccessResponse> }
-interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason>; attachOnStart?: string }
+interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason>; attachOnStart?: string; terminalProgram?:string }
 const ENTER_HOME = RESET_MODES + '\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1002h\x1b[?1006h\x1b[?2004h';
 export class Homepage {
   readonly done: Promise<void>;
@@ -61,6 +62,8 @@ export class Homepage {
   private engine: AgentEngine = 'claude-code';
   private model: string | null = null;
   private folder: string;
+  private worktrees:'on'|'off'='on';
+  private readonly terminal:import('../../shared/protocol.js').TerminalBundle|undefined;
   private engines?: EnginesStatus;
   private box?: AgentBox;
   private returnToStart = false;
@@ -97,6 +100,7 @@ export class Homepage {
   private readonly replies: BackgroundReplies;
   constructor(private readonly connection: HomepageConnection, private readonly options: Options = {}) {
     this.stdin = options.stdin ?? process.stdin; this.stdout = options.stdout ?? process.stdout; this.signals = options.signals ?? process;
+    this.terminal=terminalBundle(options.terminalProgram??process.env.TERM_PROGRAM);
     this.folder = options.cwd ?? process.cwd();
     this.done = new Promise((resolve, reject) => { this.resolveDone = resolve; this.rejectDone = reject; });
     this.parser = new InputParser(event => this.handleInput(event));
@@ -111,6 +115,7 @@ export class Homepage {
     try {
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
+      this.worktrees=settings.worktrees??'on';
       this.budgets=validateBudgets(settings.budgets??{});
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
@@ -128,7 +133,7 @@ export class Homepage {
       this.draw(true);await this.updatePreview(true);await this.subscribeStats(true);await this.subscribeUsage(true);
       // Notification clicks select agents here while this homepage is open. An older daemon refuses the request;
       // its clicks then open a new Terminal window instead, which is all this homepage needs to know.
-      await this.connection.request({ kind: 'clicks.subscribe', on: true }).catch((error: unknown) => { if (!(error instanceof DaemonRequestError)) throw error; });
+      await this.connection.request({ kind: 'clicks.subscribe', on: true, ...(this.terminal?{terminal:this.terminal}:{}) }).catch((error: unknown) => { if (!(error instanceof DaemonRequestError)) throw error; });
       if (this.options.attachOnStart) this.attachOnStart(this.options.attachOnStart);
     } catch (error) { await this.stop(error instanceof Error ? error : new Error('Homepage failed')); throw error; }
   }
@@ -226,13 +231,13 @@ export class Homepage {
     if(this.cleanIds){
       const ids=this.cleanIds;
       if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{
-        let failure='',removed=0,failed=0;for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status)){
-          try{await this.connection.request({kind:'sessions.remove',sessionId:id});removed++;}catch(error){failed++;if(!failure)failure=error instanceof Error?error.message:'Record could not remove';}
-        }}this.showNote(`removed ${removed}, ${failed} failed${failure?' · '+failure:''}`);
+        let failure='',removed=0,failed=0;const kept:string[]=[];for(const id of ids){const session=this.sessions.find(s=>s.id===id);if(session&&['exited','error'].includes(session.status)){
+          try{const result=await this.connection.request({kind:'sessions.remove',sessionId:id});if(result.keptWorktree)kept.push(`worktree kept: ${result.keptWorktree}`);removed++;}catch(error){failed++;if(!failure)failure=error instanceof Error?error.message:'Record could not remove';}
+        }}this.showNote(`removed ${removed}, ${failed} failed${failure?' · '+failure:''}${kept.length?' · '+kept.join(' · '):''}`);
       });}else if(event.key==='n'||event.key==='escape'){this.cleanIds=null;this.showNote('');}return;
     }
     if(this.usageForm){const form=this.usageForm;if(event.key==='escape'){this.usageForm=undefined;this.usageFormError='';}else if(event.key==='enter')this.enqueue(async()=>{try{if(form instanceof BudgetForm){const budgets=form.values();await this.connection.request({kind:'settings.set',patch:{budgets}});this.budgets=budgets;}else{const {model,price}=form.values(),settings=(await this.connection.request({kind:'settings.get'})).settings;await this.connection.request({kind:'settings.set',patch:{priceOverrides:{...settings?.priceOverrides,[model]:price}}});}this.usageForm=undefined;}catch(error){this.usageFormError=error instanceof Error?error.message:'Settings could not save';}this.draw(true);});else form.key(event.key);this.draw(true);return;}
-    if(this.credentials){const panel=this.credentials;if(event.key==='escape'){panel.dispose();this.credentials=undefined;this.draw(true);}else this.enqueue(()=>panel.key(event.key));return;}
+    if(this.credentials){const panel=this.credentials;if(event.key==='escape'){panel.dispose();this.credentials=undefined;this.enqueue(async()=>{this.worktrees=(await this.connection.request({kind:'settings.get'})).settings?.worktrees??'on';this.draw(true);});}else this.enqueue(()=>panel.key(event.key));return;}
     if (this.box) { this.boxInput(event.key); return; }
     if (this.confirmId) {
       const id = this.confirmId;
@@ -285,7 +290,7 @@ export class Homepage {
     this.draw(true);
   }
   private async operation(body: RequestBody): Promise<void> {
-    try { await this.connection.request(body); this.showNote(''); }
+    try { const result=await this.connection.request(body); this.showNote(result.keptWorktree?`worktree kept: ${result.keptWorktree}`:''); }
     catch (error) { this.showNote(error instanceof Error ? error.message : 'Operation failed'); }
   }
   private async copySelected(session:SessionInfo|null,all=false):Promise<void>{
@@ -330,7 +335,7 @@ export class Homepage {
   private async openCredentials(kind:'login'|'settings'):Promise<void>{
     this.box=undefined;
     const panel=new CredentialsPanel(kind,{
-      request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.draw(true);},
+      request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.enqueue(async()=>{this.worktrees=(await this.connection.request({kind:'settings.get'})).settings?.worktrees??'on';this.draw(true);});},
       login:async engine=>{const response=await this.connection.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:this.folder,permission:'ask',login:true,title:engine==='codex'?'Codex login':'Claude login'});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.credentials=undefined;await this.openSelected();},
       price:()=>{this.credentials=undefined;this.usageForm=new PriceForm();this.draw(true);},
       defaults:kind=>{this.credentials=undefined;this.openBox(kind);this.savingDefault=true;},
@@ -350,6 +355,9 @@ export class Homepage {
     box.checking = true; box.error = ''; this.draw(true);
     try {
       this.engines = (await this.connection.request({kind:'engines.status'})).engines;box.authLabel=this.nextAuthLabel();
+      if(box.kind==='start'){
+        try{box.worktreePreview=validateWorktreePreview((await this.connection.request({kind:'worktrees.preview',cwd:box.cwd,title:box.engine==='codex'?'Codex':'Claude Code'})).worktreePreview);}catch{box.worktreePreview=undefined;}
+      }
       const status = box.engine === 'codex' ? this.engines?.codex : this.engines?.claudeCode;
       if (!status?.installed) box.error = `${box.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`;
       else if (box.auth?.kind!=='key' && status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
@@ -447,7 +455,7 @@ export class Homepage {
           catch { b.error = 'Cannot access folder'; this.draw(true); return; }
           b.cwd = path; this.folder = path;
           if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultCwd:path}});this.savingDefault=false;}
-          if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; } else this.box = undefined;
+          if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); } else this.box = undefined;
           this.draw(true); return;
         }
         if (b.checking || b.error) return;
@@ -548,7 +556,9 @@ export class Homepage {
         // A notification click. Selecting never attaches; an agent this homepage doesn't list is ignored.
         if (!isUUID(v.sessionId)) throw new Error('Invalid selected session');
         const id = v.sessionId;
-        if (this.sessions.some(s => s.id === id) && id !== this.selectedId) { this.selectedId = id; this.drag = null; this.previewCells = undefined; if (!this.attached) this.enqueue(() => this.updatePreview(false)); }
+        const selected=this.sessions.find(s=>s.id===id);
+        if(selected){if(this.terminal)this.stdout.write(RAISE_WINDOW);else this.showNote(`selected ${selected.title} from a notification`);}
+        if (selected && id !== this.selectedId) { this.selectedId = id; this.drag = null; this.previewCells = undefined; if (!this.attached) this.enqueue(() => this.updatePreview(false)); }
       } else if (v.kind === 'session.removed') {
         if (!isUUID(v.sessionId)) throw new Error('Invalid removed session');
         this.sessions = this.sessions.filter(s => s.id !== v.sessionId); this.previews.get(v.sessionId)?.dispose(); this.previews.delete(v.sessionId);
@@ -647,7 +657,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), field: this.fieldView(cols), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,usage:this.usage,budgets:this.budgets }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), field: this.fieldView(cols), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,worktrees:this.worktrees,usage:this.usage,budgets:this.budgets }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);

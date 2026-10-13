@@ -129,7 +129,7 @@ async function main(): Promise<void> {
         if (action === 'ls') {
             const result = await client.request({ kind: 'sessions.list' });
             for (const session of result.sessions ?? [])
-                process.stdout.write(`${session.id} ${session.status} ${redact(session.statusDetail)} ctx=${session.ctxPercent===null?'?':session.ctxPercent+'%'} ${redact(session.title)}\n`);
+                process.stdout.write(`${session.id} ${session.status} ${redact(session.statusDetail)} ctx=${session.ctxPercent===null?'?':session.ctxPercent+'%'} ${redact(session.title)}${session.branch?' · '+session.branch:''}\n`);
         }
         if (action === 'shell' && cwd) {
             const result = await client.request({ kind: 'sessions.create', engine: 'shell', cwd });

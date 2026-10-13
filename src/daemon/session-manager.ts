@@ -10,6 +10,8 @@ import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
 import type { SessionInfo, SessionEvent, TerminalModes, CreateSession, ClaudeStatusEvent } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession } from '../shared/validate.js';
+import { SettingsStore } from './settings.js';
+import { prepareWorktree } from './worktrees.js';
 import { atomicWrite, readState } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
@@ -70,7 +72,7 @@ export class SessionManager extends EventEmitter {
                 throw new Error('Invalid session record');
             const now = new Date().toISOString();
             const saved = validateSession(r);
-            const info: SessionInfo = { id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}) };
+            const info: SessionInfo = { id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}) };
             if (!['exited','error'].includes(info.status)) {
                 info.status = 'exited'; info.statusDetail = 'background service restarted';
                 info.statusSince = now; info.exitCode = null;
@@ -112,9 +114,9 @@ export class SessionManager extends EventEmitter {
         const identity=saved.conversationId??saved.id;if(this.resuming.has(identity))throw new Error('Conversation already starting');
         const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const};
         this.resuming.add(identity);
-        try{return await this.create({engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},{...(saved.conversationId?{conversationId:saved.conversationId}:{})});}finally{this.resuming.delete(identity);}
+        try{return await this.create({engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},{...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{})});}finally{this.resuming.delete(identity);}
     }
-    async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{conversationId?:string}): Promise<SessionInfo> {
+    async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{conversationId?:string;worktree?:string;branch?:string}): Promise<SessionInfo> {
         const cwdValid=await validCwd(request.cwd);
         if (this.closing || !cwdValid || (request.title !== undefined && !isTitle(request.title)))
             throw new Error('Invalid session request');
@@ -142,6 +144,13 @@ export class SessionManager extends EventEmitter {
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
+        if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
+        else if(agent&&!agent.login&&!continuation){
+            try {
+                if((await new SettingsStore(this.paths.root).get()).worktrees!=='off')Object.assign(info,await prepareWorktree(this.paths.root,request.cwd,info.title));
+            } catch { info.worktreeNote='worktree off: git check failed'; }
+            if(info.worktreeNote)this.log.info(info.worktreeNote);
+        }
         const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
         const telemetry=agent&&!agent.login&&authMethod==='api-key'&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model}):undefined;
         if(telemetry){const extra=buildUsageArgs(agent?.engine??'codex',telemetry),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);Object.assign(recipe.env,buildUsageEnv(agent?.engine??'codex',telemetry));}
@@ -173,9 +182,9 @@ export class SessionManager extends EventEmitter {
                 recipe.env=buildSpawnEnv(agent.engine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env);
                 if(telemetry)Object.assign(recipe.env,buildUsageEnv(agent.engine,telemetry));
                 if(statusTelemetry)Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
-                try{live.host=new PtyHost(recipe,request.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
+                try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
             });
-            else live.host = new PtyHost(recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
+            else live.host = new PtyHost(recipe, info.cwd, this.size.cols, this.size.rows, this.childUmask);
             const host=live.host;if(!host)throw new Error('Spawn did not return a PTY');
             host.pty.onData(data => {
                 if(live.mirrorFailed)return;

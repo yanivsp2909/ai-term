@@ -175,3 +175,12 @@ it('the daemon tells only clients that handle clicks to select the agent, and co
   homepage.close();
   await vi.waitFor(() => expect(server.clickClients()).toBe(0));
 });
+
+it('daemon click activates only the validated terminal subscription and removal returns a kept worktree',async()=>{
+ const paths=await home(),log=new Logger(paths.log),manager=new SessionManager(paths,log),activate=vi.fn().mockResolvedValue(undefined);
+ await manager.load();const server=new DaemonServer(paths,manager,log,undefined,undefined,undefined,undefined,activate);await server.listen();
+ const client=await Connection.connect(paths,{entry:'/unused',autoStart:false});cleanup.push(async()=>{client.close();await server.close();await manager.shutdown();});
+ await client.request({kind:'clicks.subscribe',on:true,terminal:'com.apple.Terminal'});const events:unknown[]=[];client.on('event',event=>events.push(event));const id=randomUUID();server.selectSession(id);
+ await vi.waitFor(()=>expect(events).toContainEqual({kind:'session.select',sessionId:id}));expect(activate).toHaveBeenCalledExactlyOnceWith('com.apple.Terminal');
+ await client.request({kind:'clicks.subscribe',on:true});server.selectSession(id);expect(activate).toHaveBeenCalledTimes(1);
+});

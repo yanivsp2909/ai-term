@@ -2,6 +2,9 @@ import { createServer, type Socket, type Server } from 'node:net';
 import type { Paths } from '../shared/paths.js';
 import { listenPrivate, closePrivate, type SocketIdentity } from './private-socket.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type NotifierState,type NotificationAuthorization, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
+import { previewWorktree } from './worktrees.js';
+import { activateTerminal } from './terminal-activate.js';
+import type { TerminalBundle } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
 import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings.js';
@@ -22,6 +25,7 @@ interface Peer {
     lagged: boolean;
     stats: boolean; usage:boolean;
     clicks: boolean;
+    terminal?: TerminalBundle;
     queue: Promise<void>;
     snapshotId?: string;
 }
@@ -34,7 +38,7 @@ export class DaemonServer {
     private socketIdentity: SocketIdentity | undefined;
     private readonly sampler: SystemSampler;
     private closed = false;
-    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService, private readonly notifier?:{state():NotifierState;permission?():NotificationAuthorization;refreshPermission?():Promise<NotificationAuthorization>}) {
+    constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService, private readonly notifier?:{state():NotifierState;permission?():NotificationAuthorization;refreshPermission?():Promise<NotificationAuthorization>}, private readonly activate=activateTerminal) {
         this.settings = new SettingsStore(paths.root,()=>manager.keyMetadataWarning());
         keys.on('warning',()=>manager.keyMetadataWarning());
         usage?.on('updated',summary=>{for(const peer of this.peers)if(peer.hello&&peer.usage)this.control(peer,{kind:'usage.updated',usage:summary});});
@@ -80,7 +84,13 @@ export class DaemonServer {
     }
     // Homepage clients that route notification clicks (they send clicks.subscribe). None open → the click opens Terminal.
     clickClients(): number { return [...this.peers].filter(peer => peer.hello && peer.clicks && !peer.socket.destroyed).length; }
-    selectSession(sessionId: string): void { for (const peer of this.peers) if (peer.hello && peer.clicks) this.control(peer, { kind: 'session.select', sessionId }); }
+    selectSession(sessionId: string): void {
+        const terminals=new Set<TerminalBundle>();
+        for(const peer of this.peers)if(peer.hello&&peer.clicks&&!peer.socket.destroyed){
+            this.control(peer,{kind:'session.select',sessionId});if(peer.terminal)terminals.add(peer.terminal);
+        }
+        for(const terminal of terminals)void this.activate(terminal).catch(()=>this.log.error('Notification click could not activate terminal'));
+    }
     private async sendText(peer:Peer,id:string,copy:SessionText):Promise<void>{
         const bytes=Buffer.from(copy.text,'utf8');let start=0;
         do{
@@ -175,7 +185,7 @@ export class DaemonServer {
                 case 'usage.summary':this.control(peer,{id:request.id,ok:true,usage:this.usage?.summary()});break;
                 case 'usage.diagnostics':this.control(peer,{id:request.id,ok:true,usageDiagnostics:this.usage?.diagnostics()});break;
                 case 'usage.subscribe':peer.usage=request.on;this.control(peer,{id:request.id,ok:true});break;
-                case 'clicks.subscribe':peer.clicks=request.on;this.control(peer,{id:request.id,ok:true});break;
+                case 'clicks.subscribe':peer.clicks=request.on;peer.terminal=request.on?request.terminal:undefined;this.control(peer,{id:request.id,ok:true});break;
                 case 'keys.list': this.control(peer,{id:request.id,ok:true,keys:await this.keys.list()}); break;
                 case 'keys.add': this.control(peer,{id:request.id,ok:true,key:await this.keys.add(request)}); break;
                 case 'keys.remove': await this.keys.remove(request.keyId); this.control(peer,{id:request.id,ok:true}); break;
@@ -203,6 +213,9 @@ export class DaemonServer {
                     break;
                 case 'sessions.resume':
                     this.control(peer,{id:request.id,ok:true,session:await this.manager.resume(request.sessionId)});
+                    break;
+                case 'worktrees.preview':
+                    this.control(peer,{id:request.id,ok:true,worktreePreview:(await this.settings.get()).worktrees==='off'?{}:await previewWorktree(this.paths.root,request.cwd,request.title)});
                     break;
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
@@ -244,6 +257,7 @@ export class DaemonServer {
                     this.control(peer, { id: request.id, ok: true });
                     break;
                 case 'sessions.remove': {
+                    const keptWorktree=this.manager.get(request.sessionId).worktree;
                     await this.manager.remove(request.sessionId);
                     const removedOwner=this.owners.get(request.sessionId);
                     if(removedOwner)removedOwner.attached=null;
@@ -251,7 +265,7 @@ export class DaemonServer {
                     for (const p of this.peers)
                         if (p.preview === request.sessionId)
                             p.preview = null;
-                    this.control(peer, { id: request.id, ok: true });
+                    this.control(peer, { id: request.id, ok: true, ...(keptWorktree?{keptWorktree}:{}) });
                     break;
                 }
                 case 'sessions.rename':

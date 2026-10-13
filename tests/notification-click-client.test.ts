@@ -25,9 +25,9 @@ class Client extends EventEmitter {
     return result;
   }
 }
-async function fixture(sessions: SessionInfo[], options: { attachOnStart?: string; refuseClicks?: boolean } = {}) {
+async function fixture(sessions: SessionInfo[], options: { attachOnStart?: string; refuseClicks?: boolean;terminalProgram?:string } = {}) {
   const tty = new TTY(), client = new Client(sessions, options.refuseClicks), attached: string[] = [];
-  const home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp', attachSession: async id => { attached.push(id); return 'home key'; }, ...(options.attachOnStart ? { attachOnStart: options.attachOnStart } : {}) });
+  const home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp', terminalProgram:options.terminalProgram??'unknown-test-terminal', attachSession: async id => { attached.push(id); return 'home key'; }, ...(options.attachOnStart ? { attachOnStart: options.attachOnStart } : {}) });
   await home.start();
   return { tty, client, home, attached };
 }
@@ -94,4 +94,13 @@ it('ai --attach is listed and refuses anything but one UUID before connecting', 
     const result = spawnSync(process.execPath, ['--import', 'tsx', resolve('src/cli/index.ts'), ...args], { encoding: 'utf8', timeout: 20000, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', AI_TERM_HOME: '/nonexistent-ai-term-home' } });
     expect(result.status).toBe(2); expect(result.stderr).toContain('Usage:'); expect(result.stderr).not.toContain('AITERMCANARY');
   }
+});
+
+it('known terminals subscribe with their fixed bundle id and raise their own window on a click',async()=>{
+ const a=agent('alpha'),{client,home,tty}=await fixture([a],{terminalProgram:'Apple_Terminal'});
+ try{expect(client.requests).toContainEqual({kind:'clicks.subscribe',on:true,terminal:'com.apple.Terminal'});tty.output='';client.emit('event',{kind:'session.select',sessionId:a.id});expect(tty.output).toContain('\x1b[5t');}finally{await home.stop();}
+});
+it('unknown terminals select and show the notification note without raising a window',async()=>{
+ const a=agent('alpha'),{client,home,tty}=await fixture([a]);
+ try{tty.output='';client.emit('event',{kind:'session.select',sessionId:a.id});expect(tty.output).toContain('selected alpha from a notification');expect(tty.output).not.toContain('\x1b[5t');}finally{await home.stop();}
 });

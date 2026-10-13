@@ -3,11 +3,11 @@ import type { Theme } from './theme.js';
 import type { AgentEngine, Permission, AuthRef, Effort } from '../../shared/protocol.js';
 import type { ModelChoice } from '../../shared/models.js';
 import type { MessageField } from './message-field.js';
-export interface AgentBox {kind:'start'|'model'|'folder'|'effort'|'mode';engine:AgentEngine;model:string|null;cwd:string;permission:Permission;message:string;messageField?:MessageField;messageNote?:string;error:string;checking:boolean;row:number;filter:string;choices:ModelChoice[];choice:number;path:string;completions:string[];auth?:AuthRef;tabs?:string[];tab?:string;authLabel?:string;effort?:Effort|null;values?:readonly string[]}
+export interface AgentBox {kind:'start'|'model'|'folder'|'effort'|'mode';engine:AgentEngine;model:string|null;cwd:string;permission:Permission;message:string;messageField?:MessageField;messageNote?:string;worktreePreview?:import('../../shared/protocol.js').WorktreePreview;error:string;checking:boolean;row:number;filter:string;choices:ModelChoice[];choice:number;path:string;completions:string[];auth?:AuthRef;tabs?:string[];tab?:string;authLabel?:string;effort?:Effort|null;values?:readonly string[]}
 export function drawAgentBox(frame:Frame,box:AgentBox,theme:Theme):Frame{
  const rows=frame.length,cols=frame[0]?.length??0,grid=new Grid(cols,rows,theme),t=theme.colors;
  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){const cell=frame[y]?.[x];if(cell)grid.put(x,y,cell);}
- const h=Math.min(rows-2,box.kind==='model'?14:box.kind==='effort'?16:11),w=Math.min(cols,100),x=Math.floor((cols-w)/2),y=Math.max(1,rows-4-h);
+ const h=Math.min(rows-2,box.kind==='model'?14:box.kind==='effort'?16:box.kind==='start'?12:11),w=Math.min(cols,100),x=Math.floor((cols-w)/2),y=Math.max(1,rows-4-h);
  grid.box(x,y,w,h,box.kind==='start'?'Start a new agent':box.kind==='model'?'Select model':box.kind==='effort'?'Select effort':box.kind==='mode'?'Select mode':'Select folder',t.surface);
  // Start confirmation has the approved accent border, without adding colors to components.
  for(let r=y;r<y+h;r++)for(let c=x;c<x+w;c++)if(r===y||r===y+h-1||c===x||c===x+w-1){const cell=grid.cells[r]?.[c];if(cell)grid.put(c,r,{...cell,fg:t.accent});}
@@ -18,8 +18,12 @@ export function drawAgentBox(frame:Frame,box:AgentBox,theme:Theme):Frame{
   line(3,`${box.row===2?'›':' '} mode           ${box.permission==='dontAsk'?"! don't ask":box.permission} · ⇥ toggles`,box.permission==='dontAsk'?t['status-error']:t['ink-2']);
   line(4,`${box.row===3?'›':' '} effort         ${box.effort??'CLI default'}   e /effort`);
   line(5,`${box.row===4?'›':' '} first message  ${box.messageField?.display(true)??box.message}`);
-  line(7,box.error?`✗ ${box.error}`:box.messageNote??(box.checking?'◐ checking engine': '⏎ starts · Esc returns to editing'),box.error?t['status-error']:t['ink-3']);
-  line(8,'↑↓ rows · m model · c folder · e effort · message row edits text',t['ink-3']);
+  const tree=box.worktreePreview;
+  if(tree?.branch&&tree.head)line(6,`new worktree · ${tree.branch} from ${tree.head.slice(0,7)}`,t['ink-3']);
+  else if(tree?.note)line(6,tree.note,t['ink-3']);
+  if(tree?.dirty)line(7,"uncommitted changes in your checkout aren't included",t['ink-3']);
+  line(8,box.error?`✗ ${box.error}`:box.messageNote??(box.checking?'◐ checking engine': '⏎ starts · Esc returns to editing'),box.error?t['status-error']:t['ink-3']);
+  line(9,'↑↓ rows · m model · c folder · e effort · message row edits text',t['ink-3']);
  }else if(box.kind==='effort'||box.kind==='mode'){
   const capacity=h-4,start=Math.max(0,box.choice-capacity+1);
   for(const [i,value]of(box.values??[]).slice(start,start+capacity).entries())line(i+1,`${box.choice===start+i?'›':' '} ${value}`,box.choice===start+i?t.accent:t['ink-2']);
