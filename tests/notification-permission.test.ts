@@ -28,3 +28,12 @@ it('denied permission never launches a notification and logs the suppression onc
  for(let i=0;i<2;i++)notifier.transition(session,{status:'running',statusDetail:'running'},{status:'waiting',statusDetail:'permission'},true);
  await new Promise(r=>setTimeout(r,0));expect(launch).not.toHaveBeenCalled();expect(log.error).toHaveBeenCalledTimes(1);
 });
+it('daemon-start checks and minute refreshes are nonblocking and stop on close',async()=>{
+ vi.useFakeTimers();const run=vi.fn<NonNullable<ConstructorParameters<typeof NotificationPermission>[2]>>((_f,_a,_o,done)=>done(null,'allowed'));
+ const cache=new NotificationPermission('/tmp/app',()=>{},run,Date.now,true);
+ try{cache.start();expect(run).toHaveBeenCalledTimes(1);await vi.advanceTimersByTimeAsync(60_000);expect(run).toHaveBeenCalledTimes(2);cache.close();await vi.advanceTimersByTimeAsync(60_000);expect(run).toHaveBeenCalledTimes(2);}finally{cache.close();vi.useRealTimers();}
+});
+it('failed helper reads cache unknown and log only a fixed operation message',async()=>{
+ const log=vi.fn(),cache=new NotificationPermission('/tmp/app',log,(_f,_a,_o,done)=>done(new Error('private argv'),'allowed'),()=>0,true);
+ expect(await cache.refresh()).toBe('unknown');expect(await cache.refresh()).toBe('unknown');expect(log).toHaveBeenCalledExactlyOnceWith('Notification permission check failed');
+});
