@@ -34,3 +34,7 @@ it('off never probes and retains raw passthrough including original terminal esc
  const tty=new TTY(),connection=new Connection();const done=attach(connection,id,{stdin:tty,stdout:tty,signals:new EventEmitter(),bar:'off'});await tick();connection.emit('output',id,Buffer.from('\x1b]8;;target\x07RAW'));tty.emit('data',Buffer.from([5]));await done;
  expect(tty.output).not.toContain('\x1b[c');expect(tty.output).toContain('\x1b]8;;target\x07RAW');
 });
+it('reattach carries cursor shape, title, kitty flags and theme report mode from the daemon mirror',async()=>{
+ const {Mirror}=await import('../src/daemon/mirror.js');const {enterModes}=await import('../src/client/terminal-modes.js');const mirror=new Mirror(80,23,()=>{});
+ try{await mirror.write('\x1b[5 q\x1b]2;agent title\x07\x1b[>3u\x1b[?2031h');expect(mirror.modes()).toMatchObject({cursorShape:5,title:'agent title',kittyFlags:[0,3],themeReports:true});const modes=enterModes(mirror.modes());for(const seq of ['\x1b[5 q','\x1b]2;agent title\x1b\\','\x1b[>3u','\x1b[?2031h'])expect(modes).toContain(seq);}finally{mirror.dispose();}
+});
