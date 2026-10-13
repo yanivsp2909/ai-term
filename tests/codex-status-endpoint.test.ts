@@ -13,8 +13,8 @@ it('Codex status resolves identity from its own credential and engine path, alwa
   expect(await send(receiver.port(),codex,{path:'/v1/status/claude'})).toEqual({status:204,body:''});
   expect(await send(receiver.port(),claude,{path:'/v1/status/codex'})).toEqual({status:204,body:''});
   expect(updates).toHaveLength(1);
-  expect(receiver.nextStatusSeq(codexId)).toBe(2);expect(receiver.nextStatusSeq(randomUUID())).toBeNull();
-  receiver.revoke(codexId);expect(await send(receiver.port(),codex)).toEqual({status:204,body:''});expect(updates).toHaveLength(1);expect(receiver.nextStatusSeq(codexId)).toBeNull();
+  const signals:number[]=[];expect(receiver.enqueueStatus(codexId,seq=>signals.push(seq))).toBe(true);expect(receiver.enqueueStatus(randomUUID(),()=>{throw new Error('unknown');})).toBe(false);await expect.poll(()=>signals).toEqual([4]);
+  receiver.revoke(codexId);expect(await send(receiver.port(),codex)).toEqual({status:204,body:''});expect(updates).toHaveLength(1);expect(receiver.enqueueStatus(codexId,()=>{throw new Error('revoked');})).toBe(false);
  }finally{await receiver.close();}
 });
 it('every Codex status rejection is an empty 204 with no update and no canary in logs',async()=>{
@@ -27,4 +27,15 @@ it('a Codex body carrying a full 256 KB reply fits under the Codex cap',async()=
  // Worst-case JSON escaping: every byte of a 256 KiB reply becomes a six-byte \u00XX escape.
  const reply='\u0001'.repeat(256*1024);
  try{expect(await send(receiver.port(),token,{body:JSON.stringify({type:'agent-turn-complete','last-assistant-message':reply})})).toEqual({status:204,body:''});expect(updates).toHaveLength(1);}finally{await receiver.close();}
+});
+it('a terminal signal queues behind a status body that arrived first, and a failing signal never blocks later requests',async()=>{
+ const order:string[]=[],logs:string[]=[],receiver=new UsageReceiver(async()=>{}, {error:text=>logs.push(text)},async(_id,_raw,seq)=>{order.push(`http ${seq}`);});await receiver.listen();const id=randomUUID(),token=receiver.registerStatus(id,'codex');
+ try{
+  let complete:()=>void=()=>{};
+  const held=new Promise<number>((resolve,reject)=>{const req=request({hostname:'127.0.0.1',port:receiver.port(),path:'/v1/status/codex',method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token,'transfer-encoding':'chunked'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode??0));});req.on('error',reject);req.write('{');complete=()=>req.end('}');});
+  await new Promise(r=>setTimeout(r,20));receiver.enqueueStatus(id,seq=>{order.push(`signal ${seq}`);});await new Promise(r=>setTimeout(r,20));expect(order).toEqual([]);
+  complete();expect(await held).toBe(204);await expect.poll(()=>order).toEqual(['http 1','signal 2']);
+  receiver.enqueueStatus(id,()=>{throw new Error('AITERMCANARY');});expect(await send(receiver.port(),token)).toEqual({status:204,body:''});await expect.poll(()=>order).toEqual(['http 1','signal 2','http 4']);
+  expect(logs).toEqual(['Status signal failed']);
+ }finally{await receiver.close();}
 });

@@ -16,6 +16,8 @@ it('Codex titles yield only a run state and a remaining-context number',()=>{
  expect(codexTitle('Starting AITERMCANARY')).toEqual({run:null,leftPercent:null});
  expect(codexTitle('Ready | Context 101% left')).toEqual({run:'ready',leftPercent:null});
  expect(codexTitle('my-Working-dir | Context 0% left')).toEqual({run:null,leftPercent:0});
+ // Only a whole title part counts, so a thread or folder name cannot spoof context.
+ expect(codexTitle('repo Context 5% left | Ready')).toEqual({run:'ready',leftPercent:null});
 });
 it('only Codex approval OSC 9 messages count as waiting',()=>{
  expect(isCodexApproval('Approval requested: curl https://example.com')).toBe(true);
