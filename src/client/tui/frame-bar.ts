@@ -16,9 +16,11 @@ export function frameBar(cols:number,session:BarSession,others:Pick<SessionInfo,
  const homeWidth=textWidth(label)+textWidth(home)+3<=cols?textWidth(home)+2:0;
  const right=(showCounts?counts+'  ':'')+(homeWidth?home:'');
  const rightX=cols-textWidth(right)-1;let x=grid.text(1,0,label,theme.colors[status.color],bg);
- const room=Math.max(0,(right?rightX-2:cols)-x-2-(showModel?textWidth(detail)+2:0));
+ const shownDetail=showModel?detail:session.engine;
+ const showDetail=(right?rightX-2:cols)-x>=textWidth(shownDetail)+2;
+ const room=Math.max(0,(right?rightX-2:cols)-x-2-(showDetail?textWidth(shownDetail)+2:0));
  x=grid.text(x+2,0,name,theme.colors.ink,bg,true,room);
- if(showModel)grid.text(x+2,0,detail,theme.colors['ink-2'],bg);
+ if(showDetail)grid.text(x+2,0,shownDetail,theme.colors['ink-2'],bg);
  if(right)grid.text(rightX,0,right,theme.colors['ink-3'],bg);
  return grid.cells;
 }
