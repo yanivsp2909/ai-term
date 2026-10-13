@@ -1,6 +1,5 @@
 import {expect,it} from 'vitest';
 import {Readable} from 'node:stream';
-import {request} from 'node:http';
 import {createServer} from 'node:http';
 import {statusLine} from '../src/cli/status-line.js';
 it('status-line prints safe model/context and sends only numeric context with env token',async()=>{

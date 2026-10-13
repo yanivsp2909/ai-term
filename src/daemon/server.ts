@@ -142,7 +142,7 @@ export class DaemonServer {
             let end=Math.min(bytes.length,start+COPY_CHUNK_BYTES);while(end<bytes.length&&((bytes[end]??0)&0xc0)===0x80)end--;
             const more=end<bytes.length;
             // Chunk JSON stays below 4 MiB even with quotes/newlines; respect the socket's backpressure.
-            const frame=encodeControl({id,ok:true,copy:{sessionId:copy.sessionId,text:bytes.subarray(start,end).toString('utf8'),truncated:copy.truncated,more}});
+            const frame=encodeControl({id,ok:true,copy:{sessionId:copy.sessionId,text:bytes.subarray(start,end).toString('utf8'),truncated:copy.truncated,...(copy.source?{source:copy.source}:{}),more}});
             await new Promise<void>((resolve,reject)=>peer.socket.write(frame,error=>error?reject(error):resolve()));start=end;
         }while(start<bytes.length);
     }
@@ -261,7 +261,7 @@ export class DaemonServer {
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
                 case 'sessions.text':
-                    await this.sendText(peer,request.id,await this.manager.text(request.sessionId));
+                    await this.sendText(peer,request.id,await this.manager.text(request.sessionId,request.lastReply));
                     break;
                 case 'sessions.attach':
                     if(peer.attached&&peer.attached!==request.sessionId)await this.detach(peer);

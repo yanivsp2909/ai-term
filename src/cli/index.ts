@@ -27,7 +27,7 @@ async function main(): Promise<void> {
     }
     if (args.length === 1 && args[0] === 'daemon') {
         const { runDaemon } = await import('../daemon/main.js');
-        await runDaemon();
+        await runDaemon(entry);
         return;
     }
     if(args.length===1&&args[0]==='status-line'){const {statusLine}=await import('./status-line.js');await statusLine();return;}
@@ -119,7 +119,7 @@ async function main(): Promise<void> {
         if (action === 'ls') {
             const result = await client.request({ kind: 'sessions.list' });
             for (const session of result.sessions ?? [])
-                process.stdout.write(`${session.id} ${session.status} ${redact(session.title)}\n`);
+                process.stdout.write(`${session.id} ${session.status} ${redact(session.statusDetail)} ctx=${session.ctxPercent===null?'?':session.ctxPercent+'%'} ${redact(session.title)}\n`);
         }
         if (action === 'shell' && cwd) {
             const result = await client.request({ kind: 'sessions.create', engine: 'shell', cwd });

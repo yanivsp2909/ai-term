@@ -1,3 +1,8 @@
+import { fileURLToPath } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
+import { writeClaudeSettings,removeClaudeSettings } from './claude-settings.js';
+import {parseClaudeStatus} from './claude-status.js';
+import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
@@ -7,7 +12,7 @@ import { atomicWrite, readState } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror } from './mirror.js';
-import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs } from './env.js';
+import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs } from './env.js';
 import { KeyStore, KeyError } from './keys.js';
 import { checkEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
@@ -18,6 +23,8 @@ interface Live {
     mirror: Mirror;
     output: Promise<void>;
     mirrorFailed?:boolean;
+    statusState?:StatusState;
+    lastReply?:string;
     queuedBytes:number;
     paused:boolean;
     attached:boolean;
@@ -32,8 +39,8 @@ export class SessionManager extends EventEmitter {
     private resuming=new Set<string>();
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
-    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService) {
-        super();keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+    constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
+        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.claudeStatus(id,raw,seq));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -57,8 +64,8 @@ export class SessionManager extends EventEmitter {
                 throw new Error('Invalid session record');
             const now = new Date().toISOString();
             const saved = validateSession(r);
-            const info: SessionInfo = { id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}) };
-            if (info.status === 'starting' || info.status === 'running') {
+            const info: SessionInfo = { id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}) };
+            if (!['exited','error'].includes(info.status)) {
                 info.status = 'exited'; info.statusDetail = 'background service restarted';
                 info.statusSince = now; info.exitCode = null;
             }
@@ -75,7 +82,7 @@ export class SessionManager extends EventEmitter {
     } { return { ...this.size }; }
     // Live PTY children only; the This Mac sampler sums each one's process tree.
     sessionRoots(): { sessionId: string; pid: number }[] { return [...this.sessions.values()].flatMap(s => s.host && !['exited', 'error'].includes(s.info.status) ? [{ sessionId: s.info.id, pid: s.host.pty.pid }] : []); }
-    activeCount(): number { return this.list().filter(s => s.status === 'starting' || s.status === 'running').length; }
+    activeCount(): number { return this.list().filter(s => !['exited','error'].includes(s.status)).length; }
     private event(event: SessionEvent): void { this.emit('event', event); }
     private persist(): Promise<void> {
         const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: s.info.engine, model: s.info.model, auth: s.info.auth.kind==='key'?{kind:'key',keyId:s.info.auth.keyId}:{ kind: 'account' }, cwd: s.info.cwd, permission: s.info.permission, ...(s.info.effort!==undefined?{effort:s.info.effort}:{}), ...(s.info.conversationId?{conversationId:s.info.conversationId}:{}) } })) };
@@ -125,7 +132,8 @@ export class SessionManager extends EventEmitter {
         } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
-        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null };
+        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
+        const statusTelemetry=agent?.engine==='claude-code'&&!agent.login&&this.usage?this.usage.registerStatus(info.id):undefined;
         const telemetry=agent&&!agent.login&&authMethod==='api-key'&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model}):undefined;
         if(telemetry){const extra=buildUsageArgs(agent?.engine??'codex',telemetry),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);Object.assign(recipe.env,buildUsageEnv(agent?.engine??'codex',telemetry));}
         const replies = new ReplyBudget();
@@ -135,12 +143,18 @@ export class SessionManager extends EventEmitter {
             if (!dropping) this.log.error(`Dropped terminal query replies over budget for session ${info.id}`);
             dropping = true;
         };
-        const live: Live = { info, mirror: new Mirror(this.size.cols, this.size.rows, reply), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
+        const live: Live = { info,...(statusTelemetry?{statusState:initialStatus(now)}:{}), mirror: new Mirror(this.size.cols, this.size.rows, reply), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         this.sessions.set(info.id, live);
         try {
+            if(statusTelemetry){
+                const settings=await writeClaudeSettings(this.paths.root,info.id,statusTelemetry.port,process.execPath,this.cliEntry);
+                const extra=buildStatusArgs(settings),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);
+                Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
+            }
             if(agent?.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,secret=>{
                 recipe.env=buildSpawnEnv(agent.engine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env);
                 if(telemetry)Object.assign(recipe.env,buildUsageEnv(agent.engine,telemetry));
+                if(statusTelemetry)Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
                 try{live.host=new PtyHost(recipe,request.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
             });
             else live.host = new PtyHost(recipe, request.cwd, this.size.cols, this.size.rows, this.childUmask);
@@ -154,6 +168,7 @@ export class SessionManager extends EventEmitter {
                     await live.mirror.write(data);
                     info.lastOutputAt = new Date().toISOString();
                     if (info.status === 'starting') {
+                        if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:0,at:info.lastOutputAt,kind:'running'});
                         info.status = 'running';
                         info.statusDetail = 'running';
                         info.statusSince = info.lastOutputAt;
@@ -176,6 +191,8 @@ export class SessionManager extends EventEmitter {
             });
             host.pty.onExit(event => {
                 this.usage?.revoke(info.id);
+                // Set terminal precedence synchronously: queued hook bodies must not win a process-exit race.
+                if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:live.statusState.seq+1,at:new Date().toISOString(),kind:'exit',status:'exited',detail:'exited',exitCode:event.exitCode});
                 live.output = live.output.then(async () => {
                     if(live.mirrorFailed)return;
                     // node-pty reports exitCode 0 for a killed child; only the signal tells a crash apart.
@@ -184,6 +201,7 @@ export class SessionManager extends EventEmitter {
                     info.status = event.exitCode === 0 && !crashed ? 'exited' : 'error';
                     info.statusDetail = crashed ? `signal ${event.signal}` : `exit ${event.exitCode}`;
                     info.statusSince = new Date().toISOString();
+                    if(live.statusState)live.statusState={...live.statusState,status:info.status,statusDetail:info.statusDetail,statusSince:info.statusSince,exitCode:info.exitCode};
                     await this.persist();
                     this.event({ kind: 'session.updated', session: { ...info } });
                 }).catch(error => { this.log.error('Exit record failed'); this.emit('fatal', error); });
@@ -201,17 +219,34 @@ export class SessionManager extends EventEmitter {
         this.event({ kind: 'session.updated', session: { ...info } });
         return { ...info };
     }
+    private claudeStatus(id:string,raw:unknown,seq:number):void{
+        const live=this.sessions.get(id);if(!live?.statusState||live.mirrorFailed||['exited','error'].includes(live.statusState.status))return;
+        const update=parseClaudeStatus(raw,seq,new Date().toISOString());if(!update)return;
+        const next=reduceStatus(live.statusState,update.event);if(next===live.statusState)return;
+        live.statusState=next;
+        Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
+        if(update.reply!==undefined)live.lastReply=update.reply;
+        this.event({kind:'session.updated',session:{...live.info}});
+        void this.persist();
+    }
     async snapshot(id: string, publish?: (snapshot: string, size:{cols:number;rows:number}) => void): Promise<string> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); return live.output.then(() => { const snapshot = live.mirror.snapshot(); publish?.(snapshot,{cols:live.mirror.terminal.cols,rows:live.mirror.terminal.rows}); return snapshot; }); }
-    async text(id:string):Promise<import('../shared/protocol.js').SessionText>{
+    async text(id:string,lastReply=false):Promise<import('../shared/protocol.js').SessionText>{
         if(!isUUID(id))throw new Error('Invalid session UUID');const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
-        return live.output.then(()=>({sessionId:id,...live.mirror.plainText()}));
+        return live.output.then(()=>{
+            if(lastReply&&live.info.engine==='claude-code'&&live.lastReply!==undefined){
+                // eslint-disable-next-line no-control-regex -- Explicit copy strips controls before reaching a clipboard.
+                const text=stripVTControlCharacters(live.lastReply).replace(/\r\n?/g,'\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/gu,'');
+                return {sessionId:id,text,truncated:false,source:'last-reply' as const};
+            }
+            return {sessionId:id,...live.mirror.plainText()};
+        });
     }
     async stop(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
     async remove(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
-        throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
+        throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; await removeClaudeSettings(this.paths.root,id);live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
     async rename(id: string, title: string): Promise<SessionInfo> { const live = this.sessions.get(id); if (!live || !isTitle(title))
         throw new Error('Invalid session or title'); live.info.title = title; await this.persist(); this.event({ kind: 'session.updated', session: { ...live.info } }); return { ...live.info }; }
     async previewSize(cols: number, rows: number): Promise<void> { if (!isSize(cols, rows))

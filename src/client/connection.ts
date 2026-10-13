@@ -17,7 +17,7 @@ export class Connection extends EventEmitter {
         reject: (error: Error) => void;
         timer: ReturnType<typeof setTimeout>;
         textSession?:string;
-        copy?:{parts:string[];bytes:number;truncated:boolean};
+        copy?:{parts:string[];bytes:number;truncated:boolean;source?:SessionText['source']};
     }>();
     readonly hello: Promise<SuccessResponse>;
     private constructor(readonly socket: Socket) {
@@ -43,10 +43,10 @@ export class Connection extends EventEmitter {
                         else if(v.kind!=='helloMismatch'&&(v.ok!==false||!v.error||typeof v.error!=='object'||!('code' in v.error)||typeof v.error.code!=='string'||!('message' in v.error)||typeof v.error.message!=='string'))throw new Error('Invalid daemon response');
                         if(v.ok===true&&v.copy!==undefined){
                             const copy=validateSuccess(value).copy;if(!copy||copy.sessionId!==pending.textSession||Buffer.byteLength(copy.text)>COPY_CHUNK_BYTES||copy.more===true&&!copy.text)throw new Error('Invalid copy chunk');
-                            const combined=pending.copy??{parts:[],bytes:0,truncated:copy.truncated};if(combined.truncated!==copy.truncated)throw new Error('Inconsistent copy chunks');
+                            const combined=pending.copy??{parts:[],bytes:0,truncated:copy.truncated,source:copy.source};if(combined.truncated!==copy.truncated||combined.source!==copy.source)throw new Error('Inconsistent copy chunks');
                             combined.bytes+=Buffer.byteLength(copy.text);if(combined.bytes>MAX_COPY_BYTES||combined.parts.length>=6)throw new Error('Session text exceeds copy limit');combined.parts.push(copy.text);pending.copy=combined;
                             if(copy.more===true)continue;
-                            const result=validateSuccess({...v,copy:{sessionId:copy.sessionId,text:combined.parts.join(''),truncated:copy.truncated} satisfies SessionText});
+                            const result=validateSuccess({...v,copy:{sessionId:copy.sessionId,text:combined.parts.join(''),truncated:copy.truncated,...(copy.source?{source:copy.source}:{})} satisfies SessionText});
                             clearTimeout(pending.timer);this.pending.delete(v.id);pending.resolve(result);continue;
                         }
                         if(v.ok===true&&pending.textSession)throw new Error('Missing session text');
