@@ -4,6 +4,8 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   { ignores: ['dist/**', 'coverage/**', 'spikes/**'] },
   eslint.configs.recommended,
+  // Plain Node build scripts (.mjs) run outside TypeScript.
+  { files: ['scripts/**/*.mjs'], languageOptions: { globals: { process: 'readonly' } } },
   ...tseslint.configs.recommended,
   {
     rules: {
