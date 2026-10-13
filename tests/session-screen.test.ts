@@ -51,3 +51,15 @@ it('user input flags xterm synchronously and floods are capped at eight millisec
  try{const input=vi.spyOn(screen.terminal,'input');screen.input();expect(input).toHaveBeenCalledWith('',true);await screen.write('a');const n=output.length;screen.terminal.input('',true);await screen.write('b');expect(output.length).toBe(n);await vi.advanceTimersByTimeAsync(8);expect(output.length).toBeGreaterThan(n);
  }finally{screen.dispose();vi.useRealTimers();}
 });
+it.each(['sgr','urxvt','default','utf8'] as const)('fragmented %s mouse reports and paste markers survive arbitrary read boundaries',encoding=>{
+ const mouse=new MouseRewriter(()=>({tracking:true,encoding}));
+ const report=encoding==='sgr'?Buffer.from('\x1b[<0;5;6M'):encoding==='urxvt'?Buffer.from('\x1b[32;5;6M'):Buffer.from([27,91,77,32,37,38]);
+ const expected=encoding==='sgr'?Buffer.from('\x1b[<0;5;5M'):encoding==='urxvt'?Buffer.from('\x1b[32;5;5M'):Buffer.from([27,91,77,32,37,37]);
+ expect(Buffer.concat([...report].map(b=>mouse.push(Buffer.from([b]))))).toEqual(expected);
+ const paste=Buffer.concat([Buffer.from('\x1b[200~'),report,Buffer.from('\x1b[201~'),report]);
+ expect(Buffer.concat([...paste].map(b=>mouse.push(Buffer.from([b]))))).toEqual(Buffer.concat([Buffer.from('\x1b[200~'),report,Buffer.from('\x1b[201~'),expected]));
+});
+it('a changed bar preserves the agent cursor even when no body cells changed',async()=>{
+ let bar='\x1b[1;1Hbar';const out:string[]=[];const screen=new SessionScreen(20,3,{kitty:false},s=>{out.push(s);},()=>{},()=>bar,()=>{});
+ try{await screen.write('abc');await new Promise(r=>setTimeout(r,12));out.length=0;bar='\x1b[1;1Hnew';screen.changed();expect(out.join('')).toContain('\x1b[2;4H');}finally{screen.dispose();}
+});
