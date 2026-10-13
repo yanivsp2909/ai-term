@@ -49,7 +49,7 @@ export async function listWorktrees(cwd: string): Promise<GitWorktree[]> {
     });
 }
 export async function branchNames(cwd: string): Promise<string[]> {
-    return (await run(cwd, ['for-each-ref', '--format=%(refname:short)', '--', 'refs/heads/'])).trim().split('\n').filter(Boolean);
+    return (await run(cwd, ['for-each-ref', '--format=%(refname)', '--', 'refs/heads/'])).trim().split('\n').filter(ref=>ref.startsWith('refs/heads/')).map(ref=>ref.slice(11));
 }
 export async function checkoutDirty(cwd: string): Promise<boolean> {
     return (await run(cwd, ['status', '--porcelain', '--untracked-files=normal', '--'])).length > 0;
