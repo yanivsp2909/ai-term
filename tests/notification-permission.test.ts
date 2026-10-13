@@ -43,3 +43,8 @@ it('permission words and bar action remain reachable in a short narrow settings 
  for(let i=0;i<8;i++)await panel.key('down');expect(plainText(panel.draw(new Grid(70,14,theme).cells,theme))).toContain('Notifications');
  await panel.key('down');expect(plainText(panel.draw(new Grid(70,14,theme).cells,theme))).toContain('bar: off');
 });
+it('ordinary settings reads in attach never wait for permission, while settings overlay explicitly refreshes',async()=>{
+ const {mkdtemp,rm}=await import('node:fs/promises'),{getPaths,preparePaths}=await import('../src/shared/paths.js'),{Logger}=await import('../src/daemon/log.js'),{SessionManager}=await import('../src/daemon/session-manager.js'),{DaemonServer}=await import('../src/daemon/server.js'),{Connection}=await import('../src/client/connection.js');
+ const root=await mkdtemp('/tmp/ai-permission-path-'),paths=getPaths(root);await preparePaths(paths);const log=new Logger(paths.log),manager=new SessionManager(paths,log),refresh=vi.fn(async()=> 'denied' as const),server=new DaemonServer(paths,manager,log,undefined,undefined,undefined,{state:()=> 'ready',permission:()=> 'allowed',refreshPermission:refresh});let connection:InstanceType<typeof Connection>|undefined;
+ try{await manager.load();await server.listen();connection=await Connection.connect(paths,{entry:'/unused',autoStart:false});expect((await connection.request({kind:'settings.get'})).notificationPermission).toBe('allowed');expect(refresh).not.toHaveBeenCalled();expect((await connection.request({kind:'settings.get',refreshNotifications:true})).notificationPermission).toBe('denied');expect(refresh).toHaveBeenCalledOnce();}finally{connection?.close();await server.close();await manager.shutdown();await rm(root,{recursive:true,force:true});}
+});
