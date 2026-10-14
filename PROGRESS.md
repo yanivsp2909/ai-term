@@ -1,6 +1,152 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 027521c fix: deny only CLI and shell state names, not extensions named like git-log or analyze-logs
+Roadmap step: v0.4 release gate — done. **v0.4 is closed** on automated evidence; only Yaniv's real-key and real-terminal checks below remain, as for v0.2 and v0.3.
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 5896209 after `git pull --ff-only` (already up to date). Baseline 173 files / 1108 passed / 2 opt-in Keychain skips. Final 183 files / 1144 passed / the same 2 skips, twice in a row. Session: Claude Code, Opus 5.5.
+Prompt vs code:
+- "its cost shows on the card": the homepage card shows no cost (status, model, ctx %, activity, auth). Cost shows on the agent's own turn lines, which the card's preview mirrors, and in Usage. The exit check verifies those two and that they agree.
+- `security-bounty-hunter` and `engineering:code-review` are skills, not agent types: they ran as fresh general-purpose agents told to load them. Seven fresh reviewers in all (keys, approval, jail/reader, money, MCP, silent failures, whole v0.4 diff), then one fresh reviewer on this session's own fix diff.
+- The checkpoint otherwise matches the code. The plan's `ui.ts` is still stale (`app.ts` + `screen.ts`).
+- Mid-session, Yaniv asked for the cap fix to size each request's output allowance to what is left, not just to send a 16k limit; done as asked (below).
+
+## Gate findings (each: failing test commit, then fix commit)
+No CRITICAL. Reviewers ran read-only on 5896209 with temp homes, stub models, stub vaults and local stub servers only.
+- **HIGH (approval):** MCP call arguments, `task` job prompts and project MCP server previews reached the terminal raw: C1 controls (U+009B CSI), OSC 52 and bidi overrides could hide the real target or make a Don't ask job read as Ask. `AgentApp.approve` now passes every title and body through `visible()`. db69ccb → ce3f422.
+- **HIGH (reader, D48):** a cloned repo's relative symlinks in `.claude/agents` / `.claude/commands` reached `~/.bash_history`, `~/.zsh_history`, `~/.pgpass`, private keys and any home Markdown; `task` or `/name` sent them to the model. Project roots now never resolve outside the project's real folder; shell history/sessions, `.pgpass`, `.s3cfg`, `.boto`, `.my.cnf`, `id_*` keys denied for user roots too. 33fb114 → 70891ec; over-broad first version (refused `git-log`, `analyze-logs`) caught by the fix review: 82640a4 → 027521c.
+- **HIGH (money):** no `maxOutputTokens` was ever sent (the shipped catalog has no limits), so one checked request could cost more than the $5 cap (128k on Claude). Now, as Yaniv specified: before each request (parent or subagent) the allowance is the largest `maxOutputTokens` whose worst case (input + allowance × output price; reasoning is output under the same allowance) fits what's left of the run cap and of every budget, never above the model limit; under 1,000 tokens → pause; unknown price → pause, then the model's own allowance. d9085ed → 35ef2de, f4b5618 → 858526b.
+- **HIGH (money):** a request that failed mid-stream was billed but counted $0. It now counts its worst case (only after the provider answered: `start-step`). d9085ed → 35ef2de.
+- **HIGH (correctness):** a 240-character cut or a last-four suffix could split an emoji; the lone surrogate failed catalog validation and every agent turn failed (MCP: until daemon restart). `src/shared/text-cut.ts`. f381d20 → c25eae9.
+- **MEDIUM (money):** a finished request without usage counted $0 → worst case plus a note. Usage the daemon never took (failed post, missing credential) keeps counting in the run's budget check, with a note. d9085ed → 35ef2de.
+- **MEDIUM (approval):** a write over a file larger than 1 MB showed "no change" and truncated it → refused. Write/edit approvals hid changed lines past 200 → every line is paged. db69ccb → 27a9257, 4cf521b.
+- **MEDIUM (D50/S22):** `/send` typed into an open agent popup; its Enter saved and authorized an MCP server. The popup reports waiting · question, then done. 7191c2e → 5c7f400.
+- **MEDIUM (reader):** repos under `~/Projects`, or in folders named like `logs-viewer`/`history-app`, lost their extensions and `.mcp.json`; projects outside the home lost theirs. Fixed with the reader change. 33fb114 → 70891ec.
+- **MEDIUM (correctness):** a folder with a ZWJ emoji or soft hyphen made every turn fail (extension/MCP queries refused the cwd validCwd accepted). c8baa41 → 994aaf3.
+- **MEDIUM (MCP):** daemon shutdown didn't wait for MCP servers; `mcp_call` failed with a bare error after any Esc/Ctrl+K; `/cd` left the old folder's servers running; a failed Keychain rollback stopped at the first name and logged nothing. a5e5b85 → 22b7f8e.
+- **LOW (keys):** a key streamed across two deltas reached the screen and the last reply (needs the model to know the key). Stream redactor. 4cedde8 → 6f24e13.
+
+## Not fixed, with reasons
+- **Budgets across concurrent sessions** (money MEDIUM): each agent reserves its in-flight worst case only in its own process, so two agents near the same daily budget can together cross it; a cut-off request's worst case never reaches Usage. Needs the daemon to hold reservations (a protocol change); proposed for the next step. A single agent never crosses a budget.
+- **Daemon crash or SIGKILL leaves stdio MCP servers that ignore stdin EOF running** (MCP MEDIUM): a clean `ai daemon stop` now stops them all; killing persisted process groups at the next start risks killing reused pids. Most servers exit on stdin EOF.
+- **A deployment whose real output limit is under 16k refuses requests** until its catalog model is marked (`/settings` → `m`) or the catalog refreshed: the price of never sending an unbounded request. README says so.
+- **Reasoning billed outside output:** none of the three wired APIs does; if a Foundry Chat Completions deployment reported reasoning outside completion tokens, cost would read low. Manual check below compares one Grok/Kimi turn with Azure's numbers.
+- **MCP LOWs:** approvals/overrides cap at 64 project servers; a project server shadows an own server of the same name (still needs approval, preview says "this project"); stale project Keychain values after an entry edit (hash-bound, unusable); project approval shows value names, not values (§12.8 "all values secret"); a failed MCP stop is only logged (suspected, not reproduced).
+- **`/retry` of a pre-v0.4 Claude key session with model `sonnet`** starts the agent on `sonnet`, which the provider refuses (visible HTTP 404; suspected, not reproduced). Pick a model with `/model`.
+- **Hard links in the agent's folder** (jail review): read/edit follow a hard link to an outside file; only a same-user process can make one (D35, S18's accepted boundary). Not reported as a finding.
+- **Pre-existing:** `Screen.fit` is quadratic on a 16 KB bash summary (~1.5 s); the review test for it times out only under coverage, at 5896209 too.
+
+## Exit check (headless, ran)
+`tests/v04-exit-check.test.ts` (3280d9a): a temp HOME and temp git repo; the daemon's real SessionManager, usage receiver, facts/extension/MCP routes, D48 reader and McpService with a real stdio MCP server from the repo's `.mcp.json`; the agent in-process with a stub model, driven by typed keys. It loads a skill (`notes`), runs a subagent (`scribe`, which writes NOTES.md) and calls the MCP tool (`stub/echo`), then bash: five typed approvals (job, write, MCP server, MCP call, bash), nothing else runs. The MCP server sees no key. 16,700 tokens reach Usage (Foundry, priced) and the two turn lines add up to the same cost. A turn cap of 2 pauses the third request (card `waiting · question`, Esc sends nothing). Ctrl+K kills a running bash's whole process group within 2 s and nothing more is sent. 3 passed.
+
+## Check output
+```
+npm run typecheck        > tsc --noEmit                         (exit 0)
+npm run lint             > eslint .   ESLint: No issues found
+npm run build            ESM ⚡️ Build success in 33ms
+npm run build:notifier   Notifier built and ad-hoc signed: /Users/yanivsp/ai-term/build/notifier/AI Term.app
+npm test (1)             Test Files  183 passed (183) · Tests  1144 passed | 2 skipped (1146) · 19.39s
+npm test (2)             Test Files  183 passed (183) · Tests  1144 passed | 2 skipped (1146) · 20.17s
+coverage (src/**)        Statements 87.44% · Branches 81.65% · Functions 88.74% · Lines 94.14%
+grep exec(/execSync(/shell: true            none (two RegExp .exec only); the one /bin/sh -c is src/agent/bash.ts
+grep sk-                                    only guards (isToolName, model ids, status line) and log redaction; env.ts "ask-for-approval"
+grep key variable names                     src/daemon/env.ts and src/agent/main.ts (+ the .env import name table in validate.ts, unchanged since v0.1)
+grep ~/.claude, ~/.codex, ~/.agents paths   only src/agent/extensions/reader.ts
+grep permission flags                       src/daemon/env.ts only
+git diff --check 5896209..HEAD              clean
+```
+- An earlier full run had one failure in `tests/gate-silent.test.ts` (M2+L6, v0.3, unreadable settings keeps worktrees on); it passed 6/6 alone and in the next four full runs. It touches nothing changed here; recorded as a load-dependent flake.
+- verification-loop: build, types, lint, tests twice, coverage, security greps, diff review (fresh reviewer on 5896209..HEAD: one MEDIUM found and fixed, one LOW documented).
+
+## What's next
+- v0.5 per the roadmap. From this gate, proposed first: daemon-held budget reservations across sessions; resume from the transcript and opt-in /compact remain open from v0.4.
+- Nothing blocks v0.4 except Yaniv's manual checks below.
+
+## Manual checks (everything still open from v0.2 to v0.4, in one sitting)
+Setup first (network and your keys on your side; keys stay in the Keychain):
+- Catalog refresh: `cd ~/ai-term && curl -fsSL https://models.dev/api.json -o /tmp/models-dev.json && npx tsx scripts/update-prices.ts /tmp/models-dev.json && git diff --stat -- data/usage-prices.json` — commit it if the diff looks right (gives ctx % and real output limits).
+- Rebuild and restart (stops running agents): `cd ~/ai-term && npm run build && npm run build:notifier && node dist/cli/index.js daemon stop && node dist/cli/index.js`
+- Foundry key re-add (B12): `cd ~/ai-term && node dist/cli/index.js` — /settings, `t` on the Foundry key refuses `Foundry key must be added again to bind its endpoint`; `x`, `a` (re-add), `t` → GPT deployments `ready`, Grok/Kimi/DeepSeek/GLM `chat`.
+- Mark models: `cd ~/ai-term && node dist/cli/index.js` — /settings → Foundry key → `m` → your Kimi and Grok deployments → their catalog models (cost lines show dollars, real output limits apply).
+- Scratch repo: `cd ~/ai-term && rm -rf /tmp/ai-agent-try && mkdir /tmp/ai-agent-try && printf '# try\n' > /tmp/ai-agent-try/README.md && git -C /tmp/ai-agent-try init -q -b main && git -C /tmp/ai-agent-try add -- README.md && git -C /tmp/ai-agent-try -c user.name=you -c user.email=you@example.invalid commit -qm init`
+
+v0.4, the real exit check (Kimi or Grok through Foundry, one of your skills, one real MCP server):
+- Add a server: `cd ~/ai-term && node dist/cli/index.js` — `/mcp add`: a local MCP server you use (absolute executable, JSON argv, env names, masked values), review the paged preview, save.
+- The task: `cd ~/ai-term && node dist/cli/index.js` — `/cd /tmp/ai-agent-try`, `/model` → FOUNDRY → your Kimi or Grok `· ai term`, Ask, then `Use the <your skill> skill, ask the <your subagent> subagent to add a line to README.md, and call <your MCP server>'s <tool>`: Enter confirms the job, `y` on each write/MCP call/bash; every approval shows markers, never raw escapes.
+- Cost: same agent — after the turn, `turn · … in · … out · $…` lines (one per subagent too); Ctrl+E home → Usage shows the same Foundry spend; compare one Grok/Kimi turn with Azure's token numbers (reasoning billed as output).
+- Session allow: `cd ~/ai-term && node dist/cli/index.js` — at the MCP Ask prompt type `a`; the next call to that tool doesn't ask; a fresh agent asks again.
+- Project server: `cd ~/ai-term && node dist/cli/index.js` — `/cd` a project with `.mcp.json`, `/mcp`, `d` on one entry: approve once; edit its command, `d` again must ask.
+- /mcp popup: `cd ~/ai-term && node dist/cli/index.js` — inside the agent `/mcp`; meanwhile from the homepage `/send <name> hi` is refused (asking a question); Esc closes; Ctrl+K during a slow call and after idle discovery.
+- Sized allowance: `cd ~/ai-term && node dist/cli/index.js` — inside an agent `/caps spend 0.02`, ask for a long answer → it goes with a short reply; `/caps spend 0.001` → `● paused · cap reached … what's left fits under 1,000 output tokens`; `/caps spend 5`.
+- Budget stop: `cd ~/ai-term && node dist/cli/index.js` — home `b` → daily `0.01` → in an agent `Read README.md and summarize it` → `● paused · budget: today …`, card `waiting · question`; Esc → `■ stopped`; clear the daily budget.
+- Turn cap: `cd ~/ai-term && node dist/cli/index.js` — `/caps turns 2`, `Read README.md, then AGENTS.md, then PROGRESS.md one by one` → `cap reached: 2 turns this run · ⏎ allows 2 more`; ⏎; `/caps turns off`.
+- Kill switch: `cd ~/ai-term && node dist/cli/index.js` — Ask, `Run sleep 120 && echo finished`, `y`, Ctrl+K → `✗ killed: the request and 1 running command`; then `cd ~/ai-term && pgrep -fl "sleep 120" || echo none` → `none`.
+- Homepage stop: `cd ~/ai-term && node dist/cli/index.js` — same command, Ctrl+E home, `s`, `y` → exited; `cd ~/ai-term && pgrep -fl "sleep 120" || echo none` → `none`.
+- Deny, Esc, jail, key: `cd ~/ai-term && node dist/cli/index.js` — `Run ls -la` → `n` → denied, no retry; Esc during a long stream → `■ interrupted`; `Read /etc/hosts with the read tool` → `Path is outside the folder`; `Run env | sort` → `y` → no AITERM/OPENAI/ANTHROPIC/key value.
+- Card, `c`, notification: `cd ~/ai-term && node dist/cli/index.js` — card `✓ done` with the model `· ai term` and `API key ····last4`; `c` copies the last reply; going home before an approval gives `<name> · waiting: permission`.
+- /model inside: `cd ~/ai-term && node dist/cli/index.js` — `/model` lists the key's tested deployments; `/model <other>` switches and the card follows.
+- Context: `cd ~/ai-term && node dist/cli/index.js` — after the catalog refresh, `ctx N%` on the card and the bar; mark a deployment as a small-context model (e.g. `phi-4`), `Read PROGRESS.md in full` twice → `context 8x% · /clear or start fresh` once; `/clear`; unmark.
+- Anthropic/OpenAI keys (if you have them): `cd ~/ai-term && node dist/cli/index.js` — `/login` → API key; `/model` → `claude-sonnet-5 · ai term` / `gpt-6.1-sol · ai term`, one turn each with a cost line.
+- Fallback: `cd ~/ai-term && node dist/cli/index.js` — /settings `r` → `keys run on: the cli` (rows read `· claude code` / `· codex`); `r` back.
+- Your skills and agents: `cd ~/ai-term && node dist/cli/index.js` — `/skills`, `/agents`: real Claude/Codex definitions, sources, token totals, a Codex TOML agent; Space one off and back; Enter reads the full file.
+- A command: `cd ~/ai-term && node dist/cli/index.js` — inside an agent run one of your commands `/<name> README.md` and check the argument substitution.
+- A repo under ~/Projects: `cd ~/ai-term && node dist/cli/index.js` — `/cd` a repo kept under `~/Projects` (or similar) that has `.claude/commands` → they appear in `/skills` → Commands.
+
+v0.2 and v0.3, retained:
+- Notifications, permission: `cd ~/ai-term && node dist/cli/index.js` — start a Codex agent and make it ask permission; first time the Allow prompt for "AI Term", then a banner `<name> · waiting: permission` with sound.
+- Notifications, done: `cd ~/ai-term && node dist/cli/index.js` — an agent finishing while you're inside it gives no banner; one finishing while you're on the homepage gives `<name> · done`.
+- Notifications off: `cd ~/ai-term && node dist/cli/index.js` — /settings, n → `notifications: off`; trigger waiting → no banner; n again.
+- Click with ai open: `cd ~/ai-term && node dist/cli/index.js` — two agents, select one; click the other's banner → it's selected, Enter attaches.
+- Click with ai closed: `cd ~/ai-term && node dist/cli/index.js` — start an agent with a task, /exit, click its done banner → a new Terminal opens ai inside it; Ctrl+E goes home.
+- Click without a banner: `cd ~/ai-term && node dist/cli/index.js debug ls` (copy an id, /exit ai), then `cd ~/ai-term && "build/notifier/AI Term.app/Contents/MacOS/AITermNotifier" --click <id>`.
+- Click for a removed agent: `cd ~/ai-term && "build/notifier/AI Term.app/Contents/MacOS/AITermNotifier" --click "$(uuidgen | tr A-Z a-z)" && tail -1 ~/.ai-term/logs/daemon.log` → nothing opens; log says `Notification click for unknown agent dropped`.
+- Terminal.app raise: `cd ~/ai-term && node dist/cli/index.js` — with another app in front, click a live agent's banner; Terminal activates, the right ai window rises, the agent is selected.
+- Raise probe: `cd ~/ai-term && printf '\e[5t'` — does this Terminal.app window come forward?
+- Unknown terminal: `cd ~/ai-term && TERM_PROGRAM=unknown node dist/cli/index.js` — a click selects only and notes `selected <name> from a notification`.
+- Bar trace: `cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace` — hands off; reply with the BAR_DIAGNOSTIC line.
+- Bar feel: `cd ~/ai-term && node dist/cli/index.js` — /settings h → bar on, /shell, `/usr/bin/vim -Nu NONE -i NONE -n` (type, Esc, :q), `/usr/bin/top` (q), a multi-line paste with Ctrl+E inside stays text, vim `:set mouse=a` click/wheel, resize (agent gets rows−1), Ctrl+E home and back; then h → bar off and the next attach is raw full height.
+- Bar with the CLIs: `cd ~/ai-term && node dist/cli/index.js` — bar on, type into Claude Code and Codex and go through one permission prompt each (Ctrl+C skips a Codex update notice; never approve an update here).
+- Two worktree starts: `cd ~/ai-term && node dist/cli/index.js` — /cd ~/ai-term, Codex, start two agents → `ai/codex` and `ai/codex-2` with distinct folders; then `cd ~/ai-term && git worktree list --porcelain && git status --short && git branch --show-current` (main stays checked out, no agent files) and `cd ~/ai-term && node dist/cli/index.js debug ls` (both branches).
+- Non-repo start: `cd ~/ai-term && node dist/cli/index.js` — /cd a plain temp folder, start an agent → it runs there, card says `worktree off: not a git repo`.
+- Worktrees toggle: `cd ~/ai-term && node dist/cli/index.js` — /settings w → off/on; /shell stays in /cd; x or /clean on a finished worktree agent keeps the tree (`worktree kept: <path>`).
+- Removal, clean: `cd ~/ai-term && node dist/cli/index.js` — let a worktree agent exit, x → `remove worktree and branch ai/<slug>? k keep · d delete`; Esc keeps; again with d → `✓ deleted worktree and branch …`.
+- Removal, loss: `cd ~/ai-term && node dist/cli/index.js` — in an exited agent's worktree add a file and a commit, x → `1 untracked · 1 commit not in main`; d only types; the branch name + ⏎ deletes.
+- /worktrees and /clean: `cd ~/ai-term && node dist/cli/index.js` — /worktrees lists v0.3.1 leftovers as `✗ Not in AI Term's record` and never offers to delete them; /clean says `kept N worktrees · /worktrees reviews them`.
+- Split, open and type: `cd ~/ai-term && node dist/cli/index.js` — Space, ↓, Space, v → two panes, marks gone; type in each; Ctrl+\ moves focus; Ctrl+\ twice sends one Ctrl+\.
+- Split, mouse: `cd ~/ai-term && node dist/cli/index.js` — in a split, click the other pane (it takes focus and gets the click); wheel over an unfocused pane does nothing.
+- Split, home and reopen: `cd ~/ai-term && node dist/cli/index.js` — Ctrl+E home with both running; v with nothing marked reopens the split.
+- Split, vim: `cd ~/ai-term && node dist/cli/index.js` — /shell twice, mark both, v, `/usr/bin/vim -Nu NONE` in one pane; insert, move, :q; the other pane is untouched.
+- Split, resize and exit: `cd ~/ai-term && node dist/cli/index.js` — drag the window narrower/wider (below 81 cols: `make the window bigger · ^E home`); /exit one pane's agent → `■ exited · exit 0 · ^\ closes`, Ctrl+\ turns the other into a normal attach.
+- /send, idle: `cd ~/ai-term && node dist/cli/index.js` — after an agent shows ✓ done, `/send <name> ` + Tab, paste two lines, ⏎ → `✓ sent to <name> · 2 lines`, one message.
+- /send, permission: `cd ~/ai-term && node dist/cli/index.js` — while an Ask-mode agent shows `waiting · permission`, `/send <name> 1` → `<name> is asking for permission, go inside to answer`.
+- /send, tool running (gate fix): `cd ~/ai-term && node dist/cli/index.js` — while a Claude agent runs a long Bash command, `/send <name> hi` → `<name> is running a tool and may ask permission · try again when it finishes`.
+- /send, trust prompt: `cd ~/ai-term && node dist/cli/index.js` — start an agent with no first message, `/send <name> hi` → `<name> may be asking to trust its folder · go inside first`.
+- /retry: `cd ~/ai-term && node dist/cli/index.js` — select a failed agent, /retry → same `ai/<slug>`, old card gone.
+- /find: `cd ~/ai-term && node dist/cli/index.js` — `/find error`, ↑↓, ⏎ → that agent selected, preview at the line with `↑ N lines back`.
+- /open: `cd ~/ai-term && node dist/cli/index.js` — /open → Finder at the worktree; /open code → VS Code, or the note when `code` isn't on PATH.
+- /doctor: `cd ~/ai-term && node dist/cli/index.js` — /doctor → the same lines as `ai doctor`; Esc closes.
+- B24 (optional, a throwaway home): `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js` once and quit, then `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js daemon stop && printf '{"sessions":[' > /tmp/ai-b24/state.json && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js` → the note names `state.json.corrupt-…`; finish with `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js daemon stop`.
+
+## Gotchas
+- Every request now carries a `maxOutputTokens`: the model's limit (32k at most), 16k when the catalog doesn't know it, or less when the cap or a budget is close. A deployment with a smaller real limit refuses until its catalog model is marked (`/settings` → `m`).
+- Near a cap the agent keeps working with shorter replies, and pauses only when under 1,000 output tokens fit. A subagent started while its parent's request is still open gets what is left after the parent's reserved worst case.
+- A project's `.claude/*` and `.agents/skills` links must stay inside the project; a shared skill elsewhere in your home belongs in your own `~/.claude` or `~/.agents` roots.
+- A failed, usage-less or unconfirmed request counts its worst case for the rest of the run, so a run can pause earlier than Usage suggests.
+- Gate tests that need a log file create `<state>/logs` first: the Logger never creates its folder.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- **Sized output allowance (`src/agent/limits.ts` `check`):** a cap only holds if the request can't write past it. So the agent turns "what's left of the money" into "how many output tokens may this request write", subtracts the input it is sending, and passes that number as `maxOutputTokens`. The worst case is then a real upper bound, not a guess.
+- **Stream redaction (`src/agent/display.ts` `streamRedactor`):** a secret can arrive split across two chunks of streamed text. Replacing whole secrets first, then holding back only a tail that could still become one, makes chunked output as safe as a whole string without delaying ordinary text.
+- **Project containment (`src/agent/extensions/reader.ts`):** a cloned repo is untrusted input, including its symlinks. Checking every resolved path against the project's own real folder stops a relative link like `../../.bash_history` from turning a repo file into a read of your home.
+
+---
+
+## Previous checkpoint (v0.4.4, retained)
+
+## Checkpoint
 Last commit: dd87b1b fix: quit immediately when no MCP cleanup is required
 Roadmap step: v0.4.4 MCP servers and Codex discovery — done (real servers, Keychain and real-folder checks need Yaniv below)
 Branch: main. This handover is the last commit; its own hash is in git log.
