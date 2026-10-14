@@ -562,6 +562,8 @@ export class Homepage {
     this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};
     if(!this.presetsEnabled){this.showNote('presets are off · /settings s turns them on');return;}
     const presets=this.presets;
+    // Own entries only: a name like `constructor` must not find Object's built-in.
+    const find=(name:string):Preset|undefined=>Object.hasOwn(presets,name)?presets[name]:undefined;
     try{this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];}catch(error){this.showNote(`presets unavailable: ${error instanceof Error?error.message:'key list could not be read'}`);return;}
     if(parsed.kind==='list'){
       const lines=presetLines(presets,this.keys);
@@ -570,13 +572,13 @@ export class Homepage {
       this.popup=panel;panel.set([...lines.map(line=>({text:line,tone:'ink-2' as const})),{text:'/preset <name> opens the start box · /preset rm <name>',tone:'ink-3'}]);return;
     }
     if(parsed.kind==='rm'){
-      if(!presets[parsed.name]){this.showNote(`no preset ${parsed.name}`);return;}
+      if(!find(parsed.name)){this.showNote(`no preset ${parsed.name}`);return;}
       const rest=Object.fromEntries(Object.entries(presets).filter(([name])=>name!==parsed.name));
       try{await this.connection.request({kind:'settings.set',patch:{presets:rest}});this.presets=rest;this.showNote(`✓ preset ${parsed.name} removed`);}catch(error){this.showNote(`preset not removed: ${error instanceof Error?error.message:'settings could not be saved'}`);}
       return;
     }
     if(parsed.kind==='save'){
-      if(!presets[parsed.name]&&Object.keys(presets).length>=MAX_PRESETS){this.showNote(`at most ${MAX_PRESETS} presets · /preset rm one first`);return;}
+      if(!find(parsed.name)&&Object.keys(presets).length>=MAX_PRESETS){this.showNote(`at most ${MAX_PRESETS} presets · /preset rm one first`);return;}
       let preset:Preset;
       try{preset=validatePreset({engine:this.engine,model:this.model,effort:this.effort??null,auth:this.auth,permission:this.permission,cwd:this.folder,worktree:this.worktrees!=='off',...(parsed.firstMessage?{firstMessage:parsed.firstMessage}:{})});}
       catch{this.showNote('preset not saved: the next agent setup or first message is not valid for a preset');return;}
@@ -584,7 +586,7 @@ export class Homepage {
       try{await this.connection.request({kind:'settings.set',patch:{presets:next}});this.presets=next;}catch(error){this.showNote(`preset not saved: ${error instanceof Error?error.message:'settings could not be saved'}`);return;}
       this.showNote(`✓ preset ${parsed.name} saved${preset.permission==='dontAsk'?" · ! don't ask":''}`);return;
     }
-    const preset=presets[parsed.name];
+    const preset=find(parsed.name);
     if(!preset){this.showNote(`no preset ${parsed.name} · /preset lists them`);return;}
     const problem=await presetProblem(parsed.name,preset,this.keys);
     if(problem){this.showNote(problem);return;}
@@ -594,7 +596,7 @@ export class Homepage {
   // Start box p: the next saved preset by name (wrapping). One whose key or folder is gone says why and is skipped over.
   private async nextPreset(b:AgentBox):Promise<void>{
     const names=Object.keys(this.presets).sort(),name=names[(names.indexOf(b.presetCursor??b.preset??'')+1)%Math.max(1,names.length)];
-    const preset=name===undefined?undefined:this.presets[name];
+    const preset=name===undefined||!Object.hasOwn(this.presets,name)?undefined:this.presets[name];
     if(name===undefined||!preset){b.error='no presets yet · /preset save <name>';return;}
     b.presetCursor=name;
     const problem=await presetProblem(name,preset,this.keys);
