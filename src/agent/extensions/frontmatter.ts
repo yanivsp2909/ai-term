@@ -37,6 +37,7 @@ export function parseExtension(text: string, kind: ExtensionKind, fallback: stri
     body = lines.slice(end + 1).join('\n');
   } else if (kind === 'skill') throw new Error('skill needs frontmatter');
   const name = values.name || fallback;
+  if (values.model && values.model.length > 240) throw new Error('model metadata too long');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(name) || !body.trim() || kind === 'skill' && (!values.name || !values.description)) throw new Error('invalid extension');
   return { name, description: (values.description ?? '').slice(0, EXTENSION_DESCRIPTION_CHARS), body, ...(values.model ? { model: values.model } : {}) };
 }
