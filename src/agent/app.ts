@@ -125,7 +125,7 @@ export class AgentApp implements AgentIO {
     this.queued = []; this.approval?.resolve(false); this.paused?.resolve(false); this.turn?.abort();
     this.options.screen.note(`killed: the request${commands ? ` and ${commands} running command${commands > 1 ? 's' : ''}` : ''}`, 'error');
   }
-  close(): void { if (this.closed) return; this.closed = true; this.generation++; this.options.screen.closePopup(); killAllBash(); this.paused?.resolve(false); this.approval?.resolve(false); this.turn?.abort(); this.options.screen.hidePrompt();void this.agent.stopMcp().then(()=>this.options.quit(),()=>{this.options.screen.note('MCP stop failed','error');this.options.quit();}); }
+  close(): void { if (this.closed) return; this.closed = true; this.generation++; this.options.screen.closePopup(); killAllBash(); this.paused?.resolve(false); this.approval?.resolve(false); this.turn?.abort(); this.options.screen.hidePrompt();if(!this.agent.mcpAccess){this.options.quit();return;}void this.agent.stopMcp().then(()=>this.options.quit(),()=>{this.options.screen.note('MCP stop failed','error');this.options.quit();}); }
 
   private submit(message: string): void {
     const command = message.trim().match(/^\/(help|exit|model|cd|caps|clear|skills|agents|mcp)(?:\s+(.*))?$/s);
