@@ -1,4 +1,5 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs';
 import { mkdir, mkdtemp, realpath, writeFile, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -6,8 +7,9 @@ import { ExtensionReader, deniedExtensionPath } from '../src/agent/extensions/re
 import { ExtensionService } from '../src/daemon/extensions.js';
 import { SettingsStore } from '../src/daemon/settings.js';
 import { validateExtensionCatalog, validateExtensionFile, validateRequest, validateSettingsPatch } from '../src/shared/validate.js';
-import { EXTENSION_FILE_BYTES, extensionManifest, catalogTokens } from '../src/shared/extensions.js';
+import { EXTENSION_FILE_BYTES, EXTENSION_TOTAL_BYTES, extensionManifest, catalogTokens } from '../src/shared/extensions.js';
 
+vi.mock('node:fs',async importOriginal=>{const actual=await importOriginal<typeof import('node:fs')>();return {...actual,readSync:vi.fn(actual.readSync)};});
 const roots: string[] = [];
 afterEach(async () => { for (const p of roots.splice(0)) await rm(p, { recursive: true, force: true }); });
 async function setup() {
@@ -91,4 +93,12 @@ it('loads auth-related skill directories while still denying actual credential f
   const c=new ExtensionReader(home,project).scan();
   expect(c.items.map(i=>i.name)).toEqual(['adding-auth','oauth']);
   expect(deniedExtensionPath(home,join(home,'auth.json'))).toBe(true);
+});
+
+it('charges invalid UTF-8 reads against the total cap before decoding', async()=>{
+  const {home,project,file}=await setup();
+  for(let n=0;n<20;n++){const path=await file(`.claude/skills/bad-${n}/SKILL.md`,'');await writeFile(path,Buffer.alloc(EXTENSION_FILE_BYTES,0xff));}
+  let readBytes=0;const original=(await vi.importActual<typeof import('node:fs')>('node:fs')).readSync;const spy=vi.mocked(fs.readSync).mockImplementation((...args:Parameters<typeof fs.readSync>)=>{const count=original(...args);readBytes+=count;return count;});
+  try{const catalog=new ExtensionReader(home,project).scan();expect(catalog.items).toEqual([]);expect(readBytes).toBeLessThanOrEqual(EXTENSION_TOTAL_BYTES);expect(catalog.notes.some(n=>n.includes('size limit'))).toBe(true);}
+  finally{spy.mockImplementation(original);}
 });
