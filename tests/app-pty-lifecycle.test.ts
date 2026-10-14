@@ -2,7 +2,7 @@ import {expect,it,vi} from 'vitest';
 import type {IPty} from 'node-pty';
 import {PtyLifecycle} from '../app/main/pty-lifecycle.js';
 function child(){
- let finish=()=>{throw new Error('PTY was not observed');};
+ let finish:()=>void=()=>{throw new Error('PTY was not observed');};
  const kill=vi.fn();
  const pty:Pick<IPty,'kill'|'onExit'>={kill,onExit:listener=>{finish=()=>listener({exitCode:0,signal:0});return{dispose:()=>{finish=()=>{throw new Error('PTY observer disposed');};}};}};
  return{pty,kill,exit:()=>finish()};

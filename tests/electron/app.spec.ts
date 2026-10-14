@@ -22,15 +22,17 @@ test.beforeEach(async () => {
 });
 // eslint-disable-next-line no-empty-pattern -- Playwright requires fixture destructuring even when none are used.
 test.afterEach(async ({}, info) => {
+  let exitStatus:{code:number|null;signal:string|null}|undefined;
   if (info.status !== info.expectedStatus) {
     for (const path of [join(home, "electron/app.log"), join(home, ".ai-term/logs/daemon.log")]) {
       try { console.log(await readFile(path, "utf8")); } catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
     }
   }
   if (application) {
+    const appProcess=application.process();
     await application.evaluate(async ({ clipboard }) => { await clipboard.clear(); });
     await application.close();
-    expect({code:application.process().exitCode,signal:application.process().signalCode}).toEqual({code:0,signal:null});
+    exitStatus={code:appProcess.exitCode,signal:appProcess.signalCode};
   }
   // Stop only this test's daemon, using the pid in its private disposable home.
   try {
@@ -40,6 +42,7 @@ test.afterEach(async ({}, info) => {
     if (!(error instanceof Error && 'code' in error && ['ENOENT', 'ESRCH'].includes(String(error.code)))) throw error;
   }
   await rm(home, { recursive: true, force: true });
+  expect(exitStatus).toEqual({code:0,signal:null});
 });
 
 // CDP dispatch bypasses Electron's before-input-event/native accelerators. Use

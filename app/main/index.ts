@@ -2,6 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shel
 import {homedir} from 'node:os';
 import {runtimePaths,runtimeEnv} from '../../src/shared/runtime-paths.js';
 import {commandPlan,installCommand,uninstallCommand} from './command-install.js';
+import {PtyLifecycle} from './pty-lifecycle.js';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -29,12 +30,15 @@ let ended = false;
 const appToken = randomBytes(32).toString('hex');
 let closeNote = false;
 let log: Logger;
+const lifecycle=new PtyLifecycle(()=>{failure('Desktop terminal cleanup failed');});
+let quitting=false,quitReady=false;
 function output(data: string): void { if (window && !window.isDestroyed()) window.webContents.send(channels.output, data); }
 function failure(message: string): void { log.error(message); output(`\r\n✗ ${message}\r\n`); }
 function trusted(event: IpcMainEvent | IpcMainInvokeEvent): void {
   if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== window.webContents.getURL()) throw new Error('Untrusted terminal sender');
 }
 function resize(size: TerminalSize): void {
+  if(quitting)throw new Error('App is closing');
   if (ended) throw new Error('Terminal has exited');
   if (terminal) { terminal.resize(size.cols, size.rows); return; }
   // CLI startup inherits its caller's env today. Electron runs the built CLI in Node mode;
@@ -44,6 +48,7 @@ function resize(size: TerminalSize): void {
     env: runtimeEnv({ ...process.env, TERM_PROGRAM: 'AI_Term', COLORTERM: 'truecolor', AI_TERM_APP_TOKEN: appToken }),
   });
   const child = terminal;
+  lifecycle.track(child);
   child.onData(data => { if (terminal === child) output(data); });
   child.onExit(({ exitCode }) => {
     if (terminal !== child) return;
@@ -126,7 +131,7 @@ function createWindow(): Promise<void> {
     window = undefined;
     // Only the outer ai client dies; its existing detached daemon and agents survive.
     const child = terminal; terminal = undefined;
-    if (child) { try { child.kill(); } catch { log.error('Desktop terminal cleanup failed'); } }
+    if (child) lifecycle.stop(child);
   });
   window.webContents.on('render-process-gone', () => { log.error('Desktop renderer exited'); window?.close(); });
   return window.loadFile(join(here, '../renderer/index.html'));
@@ -146,7 +151,11 @@ void app.whenReady().then(async () => {
     window.setBackgroundColor(tokenColors(mode).bg);
     window.webContents.send(channels.theme, mode);
   });
-  app.on('activate', () => { if (!window) void createWindow().catch(() => { log.error('Desktop window could not reopen'); app.quit(); }); });
+  app.on('activate', () => { if (!window&&!quitting) void createWindow().catch(() => { log.error('Desktop window could not reopen'); app.quit(); }); });
   await createWindow();
 }).catch(() => { console.error('AI Term desktop startup failed'); app.quit(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit',event=>{
+ if(quitReady)return;event.preventDefault();if(quitting)return;quitting=true;
+ void lifecycle.finish().then(()=>{quitReady=true;app.quit();}).catch(()=>{console.error('AI Term terminal shutdown failed');});
+});
