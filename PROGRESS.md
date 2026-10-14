@@ -1,6 +1,116 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 2d905f3 test: select menu entries by their registered name
+Roadmap step: v0.4.3 skills, subagents, slash commands and load controls — done (real folders and real-key turns need Yaniv's manual checks below)
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at a55f1de after `git pull --ff-only` (already up to date). Baseline: 164 files passed / 1 failed, 1046 tests passed / 1 failed / 2 existing opt-in Keychain skips. The failure was installed ripgrep's `./a.txt` prefix; reproduced and fixed without changing matching contents. Final: 169 files / 1079 passed / the same 2 skips, twice consecutively. Session: Codex, GPT-6.1 Sol, high.
+Prompt vs code:
+- The plan's `src/agent/ui.ts` is stale; the actual UI is `app.ts` plus `screen.ts`, both inspected and changed.
+- File tools were folder-jailed; existing bash runs `/bin/sh -c` with argv, timeout, keyless env and process-group cancellation, without an OS sandbox (S19). Children inherit this exact permission mode; their confirmation describes Don't ask accurately. No new permission flags or env changes.
+- `RTK.md`, referenced by the supplied instructions, is absent in this checkout.
+- The requested literal allowlist includes `~/.codex/prompts`, not `~/.codex/skills` or `~/.codex/agents`; the latter remain excluded. No real CLI folder was inspected during development.
+
+## What works
+- **Task 1, D48 reader** (`9340a82`, hardened by the review fixes below): one reader under `src/agent/extensions/`, five user roots and four project roots, resolved symlinks under canonical home, logical/resolved case-folded denylist, known credential stores denied, hard links refused before opening, Darwin O_NOFOLLOW_ANY / Linux held directory descriptors, bounded reads and sanitized skip notes. Temp-home tests exercise allowed roots, denied aliases, outside-home symlinks, malformed frontmatter/UTF-8, huge files, total caps and hard links.
+- **Task 2, lazy skills** (`2a590ec`): enabled names and descriptions only in the manifest; `skill` loads instructions on use; 240-character descriptions. Disabling an item clears prior conversation bodies before the next message. A failed refresh stops model work until fresh selection is available.
+- **Task 3, subagents** (`2a590ec`, `d0ac1fd`, `dc92a81`, `fd0320d`): own conversation and instructions, same folder, permission mode, Ask IO, usage and RunLimits; serial tasks with no recursive task tool. D49 job confirmation shows model, permissions and token/price range, typed Enter runs; child writes/commands still ask in Ask. The approved file/model/prompt are snapshotted; the enabled switch is rechecked. Only the final answer returns. Parent in-flight cost is reserved while the child runs; Ctrl+K kills both conversations and command groups.
+- **Task 4, slash commands** (`2a590ec`, `f446f2b`): discovered enabled command/prompt files run as `/name`, literal `$ARGUMENTS` substitution; built-ins win. Esc invalidates pending lookup before dispatch.
+- **Task 5, controls** (`9340a82`, `2a590ec`, `2cdea07`): per-item on/off in AI Term settings only, default on for project/user definitions; no extension file edits. Banner shows enabled count and manifest tokens/request. Settings overflow refuses the write and preserves readable prior settings.
+- **Task 6, popup** (`2a590ec`): shared `ExtensionsPanel` on homepage and inside the agent; Skills / Agents / Commands / MCP, tab/item keys, persisted Space toggle, read-only full-file view, Esc close; source, description, on/off and estimate per row, total in header. Headless xterm/shared-panel checks ran. MCP is empty until v0.4.4.
+- **Task 7, docs** (`2a590ec`, `dc2ddea`, `ebfcd46`): README command/key list, architecture S11 exception plus exact S21 allowlist/denylist and §12.7, implementation judgments in the v0.4 plan.
+
+## What's next
+- v0.4.4: MCP, not started in this session.
+- Real-folder popup, toggle and real-key skill/task/command checks below need Yaniv. No product implementation from this step is left open.
+- Existing v0.4 deferrals remain: transcript resume, opt-in /compact, catalog context-window refresh and older real-key/manual checks retained below.
+
+## Reviews
+Fresh high TypeScript and security passes ran serially; root paused repo work during reviews. A required final general code review also ran serially and verified its fixes. Reviewers used temporary homes/mocked models, no real credentials or repo edits. Every concrete finding received a failing-test commit followed by a fix commit.
+- TypeScript: auth-related skill directories wrongly denied — `720f2d9` → `e0b78ec`.
+- TypeScript: rejected UTF-8 reads bypassed total cap — `77156c8` → `2d8723f`.
+- TypeScript: oversized model metadata invalidated catalog — `5654cf2` → `920f1fb`.
+- TypeScript: task body/model changed after confirmation — `8713e34` → `d0ac1fd`.
+- TypeScript: Esc dispatched a pending slash lookup — `a9cf815` → `f446f2b`.
+- TypeScript: parent abort leaked a child reservation — `b7e174e` → `dc92a81`.
+- TypeScript: inherited key-reader test expected arrows to be dropped — `8a4ced5` → `84462d6`.
+- Security HIGH: symlink aliases opened known credential stores — `acd0b93` → `3971710`.
+- Security HIGH: hard-link alias opened a denied auth file — `d199d33` → `4351b99` (test observes zero content reads).
+- Security MEDIUM: valid JSON-escaped files/500 multibyte rows exceeded reporter response cap — `d1ee4b7` → `5b08a5b`.
+- Security MEDIUM: toggles made UTF-8 settings unreadable — `8c9a462` → `2cdea07`.
+- Final review MEDIUM: refresh failure retained stale disabled bodies — `642624d` → `d37f88c`.
+- Final review MEDIUM: task confirmation misreported inherited Don't ask — `a3d8512` → `fd0320d`.
+- Baseline ripgrep prefix — `99a8005` → `8cc62db`; final full-run fixed-index menu assertion — `973ca7b` → `2d905f3`.
+- Final follow-up: no remaining findings in these fixes, 18 focused tests green. Security's temp symlink / `..` / case / Unicode / parent and final-component swap probes found no other content opens.
+
+## Check output
+Actual last output lines (all commands exit 0):
+```text
+npm run typecheck
+> ai-term@0.1.1 typecheck
+> tsc --noEmit
+
+npm run lint
+> ai-term@0.1.1 lint
+> eslint .
+
+npm run build
+ESM dist/cli/chunk-AP5EDM2O.js             1.26 KB
+ESM ⚡️ Build success in 38ms
+
+npm test -- --reporter=dot (1)
+ Test Files  169 passed (169)
+      Tests  1079 passed | 2 skipped (1081)
+   Duration  16.83s (tests 93%, import 5%, transform 2%)
+
+npm test -- --reporter=dot (2)
+ Test Files  169 passed (169)
+      Tests  1079 passed | 2 skipped (1081)
+   Duration  17.02s (tests 93%, import 4%, transform 2%)
+```
+- The two skips are the existing opt-in native Keychain tests; not run under the no-Keychain limit. The existing PTY flood test still prints EIO on stderr while passing (also present in baseline).
+- While implementing, only touched tests were run; the final full-suite failure was the inherited fixed menu index, repaired before the two consecutive green runs.
+- Source grep: literal `.claude/`, `.codex/`, `.agents/` paths only in the reader; no filesystem-open calls to them outside it. No `exec(` / `execSync(` / `shell: true` process calls (the two `.exec` hits are existing RegExp calls). `git diff --check a55f1de..HEAD` clean.
+- Restricted files/trees unchanged; no package/dependency changes, no real home state, daemon stop, external API call or computer use. Only git pull/push use external network.
+
+## Manual checks
+- Temp-home reader security / metadata caps / persistent toggles: ran; allowed files loaded, denied aliases skipped, overflow settings preserved.
+- Stub skill listed then lazy-loaded, disabled history cleared, refresh failure prevented calls: ran; captured provider prompts contain only enabled metadata before use.
+- Stub task Ask / own instructions / final answer / shared costs and caps / jail / Ctrl+K: ran; write asked in parent, command killed, no subsequent model call, reservation returned to zero.
+- Stub slash literal arguments / built-in precedence / Esc lookup cancellation: ran.
+- Headless popup tabs / toggles / full-file scrolling / banner estimate: ran.
+- `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js` → reload new daemon when convenient (this stops running agents) — needs Yaniv; not executed here.
+- `cd ~/ai-term && node dist/cli/index.js` → `/skills`, confirm real definitions/source/token totals; `/agents`, left/right tabs, Enter full file, Esc — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` → `/skills`, Space one skill off, close/reopen and verify on/off plus lower total; restore it after checking — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` → select a keyed AI Term model in Ask, start/open it, `/skills`, choose a known enabled skill, ask `Use <skill-name> to review README.md`; observe skill load and turn cost — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` → inside that agent `/agents`, choose `code-reviewer` if present, ask `Use code-reviewer to review this small diff`; typed Enter confirms job, y/n answers any command/write in Ask, observe child costs/final answer; Ctrl+K during a child command stops it — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` → inside the agent `/skills`, Commands tab, pick an enabled real command name; run `/<name> README.md` and verify argument substitution — needs Yaniv.
+
+## Gotchas
+- Allowlist is exact; `.codex/skills` and `.codex/agents` are intentionally not roots. Symlink targets must stay under canonical home and pass the denylist; hard-linked files are skipped rather than attempting to discover every other alias.
+- Known credential stores are denied even if an innocuous command filename aliases them. Reader is fail-closed on unsupported platforms; currently Darwin/Linux safe opens are supported.
+- Supported metadata is scalar name/description/model plus YAML block descriptions; unrelated nested metadata is ignored. Unsupported frontmatter is skipped with a one-line note. Limits: 64 KiB/file, 1 MiB/scan (including rejected reads), 500 items, 4,000 entries, depth eight, 100 notes.
+- Project source wins duplicate names, then Claude, Codex prompts, shared. IDs follow logical path and kind; moving a source resets its saved toggle.
+- Estimate is UTF-8 bytes / three, not a tokenizer measurement; it covers manifest names/descriptions, not tool schemas/bodies. Commands contribute zero until run. Disabling an extension clears conversation before the next message; refresh failure refuses the turn.
+- Model selection is limited to models available to the same parent key; unknown/ambiguous aliases fall back to parent. Serial child tasks cannot recursively task. D49 job confirmation remains required even under Don't ask; child tools inherit that mode accurately.
+- In-process daemon fixtures must inject the temporary home into ExtensionService. Changing only a spawned child's HOME does not change the parent daemon's homedir; tests must never discover the real folders accidentally.
+- Settings serialize to at most 16 KiB including newline; an overflowing toggle reports failure without replacing the prior file. Agent query cap is 2 MiB for accepted JSON-expanded responses.
+
+## New dependencies
+- None. A bounded parser for the shared extension fields was enough; no YAML/frontmatter dependency added.
+
+## Concepts introduced
+- **Discovery boundary (`src/agent/extensions/reader.ts`):** discovery starts from literal roots and turns validated files into IDs. Opening a file later means selecting a validated bounded snapshot, not accepting a path from the model; symlinks and hard links require separate defenses.
+- **Lazy manifest (`src/shared/extensions.ts`, `src/agent/agent.ts`):** names and short descriptions help the model choose a skill without sending every body. The body becomes a tool result only on use, so toggling selection also clears old bodies from history.
+- **Child conversation (`src/agent/agent.ts`):** a task has its own history and file instructions but shares the parent's folder, approvals, usage and cancellation. Only its final answer enters the parent history, keeping intermediate work out of that context.
+- **In-flight reservation (`src/agent/limits.ts`, `src/agent/agent.ts`):** the parent's request can still be waiting for usage while a child spends. Holding its worst-case amount closes that gap; releasing the captured amount after abort avoids a stale reservation.
+- **Shared popup and byte caps (`src/client/tui/extensions-panel.ts`, `src/shared/validate.ts`):** both terminal surfaces use the same panel actions and rendering. File, settings and transport limits count serialized UTF-8 bytes so Unicode and JSON escaping cannot make a supposedly accepted value unreadable later.
+
+---
+
+## Previous checkpoint (v0.4.2, retained)
+
+## Checkpoint
 Last commit: 1b27e49 fix: budgets count a fast agent loop, dense text and odd deployment names
 Roadmap step: v0.4.2 every key, exact cost, hard limits — done (real-key turns and the catalog refresh are Yaniv's manual checks below)
 Branch: main. This handover is the last commit; its own hash is in git log.
