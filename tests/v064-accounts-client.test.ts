@@ -86,3 +86,25 @@ it('when an agent hits its limit the homepage says so once and offers the choice
     expect(client.requests.some(r => r.kind === 'sessions.handoff' || r.kind === 'sessions.create')).toBe(false);
   } finally { await h.done(); }
 });
+
+// Part F TypeScript review (2026-10-15).
+it('MEDIUM review: the account stays with a same-engine model pick and goes with another engine; use resets the model; the box shows the account', async () => {
+  const client = new Client(); client.settings = { theme: 'graphite', accounts: [{ name: 'work', engine: 'claude-code' }, { name: 'side', engine: 'codex' }] };
+  const h = await open(client);
+  try {
+    type(h.tty, '/account use side'); enter(h.tty);
+    await shows(h.tty, 'next agent: side · codex');
+    type(h.tty, 'a task'); enter(h.tty); await shows(h.tty, 'Start a new agent');
+    await shows(h.tty, 'account        side · a'); await shows(h.tty, 'CLI default · codex · account side');
+  } finally { await h.done(); }
+});
+it('MEDIUM review: an account whose login could not start is taken back, so /account add can be run again', async () => {
+  const client = new Client(), h = await open(client);
+  const request = client.request.bind(client);
+  client.request = async body => { if (body.kind === 'sessions.create') throw new Error('claude not found in PATH'); return request(body); };
+  try {
+    type(h.tty, '/account add claude work'); enter(h.tty);
+    await shows(h.tty, "login didn't start: claude not found in PATH");
+    expect(client.settings.accounts).toEqual([]);
+  } finally { await h.done(); }
+});

@@ -182,3 +182,27 @@ it('LOW review: a handoff with no account named checks and starts the same accou
     expect(checks.at(-1)).toBe(join(root, 'profiles', 'work'));
   } finally { await manager.shutdown(); await usage.close(); }
 });
+
+// Part F TypeScript review (2026-10-15).
+it('MEDIUM review: only a CLI banner line counts as a limit, never code or a quote that mentions one', () => {
+  expect(parseLimit('  expect(parseLimit("Claude usage limit reached. Your limit will reset at 7:30 pm"))')).toBeNull();
+  expect(parseLimit('the error said weekly limit reached, so I retried')).toBeNull();
+  expect(parseLimit('  ⎿  Claude usage limit reached. Your limit will reset at 7:30 pm')).toEqual({ resets: '19:30' });
+  expect(parseLimit('│ ■ You’ve hit your usage limit. Try again at 3:45 PM.')).toEqual({ resets: '15:45' });
+});
+it('LOW review: settings must point defaults at real accounts of that engine; the card names the account plainly', () => {
+  expect(() => validateSettingsPatch({ theme: 'graphite', accounts: [{ name: 'work', engine: 'claude-code' }], defaultAccounts: { codex: 'work' } })).toThrow();
+  expect(() => validateSettingsPatch({ theme: 'graphite', defaultAccounts: { codex: 'side' } })).toThrow();
+  const now = new Date().toISOString(), s: SessionInfo = { id: randomUUID(), title: 'x', engine: 'claude-code', model: null, auth: { kind: 'account', profile: 'work' }, authMethod: 'subscription', cwd: '/tmp', permission: 'ask', status: 'waiting', statusDetail: 'permission', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null, limit: { resets: '15:00' } };
+  expect(cardText(s, Date.now(), 60).auth).toBe('account work · sub');
+  // A question that needs you stays visible over a limit line.
+  expect(cardText(s, Date.now(), 60).line3.startsWith('asks: permission')).toBe(true);
+});
+it('MEDIUM review: unreadable settings keep worktrees on when no account was ever made, and refuse to guess once one exists', async () => {
+  const d = await daemon({});
+  try {
+    await writeFile(join(d.root, 'settings.json'), '{not json', { mode: 0o600 });
+    const s = await d.manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: d.root, permission: 'ask' });
+    expect(s.auth).toEqual({ kind: 'account' });
+  } finally { await d.close(); }
+});
