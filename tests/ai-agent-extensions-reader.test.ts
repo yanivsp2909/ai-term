@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
-import { mkdir, mkdtemp, realpath, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile, symlink, link, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ExtensionReader, deniedExtensionPath } from '../src/agent/extensions/reader.js';
@@ -108,4 +108,12 @@ it('skips an oversized model field without invalidating other catalog items',asy
   await file('.claude/agents/bad.md',`---\nmodel: ${'x'.repeat(241)}\n---\nReview this`);
   const c=new ExtensionReader(home,project).scan();
   expect(()=>validateExtensionCatalog(c)).not.toThrow();expect(c.items.map(i=>i.name)).toEqual(['good']);expect(c.notes.some(n=>n.includes('bad.md'))).toBe(true);
+});
+
+it('refuses resolved command aliases to known credential stores before opening them',async()=>{
+  const {home,project,file}=await setup();await mkdir(join(home,'.claude/commands'),{recursive:true});
+  for(const [n,path] of ['.ssh/id_ed25519','.netrc','.npmrc','.pypirc','.docker/config.json','.kube/config','.config/gh/hosts.yml','.authinfo','login-token.json'].entries()){
+    const target=await file(path,'MOCK PRIVATE CONTENT');await symlink(target,join(home,'.claude/commands',`alias${n}.md`));
+  }
+  const c=new ExtensionReader(home,project).scan();expect(c.items).toEqual([]);expect(c.notes.filter(n=>n.includes('denied'))).toHaveLength(9);
 });
