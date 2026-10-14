@@ -61,6 +61,7 @@ interface Live {
     // AI Term's agent: the deployments its /model may switch to (bound to the key and tested).
     agentModels?:string[];
 }
+const TASK_UPDATE_MS=1000;
 export class SessionManager extends EventEmitter {
     // /send: how long Enter waits behind the paste (static so a test can widen the window it races).
     static sendEnterDelayMs = 50;
@@ -80,11 +81,12 @@ export class SessionManager extends EventEmitter {
     readonly mcp:McpService;
     // B25 (v0.6.1): every AI Term agent's in-flight worst cases, checked against the budgets before any request is sent.
     private readonly ledger?:BudgetLedger;
+    private readonly taskTimers=new Map<string,ReturnType<typeof setTimeout>>();
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
         super();this.mcp=new McpService(new SettingsStore(paths.root),keys,log);
-        if(usage){this.ledger=new BudgetLedger({file:join(paths.root,'budget-reservations.json'),book:reservation=>usage.book(reservation),log});usage.on('record',(record:UsageRecord)=>this.addTask(record.sessionId,record.inputTokens+record.outputTokens,record.costUsd));usage.on('task',(id:string,tokens:number)=>this.addTask(id,tokens,undefined));}usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+        if(usage){this.ledger=new BudgetLedger({file:join(paths.root,'budget-reservations.json'),book:reservation=>usage.book(reservation),log,busy:id=>{const live=this.sessions.get(id);return !!live&&(live.info.status==='waiting'||(live.statusState?.toolsInFlight??0)>0);}});usage.on('record',(record:UsageRecord)=>this.addTask(record.sessionId,record.inputTokens+record.outputTokens,record.costUsd));usage.on('task',(id:string,tokens:number)=>this.addTask(id,tokens,undefined));}usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -458,7 +460,10 @@ export class SessionManager extends EventEmitter {
         const live=this.sessions.get(id);if(!live||!Number.isSafeInteger(tokens)||tokens<0)return;
         const before=live.info.taskUsage,next:TaskUsage={tokens:Math.min(Number.MAX_SAFE_INTEGER,(before?.tokens??0)+tokens),costUsd:cost===undefined?before?.costUsd??null:(before?.costUsd??0)+(cost??0)};
         if(before?.unknownPrice||cost===null)next.unknownPrice=true;
-        live.info.taskUsage=next;this.event({kind:'session.updated',session:{...live.info}});void this.persist();
+        live.info.taskUsage=next;
+        // A CLI can report 120 records a minute: the card and state.json follow at most once a second.
+        if(this.taskTimers.has(id))return;
+        this.taskTimers.set(id,setTimeout(()=>{this.taskTimers.delete(id);const current=this.sessions.get(id);if(!current)return;this.event({kind:'session.updated',session:{...current.info}});void this.persist();},TASK_UPDATE_MS));
     }
     private ingressAgentStatus(id:string,update:import('./agent-status.js').AgentUpdate|null):void{
         const live=this.sessions.get(id);if(!live||!update)return;
@@ -687,7 +692,8 @@ export class SessionManager extends EventEmitter {
         const ids=[...this.sessions.keys()];
         const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
         for(const [index,result]of stopped.entries())if(result.status==='rejected')this.log.error(`Session stop failed: ${ids[index]}`);
-        await this.saving;
+        for(const timer of this.taskTimers.values())clearTimeout(timer);this.taskTimers.clear();
+        await this.persist();
         await this.ledger?.close();
         try{await this.mcp.shutdown();}catch{this.log.error('MCP shutdown failed');}
         for(const live of this.sessions.values()){live.outputClock?.dispose();live.mirror.dispose();}

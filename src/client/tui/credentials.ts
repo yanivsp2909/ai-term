@@ -79,7 +79,7 @@ export class CredentialsPanel {
    if(key==='c'){this.actions.caps?.(this.settings?.agentCaps);return;}
    // D55: the 85% context warning has its own switch, on by default.
    if(key==='k'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{contextWarning:this.settings?.contextWarning===false}})).settings;this.message='';}catch{this.message='Context warning setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
-   // D55: cost per task (v0.6.1) has its own switch, on by default; off also stops asking subscriptions for their tokens.
+   // D55: cost per task (v0.6.1) has its own switch, on by default; off also stops asking new subscription sessions for their tokens (running ones keep reporting until they exit).
    if(key==='o'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{taskCost:this.settings?.taskCost===false}})).settings;this.message='';}catch{this.message='Cost per task setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    const marking=this.keys[this.choice];
    if(key==='m'&&marking?.provider==='foundry'&&marking.deployments?.length){this.mapping={key:marking,deployment:'',filter:''};this.screen='deployments';this.choice=0;this.message='';this.actions.changed();return;}

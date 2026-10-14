@@ -15,9 +15,11 @@ export const RESERVATION_TTL_MS = 20 * 60_000;
 const MAX_RESERVATIONS = 1000;
 // One agent sends one request at a time (a subagent adds one more): 16 held is plenty, and one session can't take every
 // slot. 600 reservations a minute is ten requests a second, far past any real model; a flood can't bloat Usage.
-const MAX_PER_SESSION = 16, MAX_PER_MINUTE = 600;
+const MAX_PER_SESSION = 16, MAX_PER_MINUTE = 600, MAX_RELEASED = 10_000;
 // file: where live reservations survive a daemon crash (absent in tests that need no restart).
-export interface LedgerOptions { file?: string; book: (reservation: Reservation) => Promise<void>; log: { error(text: string): void }; ttlMs?: number }
+// busy: the session is waiting on you or running a tool. A request's grant spans its tools (the step's usage comes after
+// them), so it must not expire into a booked worst case while you take time over an approval.
+export interface LedgerOptions { file?: string; book: (reservation: Reservation) => Promise<void>; log: { error(text: string): void }; ttlMs?: number; busy?: (sessionId: string) => boolean }
 type Spent = { day: number; week: number; month: number };
 
 export class BudgetLedger {
@@ -57,11 +59,19 @@ export class BudgetLedger {
     for (const [budget, limit, used] of [['daily', budgets.daily, spent.day], ['weekly', budgets.weekly, spent.week], ['monthly', budgets.monthly, spent.month]] as const)
       if (limit !== null && used + held + request.amountUsd > limit) return { refused: { budget, spent: used, reserved: held, limit } };
     const reservation: Reservation = { id: randomUUID(), ...request, at: new Date().toISOString() };
-    const timer = setTimeout(() => { void this.settle(reservation.sessionId, reservation.id, true, 'expired'); }, this.options.ttlMs ?? RESERVATION_TTL_MS);
-    timer.unref();
-    this.live.set(reservation.id, { reservation, timer });
+    this.live.set(reservation.id, { reservation, timer: this.expire(reservation) });
     void this.persist();
     return { grant: { id: reservation.id } };
+  }
+  private expire(reservation: Reservation): ReturnType<typeof setTimeout> {
+    const timer = setTimeout(() => {
+      const held = this.live.get(reservation.id);
+      if (!held) return;
+      if (this.options.busy?.(reservation.sessionId)) { held.timer = this.expire(reservation); return; }
+      void this.settle(reservation.sessionId, reservation.id, true, 'expired');
+    }, this.options.ttlMs ?? RESERVATION_TTL_MS);
+    timer.unref();
+    return timer;
   }
   // Only the session that holds a reservation can settle it. worstCase: no usage will ever arrive for it.
   async settle(sessionId: string, id: string, worstCase: boolean, why: 'settled' | 'expired' | 'exited' = 'settled'): Promise<boolean> {
@@ -77,6 +87,8 @@ export class BudgetLedger {
   // An agent that exited can't report the usage of a request it still held: booked at its worst case.
   async releaseSession(sessionId: string): Promise<void> {
     this.released.add(sessionId); this.rate.delete(sessionId);
+    // Session ids are never reused; the oldest are dropped so a long-lived daemon doesn't keep every one.
+    if (this.released.size > MAX_RELEASED) for (const old of this.released) { this.released.delete(old); if (this.released.size <= MAX_RELEASED / 2) break; }
     for (const { reservation } of [...this.live.values()]) if (reservation.sessionId === sessionId) await this.settle(sessionId, reservation.id, true, 'exited');
   }
   // Shutdown keeps the file: whatever is still held is booked at the next start.
