@@ -7,7 +7,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { monoFont, sansFont, terminalFontSize, tokenColors } from '../../src/shared/theme-tokens.js';
-import type { AppTheme } from '../shared/api.js';
+import { pasteErrors, type AppTheme } from '../shared/api.js';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
 
@@ -58,7 +58,12 @@ function App(): unknown {
       if (!['c', 'v', 'e', 'k', 'f', '+', '=', '-', '0'].includes(key)) return true;
       event.preventDefault();
       if (key === 'c') { if (terminal.hasSelection()) void api.copy(terminal.getSelection()).catch(() => { report('Could not copy terminal selection'); }); }
-      else if (key === 'v') { void api.paste().then(text => { terminal.paste(text); }).catch(() => { report('Paste exceeds 64 KiB or clipboard is unavailable'); }); }
+      else if (key === 'v') {
+        void api.paste().then(text => { terminal.paste(text); }).catch((error: unknown) => {
+          // Electron prefixes invoke rejections; only our fixed reasons may reach chrome.
+          report(Object.values(pasteErrors).find(reason => error instanceof Error && error.message.includes(reason)) ?? pasteErrors.unavailable);
+        });
+      }
       else if (key === 'e') api.write('\x05');
       else if (key === 'k' || key === 'f') setSearching(true);
       else { terminal.options.fontSize = key === '0' ? terminalFontSize : Math.max(8, Math.min(32, (terminal.options.fontSize ?? terminalFontSize) + (key === '-' ? -1 : 1))); resize(); }

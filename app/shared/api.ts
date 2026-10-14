@@ -1,4 +1,9 @@
 export type AppTheme = 'dark' | 'light';
+export const pasteErrors = {
+  controls: 'Paste contains terminal escape controls',
+  size: 'Paste exceeds 64 KiB',
+  unavailable: 'Clipboard is unavailable',
+} as const;
 export interface TerminalSize { cols: number; rows: number }
 export interface TerminalApi {
   write(data: string): void;

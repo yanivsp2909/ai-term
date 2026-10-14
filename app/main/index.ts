@@ -5,8 +5,8 @@ import { mkdirSync } from 'node:fs';
 import { spawn, type IPty } from 'node-pty';
 import { Logger } from '../../src/daemon/log.js';
 import { tokenColors } from '../../src/shared/theme-tokens.js';
-import { channels, type TerminalSize } from '../shared/api.js';
-import { MAX_COPY_BYTES, MAX_WRITE_BYTES, validateEmpty, validateOne, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
+import { channels, pasteErrors, type TerminalSize } from '../shared/api.js';
+import { MAX_COPY_BYTES, PasteRefusal, validateEmpty, validateOne, validatePaste, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
 import { CSP, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -61,8 +61,8 @@ function registerIpc(): void {
     catch { log.error('Clipboard copy refused or failed'); throw new Error('Could not copy terminal selection'); }
   });
   ipcMain.handle(channels.paste, async (event, ...args: unknown[]) => {
-    try { trusted(event); validateEmpty(args); return validateWrite(await clipboard.readText(), MAX_WRITE_BYTES - 12); }
-    catch { log.error('Clipboard paste refused or failed'); throw new Error('Paste exceeds 64 KiB or clipboard is unavailable'); }
+    try { trusted(event); validateEmpty(args); return validatePaste(await clipboard.readText()); }
+    catch (error) { log.error('Clipboard paste refused or failed'); throw new Error(error instanceof PasteRefusal ? error.message : pasteErrors.unavailable); }
   });
 }
 void app.whenReady().then(async () => {

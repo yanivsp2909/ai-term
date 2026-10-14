@@ -1,8 +1,17 @@
-import type { TerminalSize } from './api.js';
+import { pasteErrors, type TerminalSize } from './api.js';
 export const MAX_WRITE_BYTES = 64 * 1024;
 export const MAX_COPY_BYTES = 5 * 1024 * 1024;
 export function validateWrite(value: unknown, limit = MAX_WRITE_BYTES): string {
   if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > limit) throw new Error('Terminal text exceeds limit or is invalid');
+  return value;
+}
+export class PasteRefusal extends Error {}
+export function validatePaste(value: unknown): string {
+  if (typeof value !== 'string') throw new PasteRefusal(pasteErrors.unavailable);
+  if (Buffer.byteLength(value, 'utf8') > MAX_WRITE_BYTES - 12) throw new PasteRefusal(pasteErrors.size);
+  // xterm wraps but does not escape clipboard ESC bytes. An embedded paste-end marker
+  // could turn subsequent text into an approval key in ai, so refuse before forwarding.
+  if (value.includes('\x1b')) throw new PasteRefusal(pasteErrors.controls);
   return value;
 }
 export function validateSize(value: unknown): TerminalSize {
