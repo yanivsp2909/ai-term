@@ -7,6 +7,8 @@ import { open } from 'node:fs/promises';
 import type { KeyProvider, KeyView, DeploymentTest } from '../shared/protocol.js';
 import { ENV_KEY_NAMES, isEndpoint, isSecret, isUUID, isValidModelId, validateKeyView, validateDeploymentTests } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
+import { isExtensionId } from '../shared/extensions.js';
+import { isMcpHash, isMcpEnv, isMcpHeader } from '../shared/validate.js';
 export class KeyError extends Error {}
 // B12: settings.json is writable by anything running as the user, so a Foundry key's endpoint and deployments are
 // stored with the secret in its Keychain entry, and only those bound values ever decide where the secret goes.
@@ -42,6 +44,20 @@ export class KeyStore extends EventEmitter {
   this.settings=new SettingsStore(root,()=>{if(!this.metadataWarning){this.metadataWarning=true;log.error('Invalid key metadata entry skipped');this.emit('warning','Invalid key metadata entry skipped; other keys remain usable.');}});this.vault=options.vault??nativeVault(options.service??'ai-term');
  }
  async list():Promise<KeyView[]>{const keys=(await this.settings.get()).keys??[];if(!Array.isArray(keys)||keys.length>100)throw new KeyError('Invalid key metadata');return keys.map(validateKeyView);}
+ // MCP values have their own account kind and a binding to the exact approved configuration, never provider accounts.
+ private mcpAccount(server:string,name:string):string{if(!isExtensionId(server)||!isMcpEnv(name)&&!isMcpHeader(name))throw new KeyError('Invalid MCP secret reference');return `mcp:${server}:${name}`;}
+ async saveMcp(server:string,name:string,secret:string,hash:string):Promise<string>{
+  const account=this.mcpAccount(server,name);if(!isMcpHash(hash)||!secret||Buffer.byteLength(secret)>2048||/[\p{C}]/u.test(secret))throw new KeyError('Invalid MCP secret');
+  try{await this.vault.write(account,JSON.stringify({v:1,secret,hash}));}catch{throw new KeyError('MCP keychain write failed');}return secret.length>=MIN_SUFFIX_SECRET?secret.slice(-4):'';
+ }
+ async removeMcp(server:string,names:string[]):Promise<void>{for(const name of names){try{await this.vault.remove(this.mcpAccount(server,name));}catch{throw new KeyError('MCP keychain remove failed');}}}
+ async withMcp<T>(server:string,names:string[],hash:string,use:(values:Record<string,string>)=>Promise<T>):Promise<T>{
+  if(!isMcpHash(hash))throw new KeyError('Invalid MCP binding');const values:Record<string,string>={};
+  try{for(const name of names){let raw:string|null;try{raw=await this.vault.read(this.mcpAccount(server,name));}catch{throw new KeyError('MCP keychain read failed');}
+   let entry:unknown;try{entry=raw?JSON.parse(raw) as unknown:null;}catch{throw new KeyError('MCP secret is unavailable');}
+   if(!entry||typeof entry!=='object'||Array.isArray(entry)||!('hash'in entry)||entry.hash!==hash||!('secret'in entry)||typeof entry.secret!=='string'||!entry.secret)throw new KeyError('MCP configuration changed; add or approve it again');values[name]=entry.secret;
+  }return await use(values);}finally{for(const name of Object.keys(values))delete values[name];}
+ }
  async view(id:string):Promise<KeyView>{if(!isUUID(id))throw new KeyError('Invalid key id');const key=(await this.list()).find(k=>k.id===id);if(!key)throw new KeyError('Key not found');return key;}
  private serial<T>(work:()=>Promise<T>):Promise<T>{const next=this.queue.then(work);this.queue=next.then(()=>undefined,()=>undefined);return next;}
  async add(request:{provider:KeyProvider;label:string;secret:string;endpoint?:string;deployments?:string[]}):Promise<KeyView>{

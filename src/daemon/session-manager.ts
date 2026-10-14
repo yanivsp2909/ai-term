@@ -1,3 +1,4 @@
+import { McpService } from './mcp/service.js';
 import { ExtensionService } from './extensions.js';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -72,10 +73,11 @@ export class SessionManager extends EventEmitter {
     // Worktrees AI Term created, by path. A record outlives its agent and goes only when its worktree is deleted.
     private worktreeRecords=new Map<string,WorktreeRecord>();
     private busyWorktrees=new Set<string>();
+    readonly mcp:McpService;
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
-        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+        super();this.mcp=new McpService(new SettingsStore(paths.root),keys,log);usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -357,7 +359,7 @@ export class SessionManager extends EventEmitter {
                 });
             });
             host.pty.onExit(event => {
-                this.usage?.revoke(info.id);live.outputClock?.dispose();
+                this.usage?.revoke(info.id);live.outputClock?.dispose();void this.mcp.stop(info.id).catch(()=>this.log.error('MCP session stop failed'));
                 // Set terminal precedence synchronously: queued hook bodies must not win a process-exit race.
                 if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:live.statusState.seq+1,at:new Date().toISOString(),kind:'exit',status:'exited',detail:'exited',exitCode:event.exitCode});
                 live.output = live.output.then(async () => {
@@ -403,6 +405,7 @@ export class SessionManager extends EventEmitter {
     private async agentQuery(id:string,raw:unknown):Promise<unknown> {
         const live=this.sessions.get(id);
         if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status))return null;
+        if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind'in raw&&typeof raw.kind==='string'&&raw.kind.startsWith('mcp.'))return this.mcp.query(id,raw);
         if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind' in raw)return new ExtensionService(new SettingsStore(this.paths.root)).query(raw as Record<string,unknown>);
         return this.agentFacts(id,raw);
     }

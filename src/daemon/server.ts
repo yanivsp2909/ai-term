@@ -204,6 +204,9 @@ export class DaemonServer {
                 case 'engines.status':
                     this.control(peer, { id: request.id, ok: true, engines: await enginesStatus(), notifier: this.notifier?.state() ?? 'not built' });
                     break;
+                case 'mcp.list': case 'mcp.add': case 'mcp.remove': case 'mcp.toggle': case 'mcp.approve': case 'mcp.discover': case 'mcp.schema': case 'mcp.call': case 'mcp.cancel': case 'mcp.stop':
+                    if(['mcp.schema','mcp.call','mcp.cancel','mcp.stop'].includes(request.kind))throw new Error('MCP tool calls require an agent');
+                    this.control(peer,{id:request.id,ok:true,...await this.manager.mcp.query('homepage',request)});break;
                 case 'extensions.list': case 'extensions.read': case 'extensions.toggle':
                     this.control(peer, {id:request.id,ok:true,...await new ExtensionService(this.settings).query(request)}); break;
                 case 'settings.get':

@@ -15,7 +15,7 @@ interface StatusContext {id:string;engine:StatusEngine;seq:number;queue:Promise<
 // bytes makes the kernel send a reset that destroys the 413 (B10), and OTLP exporters retry a reset but
 // not a 413. Past the bound the connection is cut. Nothing beyond MAX_BODY is ever kept.
 const MAX_DISCARD=4*MAX_BODY;
-const AGENT_QUERY_CAP=4096,AGENT_QUERY_PATH='/v1/agent/ai-term';
+const AGENT_QUERY_CAP=4096,AGENT_QUERY_PATH='/v1/agent/ai-term',MCP_QUERY_PATH='/v1/mcp/ai-term';
 export class UsageReceiver {
  private readonly server:Server;
  private statusCredentials=new Map<string,StatusContext>();
@@ -58,11 +58,12 @@ export class UsageReceiver {
  private async handleAgentQuery(req:IncomingMessage,res:ServerResponse):Promise<void>{
   const context=this.authorizeStatus(req.headers['x-ai-term-session']);
   if(!context||context.engine!=='ai-term'||req.method!=='POST'||req.headers.host!==`127.0.0.1:${this.port()}`||Object.hasOwn(req.headers,'origin')||req.headers['content-type']!=='application/json'||!this.agentQuery){this.statusAnswer(res);res.once('finish',()=>req.destroy());req.resume();return;}
+  const cap=req.url===MCP_QUERY_PATH?64*1024:AGENT_QUERY_CAP;
   let bytes=0;const chunks:Buffer[]=[];
   const body=await new Promise<Buffer|null>(resolve=>{
    const timer=setTimeout(()=>resolve(null),1000);
-   req.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes<=AGENT_QUERY_CAP)chunks.push(chunk);});
-   req.on('end',()=>{clearTimeout(timer);resolve(bytes>AGENT_QUERY_CAP?null:Buffer.concat(chunks));});
+   req.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes<=cap)chunks.push(chunk);});
+   req.on('end',()=>{clearTimeout(timer);resolve(bytes>cap?null:Buffer.concat(chunks));});
    req.on('error',()=>{clearTimeout(timer);resolve(null);});req.on('close',()=>{clearTimeout(timer);if(!req.complete)resolve(null);});
   });
   let answer:unknown=null;
@@ -93,7 +94,7 @@ export class UsageReceiver {
  }
  private answer(res:ServerResponse,status:number):void{res.writeHead(status,{'content-type':'application/json','connection':'close'});res.end(status===200?'{}':'');}
  private async handle(req:IncomingMessage,res:ServerResponse):Promise<void>{
-  if(req.url===AGENT_QUERY_PATH){await this.handleAgentQuery(req,res);return;}
+  if((req.url===AGENT_QUERY_PATH||req.url===MCP_QUERY_PATH)){await this.handleAgentQuery(req,res);return;}
   if(this.isStatusPath(req.url)){await this.handleStatus(req,res);return;}
   if(req.headers.host!==`127.0.0.1:${this.port()}`){this.answer(res,421);req.resume();return;}
   if(Object.hasOwn(req.headers,'origin')){this.answer(res,403);req.resume();return;}

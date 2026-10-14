@@ -1,3 +1,4 @@
+import { MCP_MAX_SERVERS, MCP_MAX_TOOLS, mcpTokens, type McpConfig, type McpServer, type McpCatalog, type McpRequest } from './mcp.js';
 import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DESCRIPTION_CHARS, catalogTokens, type ExtensionCatalog, type ExtensionFile } from './extensions.js';
 import { isAgentCaps } from './agent-facts.js';
 export function isValidModelId(id: string): boolean {
@@ -87,6 +88,8 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'extensions.list': case 'extensions.read': case 'extensions.toggle':
             fields = v.kind === 'extensions.list' ? ['cwd'] : v.kind === 'extensions.read' ? ['cwd','extensionId'] : ['cwd','extensionId','enabled'];
             validateExtensionRequest(v); break;
+        case 'mcp.list': case 'mcp.add': case 'mcp.remove': case 'mcp.toggle': case 'mcp.approve': case 'mcp.discover': case 'mcp.schema': case 'mcp.call': case 'mcp.cancel': case 'mcp.stop':
+            fields = validateMcpRequest(v); break;
         case 'keys.list': fields=[]; break;
         case 'keys.add':
             fields=['provider','label','secret','endpoint','deployments'];
@@ -185,6 +188,9 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.deletedWorktree!==undefined&&!isSafeAbsolutePath(v.deletedWorktree))throw new ValidationError('Invalid deleted worktree');
     if(v.worktree!==undefined)validateWorktreeView(v.worktree);
     if(v.worktrees!==undefined){if(!Array.isArray(v.worktrees)||v.worktrees.length>500)throw new ValidationError('Invalid worktrees');v.worktrees.forEach(validateWorktreeView);}
+    if(v.mcp!==undefined)validateMcpCatalog(v.mcp);
+    if(v.mcpSchema!==undefined)validateMcpObject(v.mcpSchema);
+    if(v.mcpResult!==undefined&&(typeof v.mcpResult!=='string'||Buffer.byteLength(v.mcpResult)>64*1024))throw new ValidationError('Invalid MCP result');
     if(v.extensions!==undefined)validateExtensionCatalog(v.extensions);
     if(v.extension!==undefined)validateExtensionFile(v.extension);
     if(v.settings!==undefined)validateSettings(v.settings);
@@ -239,7 +245,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','extensions'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -249,6 +255,9 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.deploymentModels!==undefined&&(!v.deploymentModels||typeof v.deploymentModels!=='object'||Array.isArray(v.deploymentModels)||Object.keys(v.deploymentModels).length>200||Object.entries(v.deploymentModels).some(([k,m])=>['__proto__','prototype','constructor'].includes(k)||!isValidModelId(k)||typeof m!=='string'||!isValidModelId(m))))throw new ValidationError('Invalid deployment models');
     if(v.agentCaps!==undefined&&!isAgentCaps(v.agentCaps))throw new ValidationError('Invalid agent caps');
     if(v.extensions!==undefined&&(!v.extensions||typeof v.extensions!=='object'||Array.isArray(v.extensions)||Object.keys(v.extensions).length>EXTENSION_MAX_ITEMS||Object.entries(v.extensions).some(([id,on])=>!isExtensionId(id)||typeof on!=='boolean')))throw new ValidationError('Invalid extension settings');
+    if(v.mcp!==undefined){if(!Array.isArray(v.mcp)||v.mcp.length>MCP_MAX_SERVERS)throw new ValidationError('Invalid MCP servers');v.mcp.forEach(validateMcpServer);if(new Set(v.mcp.map(s=>s.config.name)).size!==v.mcp.length)throw new ValidationError('Duplicate MCP name');}
+    if(v.mcpApprovals!==undefined&&(!isRecord(v.mcpApprovals)||Object.keys(v.mcpApprovals).length>64||Object.entries(v.mcpApprovals).some(([id,hash])=>!isExtensionId(id)||!isMcpHash(hash))))throw new ValidationError('Invalid MCP approvals');
+    if(v.mcpOverrides!==undefined&&(!isRecord(v.mcpOverrides)||Object.keys(v.mcpOverrides).length>64||Object.entries(v.mcpOverrides).some(([id,value])=>!isExtensionId(id)||!isRecord(value)||Object.keys(value).some(k=>!['enabled','tools'].includes(k))||value.enabled!==undefined&&typeof value.enabled!=='boolean'||!isMcpTools(value.tools))))throw new ValidationError('Invalid MCP switches');
     if(v.contextWarning!==undefined&&typeof v.contextWarning!=='boolean')throw new ValidationError('Invalid context warning');
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
@@ -439,3 +448,58 @@ export function validateExtensionFile(value: unknown): ExtensionFile {
     validateExtensionCatalog({items:[item],notes:[],tokens:catalogTokens([item])});
     return value as ExtensionFile;
 }
+
+const isRecord=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
+export const isMcpName=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value)&&!['__proto__','prototype','constructor'].includes(value);
+export const isMcpTool=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value)&&!['__proto__','prototype','constructor'].includes(value);
+export const isMcpHash=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+export const isMcpEnv=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(value)&&!/^(?:AITERM|AI_TERM|OTEL|NODE_|LD_|DYLD_)/i.test(value)&&!['PATH','HOME','SHELL','USER','LOGNAME','TMPDIR','TERM','LANG'].includes(value.toUpperCase());
+export const isMcpHeader=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z][A-Za-z0-9-]{0,79}$/.test(value)&&!['host','content-length','connection','origin','content-type','accept','mcp-session-id','mcp-protocol-version','last-event-id','transfer-encoding','proxy-authorization'].includes(value.toLowerCase());
+function isMcpTools(value:unknown):value is Record<string,boolean>{return isRecord(value)&&Object.keys(value).length<=MCP_MAX_TOOLS&&Object.entries(value).every(([name,on])=>isMcpTool(name)&&typeof on==='boolean');}
+export function validateMcpConfig(value:unknown):McpConfig {
+ if(!isRecord(value)||!isMcpName(value.name)||!['stdio','http'].includes(String(value.type)))throw new ValidationError('Invalid MCP configuration');
+ const fields=value.type==='stdio'?['name','type','command','args','env']:['name','type','url','headers'];if(Object.keys(value).some(k=>!fields.includes(k)))throw new ValidationError('Invalid MCP configuration');
+ const names=value.type==='stdio'?value.env:value.headers;
+ if(!Array.isArray(names)||names.length>16||names.some(n=>value.type==='stdio'?!isMcpEnv(n):!isMcpHeader(n))||new Set(names.map(n=>String(n).toLowerCase())).size!==names.length)throw new ValidationError('Invalid MCP value names');
+ if(value.type==='stdio'){
+  if(typeof value.command!=='string'||!value.command||value.command.startsWith('-')||Buffer.byteLength(value.command)>2048||/[\p{C}]/u.test(value.command)||!isAbsolute(value.command)&&/[\s/\\]/u.test(value.command)||!Array.isArray(value.args)||value.args.length>64||value.args.some(a=>typeof a!=='string'||Buffer.byteLength(a)>2048||/[\p{C}]/u.test(a)))throw new ValidationError('Invalid MCP argv');
+ }else{
+  if(typeof value.url!=='string'||value.url.length>2048)throw new ValidationError('Invalid MCP URL');let url:URL;try{url=new URL(value.url);}catch{throw new ValidationError('Invalid MCP URL');}
+  if(url.username||url.password||url.search||url.hash||url.protocol!=='https:'&&(url.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(url.hostname))||url.href!==value.url)throw new ValidationError('Invalid MCP URL');
+ }
+ if(Buffer.byteLength(JSON.stringify(value))>12*1024)throw new ValidationError('MCP configuration too large');return value as unknown as McpConfig;
+}
+export function validateMcpValues(config:McpConfig,value:unknown):Record<string,string>{
+ const names=config.type==='stdio'?config.env:config.headers;
+ if(!isRecord(value)||Object.keys(value).length!==names.length||Object.keys(value).some(n=>!names.includes(n))||Object.values(value).some(v=>typeof v!=='string'||!v||Buffer.byteLength(v)>2048||/[\p{C}]/u.test(v)))throw new ValidationError('Invalid MCP values');return value as Record<string,string>;
+}
+export function validateMcpServer(value:unknown):McpServer {
+ if(!isRecord(value)||Object.keys(value).some(k=>!['id','config','hash','enabled','values','tools'].includes(k))||!isExtensionId(value.id)||!isMcpHash(value.hash)||typeof value.enabled!=='boolean'||!isMcpTools(value.tools))throw new ValidationError('Invalid MCP server');
+ const config=validateMcpConfig(value.config),names=config.type==='stdio'?config.env:config.headers;
+ if(!Array.isArray(value.values)||value.values.length!==names.length||value.values.some(v=>!isRecord(v)||Object.keys(v).some(k=>!['name','last4'].includes(k))||!names.includes(String(v.name))||typeof v.last4!=='string'||v.last4.length!==4&&v.last4!==''||/[\p{C}]/u.test(v.last4))||new Set(value.values.map(v=>v.name)).size!==names.length)throw new ValidationError('Invalid MCP secret references');return value as unknown as McpServer;
+}
+export function validateMcpCatalog(value:unknown):McpCatalog {
+ if(!isRecord(value)||Object.keys(value).some(k=>!['servers','notes','tokens'].includes(k))||!Array.isArray(value.servers)||value.servers.length>MCP_MAX_SERVERS*2||!Array.isArray(value.notes)||value.notes.length>32||value.notes.some(n=>typeof n!=='string'||n.length>240||/[\p{C}]/u.test(n)))throw new ValidationError('Invalid MCP catalog');
+ for(const s of value.servers){if(!isRecord(s)||Object.keys(s).some(k=>!['id','config','hash','enabled','values','tools','source','approved','note','available'].includes(k)))throw new ValidationError('Invalid MCP catalog');const {source,approved,note,available,...stored}=s;validateMcpServer(stored);if(!['AI Term','this project'].includes(String(source))||typeof approved!=='boolean'||note!==undefined&&(typeof note!=='string'||note.length>240||/[\p{C}]/u.test(note))||!Array.isArray(available)||available.length>MCP_MAX_TOOLS||available.some(t=>!isRecord(t)||Object.keys(t).some(k=>!['name','description','enabled','tokens'].includes(k))||!isMcpTool(t.name)||typeof t.description!=='string'||t.description.length>240||/[\p{C}]/u.test(t.description)||typeof t.enabled!=='boolean'||!Number.isSafeInteger(t.tokens)||Number(t.tokens)<0))throw new ValidationError('Invalid MCP tools');}
+ const c=value as unknown as McpCatalog;if(c.tokens!==mcpTokens(c))throw new ValidationError('Invalid MCP token estimate');return c;
+}
+export function validateMcpObject(value:unknown):Record<string,unknown>{
+ if(!isRecord(value)||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new ValidationError('Invalid MCP object');return value;
+}
+export function validateMcpRequest(value:unknown):string[]{
+ if(!isRecord(value)||typeof value.kind!=='string')throw new ValidationError('Invalid MCP request');const v=value;
+ let fields:string[];
+ if(v.kind==='mcp.add'){fields=['config','values'];validateMcpValues(validateMcpConfig(v.config),v.values);}
+ else if(v.kind==='mcp.remove'){fields=['name'];if(!isMcpName(v.name))throw new ValidationError('Invalid MCP name');}
+ else if(v.kind==='mcp.cancel'||v.kind==='mcp.stop')fields=[];
+ else{
+  fields=['cwd'];if(!isSafeAbsolutePath(v.cwd))throw new ValidationError('Invalid MCP folder');
+  if(v.kind!=='mcp.list'){
+   fields.push('serverId');if(!isExtensionId(v.serverId))throw new ValidationError('Invalid MCP server id');
+   if(v.kind==='mcp.toggle'){fields.push('tool','enabled');if(typeof v.enabled!=='boolean'||v.tool!==undefined&&!isMcpTool(v.tool))throw new ValidationError('Invalid MCP switch');}
+   else{fields.push('hash');if(!isMcpHash(v.hash))throw new ValidationError('Invalid MCP hash');if(v.kind==='mcp.schema'||v.kind==='mcp.call'){fields.push('tool');if(!isMcpTool(v.tool))throw new ValidationError('Invalid MCP tool');if(v.kind==='mcp.call'){fields.push('arguments');validateMcpObject(v.arguments);}}else if(!['mcp.approve','mcp.discover'].includes(String(v.kind)))throw new ValidationError('Invalid MCP operation');}
+  }
+ }
+ if(Object.keys(v).some(k=>k!=='id'&&!fields.includes(k)&&k!=='kind')||Buffer.byteLength(JSON.stringify(v))>64*1024)throw new ValidationError('Invalid MCP request');return fields;
+}
+export function parseMcpRequest(value:unknown):McpRequest{validateMcpRequest(value);return value as McpRequest;}

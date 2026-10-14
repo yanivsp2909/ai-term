@@ -111,4 +111,18 @@ export class ExtensionReader {
     // Bodies are from the just-validated bounded scan; no stale path is reopened after a popup/model selects an ID.
     const file = this.files.get(id); if (!file) throw new Error('Extension unavailable'); return file;
   }
+  projectMcp(project: string): string | null {
+    const root=realpathSync(project),logical=join(root,'.mcp.json');
+    if(under(this.home,root)&&deniedExtensionPath(this.home,root,true))throw new Error('MCP project is outside its allowed folder');
+    if(under(this.home,root)&&['.claude','.codex','.agents','.ssh','.gnupg','.aws','.azure','.docker','.kube'].includes(relative(this.home,root).split(sep)[0]?.normalize('NFKC').toLowerCase()??''))throw new Error('MCP project is outside its allowed folder');
+    let real:string;try{real=realpathSync(logical);}catch(error){if(error instanceof Error&&'code'in error&&error.code==='ENOENT')return null;throw new Error('MCP project file unavailable',{cause:error});}
+    if(!under(root,real)||deniedExtensionPath(root,real))throw new Error('MCP project file denied');
+    const before=statSync(real);if(!before.isFile()||before.nlink!==1||before.size>EXTENSION_FILE_BYTES)throw new Error('MCP project file unsafe');
+    const fd=secureOpen(real,false);
+    try{const info=fstatSync(fd);if(info.ino!==before.ino||info.dev!==before.dev||info.nlink!==1||info.size>EXTENSION_FILE_BYTES||realpathSync(logical)!==real)throw new Error('MCP project changed');
+      const buffer=Buffer.alloc(info.size+1),count=readSync(fd,buffer,0,buffer.length,0),after=fstatSync(fd);
+      if(count!==info.size||after.size!==info.size||after.nlink!==1||realpathSync(logical)!==real)throw new Error('MCP project changed');
+      return new TextDecoder('utf-8',{fatal:true}).decode(buffer.subarray(0,count));
+    }finally{closeSync(fd);}
+  }
 }

@@ -1,6 +1,8 @@
 import { validateExtensionCatalog, validateExtensionFile } from '../shared/validate.js';
 import type { ExtensionAccess } from '../shared/extensions.js';
 import { request } from 'node:http';
+import { mcpAccess } from '../client/mcp.js';
+import type { McpAccess, McpRequest } from '../shared/mcp.js';
 import { parseAgentFacts, type AgentFacts } from '../shared/agent-facts.js';
 
 // What the agent tells the daemon, through the same local receiver the CLIs use (S12): status on /v1/status/ai-term with
@@ -31,6 +33,23 @@ export class HttpReporter implements Reporter, ExtensionAccess {
   private sequence = 0;
   failures = 0;
   constructor(private readonly env: ReporterEnv | null, private readonly onFirstFailure: () => void) {}
+  get mcp():McpAccess{return mcpAccess((body,signal)=>this.mcpQuery(body,signal));}
+  private mcpQuery(payload:McpRequest,signal?:AbortSignal):Promise<{mcp?:unknown;mcpSchema?:unknown;mcpResult?:unknown}>{
+    const env=this.env;if(!env)return Promise.reject(new Error('MCP unavailable'));
+    return new Promise((resolve,reject)=>{
+      const body=JSON.stringify(payload);
+      // MCP calls have their own connection; a slow server must never block status, usage or the kill request.
+      const req=request({hostname:'127.0.0.1',port:env.port,path:'/v1/mcp/ai-term',method:'POST',headers:{'content-type':'application/json','content-length':Buffer.byteLength(body),'x-ai-term-session':env.status}},res=>{
+        const chunks:Buffer[]=[];let bytes=0;
+        res.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes<=FACTS_MAX_BYTES)chunks.push(chunk);else req.destroy();});
+        res.on('end',()=>{try{if(res.statusCode!==200||bytes>FACTS_MAX_BYTES)throw new Error('MCP unavailable');const answer:unknown=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(!answer||typeof answer!=='object'||Array.isArray(answer))throw new Error('MCP unavailable');resolve(answer);}catch{reject(new Error('MCP operation failed'));}});res.on('error',()=>reject(new Error('MCP operation failed')));
+      });
+      const abort=()=>{req.destroy();void this.mcpQuery({kind:'mcp.cancel'}).catch(()=>this.onFirstFailure());};
+      signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
+      const timer=setTimeout(()=>req.destroy(),payload.kind==='mcp.call'?125_000:10_000);
+      req.on('close',()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(new Error('MCP operation stopped'));});req.on('error',()=>reject(new Error('MCP operation failed')));req.end(body);
+    });
+  }
   status(update: AgentStatus): Promise<void> { return this.post('/v1/status/ai-term', this.env?.status, JSON.stringify(update)); }
   usage(model: string, tokens: TokenUsage): Promise<void> {
     const now = BigInt(Date.now()) * 1_000_000n + BigInt(this.sequence++ % 1_000_000), time = now.toString();

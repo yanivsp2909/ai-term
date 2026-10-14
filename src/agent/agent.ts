@@ -1,4 +1,6 @@
 import { extensionManifest, type ExtensionAccess, type ExtensionCatalog, type ExtensionFile } from '../shared/extensions.js';
+import { mcpManifest, mcpPreview, type McpAccess, type McpCatalog, type McpView } from '../shared/mcp.js';
+import { isMcpName, isMcpTool, validateMcpObject } from '../shared/validate.js';
 import { Transcript as ChildTranscript } from './transcript.js';
 import { streamText, tool, jsonSchema, isStepCount, APICallError, RetryError, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { readTool, writeTool, editTool, searchTool, ToolError, type GatedTool } from './tools.js';
@@ -12,7 +14,7 @@ import { RunLimits, maxOutputTokens, requestCost, estimateTokens } from './limit
 import type { AgentFacts } from '../shared/agent-facts.js';
 
 export type AgentPermission = 'ask' | 'dontAsk';
-export type ToolName = 'read' | 'write' | 'edit' | 'bash' | 'search' | 'skill' | 'task';
+export type ToolName = 'read' | 'write' | 'edit' | 'bash' | 'search' | 'skill' | 'task' | 'mcp_tools' | 'mcp_call';
 // What the agent shows. The terminal UI implements it; tests record it.
 export interface AgentIO {
   text(delta: string): void;
@@ -21,6 +23,7 @@ export interface AgentIO {
   // Resolves false when the user says no, presses Esc, or the turn is interrupted.
   approve(request: { title: string; body: string }, signal: AbortSignal): Promise<boolean>;
   confirmJob?(request: {title:string;body:string}, signal:AbortSignal):Promise<boolean>;
+  approveMcp?(request:{title:string;body:string},signal:AbortSignal):Promise<'allow'|'deny'|'session'>;
   note(text: string, tone?: 'info' | 'warn' | 'error'): void;
   // A limit pause: resolves true to go on (a typed ⏎), false to stop (Esc, a kill, or the turn ending).
   pause(text: string, signal: AbortSignal): Promise<boolean>;
@@ -31,6 +34,7 @@ export interface AgentOptions {
   bashEnv: Record<string, string>; rg: string | null; maxSteps?: number;
   extensions?: ExtensionAccess; models?: readonly string[]; makeModel?(id: string): Promise<LanguageModel>;
   limits?: RunLimits; child?: boolean;
+  mcp?:McpAccess; mcpSession?:{allowed:Set<string>;schemas:Set<string>};
 }
 export type TurnResult = 'done' | 'interrupted' | 'failed';
 const DEFAULT_MAX_STEPS = 50, CONTEXT_WARN = 85;
@@ -71,13 +75,18 @@ export class Agent {
   history: ModelMessage[] = [];
   readonly limits: RunLimits;
   private catalog: ExtensionCatalog = {items:[],notes:[],tokens:0};
+  private mcpCatalog:McpCatalog={servers:[],notes:[],tokens:0};
+  private readonly mcpSession:{allowed:Set<string>;schemas:Set<string>};
   private loadedSignature: string | null = null;
   private currentWorst = 0;
+  private confirmedMcp:{server:McpView;input:string}|null=null;
   private confirmedTask: {file:ExtensionFile;modelId:string;name:string;prompt:string} | null = null;
   private warned = false;
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private options: AgentOptions) { this.limits = options.limits ?? new RunLimits(); }
+  constructor(private options: AgentOptions) { this.limits = options.limits ?? new RunLimits();this.mcpSession=options.mcpSession??{allowed:new Set(),schemas:new Set()}; }
   get extensionAccess(): ExtensionAccess | undefined { return this.options.extensions; }
+  get mcpAccess():McpAccess|undefined{return this.options.mcp;}
+  stopMcp():Promise<void>{return this.options.mcp?.stop()??Promise.resolve();}
   get root(): string { return this.options.root; }
   get modelId(): string { return this.options.modelId; }
   // The new model's context window applies from its first request; until then the card shows no stale percentage.
@@ -87,7 +96,7 @@ export class Agent {
   // Tool calls run one at a time, so approvals never overlap even when the model asks for several at once.
   private serial<T>(work: () => Promise<T>): Promise<T> { const next = this.queue.then(work, work); this.queue = next.then(() => undefined, () => undefined); return next; }
 
-  private run<T>(name: ToolName, summary: (input: T) => string, work: (input: T, signal: AbortSignal) => Promise<string>, gate?: (input: T) => Promise<{ title: string; body: string }>, alwaysAsk = false) {
+  private run<T>(name: ToolName, summary: (input: T) => string, work: (input: T, signal: AbortSignal) => Promise<string>, gate?: (input: T, signal:AbortSignal) => Promise<{ title: string; body: string; sessionKey?:string }>, alwaysAsk = false) {
     return async (input: T, signal: AbortSignal): Promise<string> => this.serial(async () => {
       const { io, reporter, transcript, redact, permission } = this.options, shown = redact(summary(input));
       if (signal.aborted) return 'Interrupted by the user.';
@@ -96,13 +105,19 @@ export class Agent {
       let outcome: 'ok' | 'denied' | 'failed' = 'failed', output = '';
       try {
         if (gate && (permission === 'ask' || alwaysAsk)) {
-          const request = await gate(input);
+          const request = await gate(input,signal);
+          if(name==='mcp_call'&&request.sessionKey&&this.mcpSession.allowed.has(request.sessionKey)){
+            if(signal.aborted)return 'Interrupted by the user.';
+            output=redact(await work(input,signal));outcome='ok';return output;
+          }
           // The daemon has the waiting status before the question is drawn, so /send can never answer it (D50).
           await reporter.status({ event: 'permission' });
-          const approve = alwaysAsk && io.confirmJob ? io.confirmJob.bind(io) : io.approve.bind(io);
-          const allowed = await approve({ title: redact(request.title), body: redact(request.body) }, signal);
+          const shownRequest={title:redact(request.title),body:redact(request.body)};
+          let allowed:boolean;
+          if(name==='mcp_call'&&io.approveMcp){const choice=await io.approveMcp(shownRequest,signal);allowed=choice!=='deny';if(choice==='session'&&request.sessionKey&&!signal.aborted)this.mcpSession.allowed.add(request.sessionKey);}
+          else{const approve=alwaysAsk&&name==='task'&&io.confirmJob?io.confirmJob.bind(io):io.approve.bind(io);allowed=await approve(shownRequest,signal);}
           await reporter.status({ event: 'answered' });
-          if (!allowed) { outcome = 'denied'; output = signal.aborted ? 'Interrupted by the user.' : 'The user denied this. Do not retry it; ask what to do instead.'; return output; }
+          if (!allowed||signal.aborted) { outcome = 'denied'; output = signal.aborted ? 'Interrupted by the user.' : 'The user denied this. Do not retry it; ask what to do instead.'; return output; }
         }
         output = redact(await work(input, signal)); outcome = 'ok'; return output;
       } catch (error) { output = `Error: ${toolFailure(error)}`; return output; }
@@ -117,6 +132,35 @@ export class Agent {
     return this.run<T>(name, summary, input => gatedTool.run(this.options.root, input), input => gatedTool.preview(this.options.root, input));
   }
 
+  private mcpKey(server:McpView,tool:string):string{return JSON.stringify([server.id,server.hash,tool]);}
+  private async mcpServer(name:string,signal:AbortSignal):Promise<McpView>{
+    const access=this.options.mcp;if(!access||!isMcpName(name))throw new ToolError('MCP unavailable');
+    const server=(await access.list(this.root)).servers.find(s=>s.config.name===name&&s.enabled&&!s.note);if(!server)throw new ToolError('MCP server is disabled or unavailable');
+    if(!server.approved){
+      await this.options.reporter.status({event:'permission'});
+      const allowed=await this.options.io.approve({title:`MCP server ${name}`,body:mcpPreview(server)},signal);
+      await this.options.reporter.status({event:'answered'});
+      if(!allowed||signal.aborted)throw new ToolError('The user denied the MCP server. Do not retry it.');
+      await access.approve(this.root,server.id,server.hash);
+    }
+    if(signal.aborted)throw new ToolError('MCP call interrupted');return server;
+  }
+  private mcpTools():ToolSet{
+    if(!this.options.mcp)return {};
+    const select=this.run<{server:string;tool?:string}>('mcp_tools',i=>i.server+(i.tool?'/'+i.tool:''),async(i,signal)=>{
+      const server=await this.mcpServer(i.server,signal),access=this.options.mcp;if(!access)throw new ToolError('MCP unavailable');
+      if(i.tool){if(!isMcpTool(i.tool))throw new ToolError('Invalid MCP tool');const schema=await access.schema(this.root,server.id,server.hash,i.tool,signal);this.mcpSession.schemas.add(this.mcpKey(server,i.tool));return JSON.stringify(schema);}
+      return mcpManifest(await access.discover(this.root,server.id,server.hash,signal));
+    });
+    const call=this.run<{server:string;tool:string;arguments:Record<string,unknown>}>('mcp_call',i=>i.server+'/'+i.tool,async(i,signal)=>{
+      const confirmed=this.confirmedMcp;this.confirmedMcp=null;const access=this.options.mcp;if(!confirmed||!access||confirmed.input!==JSON.stringify(i))throw new ToolError('MCP call was not approved');
+      const server=(await access.list(this.root)).servers.find(s=>s.id===confirmed.server.id&&s.hash===confirmed.server.hash&&s.enabled&&!s.note&&s.tools[i.tool]!==false);if(!server||signal.aborted)throw new ToolError('MCP configuration changed or call interrupted');return access.call(this.root,server.id,server.hash,i.tool,validateMcpObject(i.arguments),signal);
+    },async(i,signal)=>{this.confirmedMcp=null;const server=await this.mcpServer(i.server,signal);if(!isMcpTool(i.tool)||!this.mcpSession.schemas.has(this.mcpKey(server,i.tool)))throw new ToolError('Load this MCP tool schema with mcp_tools first');validateMcpObject(i.arguments);this.confirmedMcp={server,input:JSON.stringify(i)};return {title:`MCP ${i.server}/${i.tool}`,body:`folder: ${this.root}\nserver: ${i.server}\ntool: ${i.tool}\narguments: ${JSON.stringify(i.arguments,null,2)}`,sessionKey:this.mcpKey(server,i.tool)};},true);
+    return {
+      mcp_tools:tool({description:'Select an enabled MCP server to list tool names/descriptions, or select one tool to load its full input schema. Project servers require user approval before starting.',inputSchema:schema<{server:string;tool?:string}>({server:'string'},{tool:'string'},{}),execute:(input,{abortSignal})=>select(input,abortSignal??new AbortController().signal)}),
+      mcp_call:tool({description:'Call a selected MCP tool after loading its schema with mcp_tools. Every call asks unless the user explicitly allows this exact tool for this session.',inputSchema:jsonSchema<{server:string;tool:string;arguments:Record<string,unknown>}>({type:'object',properties:{server:{type:'string'},tool:{type:'string'},arguments:{type:'object'}},required:['server','tool','arguments'],additionalProperties:false},{validate:value=>{try{if(!value||typeof value!=='object'||Array.isArray(value)||!('server'in value)||!isMcpName(value.server)||!('tool'in value)||!isMcpTool(value.tool)||!('arguments'in value)||Object.keys(value).some(k=>!['server','tool','arguments'].includes(k)))throw new Error('invalid');validateMcpObject(value.arguments);return {success:true,value:value as {server:string;tool:string;arguments:Record<string,unknown>}};}catch{return {success:false,error:new Error('Invalid MCP input')};}}}),execute:(input,{abortSignal})=>call(input,abortSignal??new AbortController().signal)}),
+    };
+  }
   private tools(): ToolSet {
     const read = this.run<{ path: string; offset?: number; limit?: number }>('read', i => i.path, i => readTool(this.options.root, i));
     const write = this.gated<{ path: string; content: string }>('write', i => i.path, writeTool);
@@ -130,6 +174,7 @@ export class Agent {
     const skill = this.run<{name:string}>('skill', i=>i.name, async i=>(await this.extension(i.name,'skill')).body);
     const task = this.run<{name:string;prompt:string}>('task', i=>i.name, async (i,signal)=>this.subagent(i.name,i.prompt,signal), async i=>this.taskPreview(i.name,i.prompt), true);
     return {
+      ...this.mcpTools(),
       ...(this.options.extensions ? {
         skill: tool({description:'Load an enabled skill by name. Only the listed name and description are initially loaded; use this to read its full instructions.',inputSchema:schema<{name:string}>({name:'string'}, {}, {}),execute:(input,{abortSignal})=>skill(input,abortSignal??new AbortController().signal)}),
         ...(!this.options.child ? {task:tool({description:'Run an enabled subagent by name in a separate conversation. Its instructions, folder and permissions are fixed; only its final answer returns. The user confirms the job before it spends tokens.',inputSchema:schema<{name:string;prompt:string}>({name:'string',prompt:'string'}, {}, {}),execute:(input,{abortSignal})=>task(input,abortSignal??new AbortController().signal)})} : {}),
@@ -160,8 +205,8 @@ export class Agent {
     signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop();
     let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId), open = 0;
     const totals = { input: 0, cached: 0, output: 0, reasoning: 0, cost: 0 as number | null, requests: 0 };
-    const manifest = extensionManifest(this.catalog.items);
-    const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' }) + (manifest ? '\n\n# Enabled extensions (load a skill with skill; run an agent with task)\n' + manifest : '');
+    const manifest = [extensionManifest(this.catalog.items),mcpManifest(this.mcpCatalog)].filter(Boolean).join('\n');
+    const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' }) + (manifest ? '\n\n# Enabled extensions (skill loads skills; task runs agents; mcp_tools loads MCP metadata/schema then mcp_call calls one tool)\n' + manifest : '');
     const finishInterrupted = async (): Promise<TurnResult> => {
       // A request cut off after it was sent may still be billed; its worst case counts against this run and the budgets.
       if (open) { this.limits.chargeUnfinished(open); open = 0; }
@@ -226,10 +271,11 @@ export class Agent {
   // Asks the daemon for fresh facts and checks them until the request may go; a pause the user answers with Esc (or a
   // kill) stops the turn before anything is sent.
   async refreshExtensions(): Promise<ExtensionCatalog> {
-    if (!this.options.extensions) return this.catalog;
+    if (!this.options.extensions&&!this.options.mcp) return this.catalog;
     try {
-      const catalog = await this.options.extensions.list(this.root);
-      const signature = JSON.stringify(catalog.items.filter(i=>i.enabled).map(i=>[i.id,i.name,i.description]));
+      const catalog = this.options.extensions?await this.options.extensions.list(this.root):this.catalog;
+      if(this.options.mcp){this.mcpCatalog=await this.options.mcp.list(this.root);for(const s of this.mcpCatalog.servers)if(s.note)this.options.io.note(`${s.config.name}: ${s.note}`,'warn');}
+      const signature = JSON.stringify([catalog.items.filter(i=>i.enabled).map(i=>[i.id,i.name,i.description]),this.mcpCatalog.servers.filter(s=>s.enabled).map(s=>[s.id,s.hash,s.available.filter(t=>t.enabled).map(t=>t.name)])]);
       if(this.loadedSignature!==null&&signature!==this.loadedSignature){this.clear();this.options.io.note('extension selection changed; conversation cleared so disabled instructions stop loading');}
       this.loadedSignature=signature; this.catalog=catalog;
     } catch {
@@ -282,9 +328,9 @@ export class Agent {
     if(!catalog?.items.some(i=>i.id===file.item.id&&i.enabled))throw new ToolError('Extension is disabled or unavailable');
     // The approved instructions/model are immutable, even if the source file changes while the user decides.
     const model=modelId===this.modelId?this.options.model:await this.options.makeModel?.(modelId)??this.options.model;
-    const parent=this.options,io:AgentIO={...parent.io,text:()=>undefined,toolStart:(...args)=>parent.io.toolStart(...args),toolEnd:(...args)=>parent.io.toolEnd(...args),approve:(...args)=>parent.io.approve(...args),pause:(...args)=>parent.io.pause(...args),note:(text,tone)=>parent.io.note(`${name}: ${text}`,tone)};
+    const parent=this.options,io:AgentIO={...parent.io,text:()=>undefined,toolStart:(...args)=>parent.io.toolStart(...args),toolEnd:(...args)=>parent.io.toolEnd(...args),approve:(...args)=>parent.io.approve(...args),...(parent.io.approveMcp?{approveMcp:(request,signal)=>parent.io.approveMcp?.(request,signal)??Promise.resolve('deny' as const)}:{}),pause:(...args)=>parent.io.pause(...args),note:(text,tone)=>parent.io.note(`${name}: ${text}`,tone)};
     const reporter:Reporter={facts:id=>parent.reporter.facts(id),usage:(id,tokens)=>parent.reporter.usage(id,tokens),status:async update=>{if(['permission','answered','paused','tool-start','tool-finish'].includes(update.event))await parent.reporter.status(update);}};
-    const child=new Agent({...parent,model,modelId,io,reporter,child:true,limits:this.limits,instructions:{...parent.instructions,text:parent.instructions.text+'\n\n# Subagent instructions\n'+file.body},transcript:new ChildTranscript(null,parent.redact,()=>parent.io.note('subagent transcript unavailable','error'))});
+    const child=new Agent({...parent,model,modelId,io,reporter,child:true,limits:this.limits,mcpSession:this.mcpSession,instructions:{...parent.instructions,text:parent.instructions.text+'\n\n# Subagent instructions\n'+file.body},transcript:new ChildTranscript(null,parent.redact,()=>parent.io.note('subagent transcript unavailable','error'))});
     // The parent request has been sent but its usage may arrive only after this tool. Reserve its worst case while
     // the child spends, so neither caps nor budgets temporarily forget that in-flight request.
     const reserved = this.currentWorst;
