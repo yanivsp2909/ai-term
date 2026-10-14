@@ -131,3 +131,26 @@ it('MEDIUM: an OSC 11 reply that arrives after its probe timed out is not typed 
     expect(Buffer.concat(seen).toString()).toBe('k');
   } finally { input.dispose(); }
 });
+
+// Fix review of the gate (2026-10-15): the scrub itself must not leak the token in any split or timing.
+it('HIGH S24: an echo split right after the full caret prefix never shows the token', () => {
+  const echo = `^[]777;ai-term;${appToken};home^[\\`;
+  for (let at = 1; at < echo.length; at++) {
+    const gate = new ControlGate(appToken);
+    const shown = gate.output('a' + echo.slice(0, at)) + gate.output(echo.slice(at) + 'b') + gate.flush();
+    expect(shown).toBe('ab');
+  }
+});
+it('MEDIUM S24: a control cut by the flush timer keeps being dropped when the rest arrives', () => {
+  for (const control of [encodeAppControl(appToken, 'home'), `^[]777;ai-term;${appToken};home^[\\`]) for (const at of [3, 14, 15, 40]) {
+    const gate = new ControlGate(appToken);
+    const shown = gate.output('ok' + control.slice(0, at)) + gate.flush() + gate.output(control.slice(at) + 'tail') + gate.flush();
+    expect(shown).not.toContain(appToken.slice(0, 8));
+    expect(shown.endsWith('tail')).toBe(true);
+  }
+});
+it('LOW S24: an unterminated control drops a bounded run after its prefix and shows the rest', () => {
+  const gate = new ControlGate(appToken);
+  const shown = gate.output('a\x1b]777;ai-term;' + 'x'.repeat(200) + 'KEEP') + gate.flush();
+  expect(shown.startsWith('a')).toBe(true); expect(shown.endsWith('KEEP')).toBe(true); expect(shown.length).toBeLessThan(200);
+});
