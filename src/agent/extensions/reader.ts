@@ -5,24 +5,26 @@ import { EXTENSION_FILE_BYTES, EXTENSION_TOTAL_BYTES, EXTENSION_MAX_ITEMS, exten
 import { parseExtension } from './frontmatter.js';
 
 const under = (root: string, path: string) => path === root || path.startsWith(root + sep);
-export function deniedExtensionPath(home: string, path: string): boolean {
+export function deniedExtensionPath(home: string, path: string, directory = false): boolean {
   if (!under(home, path)) return true;
-  return relative(home, path).normalize('NFKC').toLowerCase().split(sep).some(part =>
+  const parts = relative(home, path).normalize('NFKC').toLowerCase().split(sep);
+  return parts.some((part, index) =>
     /^(?:history|sessions|logs|projects)(?:[._-].*)?$/.test(part) ||
-    /(?:credentials?|auth)(?:[._-]|$)/.test(part) || /^settings.*\.json$/.test(part) ||
+    !directory && index === parts.length - 1 && /(?:credentials?|auth)(?:[._-]|$)/.test(part) || /^settings.*\.json$/.test(part) ||
     part.endsWith('.env') || part === '.env' || part.startsWith('.env.') || part === '.claude.json' || part === 'config.toml');
 }
 // Darwin O_NOFOLLOW_ANY rejects symlinks in every component of an already-resolved path. Node doesn't expose the
 // constant (Darwin fcntl.h: 0x20000000). This closes parent-symlink swaps as well as O_NOFOLLOW's last-component race.
 // Linux opens one component at a time through held directory descriptors, with O_NOFOLLOW at each step.
-function secureOpen(path: string): number {
+function secureOpen(path: string, directory: boolean): number {
   const flags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
-  if (process.platform === 'darwin') return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | 0x20000000);
+  if (process.platform === 'darwin') return openSync(path, constants.O_RDONLY | constants.O_NONBLOCK | (directory ? constants.O_DIRECTORY : 0) | 0x20000000);
   if (process.platform !== 'linux') throw new Error('safe extension reads unsupported');
   let fd = openSync('/', flags | constants.O_DIRECTORY);
   try {
-    for (const component of path.split('/').filter(Boolean)) {
-      const next = openSync(`/proc/self/fd/${fd}/${component}`, flags);
+    const components=path.split('/').filter(Boolean);
+    for (const [index,component] of components.entries()) {
+      const next = openSync(`/proc/self/fd/${fd}/${component}`, flags | (index < components.length - 1 || directory ? constants.O_DIRECTORY : 0));
       closeSync(fd); fd = next;
     }
     return fd;
@@ -52,16 +54,18 @@ export class ExtensionReader {
     const visit = (logical: string, kind: ExtensionKind, source: ExtensionSource, depth: number) => {
       if (++entries > 4000 || depth > 8 || this.files.size >= EXTENSION_MAX_ITEMS) { note(logical, 'catalog limit'); return; }
       // Deny both spellings, including a denied logical alias to an otherwise allowed file.
-      if (deniedExtensionPath(this.home, logical)) { note(logical, 'denied path'); return; }
+      if (deniedExtensionPath(this.home, logical, true)) { note(logical, 'denied path'); return; }
       let real: string;
       try { real = realpathSync(logical); }
       catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) note(logical, 'unreadable'); return; }
-      if (deniedExtensionPath(this.home, real)) { note(logical, 'denied target'); return; }
+      if (deniedExtensionPath(this.home, real, true)) { note(logical, 'denied target'); return; }
       const identity = kind + ':' + real;
       if (visited.has(identity)) return;
       let fd: number | undefined;
       try {
-        fd = secureOpen(real); const info = fstatSync(fd);
+        const directory = statSync(real).isDirectory();
+        if (deniedExtensionPath(this.home,logical,directory) || deniedExtensionPath(this.home,real,directory)) {note(logical,'denied target');return;}
+        fd = secureOpen(real, directory); const info = fstatSync(fd);
         if (realpathSync(logical) !== real || statSync(real).ino !== info.ino || statSync(real).dev !== info.dev) throw new Error('changed path');
         visited.add(identity);
         if (info.isDirectory()) {
