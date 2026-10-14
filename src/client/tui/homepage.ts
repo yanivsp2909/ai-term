@@ -1,3 +1,5 @@
+import { ExtensionsPanel } from './extensions-panel.js';
+import { socketExtensions } from '../extensions.js';
 import { terminalBundle, RAISE_WINDOW } from '../../shared/terminal-app.js';
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
@@ -64,7 +66,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel;
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
   private marked=new Set<string>();
   private lastSplit:string[]=[];
@@ -250,7 +252,7 @@ export class Homepage {
     }
     if(this.helpOffset!==null){if(event.key==='escape')this.helpOffset=null;else{const page=Math.max(1,this.size().rows-8),delta=event.key==='up'?-1:event.key==='down'?1:event.key==='page-up'?-page:event.key==='page-down'?page:0;this.helpOffset=Math.max(0,Math.min(Math.max(0,wrapHelpLines(helpLines(this.commandContext()),Math.min(this.size().cols,110)-6).length-page),this.helpOffset+delta));}this.draw(true);return;}
     if(this.worktreeUi){const ui=this.worktreeUi;this.enqueue(()=>ui.key(event.key));return;}
-    if(this.popup){this.popup.key(event.key);this.draw(true);return;}
+    if(this.popup){const popup=this.popup;if(popup instanceof ExtensionsPanel)this.enqueue(()=>popup.key(event.key));else popup.key(event.key);this.draw(true);return;}
     if(this.cleanIds){
       const ids=this.cleanIds;
       if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{
@@ -383,6 +385,10 @@ export class Homepage {
     await this.selectNew(result);
     this.showNote(`✓ restarted ${session.title}${session.worktree?' in its worktree':''}${session.engine==='shell'?'':' · its first message isn\'t resent'}`,3000);
   }
+  private async openExtensions(tab:'skills'|'agents'):Promise<void>{
+    const panel=new ExtensionsPanel(socketExtensions(body=>this.connection.request(body)),this.folder,tab,()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
+    this.popup=panel;this.draw(true);await panel.load();
+  }
   private async openUsage():Promise<void>{
     const panel:TextPanel=new TextPanel('Usage',()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
     this.popup=panel;this.draw(true);
@@ -442,6 +448,7 @@ export class Homepage {
     if(message?.hasPastes){this.openBox('start',text,message);await this.checkSelectedEngine();return;}
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
     if(command==='/copy'){if(argument&&argument!=='all'){this.showNote('/copy or /copy all');return;}await this.copySelected(copyTarget,argument==='all');return;}
+    if(command==='/skills'||command==='/agents'){if(argument){this.showNote(`${command} takes no argument`);return;}await this.openExtensions(command==='/skills'?'skills':'agents');return;}
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
     if(['/retry','/budget','/usage','/doctor'].includes(command??'')&&argument){this.showNote(`${command} takes no argument${command==='/retry'?'; it uses the selected agent':''}`);return;}
     if(command==='/retry'){await this.retrySelected(copyTarget);return;}

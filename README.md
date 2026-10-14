@@ -51,6 +51,7 @@ Homepage slash commands:
 | `/model` | Choose provider tab, then own-login/key model or tested Foundry deployment; filter searches across tabs. Key rows show `· ai term` (they start AI Term's agent: Foundry deployments that passed their test, catalog chat models for Anthropic and OpenAI keys) or, with `keys run on: the cli`, the CLI and its own models; an AI Term model can't be saved as the default (defaults carry no key) |
 | `/cd` | Choose folder for the next session, with directory completion |
 | `/login` | Anthropic/OpenAI account login or API key; Microsoft Foundry endpoint/key/deployments and test |
+| `/skills` · `/agents` | One extensions popup: Skills · Agents · Commands · MCP; browse files read-only, choose what loads, see estimated tokens/request |
 | `/settings` | KEYS, ENGINES, DEFAULTS; add/import/remove/test keys, edit saved defaults/theme, set Foundry input/output prices per 1M tokens |
 | `/effort [CLI default\|<level>]` | Reasoning for next agent; levels follow selected CLI; CLI default passes nothing |
 | `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
@@ -182,7 +183,7 @@ AI Term refuses, with a fixed reason and without touching anything:
 
 If a step fails, it stops and says which step (`Worktree remove failed; branch kept` or `Worktree removed; branch delete failed`). It never deletes files itself and never touches another worktree or branch. `/clean` only removes list records and says how many worktrees it kept. `/worktrees` lists them all for later; folders in `~/.ai-term/worktrees` that no record claims (from agents removed before v0.3.2) appear as `✗ Not in AI Term's record` and are never deleted by AI Term. Remove those yourself with `git worktree remove` if you don't need them.
 
-## AI Term's agent (v0.4.2)
+## AI Term's agent (v0.4.3)
 
 Every API key runs AI Term's own agent (D47; `/settings` → `keys run on: the cli` sends keys back to Claude Code and Codex). In `/model`: a tested Foundry deployment (GPT ones over the Responses API, others such as Grok, Kimi, DeepSeek or GLM over Chat Completions, each one tested with a tiny request first), or one of the catalog's chat models for an Anthropic or OpenAI key; every row reads `· ai term`. Type a task, keep Ask, ⏎. The card, preview, bar, splits, notifications, `c` and Usage work as for the CLIs.
 
@@ -209,8 +210,32 @@ Every API key runs AI Term's own agent (D47; `/settings` → `keys run on: the c
 | `/caps [turns N\|off] [spend USD\|off]` | Show or change this run's caps |
 | `/clear` | Forget the conversation (frees the context) |
 | `/cd <folder>` | Work in another folder; its `AGENTS.md` is read again |
+| `/skills` · `/agents` | Open the extensions popup on Skills / Agents |
+| `/name [arguments]` | Run an enabled extension slash command; `$ARGUMENTS` is replaced literally; built-ins win clashes |
+| ⏎ / Esc at a task confirmation | Run / cancel the subagent job; its writes, edits and commands still ask for y/n |
 | `/help` · `/exit` | List these · quit |
 | Ctrl+E | Home, as in any session |
+
+## Skills, subagents and slash commands (v0.4.3)
+
+`/skills` and `/agents` work on the homepage and inside AI Term's agent. They open the same popup, starting on the corresponding tab. The homepage uses the next-agent folder selected by `/cd`; inside the agent it uses that agent's current folder. Official CLIs keep their own in-session commands.
+
+| Popup key | Action |
+|---|---|
+| ←→ | Switch Skills · Agents · Commands · MCP |
+| ↑↓ | Select an item |
+| Space | Toggle this item on/off, saved in AI Term settings |
+| ⏎ | Show the complete file read-only |
+| ↑↓ / PgUp / PgDn in a file | Scroll / page |
+| Esc in a file / list | Return to the list / close |
+
+Each row shows the name, one-line description, source (Claude, Codex, shared, this project), on/off and estimated tokens per request. The header and agent banner show the enabled manifest's total. The estimate is UTF-8 bytes / three, rounded up; it includes skill and agent names/descriptions. Command rows cost zero until invoked. Bodies and the fixed tool schemas are additional tokens when used. Nothing browsed in this popup makes a model request.
+
+The reader uses exactly these roots: `~/.claude/skills`, `~/.claude/agents`, `~/.claude/commands`, `~/.codex/prompts`, `~/.agents/skills`, and the agent folder's `.claude/skills`, `.claude/agents`, `.claude/commands`, `.agents/skills`. Symlinks to shared files under home work; credentials, auth, settings, env, history, sessions, logs and projects are denied on resolved paths. No CLI files are modified. Files over 64 KiB, scans over 1 MiB, invalid UTF-8 and unsupported/malformed frontmatter are skipped with notes. The catalog is capped at 500 items, depth eight and 4,000 visited entries.
+
+Skills, agents and commands default on. Only enabled skill/agent names and descriptions (at most 240 characters each) enter the initial prompt. The model's `skill` tool loads a skill's instructions when needed. Toggles apply to the next message, clearing the previous conversation so a disabled body's earlier tool result does not keep costing tokens. Project names win clashes, then Claude, Codex prompts and shared; duplicate resolved files are listed once per kind. Built-in slash commands always win.
+
+The `task` tool opens a separate subagent conversation using that agent file's instructions and the same project instructions, folder jail, permissions, usage reporter, budgets, caps and Ctrl+K signal. First it shows the job's model and estimated token/price range; typed ⏎ runs it, Esc cancels (Space pages long confirmations). Its writes/edits/commands still wait for the parent's y/n in Ask. Only its final answer returns to the parent's model. Tasks run serially and cannot spawn further tasks. `model:` selects an exact model available to the parent key, or a unique keyed Claude model for `sonnet`, `opus`, `haiku`; otherwise it uses the parent. No other key or permission is acquired. MCP is empty until v0.4.4.
 
 ## Docs
 - `AGENTS.md`: rules for every coding agent working here

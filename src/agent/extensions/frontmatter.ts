@@ -30,7 +30,7 @@ export function parseExtension(text: string, kind: ExtensionKind, fallback: stri
         if (!raw.endsWith("'") || raw.length < 2) throw new Error('malformed frontmatter'); value = raw.slice(1, -1).replace(/''/g, "'");
       } else if (raw.startsWith('[') && !raw.endsWith(']') || raw.startsWith('{') && !raw.endsWith('}')) throw new Error('malformed frontmatter');
       if (['name', 'description', 'model'].includes(key)) {
-        if (/^[\[{]/.test(raw)) throw new Error('metadata must be text');
+        if (/^[[{]/.test(raw)) throw new Error('metadata must be text');
         values[key] = clean(value);
       }
     }

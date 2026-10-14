@@ -1,3 +1,5 @@
+import { extensionManifest, type ExtensionAccess, type ExtensionCatalog, type ExtensionFile } from '../shared/extensions.js';
+import { Transcript as ChildTranscript } from './transcript.js';
 import { streamText, tool, jsonSchema, isStepCount, APICallError, RetryError, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { readTool, writeTool, editTool, searchTool, ToolError, type GatedTool } from './tools.js';
 import { runBash, bashReport, bashPreview, checkCommand, BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS } from './bash.js';
@@ -10,7 +12,7 @@ import { RunLimits, maxOutputTokens, requestCost, estimateTokens } from './limit
 import type { AgentFacts } from '../shared/agent-facts.js';
 
 export type AgentPermission = 'ask' | 'dontAsk';
-export type ToolName = 'read' | 'write' | 'edit' | 'bash' | 'search';
+export type ToolName = 'read' | 'write' | 'edit' | 'bash' | 'search' | 'skill' | 'task';
 // What the agent shows. The terminal UI implements it; tests record it.
 export interface AgentIO {
   text(delta: string): void;
@@ -18,6 +20,7 @@ export interface AgentIO {
   toolEnd(tool: ToolName, outcome: 'ok' | 'denied' | 'failed', summary: string): void;
   // Resolves false when the user says no, presses Esc, or the turn is interrupted.
   approve(request: { title: string; body: string }, signal: AbortSignal): Promise<boolean>;
+  confirmJob?(request: {title:string;body:string}, signal:AbortSignal):Promise<boolean>;
   note(text: string, tone?: 'info' | 'warn' | 'error'): void;
   // A limit pause: resolves true to go on (a typed ⏎), false to stop (Esc, a kill, or the turn ending).
   pause(text: string, signal: AbortSignal): Promise<boolean>;
@@ -26,6 +29,8 @@ export interface AgentOptions {
   root: string; permission: AgentPermission; model: LanguageModel; modelId: string; instructions: Instructions;
   reporter: Reporter; transcript: Transcript; io: AgentIO; redact: (text: string) => string;
   bashEnv: Record<string, string>; rg: string | null; maxSteps?: number;
+  extensions?: ExtensionAccess; models?: readonly string[]; makeModel?(id: string): Promise<LanguageModel>;
+  limits?: RunLimits; child?: boolean;
 }
 export type TurnResult = 'done' | 'interrupted' | 'failed';
 const DEFAULT_MAX_STEPS = 50, CONTEXT_WARN = 85;
@@ -64,10 +69,14 @@ function schema<T>(required: Fields, optional: Fields, describe: Record<string, 
 
 export class Agent {
   history: ModelMessage[] = [];
-  readonly limits = new RunLimits();
+  readonly limits: RunLimits;
+  private catalog: ExtensionCatalog = {items:[],notes:[],tokens:0};
+  private loadedSignature: string | null = null;
+  private currentWorst = 0;
   private warned = false;
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private options: AgentOptions) {}
+  constructor(private options: AgentOptions) { this.limits = options.limits ?? new RunLimits(); }
+  get extensionAccess(): ExtensionAccess | undefined { return this.options.extensions; }
   get root(): string { return this.options.root; }
   get modelId(): string { return this.options.modelId; }
   // The new model's context window applies from its first request; until then the card shows no stale percentage.
@@ -77,7 +86,7 @@ export class Agent {
   // Tool calls run one at a time, so approvals never overlap even when the model asks for several at once.
   private serial<T>(work: () => Promise<T>): Promise<T> { const next = this.queue.then(work, work); this.queue = next.then(() => undefined, () => undefined); return next; }
 
-  private run<T>(name: ToolName, summary: (input: T) => string, work: (input: T, signal: AbortSignal) => Promise<string>, gate?: (input: T) => Promise<{ title: string; body: string }>) {
+  private run<T>(name: ToolName, summary: (input: T) => string, work: (input: T, signal: AbortSignal) => Promise<string>, gate?: (input: T) => Promise<{ title: string; body: string }>, alwaysAsk = false) {
     return async (input: T, signal: AbortSignal): Promise<string> => this.serial(async () => {
       const { io, reporter, transcript, redact, permission } = this.options, shown = redact(summary(input));
       if (signal.aborted) return 'Interrupted by the user.';
@@ -85,11 +94,12 @@ export class Agent {
       io.toolStart(name, shown); void transcript.append({ kind: 'tool-call', tool: name, input: JSON.stringify(input) });
       let outcome: 'ok' | 'denied' | 'failed' = 'failed', output = '';
       try {
-        if (gate && permission === 'ask') {
+        if (gate && (permission === 'ask' || alwaysAsk)) {
           const request = await gate(input);
           // The daemon has the waiting status before the question is drawn, so /send can never answer it (D50).
           await reporter.status({ event: 'permission' });
-          const allowed = await io.approve({ title: redact(request.title), body: redact(request.body) }, signal);
+          const approve = alwaysAsk && io.confirmJob ? io.confirmJob.bind(io) : io.approve.bind(io);
+          const allowed = await approve({ title: redact(request.title), body: redact(request.body) }, signal);
           await reporter.status({ event: 'answered' });
           if (!allowed) { outcome = 'denied'; output = signal.aborted ? 'Interrupted by the user.' : 'The user denied this. Do not retry it; ask what to do instead.'; return output; }
         }
@@ -116,7 +126,13 @@ export class Agent {
       const ms = timeout(i.timeoutSeconds);
       return bashReport(await runBash(checkCommand(i.command), { cwd: this.options.root, env: this.options.bashEnv, timeoutMs: ms, signal }), ms);
     }, async i => bashPreview(checkCommand(i.command), timeout(i.timeoutSeconds)));
+    const skill = this.run<{name:string}>('skill', i=>i.name, async i=>(await this.extension(i.name,'skill')).body);
+    const task = this.run<{name:string;prompt:string}>('task', i=>i.name, async (i,signal)=>this.subagent(i.name,i.prompt,signal), async i=>this.taskPreview(i.name,i.prompt), true);
     return {
+      ...(this.options.extensions ? {
+        skill: tool({description:'Load an enabled skill by name. Only the listed name and description are initially loaded; use this to read its full instructions.',inputSchema:schema<{name:string}>({name:'string'}, {}, {}),execute:(input,{abortSignal})=>skill(input,abortSignal??new AbortController().signal)}),
+        ...(!this.options.child ? {task:tool({description:'Run an enabled subagent by name in a separate conversation. Its instructions, folder and permissions are fixed; only its final answer returns. The user confirms the job before it spends tokens.',inputSchema:schema<{name:string;prompt:string}>({name:'string',prompt:'string'}, {}, {}),execute:(input,{abortSignal})=>task(input,abortSignal??new AbortController().signal)})} : {}),
+      } : {}),
       read: tool({ description: 'Read a text file in the folder, with line numbers. Use offset and limit for long files.', inputSchema: schema<{ path: string; offset?: number; limit?: number }>({ path: 'string' }, { offset: 'number', limit: 'number' }, { path: 'File path, relative to the folder', offset: 'First line (1-based)', limit: 'Number of lines' }), execute: (input, { abortSignal }) => read(input, abortSignal ?? new AbortController().signal) }),
       write: tool({ description: 'Create or overwrite a whole file in the folder.', inputSchema: schema<{ path: string; content: string }>({ path: 'string', content: 'string' }, {}, { path: 'File path, relative to the folder', content: 'The complete new file content' }), execute: (input, { abortSignal }) => write(input, abortSignal ?? new AbortController().signal) }),
       edit: tool({ description: 'Replace exact text in a file. old must match exactly once unless replaceAll is true.', inputSchema: schema<{ path: string; old: string; new: string; replaceAll?: boolean }>({ path: 'string', old: 'string', new: 'string' }, { replaceAll: 'boolean' }, { path: 'File path, relative to the folder', old: 'Exact existing text', new: 'Replacement text', replaceAll: 'Replace every match' }), execute: (input, { abortSignal }) => edit(input, abortSignal ?? new AbortController().signal) }),
@@ -128,6 +144,7 @@ export class Agent {
   // One message from the user: model requests and tool rounds until the model answers, the user interrupts, or a limit
   // pause ends in a stop. Every request is checked first (limits.ts); every request's own usage is priced and counted.
   async turn(prompt: string, signal: AbortSignal): Promise<TurnResult> {
+    await this.refreshExtensions();
     const { io, reporter, transcript, redact } = this.options, user: ModelMessage = { role: 'user', content: prompt };
     void transcript.append({ kind: 'user', text: prompt });
     await reporter.status({ event: 'turn-start' });
@@ -136,7 +153,8 @@ export class Agent {
     signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop();
     let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId), open = 0;
     const totals = { input: 0, cached: 0, output: 0, reasoning: 0, cost: 0 as number | null, requests: 0 };
-    const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' });
+    const manifest = extensionManifest(this.catalog.items);
+    const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' }) + (manifest ? '\n\n# Enabled extensions (load a skill with skill; run an agent with task)\n' + manifest : '');
     const finishInterrupted = async (): Promise<TurnResult> => {
       // A request cut off after it was sent may still be billed; its worst case counts against this run and the budgets.
       if (open) { this.limits.chargeUnfinished(open); open = 0; }
@@ -155,7 +173,7 @@ export class Agent {
         // Before every request: caps, budgets and a known price, with a pause that asks when one says no (D49, D53).
         prepareStep: async ({ messages }) => {
           facts = await this.clearance(estimateTokens(system + JSON.stringify(messages)), controller);
-          open = this.limits.lastWorst;
+          open = this.limits.lastWorst; this.currentWorst = open;
           return undefined;
         },
         // The SDK's default handler prints the error, whose text can carry anything the provider sent, to stderr, which
@@ -167,7 +185,7 @@ export class Agent {
         else if (part.type === 'text-delta') { const text = redact(part.text); stepText += text; io.text(text); }
         else if (part.type === 'finish-step') {
           if (stepText) lastText = stepText;
-          open = 0;
+          open = 0; this.currentWorst = 0;
           const input = part.usage.inputTokens ?? 0, output = part.usage.outputTokens ?? 0, cached = Math.min(input, part.usage.inputTokenDetails.cacheReadTokens ?? 0), reasoning = part.usage.outputTokenDetails?.reasoningTokens ?? 0;
           const cost = requestCost(facts?.price ?? null, input, cached, output);
           this.limits.record(cost);
@@ -196,10 +214,69 @@ export class Agent {
       this.turnCost(totals);
       await reporter.status({ event: 'turn-failed', error: kind });
       return 'failed';
-    } finally { signal.removeEventListener('abort', stop); }
+    } finally { this.currentWorst = 0; signal.removeEventListener('abort', stop); }
   }
   // Asks the daemon for fresh facts and checks them until the request may go; a pause the user answers with Esc (or a
   // kill) stops the turn before anything is sent.
+  async refreshExtensions(): Promise<ExtensionCatalog> {
+    if (!this.options.extensions) return this.catalog;
+    try {
+      const catalog = await this.options.extensions.list(this.root);
+      const signature = JSON.stringify(catalog.items.filter(i=>i.enabled).map(i=>[i.id,i.name,i.description]));
+      if(this.loadedSignature!==null&&signature!==this.loadedSignature){this.clear();this.options.io.note('extension selection changed; conversation cleared so disabled instructions stop loading');}
+      this.loadedSignature=signature; this.catalog=catalog;
+    } catch { this.catalog={items:[],notes:["extensions couldn't load; none are in this prompt"],tokens:0}; this.options.io.note(this.catalog.notes[0]??'extensions unavailable','warn'); }
+    return this.catalog;
+  }
+  private async extension(name: string, kind: 'skill'|'agent'|'command'): Promise<ExtensionFile> {
+    const access=this.options.extensions; if(!access)throw new ToolError('Extensions unavailable');
+    const catalog=await access.list(this.root),item=catalog.items.find(i=>i.kind===kind&&i.name===name&&i.enabled);
+    if(!item)throw new ToolError('Extension is disabled or unavailable');
+    const file=await access.read(this.root,item.id);
+    if(!file.item.enabled||file.item.id!==item.id||file.item.kind!==kind)throw new ToolError('Extension is disabled or unavailable');
+    return file;
+  }
+  async slash(name: string, argument: string): Promise<string | null> {
+    if(!this.options.extensions)return null;
+    const catalog=await this.options.extensions.list(this.root);
+    if(!catalog.items.some(i=>i.kind==='command'&&i.name===name&&i.enabled))return null;
+    const file=await this.extension(name,'command');
+    return file.body.replace(/\$ARGUMENTS/g,()=>argument);
+  }
+  private taskModel(file: ExtensionFile): string {
+    const requested=file.item.model,models=this.options.models??[this.modelId];
+    if(requested&&models.includes(requested)&&(requested===this.modelId||this.options.makeModel))return requested;
+    if(requested&&['sonnet','opus','haiku'].includes(requested.toLowerCase())) {
+      const matches=models.filter(m=>m.toLowerCase().includes('claude')&&m.toLowerCase().includes(requested.toLowerCase()));
+      if(matches.length===1&&this.options.makeModel)return matches[0]??this.modelId;
+    }
+    return this.modelId;
+  }
+  private async taskPreview(name: string, prompt: string): Promise<{title:string;body:string}> {
+    if(Buffer.byteLength(prompt)>64*1024)throw new ToolError('Task prompt is too large');
+    const file=await this.extension(name,'agent'),modelId=this.taskModel(file),facts=await this.options.reporter.facts(modelId);
+    const low=estimateTokens(file.body+this.options.instructions.text+prompt+extensionManifest(this.catalog.items)),steps=this.options.maxSteps??DEFAULT_MAX_STEPS;
+    const high=steps*(low+steps*(maxOutputTokens(facts)+64*1024)+maxOutputTokens(facts));
+    const price=facts?.price?`$0–$${((high+steps*1400)*Math.max(facts.price.input,facts.price.output)/1e6).toFixed(2)}`:'price unknown; spend limits will pause before a request';
+    return {title:`task ${name}`,body:`AI Term · ${modelId}\nestimated ${low.toLocaleString()}–${high.toLocaleString()} tokens (up to ${steps} requests) · ${price}\nSame folder, Ask permissions, budget and caps as parent.\n${prompt}`};
+  }
+  private async subagent(name: string, prompt: string, signal: AbortSignal): Promise<string> {
+    const file=await this.extension(name,'agent'),modelId=this.taskModel(file);
+    const model=modelId===this.modelId?this.options.model:await this.options.makeModel?.(modelId)??this.options.model;
+    const parent=this.options,io:AgentIO={...parent.io,text:()=>undefined,toolStart:(...args)=>parent.io.toolStart(...args),toolEnd:(...args)=>parent.io.toolEnd(...args),approve:(...args)=>parent.io.approve(...args),pause:(...args)=>parent.io.pause(...args),note:(text,tone)=>parent.io.note(`${name}: ${text}`,tone)};
+    const reporter:Reporter={facts:id=>parent.reporter.facts(id),usage:(id,tokens)=>parent.reporter.usage(id,tokens),status:async update=>{if(['permission','answered','paused','tool-start','tool-finish'].includes(update.event))await parent.reporter.status(update);}};
+    const child=new Agent({...parent,model,modelId,io,reporter,child:true,limits:this.limits,instructions:{...parent.instructions,text:parent.instructions.text+'\n\n# Subagent instructions\n'+file.body},transcript:new ChildTranscript(null,parent.redact,()=>parent.io.note('subagent transcript unavailable','error'))});
+    // The parent request has been sent but its usage may arrive only after this tool. Reserve its worst case while
+    // the child spends, so neither caps nor budgets temporarily forget that in-flight request.
+    this.limits.reserved+=this.currentWorst;
+    try {
+      const result=await child.turn(prompt,signal);
+      if(result!=='done')return result==='interrupted'?'Subagent interrupted.':'Subagent failed; no final answer.';
+      const answer=child.history.at(-1);
+      if(answer?.role!=='assistant')return 'Subagent finished without a text answer.';
+      return typeof answer.content==='string'?answer.content:answer.content.filter(p=>p.type==='text').map(p=>p.text).join('')||'Subagent finished without a text answer.';
+    } finally { this.limits.reserved-=this.currentWorst; }
+  }
   private async clearance(inputTokens: number, controller: AbortController): Promise<AgentFacts | null> {
     const { io, reporter } = this.options;
     for (;;) {

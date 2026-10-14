@@ -1,3 +1,5 @@
+import { diffFrame, type Frame } from '../client/tui/grid.js';
+import type { ExtensionsPanel } from '../client/tui/extensions-panel.js';
 import { channels, type ColorName, type Theme } from '../client/tui/theme.js';
 import { textWidth } from '../shared/unicode-width.js';
 import { plain } from './display.js';
@@ -12,6 +14,8 @@ export interface Output { write(text: string): unknown; columns?: number; rows?:
 export class Screen {
   private atLineStart = true;
   private promptShown = false;
+  private popupFrame: Frame | null = null;
+  private popupShown = false;
   constructor(private readonly out: Output, private readonly theme: Theme) {}
   paint(color: ColorName, text: string, bold = false): string {
     const [r, g, b] = channels(this.theme.colors[color]);
@@ -30,6 +34,12 @@ export class Screen {
     if (files.length) this.line(this.paint('ink-3', `· read ${plain(files.join(', '))}`));
     this.line(this.paint('ink-3', '/help · Esc interrupts · Ctrl+C twice quits'));
   }
+  extensionsBanner(count:number,tokens:number):void { this.note(`extensions: ${count} on · ≈${tokens} tokens/request · /skills /agents`); }
+  popup(panel:ExtensionsPanel):void {
+    this.hidePrompt();if(!this.popupShown){this.out.write('\x1b[?1049h\x1b[?25l');this.popupShown=true;this.popupFrame=null;}
+    const frame=panel.blank(this.theme,this.width,Math.max(8,this.out.rows??24));this.out.write(diffFrame(frame,this.popupFrame,this.theme));this.popupFrame=frame;
+  }
+  closePopup():void {if(!this.popupShown)return;this.out.write('\x1b[?1049l\x1b[?25h');this.popupShown=false;this.popupFrame=null;}
   user(text: string): void { this.line(''); for (const [i, row] of plain(text).split('\n').entries()) this.line(`${this.paint('accent', i ? '  ' : '› ')}${row}`); }
   working(): void { this.line(this.paint('ink-3', '◐ working · Esc interrupts')); }
   text(delta: string): void { this.hidePrompt(); this.raw(plain(delta)); }
@@ -51,11 +61,11 @@ export class Screen {
     for (let i = 0; i < rows.length; i += size) pages.push(rows.slice(i, i + size));
     return pages.length ? pages : [[]];
   }
-  approvalPage(title: string, pages: string[][], index: number): void {
+  approvalPage(title: string, pages: string[][], index: number, job=false): void {
     const last = index === pages.length - 1, page = pages.length > 1 ? ` · page ${index + 1} of ${pages.length}` : '';
     this.line(this.paint('status-waiting', `● allow ${title}?${page}`, true));
     for (const row of pages[index] ?? []) this.line(this.paint(row.startsWith('- ') ? 'status-error' : row.startsWith('+ ') ? 'status-done' : 'ink-2', `  ${row}`));
-    this.line(this.paint('ink-3', last ? '  y allow · n deny · Esc deny and stop' : '  space shows more · n deny · Esc deny and stop · y works on the last page'));
+    this.line(this.paint('ink-3', last ? job ? '  ⏎ run job · Esc cancel' : '  y allow · n deny · Esc deny and stop' : job ? '  space shows more · Esc cancel · ⏎ works on the last page' : '  space shows more · n deny · Esc deny and stop · y works on the last page'));
   }
   answered(allowed: boolean): void { this.line(allowed ? this.paint('ink-3', '  ✓ allowed') : this.paint('status-waiting', '  ✗ denied')); }
   note(text: string, tone: 'info' | 'warn' | 'error' = 'info'): void { this.line(tone === 'error' ? this.paint('status-error', `✗ ${plain(text)}`) : tone === 'warn' ? this.paint('status-waiting', `● ${plain(text)}`) : this.paint('ink-3', `· ${plain(text)}`)); }

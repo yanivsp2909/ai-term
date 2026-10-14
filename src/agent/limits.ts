@@ -29,6 +29,7 @@ export function requestCost(price: ModelPrice | null, input: number, cached: num
 export class RunLimits {
   turns = 0;
   spent = 0;
+  reserved = 0;
   private caps: AgentCaps | null = null;
   private base: AgentCaps | null = null;
   private unpriced = new Set<string>();
@@ -54,8 +55,8 @@ export class RunLimits {
       if (!limited || this.unpriced.has(facts.model)) return null;
       return { text: `no price known for ${facts.model}, so spend limits can't be checked · mark the deployment's model in /settings, or ⏎ goes on without them for this model this run · Esc stops`, onContinue: () => { this.unpriced.add(facts.model); } };
     }
-    const next = worstCase(facts.price, inputTokens, maxOutputTokens(facts)), extra = this.unreported;
-    if (caps.spendUsd !== null && this.spent + next > caps.spendUsd) return { text: `cap reached: ${usd(caps.spendUsd)} this run · spent ${usd(this.spent)} · the next request could cost up to ${usd(next)} · ⏎ allows ${usd(base.spendUsd ?? caps.spendUsd)} more · Esc stops`, onContinue: () => { caps.spendUsd = (caps.spendUsd ?? 0) + (base.spendUsd ?? caps.spendUsd ?? 0); } };
+    const next = worstCase(facts.price, inputTokens, maxOutputTokens(facts)), extra = this.unreported + this.reserved;
+    if (caps.spendUsd !== null && this.spent + this.reserved + next > caps.spendUsd) return { text: `cap reached: ${usd(caps.spendUsd)} this run · spent ${usd(this.spent)} · the next request could cost up to ${usd(next)} · ⏎ allows ${usd(base.spendUsd ?? caps.spendUsd)} more · Esc stops`, onContinue: () => { caps.spendUsd = (caps.spendUsd ?? 0) + (base.spendUsd ?? caps.spendUsd ?? 0); } };
     for (const [limit, spent, label] of [[facts.budgets.daily, facts.spent.day, 'today'], [facts.budgets.weekly, facts.spent.week, 'this week'], [facts.budgets.monthly, facts.spent.month, 'this month']] as const)
       if (limit !== null && spent + extra + next > limit) return { text: `budget: ${label} ${usd(spent)} of ${usd(limit)} · the next request could cost up to ${usd(next)} · raise it on the homepage (b), then ⏎ checks again · Esc stops` };
     this.lastWorst = next;

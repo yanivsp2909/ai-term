@@ -58,7 +58,7 @@ export async function foundryWireFor(facts: (model: string) => Promise<AgentFact
 }
 export interface AgentTerminal {
   stdin: NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?(raw: boolean): unknown };
-  stdout: NodeJS.WritableStream & { columns?: number; on(event: 'resize', listener: () => void): unknown };
+  stdout: NodeJS.WritableStream & { columns?: number; rows?:number; on(event: 'resize', listener: () => void): unknown };
   stderr: NodeJS.WritableStream;
 }
 export async function runAgent(args: readonly string[], terminal: AgentTerminal = { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr }, env: NodeJS.ProcessEnv = process.env): Promise<number> {
@@ -70,12 +70,15 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   (globalThis as { AI_SDK_LOG_WARNINGS?: boolean }).AI_SDK_LOG_WARNINGS = false;
   const { key, endpoint } = secrets, redact = redactor(key);
   const root = await realpath(process.cwd()), bashEnv = buildBashEnv(env), rg = await findRipgrep(bashEnv.PATH);
-  const screen = new Screen({ write: text => terminal.stdout.write(text), get columns() { return terminal.stdout.columns; } }, createTheme(parsed.theme === 'auto' ? 'graphite' : parsed.theme));
+  const screen = new Screen({ write: text => terminal.stdout.write(text), get columns() { return terminal.stdout.columns; }, get rows() { return terminal.stdout.rows; } }, createTheme(parsed.theme === 'auto' ? 'graphite' : parsed.theme));
   const reporter = new HttpReporter(secrets.reporter, () => screen.note("status updates aren't reaching AI Term; its card may lag", 'error'));
   const transcript = new Transcript(parsed.transcript, redact, () => screen.note("the transcript couldn't be saved; the conversation goes on", 'error'));
   const instructions = await loadInstructions(root);
   // A Foundry deployment's wire (Responses or Chat Completions) comes from its test, through the daemon's facts.
   const makeModel = async (id: string) => { const wire = parsed.provider === 'foundry' ? await foundryWireFor(id => reporter.facts(id), id) : undefined; return makeProviderModel({ provider: parsed.provider, model: id, key, endpoint, ...(wire ? { wire } : {}) }); };
+  let extensionCount=0,extensionCost=0;
+  try {const catalog=await reporter.list(root);extensionCount=catalog.items.filter(i=>i.enabled).length;extensionCost=catalog.tokens;for(const note of catalog.notes)screen.note(note,'warn');}
+  catch {screen.note('extensions unavailable; /skills can retry','warn');}
   let firstModel;
   try { firstModel = await makeModel(parsed.model); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof WireError ? error.message : 'the model could not be set up'}\n`); return 1; }
   return new Promise<number>(resolveExit => {
@@ -88,7 +91,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, bashEnv, rg }),
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, bashEnv, rg, extensions: reporter, models: parsed.models, makeModel }),
       quit: () => { restore(); void transcript.close().then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);
@@ -98,6 +101,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     terminal.stdin.on('data', (data: string | Buffer) => app.input(String(data)));
     terminal.stdin.on('end', () => app.close());
     screen.banner(parsed.model, root, parsed.permission, instructions.files);
+    screen.extensionsBanner(extensionCount,extensionCost);
     for (const note of instructions.notes) screen.note(note);
     app.start(parsed.firstMessage);
   });

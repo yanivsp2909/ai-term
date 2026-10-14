@@ -2,7 +2,7 @@
 // pasted or /send-ed "y" can never answer an approval. Cursor keys and other sequences are read and dropped.
 export type KeyEvent =
   | { kind: 'text'; text: string } | { kind: 'paste'; text: string } | { kind: 'enter' } | { kind: 'newline' }
-  | { kind: 'backspace' } | { kind: 'escape' } | { kind: 'ctrl-c' } | { kind: 'ctrl-d' } | { kind: 'ctrl-k' };
+  | { kind: 'up'|'down'|'left'|'right'|'page-up'|'page-down' } | { kind: 'backspace' } | { kind: 'escape' } | { kind: 'ctrl-c' } | { kind: 'ctrl-d' } | { kind: 'ctrl-k' };
 const PASTE_START = '\x1b[200~', PASTE_END = '\x1b[201~', MAX_PASTE_CHARS = 1024 * 1024;
 
 export class KeyReader {
@@ -35,7 +35,9 @@ export class KeyReader {
           if (!match) { if (/^[0-?]*[ -/]*$/.test(input.slice(2)) && input.length < 32) { flush(); this.pending = input; return events; } input = input.slice(2); continue; }
           const sequence = input.slice(0, 2 + match[0].length);
           flush();
-          if (sequence === '\x1b[13u') events.push({ kind: 'enter' });
+          const cursor:Record<string,'up'|'down'|'left'|'right'|'page-up'|'page-down'>={'\x1b[A':'up','\x1b[B':'down','\x1b[C':'right','\x1b[D':'left','\x1bOA':'up','\x1bOB':'down','\x1bOC':'right','\x1bOD':'left','\x1b[5~':'page-up','\x1b[6~':'page-down'};
+          if (cursor[sequence]) events.push({kind:cursor[sequence]});
+          else if (sequence === '\x1b[13u') events.push({ kind: 'enter' });
           else if (sequence === '\x1b[27u') events.push({ kind: 'escape' });
           else if (sequence === '\x1b[99;5u') events.push({ kind: 'ctrl-c' });
           else if (sequence === '\x1b[107;5u') events.push({ kind: 'ctrl-k' });
