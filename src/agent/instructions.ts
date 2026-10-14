@@ -1,0 +1,63 @@
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { dirname, relative } from 'node:path';
+import { resolveInside, JailError } from './jail.js';
+import { isFsError } from '../shared/paths.js';
+
+const FILE_MAX_BYTES = 64 * 1024, TOTAL_MAX_BYTES = 256 * 1024, IMPORT_DEPTH = 3;
+
+export interface Instructions { text: string; files: string[]; notes: string[] }
+
+// The folder's AGENTS.md, then CLAUDE.md with its `@path` import lines (a line holding only @path, the form CLAUDE.md
+// uses to pull in AGENTS.md) resolved inside the folder. Each file is read once, whatever imports it again; sizes and
+// import depth are bounded; nothing outside the folder is read (D48's folders come in v0.4.3).
+export async function loadInstructions(root: string): Promise<Instructions> {
+  const seen = new Set<string>(), files: string[] = [], notes: string[] = [];
+  let total = 0;
+  const read = async (path: string, depth: number): Promise<string | null> => {
+    let real: string;
+    try { real = await resolveInside(root, path); } catch (error) { if (error instanceof JailError) { notes.push(`skipped ${path}: outside the folder`); return null; } throw error; }
+    if (seen.has(real)) return null;
+    let text: string;
+    try {
+      const file = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const info = await file.stat();
+        if (!info.isFile()) return null;
+        const buffer = Buffer.alloc(Math.min(info.size, FILE_MAX_BYTES)), { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+        text = buffer.subarray(0, bytesRead).toString('utf8');
+        if (info.size > FILE_MAX_BYTES) notes.push(`${relative(root, real)} cut at ${FILE_MAX_BYTES / 1024} KiB`);
+      } finally { await file.close(); }
+    } catch (error) { if (isFsError(error, 'ENOENT')) return null; notes.push(`couldn't read ${relative(root, real)}`); return null; }
+    if (total + Buffer.byteLength(text) > TOTAL_MAX_BYTES) { notes.push(`skipped ${relative(root, real)}: instructions over ${TOTAL_MAX_BYTES / 1024} KiB`); return null; }
+    seen.add(real); files.push(relative(root, real)); total += Buffer.byteLength(text);
+    const lines: string[] = [];
+    for (const line of text.split('\n')) {
+      const target = line.trim().match(/^@(\S+)$/)?.[1];
+      if (target === undefined) { lines.push(line); continue; }
+      if (depth >= IMPORT_DEPTH) { notes.push(`skipped @${target}: imports nest too deep`); continue; }
+      const imported = await read(resolveFrom(dirname(real), target), depth + 1);
+      if (imported !== null) lines.push(imported);
+    }
+    return lines.join('\n');
+  };
+  const parts: string[] = [];
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+    const text = await read(name, 0);
+    if (text !== null && text.trim()) parts.push(`## ${name}\n${text.trim()}`);
+  }
+  return { text: parts.join('\n\n'), files, notes };
+}
+function resolveFrom(folder: string, target: string): string { return target.startsWith('/') ? target : `${folder}/${target}`; }
+
+export function systemPrompt(root: string, instructions: Instructions, tools: { search: string }): string {
+  return [
+    "You are AI Term's coding agent, working in one folder on the user's Mac: " + root,
+    'Tools: read, write, edit, bash and search. File paths are relative to that folder; the file tools cannot reach outside it.',
+    `search: ${tools.search}`,
+    'bash runs /bin/sh -c in the folder with a minimal environment and no API keys; long-running or interactive commands time out.',
+    'The user may approve or deny each write, edit and bash call. If one is denied, do not retry it; ask what to do instead.',
+    'Read before you edit. Keep replies short and plain: no tables, no headings unless asked.',
+    ...(instructions.text ? ['', '# Project instructions from the folder', instructions.text] : []),
+  ].join('\n');
+}

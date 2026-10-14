@@ -38,6 +38,8 @@ async function main(): Promise<void> {
         await runDaemon(entry);
         return;
     }
+    // AI Term's own agent (v0.4.1): the daemon starts this in a PTY with the key in its env only (env.ts).
+    if(args[0]==='agent'){const {runAgent}=await import('../agent/main.js');const code=await runAgent(args.slice(1));process.exit(code);}
     if(args.length===1&&args[0]==='status-line'){const {statusLine}=await import('./status-line.js');await statusLine();return;}
     // Codex runs this after every turn; it must exit 0 quietly whatever happens, so a failure here never reaches Codex.
     if(args[0]==='status-notify'){try{const {statusNotify}=await import('./status-notify.js');await statusNotify(args.slice(1));}catch{/* Intentionally silent: Codex shows notify failures to the user. */}process.exitCode=0;return;}
