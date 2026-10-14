@@ -14,11 +14,14 @@ import { Logger } from '../../src/daemon/log.js';
 import { tokenColors } from '../../src/shared/theme-tokens.js';
 import { channels, pasteErrors, type TerminalSize, type MenuAction } from '../shared/api.js';
 import { MAX_COPY_BYTES, PasteRefusal, validateAppTheme, validateEmpty, validateOne, validatePaste, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
-import { CSP, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
+import { CSP, debugSwitch, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
+import { describeExit, errorTag, inputAfterExit, rendererGone, startupFailed } from './failures.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runtime = runtimePaths(fileURLToPath(import.meta.url),app.isPackaged);
 const root = runtime.root;
+const refused = debugSwitch(name => app.commandLine.hasSwitch(name), app.isPackaged);
+if (refused) { console.error(`AI Term refuses --${refused}`); app.exit(1); }
 app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-component-update');
 // Tests set this to their disposable HOME before Electron becomes ready.
@@ -30,16 +33,18 @@ let ended = false;
 const appToken = randomBytes(32).toString('hex');
 let closeNote = false;
 let log: Logger;
+let logReady = false;
 const lifecycle=new PtyLifecycle(()=>{failure('Desktop terminal cleanup failed');});
 let quitting=false,quitReady=false;
 function output(data: string): void { if (window && !window.isDestroyed()) window.webContents.send(channels.output, data); }
-function failure(message: string): void { log.error(message); output(`\r\n✗ ${message}\r\n`); }
+// The terminal shows the fixed message; app.log also keeps the error's code or class (failures.ts).
+function failure(message: string, error?: unknown): void { log.error(error === undefined ? message : `${message} (${errorTag(error)})`); output(`\r\n✗ ${message}\r\n`); }
 function trusted(event: IpcMainEvent | IpcMainInvokeEvent): void {
   if (!window || window.isDestroyed() || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== window.webContents.getURL()) throw new Error('Untrusted terminal sender');
 }
 function resize(size: TerminalSize): void {
   if(quitting)throw new Error('App is closing');
-  if (ended) throw new Error('Terminal has exited');
+  if (inputAfterExit(ended) === 'drop') return;
   if (terminal) { terminal.resize(size.cols, size.rows); return; }
   // CLI startup inherits its caller's env today. Electron runs the built CLI in Node mode;
   // this flag also follows the CLI's normal detached daemon spawn. No key lookup occurs here.
@@ -50,17 +55,18 @@ function resize(size: TerminalSize): void {
   const child = terminal;
   lifecycle.track(child);
   child.onData(data => { if (terminal === child) output(data); });
-  child.onExit(({ exitCode }) => {
+  child.onExit(({ exitCode, signal }) => {
     if (terminal !== child) return;
     terminal = undefined; ended = true;
-    output(`\r\n■ ai exited (${exitCode}) · close the window to finish\r\n`);
-    if (exitCode !== 0) log.error('Desktop ai process exited unsuccessfully');
+    const exit = describeExit({ exitCode, ...(signal === undefined ? {} : { signal }) });
+    output(`\r\n${exit.failed ? '✗' : '■'} ${exit.text} · close the window to finish\r\n`);
+    if (exit.failed) log.error(`Desktop ${exit.text}`);
   });
 }
 function command(action: AppCommand): void {
   if (!terminal || !window || window.isDestroyed()) return;
   if (action !== 'theme-changed') menuAction('focus-terminal');
-  try { terminal.write(encodeAppControl(appToken, action)); } catch { failure('Desktop command failed'); }
+  try { terminal.write(encodeAppControl(appToken, action)); } catch (error) { failure('Desktop command failed', error); }
 }
 function menuAction(action: MenuAction): void { window?.webContents.send(channels.menuAction, action); }
 async function manageCommand(install:boolean):Promise<void> {
@@ -70,16 +76,17 @@ async function manageCommand(install:boolean):Promise<void> {
     if(install){const answer=await dialog.showMessageBox({type:'question',message:'Install ai command?',detail:`Create if missing: ${join(plan.home,'.local')}\nCreate if missing: ${join(plan.home,'.local/bin')}\nCreate symlink: ${plan.link}\nPointing to: ${plan.target}\nExisting foreign entries are refused. No sudo or shell profile changes.`,buttons:['Cancel','Install'],defaultId:0,cancelId:0});if(answer.response!==1)return;await installCommand(plan);}
     else await uninstallCommand(plan);
     await dialog.showMessageBox({type:'info',message:install?'ai command installed':'ai command uninstalled',detail:install?`${plan.link} → ${plan.target}\nAdd ~/.local/bin to your Terminal PATH if needed.`:'Only this app’s exact symlink was eligible for removal.'});
-  }catch(error){log.error('Command installation operation failed');await dialog.showMessageBox({type:'error',message:'Could not change ai command',detail:error instanceof Error?error.message:'Command operation failed'});}
+  }catch(error){log.error(`Command installation operation failed (${errorTag(error)})`);await dialog.showMessageBox({type:'error',message:'Could not change ai command',detail:error instanceof Error?error.message:'Command operation failed'});}
 }
 function registerIpc(): void {
   const receive = (channel: string, action: (args: unknown[]) => void): void => {
     ipcMain.on(channel, (event, ...args: unknown[]) => {
-      try { trusted(event); action(args); } catch { failure('Terminal message refused or operation failed'); }
+      try { trusted(event); action(args); } catch (error) { failure('Terminal message refused or operation failed', error); }
     });
   };
   receive(channels.write, args => {
     const data = validateWrite(validateOne(args));
+    if (inputAfterExit(ended) === 'drop') return;
     if (!terminal) throw new Error('Terminal unavailable');
     terminal.write(data);
   });
@@ -92,16 +99,18 @@ function registerIpc(): void {
   receive(channels.theme, args => { validateEmpty(args); window?.webContents.send(channels.theme, nativeTheme.shouldUseDarkColors ? 'dark' : 'light'); });
   ipcMain.handle(channels.openUrl, async (event, ...args: unknown[]) => {
     try { trusted(event); await shell.openExternal(validateUrl(validateOne(args))); }
-    catch { log.error('External link refused or failed'); throw new Error('Could not open http/https link'); }
+    // eslint-disable-next-line preserve-caught-error -- IPC exposes only fixed reasons; app.log keeps the error code.
+    catch (error) { log.error(`External link refused or failed (${errorTag(error)})`); throw new Error('Could not open http/https link'); }
   });
   ipcMain.handle(channels.copy, async (event, ...args: unknown[]) => {
     try { trusted(event); await clipboard.writeText(validateWrite(validateOne(args), MAX_COPY_BYTES)); }
-    catch { log.error('Clipboard copy refused or failed'); throw new Error('Could not copy terminal selection'); }
+    // eslint-disable-next-line preserve-caught-error -- IPC exposes only fixed reasons; app.log keeps the error code.
+    catch (error) { log.error(`Clipboard copy refused or failed (${errorTag(error)})`); throw new Error('Could not copy terminal selection'); }
   });
   ipcMain.handle(channels.paste, async (event, ...args: unknown[]) => {
     try { trusted(event); validateEmpty(args); return validatePaste(await clipboard.readText()); }
     catch (error) {
-      log.error('Clipboard paste refused or failed');
+      log.error(`Clipboard paste refused or failed (${errorTag(error)})`);
       // eslint-disable-next-line preserve-caught-error -- IPC must expose only fixed reasons, never native clipboard errors.
       throw new Error(error instanceof PasteRefusal ? error.message : pasteErrors.unavailable);
     }
@@ -133,13 +142,13 @@ function createWindow(): Promise<void> {
     const child = terminal; terminal = undefined;
     if (child) lifecycle.stop(child);
   });
-  window.webContents.on('render-process-gone', () => { log.error('Desktop renderer exited'); window?.close(); });
+  window.webContents.on('render-process-gone', (_event, details) => { log.error(rendererGone(details)); window?.close(); });
   return window.loadFile(join(here, '../renderer/index.html'));
 }
 void app.whenReady().then(async () => {
   const dataPath = app.getPath('userData');
   mkdirSync(dataPath, { recursive: true, mode: 0o700 });
-  log = new Logger(join(dataPath, 'app.log'));
+  log = new Logger(join(dataPath, 'app.log')); logReady = true;
   log.on('writeFailed', () => { console.error('Desktop log could not be written'); });
   try { writeFileSync(join(dataPath, 'close-note-shown'), '', {flag:'wx',mode:0o600}); closeNote = true; }
   catch (error) { if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) { log.error('Desktop first-use note could not be saved'); closeNote = true; } }
@@ -151,9 +160,9 @@ void app.whenReady().then(async () => {
     window.setBackgroundColor(tokenColors(mode).bg);
     window.webContents.send(channels.theme, mode);
   });
-  app.on('activate', () => { if (!window&&!quitting) void createWindow().catch(() => { log.error('Desktop window could not reopen'); app.quit(); }); });
+  app.on('activate', () => { if (!window&&!quitting) void createWindow().catch((error: unknown) => { startupFailed(error, { log, showErrorBox: (title, body) => { dialog.showErrorBox(title, body); }, quit: () => { app.quit(); } }); }); });
   await createWindow();
-}).catch(() => { console.error('AI Term desktop startup failed'); app.quit(); });
+}).catch((error: unknown) => { startupFailed(error, { ...(logReady ? { log } : {}), showErrorBox: (title, body) => { dialog.showErrorBox(title, body); }, quit: () => { app.quit(); } }); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit',event=>{
  if(quitReady)return;event.preventDefault();if(quitting)return;quitting=true;
