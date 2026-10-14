@@ -17,6 +17,7 @@ const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 it('the key reader keeps pastes whole (even split across reads) and drops cursor sequences', () => {
+  // Reproduces the inherited assertion conflict: v0.4.3 needs plain arrows for popup navigation.
   const reader = new KeyReader();
   expect(reader.push('ab\x1b[200~y\nmore')).toEqual([{ kind: 'text', text: 'ab' }]);
   expect(reader.push(' text\x1b[20')).toEqual([]);
