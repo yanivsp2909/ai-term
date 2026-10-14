@@ -69,6 +69,7 @@ export class SessionManager extends EventEmitter {
     private size = { cols: 85, rows: 30 };
     private saving: Promise<void> = Promise.resolve();
     private closing = false;
+    private shutDown = false;
     private warnings = new Map<string, string>();
     // B24's one homepage note, sent after each sessions.list for this daemon's lifetime.
     notice: string | null = null;
@@ -184,6 +185,8 @@ export class SessionManager extends EventEmitter {
     activeCount(): number { return this.list().filter(s => !['exited','error'].includes(s.status)).length; }
     private event(event: SessionEvent): void { this.emit('event', event); }
     private persist(): Promise<void> {
+        // After shutdown's last write nothing else may land: a PTY can still deliver data or its exit late.
+        if (this.shutDown) return this.saving;
         const data = { sessions: [...this.sessions.values()].map(s => ({ ...s.info, pid: s.host?.pty.pid ?? null, recipe: { engine: s.info.engine, model: s.info.model, auth: s.info.auth.kind==='key'?{kind:'key',keyId:s.info.auth.keyId}:{ kind: 'account' }, cwd: s.info.cwd, permission: s.info.permission, ...(s.info.effort!==undefined?{effort:s.info.effort}:{}), ...(s.info.conversationId?{conversationId:s.info.conversationId}:{}) } })), worktrees: [...this.worktreeRecords.values()] };
         this.saving = this.saving.then(async () => {
             try { await this.writeState(this.paths.state, data); }
@@ -695,8 +698,10 @@ export class SessionManager extends EventEmitter {
         // Each exit records itself in its session's output chain; the last state write must come after all of them, or
         // it can land after the caller already removed the folder (seen as ENOTEMPTY in tests/agent-retry).
         await Promise.allSettled([...this.sessions.values()].map(live=>live.output));
-        for(const timer of this.taskTimers.values())clearTimeout(timer);this.taskTimers.clear();
-        await this.persist();
+        // A task total still waiting for its coalesced write is saved now; otherwise only the queue is awaited.
+        const pending=this.taskTimers.size>0;for(const timer of this.taskTimers.values())clearTimeout(timer);this.taskTimers.clear();
+        await (pending?this.persist():this.saving);
+        this.shutDown = true;
         await this.ledger?.close();
         try{await this.mcp.shutdown();}catch{this.log.error('MCP shutdown failed');}
         for(const live of this.sessions.values()){live.outputClock?.dispose();live.mirror.dispose();}
