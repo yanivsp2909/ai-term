@@ -45,7 +45,13 @@ export class AppControlFilter {
         this.previous = byte;
         continue;
       }
-      if (!this.pending) { if (byte === 27) this.pending = '\x1b'; else bytes.push(byte); continue; }
+      if (byte === 27) {
+        // Escape can precede a menu shortcut (vim especially). Reconsider this
+        // byte as a fresh prefix instead of leaking the next OSC/token as data.
+        bytes.push(...Buffer.from(this.pending.slice(this.emitted), 'latin1'));
+        this.pending = '\x1b'; this.emitted = 0; continue;
+      }
+      if (!this.pending) { bytes.push(byte); continue; }
       this.pending += String.fromCharCode(byte);
       if (this.pending === PREFIX) { this.control = true; this.previous = byte; continue; }
       if (this.pending === PASTE_START || this.pending === PASTE_END) {
