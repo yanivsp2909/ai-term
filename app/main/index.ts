@@ -1,4 +1,7 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import {homedir} from 'node:os';
+import {runtimePaths,runtimeEnv} from '../../src/shared/runtime-paths.js';
+import {commandPlan,installCommand,uninstallCommand} from './command-install.js';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -13,7 +16,10 @@ import { MAX_COPY_BYTES, PasteRefusal, validateAppTheme, validateEmpty, validate
 import { CSP, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = resolve(here, '../../..');
+const runtime = runtimePaths(fileURLToPath(import.meta.url),app.isPackaged);
+const root = runtime.root;
+app.commandLine.appendSwitch('disable-background-networking');
+app.commandLine.appendSwitch('disable-component-update');
 // Tests set this to their disposable HOME before Electron becomes ready.
 if (process.env.AI_TERM_APP_DATA) app.setPath('userData', resolve(process.env.AI_TERM_APP_DATA));
 app.setName('AI Term');
@@ -33,9 +39,9 @@ function resize(size: TerminalSize): void {
   if (terminal) { terminal.resize(size.cols, size.rows); return; }
   // CLI startup inherits its caller's env today. Electron runs the built CLI in Node mode;
   // this flag also follows the CLI's normal detached daemon spawn. No key lookup occurs here.
-  terminal = spawn(process.execPath, [join(root, 'dist/cli/index.js')], {
+  terminal = spawn(app.isPackaged?runtime.node:process.execPath, [runtime.entry], {
     name: 'xterm-256color', cols: size.cols, rows: size.rows, cwd: root,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', TERM_PROGRAM: 'AI_Term', COLORTERM: 'truecolor', AI_TERM_APP_TOKEN: appToken },
+    env: runtimeEnv({ ...process.env, TERM_PROGRAM: 'AI_Term', COLORTERM: 'truecolor', AI_TERM_APP_TOKEN: appToken }),
   });
   const child = terminal;
   child.onData(data => { if (terminal === child) output(data); });
@@ -52,6 +58,15 @@ function command(action: AppCommand): void {
   try { terminal.write(encodeAppControl(appToken, action)); } catch { failure('Desktop command failed'); }
 }
 function menuAction(action: MenuAction): void { window?.webContents.send(channels.menuAction, action); }
+async function manageCommand(install:boolean):Promise<void> {
+  if(!app.isPackaged){await dialog.showMessageBox({type:'info',message:'Install the packaged AI Term.app first.'});return;}
+  try{
+    const plan=commandPlan(homedir(),runtime.command);
+    if(install){const answer=await dialog.showMessageBox({type:'question',message:'Install ai command?',detail:`Create missing real directories: ${join(plan.home,'.local/bin')}\nCreate symlink: ${plan.link}\nPointing to: ${plan.target}\nExisting foreign entries are refused. No sudo or shell profile changes.`,buttons:['Cancel','Install'],defaultId:0,cancelId:0});if(answer.response!==1)return;await installCommand(plan);}
+    else await uninstallCommand(plan);
+    await dialog.showMessageBox({type:'info',message:install?'ai command installed':'ai command uninstalled',detail:install?`${plan.link} → ${plan.target}\nAdd ~/.local/bin to your Terminal PATH if needed.`:'Only this app’s exact symlink was eligible for removal.'});
+  }catch(error){log.error('Command installation operation failed');await dialog.showMessageBox({type:'error',message:'Could not change ai command',detail:error instanceof Error?error.message:'Command operation failed'});}
+}
 function registerIpc(): void {
   const receive = (channel: string, action: (args: unknown[]) => void): void => {
     ipcMain.on(channel, (event, ...args: unknown[]) => {
@@ -123,7 +138,7 @@ void app.whenReady().then(async () => {
   log.on('writeFailed', () => { console.error('Desktop log could not be written'); });
   try { writeFileSync(join(dataPath, 'close-note-shown'), '', {flag:'wx',mode:0o600}); closeNote = true; }
   catch (error) { if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) { log.error('Desktop first-use note could not be saved'); closeNote = true; } }
-  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenu({command,action:menuAction,theme:source=>{nativeTheme.themeSource=source;},themeSource:nativeTheme.themeSource})));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenu({command,action:menuAction,theme:source=>{nativeTheme.themeSource=source;},themeSource:nativeTheme.themeSource,install:()=>{void manageCommand(true);},uninstall:()=>{void manageCommand(false);}})));
   registerIpc();
   nativeTheme.on('updated', () => {
     if (!window || window.isDestroyed()) return;

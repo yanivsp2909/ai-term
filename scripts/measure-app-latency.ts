@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { useUnicode11, textWidth } from '../src/shared/unicode-width.js';
 import type { TerminalApi } from '../app/shared/api.js';
+import {fileURLToPath} from 'node:url';
 interface RecordItem { time: number; kind: 'output' | 'key'; data: string }
 interface Capture { records: RecordItem[]; stop: () => void }
 declare global { interface Window { terminal: TerminalApi; latencyCapture?: Capture } }
@@ -35,7 +36,7 @@ async function cleanup(home: string): Promise<void> {
   }
   await rm(home, { recursive: true, force: true });
 }
-async function measure(records: RecordItem[], cols: number, rows: number): Promise<{ p50: number; p95: number; p99: number; samples: number; max: number }> {
+export async function measure(records: RecordItem[], cols: number, rows: number): Promise<{ p50: number; p95: number; p99: number; samples: number; max: number }> {
   const terminal = new headless.Terminal({ cols, rows, allowProposedApi: true }); useUnicode11(terminal);
   const samples: number[] = [];
   let pending: { time: number; key: string; row: number; col: number } | undefined;
@@ -68,9 +69,9 @@ async function measure(records: RecordItem[], cols: number, rows: number): Promi
     return { p50: percentile(.5), p95: percentile(.95), p99: percentile(.99), max: Math.round((measured.at(-1) ?? 0) * 100) / 100, samples: measured.length };
   } finally { terminal.dispose(); }
 }
-async function appCapture(): Promise<{ records: RecordItem[]; cols: number; rows: number; webgl: boolean }> {
+export async function appCapture(options:{main?:string;executablePath?:string}={}): Promise<{ records: RecordItem[]; cols: number; rows: number; webgl: boolean }> {
   const home = await setup();
-  const application = await electron.launch({ args: [resolve('app/out/main/index.js'), '--disable-background-networking', '--disable-component-update'], env: env(home) });
+  const application = await electron.launch({...(options.executablePath?{executablePath:options.executablePath}:{}),args: [...(options.executablePath?[]:[options.main??resolve('app/out/main/index.js')]), '--disable-background-networking', '--disable-component-update'], env: env(home) });
   try {
     const page = await application.firstWindow();
     await page.locator('.xterm-accessibility-tree').filter({ hasText: 'Connect a provider' }).waitFor();
@@ -128,6 +129,7 @@ async function cliCapture(cols: number, rows: number): Promise<RecordItem[]> {
     await sleep(100); return records;
   } finally { terminal?.kill(); await cleanup(home); }
 }
+if(process.argv[1]===fileURLToPath(import.meta.url)){
 const app = await appCapture();
 const appResult = await measure(app.records, app.cols, app.rows);
 const cliResult = await measure(await cliCapture(app.cols, app.rows), app.cols, app.rows);
@@ -141,3 +143,4 @@ const result = {
 await writeFile(resolve('docs/testing/v0.5-native-app-latency.json'), JSON.stringify(result, null, 2) + '\n');
 process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 if (!result.p95Gate) process.exitCode = 1;
+}

@@ -16,7 +16,7 @@ test.beforeEach(async () => {
   const state = join(home, '.ai-term');
   await mkdir(state, { mode: 0o700 });
   await writeFile(join(state, 'settings.json'), JSON.stringify({ theme: 'graphite', notifications: false }));
-  application = await electron.launch({ args: [resolve('app/out/main/index.js'), '--disable-background-networking', '--disable-component-update'], env: {
+  application = await electron.launch({ ...(process.env.AI_TERM_TEST_APP?{executablePath:process.env.AI_TERM_TEST_APP}:{}),args: [...(process.env.AI_TERM_TEST_APP?[]:[resolve('app/out/main/index.js')]), '--disable-background-networking', '--disable-component-update'], env: {
     HOME: home, AI_TERM_HOME: state, AI_TERM_APP_DATA: join(home, 'electron'), PATH: '/usr/bin:/bin', SHELL: '/bin/sh', LANG: 'en_US.UTF-8',
   } });
 });
@@ -180,8 +180,8 @@ test('a pasted authenticated control sequence does nothing in the real ai client
   await commandKey('E'); await expect(screen).not.toContainText('Connect a provider');
   // Capture only this disposable launch's native menu write in memory. No token
   // accessor or test hook is added to the product/preload.
-  await application.evaluate(async () => {
-    const requireModule = process.getBuiltinModule('module').createRequire(process.cwd()+'/package.json');
+  await application.evaluate(async ({app}) => {
+    const requireModule = process.getBuiltinModule('module').createRequire(app.getAppPath()+'/package.json');
     const module: unknown = requireModule('node-pty/lib/unixTerminal.js');
     if (!module || typeof module !== 'object') throw new Error('No disposable PTY module');
     const constructor = Reflect.get(module,'UnixTerminal') as {prototype:{write(data:string):void}};

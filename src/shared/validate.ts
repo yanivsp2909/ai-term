@@ -377,7 +377,7 @@ export function validateSessionText(value:unknown):import('./protocol.js').Sessi
 
 export function isActivity(value:unknown):boolean{if(!value||typeof value!=='object'||Array.isArray(value))return false;const v=value as Record<string,unknown>;return Object.keys(v).length===2&&isToolName(v.tool)&&typeof v.at==='string'&&Number.isFinite(Date.parse(v.at));}
 export function isToolName(value:unknown):value is string{return typeof value==='string'&&/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(value)&&!value.includes('sk-');}
-export function isStatusCommandPath(value:unknown):value is string{return typeof value==='string'&&value.length<=4096&&/^\/[A-Za-z0-9_./-]+$/.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
+export function isStatusCommandPath(value:unknown):value is string{return typeof value==='string'&&value.length<=4096&&/^\/[A-Za-z0-9_ ./-]+$/.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
 
 // Generated names use a smaller alphabet than git refs: no metacharacters, separators or option prefixes.
 export function isWorktreeSlug(value:unknown):value is string{return typeof value==='string'&&/^[a-z0-9][a-z0-9-]{0,39}$/.test(value);}

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { takeAppToken } from '../shared/app-control.js';
+import {configureCliRuntime} from '../shared/runtime-paths.js';
 import { AppInput } from '../client/app-input.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,7 @@ import {aiSubcommands,debugActions} from '../client/tui/commands.js';
 // Consume before any connection can spawn a daemon or agent child.
 const appToken = takeAppToken(process.env);
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
+configureCliRuntime(entry);
 function usage(): void { process.stderr.write('Usage:\n'+aiSubcommands.map(command=>'  '+command).join('\n')+'\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
     if (args.length === 0) {

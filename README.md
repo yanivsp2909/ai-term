@@ -23,13 +23,20 @@ Ask passes explicit ask flags. New Claude agents keep a conversation UUID for `/
 
 Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source. If the `ai` binary is installed, the same arguments work with `ai`.
 
-The macOS desktop terminal lives in `app/`. After `npm install`, run `npm exec -- install-electron --no` once (Electron 44's binary installer), then `npm run app:dev`. It builds and opens one Electron window running the built `ai` CLI. You type directly into xterm; React owns only the small title/search/error surfaces. Development uses local production bundles: rerun the command after editing. `npm run app:build` builds the three desktop bundles; build `ai` with `npm run build` too. This step does not package an installable `.app`.
+Unzip the desktop distribution and drag **AI Term.app** into Applications. No Node installation is needed: the bundled Electron runtime runs `ai` and its daemon. The app is ad-hoc signed without notarization; on first launch right-click → Open and confirm Open. If macOS still blocks it, use Privacy & Security → Open Anyway. Closing the app keeps agents running. A compatible existing dev daemon is reused; protocol mismatch is reported in one line and never stops it automatically.
+
+App menu → **Install `ai` command…** shows exactly what it will create: `~/.local/bin/ai` pointing to this app's `Contents/MacOS/ai`. No sudo, shell profile changes or overwriting foreign entries; symlinked `.local`/`bin` folders are refused. Add `~/.local/bin` to your Terminal PATH if needed, then `ai` works without Node and accepts the arguments below. **Uninstall `ai` command** removes only the exact symlink pointing at this app. Uninstall before moving the app; a link pointing elsewhere is refused.
+
+For source development, install Node ≥22, `npm install`, then `npm exec -- install-electron --no` once (Electron 44's installer) and `npm run app:dev`. Development loads local production bundles; rerun after edits. `npm run build` keeps the plain system-Node CLI working. Packaging uses isolated staging without rebuilding source dependencies; distribution builds require Xcode Command Line Tools for the notifier/native launchers.
 
 | Desktop command | Action |
 |---|---|
 | `npm run app:dev` | Build `ai` and the desktop bundles, then open the window |
 | `npm run app:build` | Build Electron main, sandbox preload, and renderer in `app/out/` |
+| `npm run app:dist` | Build/sign `build/desktop/dist/mac-arm64/AI Term.app` and `AI-Term-0.1.1-arm64.zip` on this arm64 Mac (host-architecture builds) |
 | `npm run app:test` | Playwright Electron smoke/security checks; disposable HOME and daemon |
+| `AI_TERM_TEST_APP="$PWD/build/desktop/dist/mac-arm64/AI Term.app/Contents/MacOS/AI Term" npm run app:test` | Same smoke tests against the packaged app |
+| `npm exec -- tsx scripts/measure-packaged-latency.ts` | Same-session dev `11362d1` vs packaged arrival-time A/B, gate only on p95 difference ≤0.30 ms |
 | `npm exec -- tsx scripts/measure-app-latency.ts` | Disposable-home keydown/output-arrival measurement; writes `docs/testing/v0.5-native-app-latency.json`; compares the frozen v0.5.1 p95 |
 
 | Desktop key | Action |
@@ -55,7 +62,7 @@ Other terminal keys go straight to `ai`. Web links open only http/https in your 
 
 The app inherits its launcher environment, matching current CLI startup; it does not read login files, fetch keys or reconstruct a login-shell environment. Desktop controls are authenticated with a per-launch token consumed before child-environment inheritance. They cannot carry agent text or approve a prompt; pasted and agent-printed controls are inert. Plain `ai` ignores these sequences.
 
-The earlier app/Terminal.app physical typing comparison remains unmeasured. This step's regression gate uses the same output-arrival method as v0.5.1 at 151×37 cells: app p95 must be no greater than 1.20 ms (previous 1.00 ms + 0.20 ms). These numbers do not measure display paint or prove Terminal.app parity.
+The earlier app/Terminal.app physical typing comparison remains unmeasured, and the previous native step's historical 1.20 ms gate is recorded in PROGRESS.md. This packaging step uses a fresh same-session A/B against dev `11362d1`, gating only on packaged minus dev p95 ≤0.30 ms at 151×37 cells. Neither method measures physical paint or proves Terminal.app parity.
 
 `npm run build:notifier` builds the macOS notification helper (needs `swiftc` from the Xcode Command Line Tools) into `build/notifier/AI Term.app`, ad-hoc signed, always at that path so macOS keeps your Allow across rebuilds. Without `swiftc` it prints `Notifier not built: …` and AI Term works without notifications.
 

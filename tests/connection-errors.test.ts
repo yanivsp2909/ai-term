@@ -7,6 +7,14 @@ import { Connection,DaemonRequestError } from '../src/client/connection.js';
 import { getPaths,preparePaths } from '../src/shared/paths.js';
 import { FrameDecoder,decodeControl,encodeControl } from '../src/shared/protocol.js';
 
+it('a protocol mismatch says so in one line and sends no stop or restart command',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'ai-mismatch-')),paths=getPaths(root);await preparePaths(paths);const kinds:string[]=[];
+ const server=createServer(socket=>{const decoder=new FrameDecoder();socket.on('data',data=>{for(const frame of decoder.push(data)){const request=decodeControl(frame) as {id:string;kind:string};kinds.push(request.kind);socket.write(encodeControl({id:request.id,kind:'helloMismatch',protocol:99}));}});});
+ try{await new Promise<void>(r=>server.listen(paths.socket,r));await chmod(paths.socket,0o600);
+ await expect(Connection.connect(paths,{entry:'/unused'})).rejects.toThrow('Daemon protocol mismatch; stop it explicitly before restarting');expect(kinds).toEqual(['hello']);expect(server.listening).toBe(true);
+ }finally{await new Promise<void>((r,reject)=>server.close(error=>error?reject(error):r()));await rm(root,{recursive:true,force:true});}
+});
+
 it.each([{},{ok:'invalid'},{ok:false,error:{message:'missing code'}}])('rejects malformed daemon response %j as an error, not an explicit rejection',async(fields)=>{
  const root=await mkdtemp(join(tmpdir(),'ai-term-connection-')),paths=getPaths(root);await preparePaths(paths);
  const server=createServer(socket=>{const decoder=new FrameDecoder();socket.on('data',data=>{for(const frame of decoder.push(data)){const request=decodeControl(frame) as {id:string};socket.end(encodeControl({id:request.id,...fields}));}});});

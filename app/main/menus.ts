@@ -7,12 +7,14 @@ export interface MenuHandlers {
   action(action: MenuAction): void;
   theme(source: ThemeSource): void;
   themeSource: ThemeSource;
+  install?():void;
+  uninstall?():void;
 }
 export function appMenu(handlers: MenuHandlers): MenuItemConstructorOptions[] {
   const command = (label: string, accelerator: string, action: AppCommand): MenuItemConstructorOptions => ({label, accelerator, click:()=>handlers.command(action)});
   const action = (label: string, accelerator: string, item: MenuAction): MenuItemConstructorOptions => ({label, accelerator, click:()=>handlers.action(item)});
   return [
-    {label:'AI Term',submenu:[{role:'about'},command('Settings…','Command+,','settings'),{type:'separator'},{role:'hide'},{role:'hideOthers'},{role:'unhide'},{type:'separator'},{role:'quit'}]},
+    {label:'AI Term',submenu:[{role:'about'},command('Settings…','Command+,','settings'),{type:'separator'},{label:'Install `ai` command…',click:()=>handlers.install?.()},{label:'Uninstall `ai` command',click:()=>handlers.uninstall?.()},{type:'separator'},{role:'hide'},{role:'hideOthers'},{role:'unhide'},{type:'separator'},{role:'quit'}]},
     {label:'File',submenu:[command('New Agent','Command+T','new-agent'),command('Home','Command+E','home'),command('Command Palette','Command+K','palette'),command('Split Marked Agents','Command+D','split'),{type:'separator'},...Array.from({length:9},(_,index)=>command(`Select Agent ${index+1}`,`Command+${index+1}`,`select ${index+1}` as AppCommand)),{type:'separator'},{role:'close',accelerator:'Command+W'}]},
     {label:'Edit',submenu:[action('Copy','Command+C','copy'),action('Paste','Command+V','paste'),action('Select All','Command+A','select-all'),{type:'separator'},action('Find…','Command+F','find')]},
     {label:'View',submenu:[action('Increase Font Size','Command+Plus','font-increase'),action('Decrease Font Size','Command+-','font-decrease'),action('Reset Font Size','Command+0','font-reset'),{type:'separator'},...(['system','light','dark'] as const).map(source=>({label:source==='system'?'Use System Appearance':source==='light'?'Light':'Dark',type:'radio' as const,checked:handlers.themeSource===source,click:()=>handlers.theme(source)}))]},
