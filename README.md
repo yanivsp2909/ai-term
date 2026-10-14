@@ -8,14 +8,14 @@
 You type what you want built at the bottom, pick a model, and AI Term starts the right agent:
 - **Claude account:** runs Claude Code.
 - **ChatGPT account:** runs Codex.
-- **API keys:** run AI Term's own agent (v0.4.1: Microsoft Foundry keys; Anthropic and OpenAI keys still run Claude Code and Codex until v0.4.2). `/settings` → `keys run on: the cli` sends keys back to the CLIs.
+- **API keys** (Anthropic, OpenAI, Microsoft Foundry): run AI Term's own agent, with exact per-turn cost, caps, budgets that stop it before a request crosses them, and a kill switch. `/settings` → `keys run on: the cli` sends keys back to the CLIs.
 
 Agents keep running in a background service when you leave them or close the terminal. Run `ai` again and they're all still there.
 
 Personal and learning project. macOS first; Linux and Windows by v0.8.
 
 ## Status
-`ai` starts Claude Code and Codex on their own logins, and AI Term's own agent on a Foundry API key (v0.4.1; see below). `/login` connects an account or saves a key in the macOS Keychain; `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage shows estimated API-key spend and tokens for today, this week and this month; subscriptions are excluded. `b` sets advisory budget limits; `/settings` offers Foundry deployment price overrides.
+`ai` starts Claude Code and Codex on their own logins, and AI Term's own agent on any saved API key (see below). `/login` connects an account or saves a key in the macOS Keychain; `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage shows estimated API-key spend and tokens for today, this week and this month; subscriptions are excluded. `b` sets advisory budget limits; `/settings` offers Foundry deployment price overrides.
 
 Ask passes explicit ask flags. New Claude agents keep a conversation UUID for `/resume`; Codex `/resume` opens its own picker in the saved folder. `/effort` chooses next-agent reasoning; Claude offers auto permission mode through `/mode`. Every Codex session uses `--no-daemon` and disables the startup update check; key sessions get only their own provider credential. Real-key approval and billing checks are in `docs/testing/v0.1.7-keys-login.md`.
 
@@ -48,7 +48,7 @@ Homepage slash commands:
 
 | Command | Action |
 |---|---|
-| `/model` | Choose provider tab, then own-login/key model or tested Foundry deployment; filter searches across tabs. A Foundry deployment shows `· ai term` (it starts AI Term's agent) or `· codex` with `keys run on: the cli`; an AI Term model can't be saved as the default (defaults carry no key) |
+| `/model` | Choose provider tab, then own-login/key model or tested Foundry deployment; filter searches across tabs. Key rows show `· ai term` (they start AI Term's agent: Foundry deployments that passed their test, catalog chat models for Anthropic and OpenAI keys) or, with `keys run on: the cli`, the CLI and its own models; an AI Term model can't be saved as the default (defaults carry no key) |
 | `/cd` | Choose folder for the next session, with directory completion |
 | `/login` | Anthropic/OpenAI account login or API key; Microsoft Foundry endpoint/key/deployments and test |
 | `/settings` | KEYS, ENGINES, DEFAULTS; add/import/remove/test keys, edit saved defaults/theme, set Foundry input/output prices per 1M tokens |
@@ -123,7 +123,10 @@ Homepage slash commands:
 | `/settings` `d` / `f` / `e` / Tab | Save default model+engine / folder / effort / cycle theme; permission default is always Ask |
 | `/settings` `n` or notifications row Enter | Turn macOS notifications on or off (default on; saved with the other settings). If the helper is missing or failed to launch, the panel says `notifications unavailable: …` |
 | `/settings` `w` or worktrees row Enter | Toggle `worktrees: on` / `off` (default on); applies to new agents |
-| `/settings` `r` or keys row Enter | Toggle `keys run on: ai term` / `the cli` (default ai term, D47). With `the cli`, Foundry keys start Codex as before; account logins always start the official CLIs |
+| `/settings` `r` or keys row Enter | Toggle `keys run on: ai term` / `the cli` (default ai term, D47). With `the cli`, Anthropic keys start Claude Code and OpenAI and Foundry keys start Codex; account logins always start the official CLIs |
+| `/settings` `c` or caps row Enter | AI Term agent caps per run: turns (model requests) and spend in USD, empty = no cap; defaults 100 turns and $5.00. A run pauses and asks at a cap |
+| `/settings` `k` or context row Enter | Toggle the 85% context warning on cards and inside AI Term's agent (default on, D55) |
+| `/settings` `m` on a Foundry key | Mark each deployment as a catalog model (↑↓, type to narrow, ⏎ saves; `(not set)` clears): its prices and context window then come from that model |
 | `/settings` `h` or bar row Enter | Toggle `bar: off` / `on` (default off); takes effect on the next attach |
 | `/settings` `p` or price row Enter | Foundry deployment price override: deployment, input and output USD per 1M; ↑↓ fields, Enter saves, Esc cancels |
 | Import names ↑↓ / Space / Enter | Select name / toggle inclusion / import chosen keys |
@@ -179,23 +182,32 @@ AI Term refuses, with a fixed reason and without touching anything:
 
 If a step fails, it stops and says which step (`Worktree remove failed; branch kept` or `Worktree removed; branch delete failed`). It never deletes files itself and never touches another worktree or branch. `/clean` only removes list records and says how many worktrees it kept. `/worktrees` lists them all for later; folders in `~/.ai-term/worktrees` that no record claims (from agents removed before v0.3.2) appear as `✗ Not in AI Term's record` and are never deleted by AI Term. Remove those yourself with `git worktree remove` if you don't need them.
 
-## AI Term's agent (v0.4.1)
+## AI Term's agent (v0.4.2)
 
-Pick a tested Foundry deployment in `/model` (it shows `· ai term`), type a task, keep Ask, ⏎. The card, preview, bar, splits, notifications, `c` and Usage work as for the CLIs. One provider in this step: Foundry through the Responses API, with the endpoint and deployments bound to the key in the Keychain; the key is only in the agent's own environment, never in argv, a file, a log or the protocol.
+Every API key runs AI Term's own agent (D47; `/settings` → `keys run on: the cli` sends keys back to Claude Code and Codex). In `/model`: a tested Foundry deployment (GPT ones over the Responses API, others such as Grok, Kimi, DeepSeek or GLM over Chat Completions, each one tested with a tiny request first), or one of the catalog's chat models for an Anthropic or OpenAI key; every row reads `· ai term`. Type a task, keep Ask, ⏎. The card, preview, bar, splits, notifications, `c` and Usage work as for the CLIs.
 
+- **Keys:** only in the agent's own environment, never in argv, a file, a log or the protocol. Each goes only to its own host in its own header: Foundry to the endpoint bound to the key in the Keychain (`api-key`), Anthropic to api.anthropic.com (`x-api-key`), OpenAI to api.openai.com (bearer). Redirects are refused; provider error text is never shown.
 - **Tools:** read, write, edit, bash, search (ripgrep when installed, else plain text). File tools stay inside the agent's folder (its worktree): `..`, absolute paths elsewhere and symlinks that lead out are refused. bash runs `/bin/sh -c <command>` in the folder with a 2-minute default limit (10 at most), 64 KB of output per stream, no stdin, and a minimal environment with no API keys and nothing of AI Term's. bash is not sandboxed: it runs as you, like Claude Code's.
 - **Ask (default):** every write, edit and bash shows exactly what will run (the command, or the path and the changed lines; escape sequences and invisible characters show as `␛` and `<U+…>`) and waits for `y` or `n`. An approval taller than the screen pages: Space shows the next page, and `y` works only on the last one. Commands over 16 KB are refused. Reads and searches never ask. Don't ask is per session only (red `!`), never a saved default.
 - **Instructions:** the folder's `AGENTS.md`, then `CLAUDE.md` with its `@file` import lines, go into the system prompt (inside the folder only, 64 KB per file).
-- **Cost:** token usage is reported per step and priced from the Foundry override, then Azure, then OpenAI list prices, like Codex. ctx % stays empty until model context windows arrive (v0.4.2). `/resume` isn't available yet; `/retry` starts it fresh.
+- **Cost:** after each turn, one line with the provider's own counts and the exact price: `turn · 12.3k in · 4.0k cached · 812 out · 310 reasoning · $0.0123 · run …`. Priced like Usage (D45 list prices; a Foundry deployment uses its price override, else the model you marked it as in `/settings` → `m`, else its own name).
+- **Limits (D49, D53):** before every request the agent checks the run's caps and your budgets against the worst case for that request (every input character as a third of a token, the full output allowance). It pauses and asks, before anything is sent, when the next request could cross the daily, weekly or monthly budget (raise it with `b` on the homepage, then ⏎ checks again), when the run reaches its turn cap (a turn is one request to the model) or spend cap (⏎ allows as much again), when no price is known for the model while any limit is set, or when AI Term doesn't answer. Esc stops. Defaults: 100 turns and $5.00 per run (`/settings` → `c`); `/caps` changes one run.
+- **Kill switch:** Ctrl+K stops the request and kills every running command's whole process group at once (no grace period); queued messages are dropped. `s` on the homepage does the same and stops the agent.
+- **Context:** ctx % on the card and the bar, from the model's context window in the catalog. At 85% the agent and the card show `context 85% · /clear or start fresh` once per crossing (a CLI card says `/compact`); `/settings` → `k` turns it off. The catalog shipped before v0.4.2 has no context windows: refresh it (manual checks in PROGRESS.md) and ctx % appears.
+- `/resume` isn't available yet; `/retry` starts it fresh.
 
 | Inside the agent | Action |
 |---|---|
 | Type, ⏎ | Send a message; a message sent during a turn waits for it to end. Paste arrives whole |
 | `y` / `n` | Allow / deny the write, edit or command shown. A paste never answers |
 | Space | Next page of a long approval (`y` counts on the last page) |
+| ⏎ / Esc at a pause | Go on past a cap or a raised budget / stop the turn. A paste never answers |
 | Esc | Interrupt the turn (a pending approval is denied); on an idle prompt, clear it |
+| Ctrl+K | Kill switch: stop the request and kill every running command now |
 | Ctrl+C twice | Quit the agent (within 3 s); Ctrl+D on an empty prompt counts too |
-| `/model [id]` | List or switch to another tested deployment of the same key |
+| `/model [id]` | List or switch to another model of the same key |
+| `/caps [turns N\|off] [spend USD\|off]` | Show or change this run's caps |
+| `/clear` | Forget the conversation (frees the context) |
 | `/cd <folder>` | Work in another folder; its `AGENTS.md` is read again |
 | `/help` · `/exit` | List these · quit |
 | Ctrl+E | Home, as in any session |
