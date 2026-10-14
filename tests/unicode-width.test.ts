@@ -34,7 +34,7 @@ it('emoji and wide characters line up cell-exact through the daemon mirror, the 
 });
 it('textCells splits text into the same cells and widths as a Unicode 11 xterm', async () => {
   const { textCells, textWidth } = await import('../src/shared/unicode-width.js');
-  const samples = ['é', 'é̂x', '❤️x', '😀️x', '👍🏽x', '🇮🇱x', '1️⃣x', '漢́x', 'กำx', '🧪漢字x'];
+  const samples = ['é', 'é̂x', '❤️x', '😀️x', '👍🏽x', '🇮🇱x', '1️⃣x', '漢́x', 'กำx', '🧪漢字x', '🧠🧪👍'];
   for (const sample of samples) {
     const term = new headless.Terminal({ cols: 20, rows: 1, allowProposedApi: true });
     try {

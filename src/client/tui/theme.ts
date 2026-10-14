@@ -1,4 +1,5 @@
-import tokens from '../../../docs/design/tokens.json' with { type: 'json' };
+import { tokenColors, type ColorName, type Colors } from '../../shared/theme-tokens.js';
+export type { ColorName, Colors } from '../../shared/theme-tokens.js';
 import { readFileSync } from 'node:fs';
 declare const __AI_TERM_DESIGN__: string | undefined;
 // The build embeds the approved document; tsx reads the same source during development.
@@ -6,21 +7,7 @@ const design = typeof __AI_TERM_DESIGN__ === 'string' ? __AI_TERM_DESIGN__ : rea
 import type { ThemeName } from '../../shared/protocol.js';
 import type { Cell } from './grid.js';
 import type { IBufferCell } from '@xterm/headless';
-export type ColorName = 'bg' | 'surface' | 'surface-2' | 'line' | 'ink' | 'ink-2' | 'ink-3' | 'accent' | 'on-accent' | 'status-running' | 'status-waiting' | 'status-error' | 'status-done' | 'status-idle' | 'cursor';
-export type Colors = Record<ColorName, string>;
-function completeColors(colors: Partial<Colors>): Colors {
-  for (const key of ['bg', 'surface', 'surface-2', 'line', 'ink', 'ink-2', 'ink-3', 'accent', 'on-accent', 'status-running', 'status-waiting', 'status-error', 'status-done', 'status-idle', 'cursor'] as const) {
-    if (typeof colors[key] !== 'string') throw new Error(`Missing color ${key}`);
-  }
-  return colors as Colors;
-}
 export interface Theme { name: ThemeName; colors: Colors; defaultBackground: boolean }
-function tokenColors(mode: 'dark' | 'light'): Colors {
-  const colors: Partial<Colors> = {};
-  for (const token of tokens.color.tokens) if (typeof token.value === 'object') colors[token.name as ColorName] = token.value[mode];
-  for (const token of tokens.color.tokens) if (typeof token.value === 'string') colors[token.name as ColorName] = colors[token.value.slice(1, -1) as ColorName];
-  return completeColors(colors);
-}
 function documentedPalette(name: 'slate' | 'ink'): Partial<Colors> {
   const line = design.split('\n').find(line => line.startsWith(`- **\`${name}\``));
   if (!line) throw new Error(`Missing ${name} palette in design.md`);

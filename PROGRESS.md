@@ -134,8 +134,19 @@ v0.2 and v0.3, retained:
 - A failed, usage-less or unconfirmed request counts its worst case for the rest of the run, so a run can pause earlier than Usage suggests.
 - Gate tests that need a log file create `<state>/logs` first: the Logger never creates its folder.
 
-## New dependencies
-- None.
+## New dependencies (v0.5 app in progress)
+- electron: a native desktop window and isolated Chromium renderer are not provided by Node.
+- electron-vite: builds the separate main, sandbox preload and renderer bundles.
+- react: already present; owns the small search/error UI outside xterm's input path.
+- react-dom: mounts that React UI in Electron's renderer.
+- @xterm/xterm: displays the PTY as a full terminal rather than rebuilding terminal input/rendering.
+- @xterm/addon-webgl: provides the pinned GPU renderer, with DOM fallback.
+- @xterm/addon-fit: computes terminal columns/rows from its actual pixel area.
+- @xterm/addon-unicode11: already present; shares the mirrors' modern width table.
+- @xterm/addon-web-links: detects clickable terminal URLs for the narrow validated browser opener.
+- @xterm/addon-search: searches xterm's scrollback without involving ai or its daemon.
+- @playwright/test: drives the real Electron window and asserts runtime sandbox behavior.
+- node-pty: already present and N-API compatible with Electron; no rebuild dependency added.
 
 ## Concepts introduced
 - **Sized output allowance (`src/agent/limits.ts` `check`):** a cap only holds if the request can't write past it. So the agent turns "what's left of the money" into "how many output tokens may this request write", subtracts the input it is sending, and passes that number as `maxOutputTokens`. The worst case is then a real upper bound, not a guess.

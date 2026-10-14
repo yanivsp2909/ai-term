@@ -1,4 +1,4 @@
-import type headless from '@xterm/headless';
+import headless from '@xterm/headless';
 import unicode11 from '@xterm/addon-unicode11';
 // @xterm/headless ships only Unicode 6 widths, where most emoji (🧪, 🧠) are 1 cell; the agents draw
 // them 2 wide, so every cell after one shifts. The daemon mirror, the preview mirror and the text the
@@ -7,11 +7,16 @@ export function useUnicode11(terminal: headless.Terminal): void {
   terminal.loadAddon(new unicode11.Unicode11Addon());
   terminal.unicode.activeVersion = '11';
 }
-// The addon hands its table only to a terminal's register(); capture it once from a stand-in. This
-// compiles because the addon's typings import @xterm/xterm, which isn't installed (skipLibCheck makes it any).
+// Capture the addon's table through a real headless terminal. Installing browser xterm makes
+// the addon's full browser Terminal types available, so a partial stand-in no longer typechecks.
 const provider = ((): headless.IUnicodeVersionProvider => {
   let captured: headless.IUnicodeVersionProvider | undefined;
-  new unicode11.Unicode11Addon().activate({ unicode: { register: (version: headless.IUnicodeVersionProvider) => { captured = version; } } });
+  const terminal = new headless.Terminal({ allowProposedApi: true });
+  // unicode is a fresh facade on each access; replacing a method on one facade is lost.
+  const unicode = terminal.unicode;
+  Object.defineProperty(terminal, 'unicode', { value: { ...unicode, register: (version: headless.IUnicodeVersionProvider) => { captured = version; } } });
+  terminal.loadAddon(new unicode11.Unicode11Addon());
+  terminal.dispose();
   if (!captured) throw new Error('Unicode 11 width table did not register');
   return captured;
 })();

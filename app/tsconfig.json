@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler", "lib": ["ES2023", "DOM", "DOM.Iterable"], "allowImportingTsExtensions": true },
+  "include": ["**/*.ts", "../src/shared/theme-tokens.ts"],
+  "exclude": ["out"]
+}

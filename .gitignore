@@ -6,3 +6,6 @@ coverage/
 *.log
 .DS_Store
 build/
+app/out/
+test-results/
+playwright-report/
