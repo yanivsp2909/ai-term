@@ -94,7 +94,7 @@ Homepage slash commands:
 | `/login` | Anthropic/OpenAI account login or API key; Microsoft Foundry endpoint/key/deployments and test |
 | `/skills` · `/agents` · `/mcp` | One extensions popup: Skills · Agents · Commands · MCP; browse files read-only, choose what loads, see estimated tokens/request |
 | `/mcp add` · `/mcp remove <name>` | Add a stdio/HTTP server in the masked form / remove an AI Term server |
-| `/preset` | Saved start setups (v0.6.2, D55 on by default): `/preset` lists them; `/preset <name>` opens the start box filled with one (⏎ starts, Esc edits); `/preset save <name> [first message]` keeps the next agent's engine, model, effort, auth (account or key id, never the key), mode, folder and worktree on/off; `/preset rm <name>` removes one. Don't ask is kept only if you chose it before saving, and the card shows its red `!`. A preset whose key or folder is gone says so in one line. Names: a–z, 0–9, `-`, up to 32; at most 20 |
+| `/preset` | Saved start setups (v0.6.2, D55 on by default): `/preset` lists them; `/preset <name>` opens the start box filled with one (⏎ starts, Esc edits); `/preset save <name> [first message]` keeps the next agent's engine, model, effort, auth (account or key id, never the key), mode, folder and worktree on/off; `/preset rm <name>` removes one. Don't ask is kept only if you chose it before saving, and the card shows its red `!`. A preset whose key or folder is gone says so in one line. Names: a–z, 0–9, `-`, up to 32; at most 20; a first message up to 4 KB, and all settings together fit 16 KB, so only a few long first messages fit. A keyed preset starts where keys run today (`/settings` r) |
 | `/settings` | KEYS, ENGINES, DEFAULTS; add/import/remove/test keys, edit saved defaults/theme, set Foundry input/output prices per 1M tokens |
 | `/effort [CLI default\|<level>]` | Reasoning for next agent; levels follow selected CLI; CLI default passes nothing |
 | `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
@@ -153,7 +153,7 @@ Homepage slash commands:
 | Ctrl+C twice within one second | Quit client; sessions keep running |
 | Ctrl+E | Inside a session or split returns home, keeping sessions running; inside pasted text it is pasted |
 | SIGTERM / SIGHUP / SIGQUIT | Client cleanup and exit 143 / 129 / 131; sessions keep running |
-| Start box ↑↓ / `m` / `c` / `e` / `p` / Tab / Enter | Select row / model / folder / effort / next saved preset (v0.6.2; one whose key or folder is gone is skipped with its reason) / cycle Ask → auto → Don't ask (Claude) or Ask ↔ Don't ask (Codex) / start |
+| Start box ↑↓ / `m` / `c` / `e` / `p` / Tab / Enter | Select row / model / folder / effort / next saved preset (v0.6.2; one whose key or folder is gone shows why and the next `p` moves on; Esc puts back the setup you had) / cycle Ask → auto → Don't ask (Claude) or Ask ↔ Don't ask (Codex) / start |
 | Start box worktree line | `new worktree · ai/<slug> from <short HEAD>`; a dirty checkout adds `uncommitted changes in your checkout aren't included` |
 | Start box message row | Type/paste to edit first message; multiline or over 200 chars becomes `[pasted · N lines]` |
 | Model picker ←→ / ↑↓ / Enter / Esc | Switch provider tab (Tab also goes right) / choose model / select / back; typing searches all tabs |

@@ -28,7 +28,7 @@ import { homepageLayout, renderHomepage, sortSessions, filteredCommands, visible
 import { nextCardTick } from './agent-card.js';
 import { CredentialsPanel } from './credentials.js';
 import { modelChoices, ownLoginLabel, engineTitle, keyEngine } from '../../shared/models.js';
-import { drawAgentBox, type AgentBox } from './agent-box.js';
+import { drawAgentBox, type AgentBox, type NextAgent } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
 import { BudgetForm, PriceForm, CapsForm, drawUsageForm } from './usage-forms.js';
 import { DEFAULT_AGENT_CAPS } from '../../shared/agent-facts.js';
@@ -559,7 +559,7 @@ export class Homepage {
     if(parsed.kind==='error'){this.showNote(parsed.text);return;}
     let settings:import('../../shared/protocol.js').Settings;
     try{settings=validateSettings((await this.connection.request({kind:'settings.get'})).settings);}catch{this.showNote('presets unavailable: settings could not be read');return;}
-    this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};
+    this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};this.keysRunOn=settings.keysRunOn??'ai-term';
     if(!this.presetsEnabled){this.showNote('presets are off · /settings s turns them on');return;}
     const presets=this.presets;
     // Own entries only: a name like `constructor` must not find Object's built-in.
@@ -600,18 +600,29 @@ export class Homepage {
     if(name===undefined||!preset){b.error='no presets yet · /preset save <name>';return;}
     b.presetCursor=name;
     const problem=await presetProblem(name,preset,this.keys);
+    // Esc, m, c or e may have moved on while the folder was checked: the preset then goes nowhere.
+    if(this.box!==b||b.kind!=='start')return;
     if(problem){b.error=problem;return;}
-    b.preset=name;
-    this.engine=preset.engine;this.model=preset.model;this.effort=preset.effort;this.auth=preset.auth;this.permission=preset.permission;this.folder=preset.cwd;
-    Object.assign(b,{engine:preset.engine,model:preset.model,effort:preset.effort,auth:preset.auth,permission:preset.permission,cwd:preset.cwd,useWorktree:preset.worktree,error:'',authLabel:this.nextAuthLabel()});
+    b.preset=name;b.restore??=this.nextAgent();
+    this.useSetup(preset);
+    Object.assign(b,{engine:this.engine,model:this.model,effort:this.effort,auth:this.auth,permission:this.permission,cwd:this.folder,useWorktree:preset.worktree,error:'',authLabel:this.nextAuthLabel()});
     if(preset.firstMessage!==undefined){b.message=preset.firstMessage;if(b.messageField)b.messageField.text=preset.firstMessage;}
     await this.checkSelectedEngine();
   }
   // The start box takes the preset as it was saved; ⏎ starts it, Esc keeps editing. Don't ask shows in red as always.
   private applyPreset(name:string,preset:Preset):void{
-    this.engine=preset.engine;this.model=preset.model;this.effort=preset.effort;this.auth=preset.auth;this.permission=preset.permission;this.folder=preset.cwd;
+    const restore=this.nextAgent();
+    this.useSetup(preset);
     this.openBox('start',preset.firstMessage??'');
-    if(this.box){this.box.preset=name;this.box.useWorktree=preset.worktree;}
+    if(this.box){this.box.preset=name;this.box.useWorktree=preset.worktree;this.box.restore=restore;}
+  }
+  private nextAgent():NextAgent{return {engine:this.engine,model:this.model,effort:this.effort,auth:this.auth,permission:this.permission,folder:this.folder};}
+  // A keyed preset starts where keys run today (D47's setting may have changed since it was saved); effort and mode
+  // follow that engine, as a /model pick would.
+  private useSetup(preset:Preset):void{
+    const auth=preset.auth,provider=auth.kind==='key'?this.keys.find(k=>k.id===auth.keyId)?.provider:undefined;
+    this.engine=provider?keyEngine(provider,this.keysRunOn):preset.engine;this.model=preset.model;this.effort=preset.effort;this.auth=preset.auth;this.permission=preset.permission;this.folder=preset.cwd;
+    this.compatibleDefaults(this.engine);
   }
   private async openCredentials(kind:'login'|'settings'):Promise<void>{await this.createCredentials(kind).load();}
   private createCredentials(kind:'login'|'settings'):CredentialsPanel{
@@ -692,7 +703,7 @@ export class Homepage {
     if (key === 'escape') {
       this.savingDefault=false;
       if (b.kind !== 'start' && this.returnToStart) { b.kind = 'start'; this.returnToStart = false; this.enqueue(() => this.checkSelectedEngine()); }
-      else { if (b.kind === 'start'){if(b.messageField)this.field.restore(b.messageField);else this.field.text=b.message;this.permission='ask';} this.box = undefined; }
+      else { if (b.kind === 'start'){if(b.messageField)this.field.restore(b.messageField);else this.field.text=b.message;if(b.restore){const r=b.restore;this.engine=r.engine;this.model=r.model;this.effort=r.effort;this.auth=r.auth;this.folder=r.folder;}this.permission='ask';} this.box = undefined; }
       this.draw(true); return;
     }
     if (key === 'backspace') {
