@@ -18,7 +18,10 @@ function statusLineCommand(node:string,entry:string,loader?:string):string|null{
  const tsconfig=sourceTsconfig(entry);
  if(!isStatusCommandPath(node)||!isStatusCommandPath(entry)||source&&(!isStatusCommandPath(loader)||!isStatusCommandPath(tsconfig)))return null;
  // Source mode pins AI Term's tsconfig: Claude runs this in the project folder, whose tsconfig tsx would read otherwise.
- return `${source?`${TSX_PIN} TSX_TSCONFIG_PATH=${tsconfig} `:''}${node} ${source?'--import '+loader+' ':''}${entry} status-line`;
+ // The approved app name contains spaces. The validated alphabet excludes
+ // quotes/metacharacters; quote whole arguments rather than splitting that name.
+ const quote=(value:string):string=>value.includes(' ')?`'${value}'`:value;
+ return `${source?`${TSX_PIN} ${quote('TSX_TSCONFIG_PATH='+tsconfig)} `:''}${quote(node)} ${source?'--import '+quote(loader??'')+' ':''}${quote(entry)} status-line`;
 }
 const tsxLoader=(entry:string)=>entry.endsWith('.ts')?createRequire(import.meta.url).resolve('tsx'):undefined;
 // False when writeClaudeSettings leaves the status line (context %) off for this node and ai path.

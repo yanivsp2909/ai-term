@@ -62,7 +62,7 @@ async function manageCommand(install:boolean):Promise<void> {
   if(!app.isPackaged){await dialog.showMessageBox({type:'info',message:'Install the packaged AI Term.app first.'});return;}
   try{
     const plan=commandPlan(homedir(),runtime.command);
-    if(install){const answer=await dialog.showMessageBox({type:'question',message:'Install ai command?',detail:`Create missing real directories: ${join(plan.home,'.local/bin')}\nCreate symlink: ${plan.link}\nPointing to: ${plan.target}\nExisting foreign entries are refused. No sudo or shell profile changes.`,buttons:['Cancel','Install'],defaultId:0,cancelId:0});if(answer.response!==1)return;await installCommand(plan);}
+    if(install){const answer=await dialog.showMessageBox({type:'question',message:'Install ai command?',detail:`Create if missing: ${join(plan.home,'.local')}\nCreate if missing: ${join(plan.home,'.local/bin')}\nCreate symlink: ${plan.link}\nPointing to: ${plan.target}\nExisting foreign entries are refused. No sudo or shell profile changes.`,buttons:['Cancel','Install'],defaultId:0,cancelId:0});if(answer.response!==1)return;await installCommand(plan);}
     else await uninstallCommand(plan);
     await dialog.showMessageBox({type:'info',message:install?'ai command installed':'ai command uninstalled',detail:install?`${plan.link} → ${plan.target}\nAdd ~/.local/bin to your Terminal PATH if needed.`:'Only this app’s exact symlink was eligible for removal.'});
   }catch(error){log.error('Command installation operation failed');await dialog.showMessageBox({type:'error',message:'Could not change ai command',detail:error instanceof Error?error.message:'Command operation failed'});}
