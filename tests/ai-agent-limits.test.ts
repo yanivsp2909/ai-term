@@ -7,7 +7,7 @@ import { Agent, type AgentIO } from '../src/agent/agent.js';
 import { AgentApp } from '../src/agent/app.js';
 import { Screen } from '../src/agent/screen.js';
 import { Transcript } from '../src/agent/transcript.js';
-import { RunLimits, requestCost, worstCase } from '../src/agent/limits.js';
+import { RunLimits, requestCost, worstCase, TOOL_SCHEMA_TOKENS } from '../src/agent/limits.js';
 import { killAllBash, runBash } from '../src/agent/bash.js';
 import { findPrice, type PriceSnapshot } from '../src/daemon/usage-prices.js';
 import { createTheme } from '../src/client/tui/theme.js';
@@ -52,7 +52,7 @@ it('cost per request uses the provider\'s own counts: cached at the cache rate, 
   expect(findPrice(snapshot, 'foundry', 'my-kimi', {}, 'kimi-k2.6')).toEqual(snapshot.providers.azure['kimi-k2.6']);
   expect(findPrice(snapshot, 'foundry', 'my-kimi', { 'my-kimi': { input: 9, output: 9 } }, 'kimi-k2.6')).toEqual({ input: 9, output: 9, cacheRead: 9 });
   expect(requestCost(null, 10, 0, 10)).toBeNull();
-  expect(worstCase({ input: 3, output: 15 }, 2000, 16_000)).toBeCloseTo((Math.ceil(6000 / 3) * 3 + 16_000 * 15) / 1e6, 12);
+  expect(worstCase({ input: 3, output: 15 }, 2000, 16_000)).toBeCloseTo(((2000 + TOOL_SCHEMA_TOKENS) * 3 + 16_000 * 15) / 1e6, 12);
 });
 
 it('each turn shows its exact cost from the provider\'s counts and reports reasoning with usage', async () => {

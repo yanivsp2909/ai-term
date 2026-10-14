@@ -6,7 +6,7 @@ import { ProviderError } from './provider.js';
 import { systemPrompt, type Instructions } from './instructions.js';
 import type { Reporter } from './report.js';
 import type { Transcript } from './transcript.js';
-import { RunLimits, maxOutputTokens, requestCost } from './limits.js';
+import { RunLimits, maxOutputTokens, requestCost, estimateTokens } from './limits.js';
 import type { AgentFacts } from '../shared/agent-facts.js';
 
 export type AgentPermission = 'ask' | 'dontAsk';
@@ -154,7 +154,7 @@ export class Agent {
         abortSignal: controller.signal, toolCallConcurrency: 1, maxRetries: 2, ...(facts?.output ? { maxOutputTokens: maxOutputTokens(facts) } : {}),
         // Before every request: caps, budgets and a known price, with a pause that asks when one says no (D49, D53).
         prepareStep: async ({ messages }) => {
-          facts = await this.clearance(system.length + JSON.stringify(messages).length, controller);
+          facts = await this.clearance(estimateTokens(system + JSON.stringify(messages)), controller);
           open = this.limits.lastWorst;
           return undefined;
         },
@@ -200,11 +200,11 @@ export class Agent {
   }
   // Asks the daemon for fresh facts and checks them until the request may go; a pause the user answers with Esc (or a
   // kill) stops the turn before anything is sent.
-  private async clearance(inputChars: number, controller: AbortController): Promise<AgentFacts | null> {
+  private async clearance(inputTokens: number, controller: AbortController): Promise<AgentFacts | null> {
     const { io, reporter } = this.options;
     for (;;) {
       if (controller.signal.aborted) throw new Error('stopped');
-      const facts = await reporter.facts(this.options.modelId), pause = this.limits.check(facts, inputChars);
+      const facts = await reporter.facts(this.options.modelId), pause = this.limits.check(facts, inputTokens);
       if (!pause) { this.limits.turns++; return facts; }
       await reporter.status({ event: 'paused' });
       const go = await io.pause(pause.text, controller.signal);

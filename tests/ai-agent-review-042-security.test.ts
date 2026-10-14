@@ -29,12 +29,12 @@ it('LOW: the worst case counts dense text (CJK, emoji) as a token per character,
   expect(estimateTokens('a'.repeat(3000))).toBe(1000);
   expect(estimateTokens('漢'.repeat(3000))).toBeGreaterThanOrEqual(3000);
   const limits = new RunLimits();
-  const tight = stubFacts({ price: { input: 1, output: 0 }, output: 1, caps: { turns: null, spendUsd: 0.004 } });
+  const tight = stubFacts({ price: { input: 1, output: 0 }, output: 1, caps: { turns: null, spendUsd: 0.006 } });
   expect(limits.check(tight, estimateTokens('a'.repeat(9000)))).toBeNull();
   expect(limits.check(tight, estimateTokens('漢'.repeat(9000)))?.text).toContain('cap reached');
 });
 
 it('nit: a deployment named like an Object property has no alias unless one was set', () => {
-  expect(deploymentAlias({ theme: 'graphite', deploymentModels: {} }, 'toString')).toBeUndefined();
-  expect(deploymentAlias({ theme: 'graphite', deploymentModels: { 'my-kimi': 'kimi-k2.6' } }, 'my-kimi')).toBe('kimi-k2.6');
+  expect(deploymentAlias({ deploymentModels: {} }, 'toString')).toBeUndefined();
+  expect(deploymentAlias({ deploymentModels: { 'my-kimi': 'kimi-k2.6' } }, 'my-kimi')).toBe('kimi-k2.6');
 });

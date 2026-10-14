@@ -1,4 +1,4 @@
-import type {KeyProvider,ModelPrice} from '../shared/protocol.js';
+import type {KeyProvider,ModelPrice,Settings} from '../shared/protocol.js';
 export interface ModelLimits {context?:number;output?:number}
 // limits (v0.4.2): Models.dev's limit.context and limit.output per model, kept when the catalog is refreshed; absent in a
 // catalog trimmed before then, which leaves context % and output limits unknown rather than guessed.
@@ -29,6 +29,8 @@ export function findPrice(snapshot:PriceSnapshot,provider:KeyProvider,model:stri
  return override?{...override,cacheRead:override.cacheRead??override.input}:own(snapshot.providers.azure)??own(snapshot.providers.openai);
 }
 
+// The catalog model a Foundry deployment was marked as: own keys only, so a deployment named toString has no alias.
+export function deploymentAlias(settings:Pick<Settings,'deploymentModels'>,deployment:string):string|undefined{const map=settings.deploymentModels;return map&&Object.hasOwn(map,deployment)?map[deployment]:undefined;}
 export function findLimits(snapshot:PriceSnapshot,provider:KeyProvider,model:string,alias?:string):ModelLimits{
  const id=provider==='foundry'?alias??model:model,tables=provider==='foundry'?(['azure','openai','anthropic']as const):[provider];
  for(const table of tables){const entry=snapshot.limits?.[table];if(entry&&Object.hasOwn(entry,id))return {...entry[id]};}

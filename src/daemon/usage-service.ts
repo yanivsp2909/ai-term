@@ -4,10 +4,13 @@ import {UsageReceiver,type StatusEngine} from './usage-receiver.js';
 import {UsageParser,type UsageContext} from './usage-parse.js';
 import {UsageStore} from './usage.js';
 import {SettingsStore} from './settings.js';
-import {findPrice,estimateCost,type PriceSnapshot} from './usage-prices.js';
+import {findPrice,estimateCost,deploymentAlias,type PriceSnapshot} from './usage-prices.js';
 import prices from '../../data/usage-prices.json' with {type:'json'};
 // Twenty records per normal ten-second export leaves room for multiple models while bounding disk writes.
 const RECORDS_PER_MINUTE=120;
+// AI Term's agent reports every request (up to three records each) as it happens, not every ten seconds: a fast tool loop
+// must still be counted whole, or budgets (D49) would undercount it. Still bounded against a forging client.
+const AGENT_RECORDS_PER_MINUTE=1800;
 export interface UsageTelemetry {port:number;credential:string}
 export class UsageService extends EventEmitter {
  private readonly store:UsageStore;private readonly receiver:UsageReceiver;private readonly parser:UsageParser;private readonly settings:SettingsStore;
@@ -18,15 +21,15 @@ export class UsageService extends EventEmitter {
  constructor(root:string,private readonly log:{error(text:string):void}){super();this.store=new UsageStore(root,log);this.settings=new SettingsStore(root);this.parser=new UsageParser(entry=>{this.observations.push(entry);this.prune();});
   this.receiver=new UsageReceiver(async(route,raw,context)=>{
    const settings=await this.readSettings(),overrides=settings.priceOverrides??{};
-   for(const record of this.parser.parse(route,raw,context)){if(!this.takeRecord(context.sessionId))continue;if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides,record.provider==='foundry'?settings.deploymentModels?.[record.model]:undefined),record.inputTokens,record.outputTokens,record.cachedTokens??0);await this.store.add(record);}
+   for(const record of this.parser.parse(route,raw,context)){if(!this.takeRecord(context.sessionId,context.engine==='ai-term'?AGENT_RECORDS_PER_MINUTE:RECORDS_PER_MINUTE))continue;if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides,record.provider==='foundry'?deploymentAlias(settings,record.model):undefined),record.inputTokens,record.outputTokens,record.cachedTokens??0);await this.store.add(record);}
   },log,async(id,body,seq,engine)=>{this.emit(engine==='codex'?'codex-status':engine==='ai-term'?'ai-term-status':'claude-status',id,body,seq);});
   this.store.on('warning',(on:boolean)=>this.emit('warning',on));this.store.on('updated',(usage:UsageSummary)=>this.emit('updated',usage));
  }
  async start():Promise<void>{await this.readSettings();await this.store.load();await this.receiver.listen();this.scheduleMidnight();}
- private takeRecord(sessionId:string):boolean{
+ private takeRecord(sessionId:string,perMinute:number):boolean{
   const now=Date.now();let limit=this.recordLimits.get(sessionId);
   if(!limit||now-limit.start>=60000||now<limit.start){limit={start:now,count:0,logged:false};this.recordLimits.set(sessionId,limit);}
-  if(limit.count<RECORDS_PER_MINUTE){limit.count++;return true;}
+  if(limit.count<perMinute){limit.count++;return true;}
   if(!limit.logged){limit.logged=true;this.log.error('Usage record limit exceeded; excess records dropped');}return false;
  }
  private async readSettings():Promise<Settings>{
