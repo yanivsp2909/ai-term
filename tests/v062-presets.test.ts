@@ -131,3 +131,30 @@ it('MEDIUM review: names that are also object built-ins are just missing presets
     expect(client.requests.some(r => r.kind === 'settings.set')).toBe(false);
   } finally { await home.stop(); }
 });
+
+// Part D TypeScript review (2026-10-15).
+it('MEDIUM review: a keyed preset follows today\'s keys-run-on setting, so the box shows the engine that will start', async () => {
+  const cwd = await folder(), tty = new TTY(), client = new Client(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd, terminalProgram: 'unknown' });
+  client.settings = { theme: 'graphite', keysRunOn: 'cli', presets: { keyed: preset({ engine: 'ai-term', model: 'claude-sonnet-5', effort: null, auth: { kind: 'key', keyId: key.id }, cwd }) } };
+  await home.start();
+  try {
+    type(tty, '/preset keyed'); enter(tty);
+    await shows(tty, 'claude-sonnet-5 · claude code');
+  } finally { await home.stop(); }
+});
+it('MEDIUM review: Esc after a preset puts the next agent\'s setup back as it was, Don\'t ask included', async () => {
+  const cwd = await folder(), other = await folder(), tty = new TTY(), client = new Client(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd, terminalProgram: 'unknown' });
+  client.settings = { theme: 'graphite', presets: { risky: preset({ cwd: other, model: 'opus', permission: 'dontAsk' }) } };
+  await home.start();
+  try {
+    type(tty, 'a task'); enter(tty); await shows(tty, 'Start a new agent');
+    type(tty, 'p'); await shows(tty, "! don't ask"); await shows(tty, 'opus · claude code');
+    tty.emit('data', Buffer.from('\x1b')); await vi.waitFor(async () => expect(await screen(tty)).not.toContain('Start a new agent'));
+    enter(tty); await shows(tty, 'Start a new agent');
+    const text = await screen(tty);
+    expect(text).not.toContain('opus · claude code'); expect(text).not.toContain("! don't ask"); expect(text).not.toContain(other);
+  } finally { await home.stop(); }
+});
+it('LOW review: a settings file that would pass 16 KiB says so', () => {
+  expect(() => validateSettingsPatch({ presets: Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`p${i}`, preset({ firstMessage: 'x'.repeat(4000) })])) }, true)).toThrow('Settings would pass 16 KiB');
+});
