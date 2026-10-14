@@ -10,7 +10,7 @@ import { visible } from './display.js';
 
 // Bounds that keep one tool call to one reasonable model message and one screen of approval.
 export const READ_MAX_BYTES = 256 * 1024, WRITE_MAX_BYTES = 1024 * 1024, OUTPUT_MAX_CHARS = 64 * 1024;
-const READ_DEFAULT_LINES = 2000, LINE_MAX_CHARS = 2000, PREVIEW_MAX_LINES = 200, SEARCH_MAX_LINES = 200, SEARCH_TIMEOUT_MS = 15_000;
+const READ_DEFAULT_LINES = 2000, LINE_MAX_CHARS = 2000, SEARCH_MAX_LINES = 200, SEARCH_TIMEOUT_MS = 15_000;
 const WALK_MAX_FILES = 20_000, WALK_SKIP = new Set(['.git', 'node_modules']);
 
 export class ToolError extends Error {}
@@ -55,14 +55,14 @@ export async function readTool(root: string, input: ReadInput): Promise<string> 
 }
 
 // Common leading and trailing lines are left out; what's left is shown as -/+ lines, exactly as it will be written.
+// Every changed line is shown: the approval pages it (screen.ts), and y counts only on the last page (S20).
 export function diffPreview(before: string | null, after: string): string {
   const old = before === null ? [] : before.split('\n'), next = after.split('\n');
   let start = 0; while (start < old.length && start < next.length && old[start] === next[start]) start++;
   let end = 0; while (end < old.length - start && end < next.length - start && old[old.length - 1 - end] === next[next.length - 1 - end]) end++;
   const lines = [...old.slice(start, old.length - end).map(line => `- ${line}`), ...next.slice(start, next.length - end).map(line => `+ ${line}`)];
   const head = before === null ? 'new file' : lines.length ? `from line ${start + 1}` : 'no change';
-  const body = lines.length > PREVIEW_MAX_LINES ? [...lines.slice(0, PREVIEW_MAX_LINES), `… ${lines.length - PREVIEW_MAX_LINES} more changed lines not shown`] : lines;
-  return visible([head, ...body].join('\n'));
+  return visible([head, ...lines].join('\n'));
 }
 
 export interface WriteInput { path: string; content: string }
