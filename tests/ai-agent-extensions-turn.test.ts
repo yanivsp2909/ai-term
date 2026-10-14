@@ -107,3 +107,12 @@ it('the manifest and banner token estimate is deterministic and counts only enab
   const a=await setup([]),c=await a.catalog.list();expect(c.tokens).toBe(Math.ceil(Buffer.byteLength('skill careful: Use careful edits\nagent reviewer: Review a diff')/3));
   let out='';new Screen({write:s=>{out+=s;}},createTheme('graphite')).extensionsBanner(4,c.tokens);expect(out).toContain(`extensions: 4 on · ≈${c.tokens} tokens/request`);
 });
+
+it('runs the model and instructions confirmed for a task even if its file changes meanwhile',async()=>{
+  const a=await setup([call('task',{name:'reviewer',prompt:'review'}),text('approved child'),text('parent')]);
+  const child=new MockLanguageModelV4({doStream:[text('changed child')]}),made:string[]=[];
+  a.recorder.approve=async request=>{a.recorder.approvals.push(request);const file=a.catalog.files[1];if(!file)throw new Error('missing');file.item.model='m2';file.body='CHANGED INSTRUCTIONS';return true;};
+  const agent=new Agent({...a.options,models:['m1','m2'],makeModel:async id=>{made.push(id);return child;}});
+  await agent.turn('go',signal());expect(a.recorder.approvals[0]?.body).toContain('AI Term · m1');expect(made).toEqual([]);
+  expect(prompt(a.model,1)).toContain('PRIVATE AGENT INSTRUCTIONS');expect(prompt(a.model,1)).not.toContain('CHANGED INSTRUCTIONS');
+});
