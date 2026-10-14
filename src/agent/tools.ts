@@ -131,7 +131,9 @@ function ripgrep(rg: string, root: string, pattern: string, target: string): Pro
     execFile(rg, args, { cwd: root, env: buildBashEnv(process.env), timeout: SEARCH_TIMEOUT_MS, maxBuffer: 4 * OUTPUT_MAX_CHARS }, (error, stdout) => {
       // rg exits 1 for "no matches"; a cut-off buffer still has useful lines.
       if (error && !(typeof error.code === 'number' && error.code === 1) && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') { reject(new ToolError(error.killed ? 'search timed out' : 'search failed (check the pattern)')); return; }
-      resolve(String(stdout).split('\n').filter(Boolean));
+      // rg versions differ on whether an explicit '.' search prefixes filenames with './'. Keep the tool's paths
+      // stable across versions; strip only the filename prefix, never text inside a matching line.
+      resolve(String(stdout).split('\n').filter(Boolean).map(line => line.startsWith('./') ? line.slice(2) : line));
     });
   });
 }
