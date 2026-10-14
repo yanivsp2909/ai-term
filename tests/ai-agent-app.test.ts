@@ -102,3 +102,6 @@ it('the banner never prints escape sequences from a folder or model name', () =>
   new Screen({ write: t => { out += t; }, columns: 100 }, createTheme('graphite')).banner('m1', '/tmp/evil\x1b]52;c;cHdu\x07\x1b[2Jname', 'ask', ['AGENTS.md']);
   expect(out).not.toContain('\x1b]52'); expect(out).not.toContain('\x1b[2J'); expect(out).toContain('/tmp/evilname');
 });
+it('closing an agent without MCP remains immediate and idempotent',async()=>{
+ const a=await app([]);a.instance.start();a.instance.close();expect(a.quit).toHaveBeenCalledOnce();a.instance.close();expect(a.quit).toHaveBeenCalledOnce();
+});
