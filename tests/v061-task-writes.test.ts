@@ -34,3 +34,23 @@ it('task totals from a burst of usage records coalesce into a few state writes a
     expect(writes - before).toBeLessThanOrEqual(3); expect(updates.length).toBeLessThanOrEqual(3);
   } finally { await manager.shutdown(); await usage.close(); }
 });
+
+it('during shutdown a late task total is still saved, and a remove or rename is refused rather than half done', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-task-shutdown-'))); roots.push(root);
+  const paths = getPaths(root); await preparePaths(paths);
+  await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off' }), { mode: 0o600 });
+  const log = new Logger(paths.log), usage = new UsageService(root, log), manager = new SessionManager(paths, log, undefined, undefined, undefined, undefined, usage);
+  const real = pty.spawn;
+  vi.spyOn(pty, 'spawn').mockImplementation((_file, _args, options) => real('/bin/sh', ['-c', 'printf ready; read done'], { ...options, env: { PATH: '/usr/bin:/bin' } }));
+  vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
+  await usage.start(); await manager.load();
+  const session = await manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: root, permission: 'ask' });
+  await expect.poll(() => manager.get(session.id).status).toBe('running');
+  const stopping = manager.shutdown();
+  usage.emit('task', session.id, 42);
+  await expect(manager.rename(session.id, 'late')).rejects.toThrow('Background service is stopping');
+  await expect(manager.remove(session.id)).rejects.toThrow('Background service is stopping');
+  await stopping; await usage.close();
+  const again = new SessionManager(paths, new Logger(paths.log)); await again.load();
+  expect(again.get(session.id).taskUsage?.tokens).toBe(42); await again.shutdown();
+});
