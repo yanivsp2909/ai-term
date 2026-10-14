@@ -1,6 +1,95 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 1b27e49 fix: budgets count a fast agent loop, dense text and odd deployment names
+Roadmap step: v0.4.2 every key, exact cost, hard limits — done (real-key turns and the catalog refresh are Yaniv's manual checks below)
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at df05a3c after `git pull --ff-only` (already up to date). Baseline 161 files / 1012 passed / 2 opt-in Keychain skips. Final 165 files / 1047 passed / same 2 skips, twice in a row. Session: Claude Code, Opus 5.5 (the prompt was addressed to Codex; run here as the two Codex-addressed prompts before it were).
+Prompt vs code:
+- **Context windows aren't in the catalog yet.** `data/usage-prices.json` (fetched 2026-10-12) was trimmed to prices only. `trimPrices` now keeps Models.dev's `limit.context`/`limit.output`, but downloading a fresh catalog needs network beyond git/npm, which this step's limits forbid. Until Yaniv refreshes it (manual check 1), context % and the 85% warning stay quiet and no output limit is sent. Nothing is guessed.
+- **"Test each non-GPT deployment with a tiny request before offering it":** the Foundry test already did exactly that (Chat Completions `ping`, 16 tokens, after the Responses refusal) and called a success "not a chat model" (Codex's view). It now records `chat`; older saved results mean the same. Re-testing (`t` in /settings) refreshes the label.
+- **"/compact or start fresh":** AI Term's agent has no /compact (a summarizing compaction spends tokens on its own: D49/D55 would make it opt-in, a later step). Its line says `/clear or start fresh` (new: `/clear` forgets the conversation); CLI cards say `/compact`.
+- **"Session budget"** is taken as the per-run spend cap (with the turn cap, D53); the daily, weekly and monthly budgets are all enforced.
+- **"Turn"** for the turn cap is one request to the model (a reply or a tool round): the unit a runaway loop multiplies.
+- **A limit pause shows as `waiting · question`** on the card (the reducer's existing reasons), which also makes /send refuse it.
+- The daemon's fixed-message allowlist was missing v0.4.1's AI Term start/resume messages (they reached the homepage as "Session operation failed"); fixed with this step's new ones.
+- One intermediate commit (2aca570) doesn't build alone (its protocol/validator lines landed in 437b54b); history wasn't rewritten.
+
+## What works
+- **Every key on AI Term's agent** (2aca570): Foundry GPT (Responses) and non-GPT (Chat Completions) deployments, Anthropic (api.anthropic.com, `x-api-key`), OpenAI (api.openai.com, bearer). One module each behind one fetch guard (own host only, own header only, no redirects); provider error text never shown. D47: every key routes to the agent; `keys run on: the cli` sends them to their CLIs. Anthropic/OpenAI rows offer the catalog's chat models.
+- **Facts route** (437b54b): `POST /v1/agent/ai-term` (engine-bound status credential, 4 KiB, 1 s, 200 JSON or 204): wire, context/output limits, price (Foundry: override, else the marked catalog model, else its name), today/week/month spend, budgets, caps, the warning switch.
+- **Exact cost per turn:** `turn · 12.3k in · 4.0k cached · 812 out · 310 reasoning · $0.0123 · run …`, from the provider's counts, priced like Usage (a missing cache rate charges the input rate: an upper bound).
+- **Hard limits (D49, D53):** before every request, a worst-case check against the run's turn and spend caps and the day/week/month budgets (requests cut off by Esc or Ctrl+K count their worst case); an unknown price with limits set, or a daemon that doesn't answer, pauses too. A typed ⏎ goes on (a cap allows its amount again; a raised budget is checked again), Esc stops; nothing is sent meanwhile. Defaults 100 turns / $5.00 per run (`/settings` c); `/caps` per run.
+- **Kill switch:** Ctrl+K kills the request and every running command's process group with SIGKILL; SIGTERM/SIGHUP (homepage `s`) and a crash do the same.
+- **Context:** % on cards and the bar; the 85% line once per crossing in the agent and on the card (`/settings` k, D55); `/clear`; a model switch clears the stale %.
+- **/settings:** `c` caps form, `k` context warning, `m` on a Foundry key marks each deployment as a catalog model (picked from the list; typing only narrows it).
+- Headless end-to-end (ran, built `dist`, temp home, in-memory vault, nothing left the machine): a tiny daily budget pauses the first request before anything is sent (`● paused · budget: today …`), the card shows waiting · question, /send is refused, stop exits; the v0.4.1 run (turn failure, /model, /cd, /help, no canary anywhere) still passes.
+
+## Reviews (fresh typescript-reviewer and security-reviewer, high; every finding: failing test, then fix)
+- **HIGH (both):** a priced model with no cache-read rate gave cache hits a null cost, so caps and budgets stopped counting (most new Foundry chat models) → cached input at the input rate, agent and Usage. 212532b → d3edcae.
+- **MEDIUM (security):** Usage kept only 120 records/min/session, so a fast agent loop undercounted day/week/month budgets → 1,800 for the agent. ae5903c → 1b27e49.
+- **MEDIUM (typescript):** /caps before the first request dropped the default caps; messages queued behind a command were stranded; stale ctx %/warning after /clear or a model switch; a chat-only deployment got the Responses wire when facts failed (now refused); a guessed 16k output limit was always sent (now only a known one). 212532b → d3edcae.
+- **LOW:** interrupted requests weren't counted (both) → worst case charged; /model raced typed input → text waits; crash left commands running (both) → killed; picker selected `(not set)` after typing; catalog filter hid instruct/dated models from the picker; facts parser accepted a malformed price; worst case undercounted CJK/emoji (security) → a token per non-ASCII character; `toString`-named deployments (security nit) → own-key lookup. 212532b → d3edcae, ae5903c → 1b27e49.
+- Held (both): key routing per provider (SDK base-URL/env variables ignored, explicit options win), guard, no raw text, facts route refusals, settings validators (incl. `__proto__`, catalog check), pause only by typed ⏎, kill switch, usage/facts ordering.
+
+## Check output
+```
+npm run build            ESM ⚡️ Build success in 24ms
+npm run typecheck        > tsc --noEmit            (exit 0)
+npm run lint             ESLint: No issues found
+npm test (1)             Test Files  165 passed (165) · Tests  1047 passed | 2 skipped (1049) · 16.47s
+npm test (2)             Test Files  165 passed (165) · Tests  1047 passed | 2 skipped (1049) · 16.41s
+grep exec(/execSync(/shell: true            none (only RegExp .exec)
+grep sk-                                    only guards (isToolName, model ids) and log redaction
+grep key variable names                     AITERM_AGENT_KEY/ENDPOINT only in src/daemon/env.ts and src/agent/main.ts (ENV_KEY_NAMES in validate.ts is the .env import list, unchanged)
+grep --dont-ask / permission flags          src/daemon/env.ts only
+git diff --check df05a3c..HEAD              clean
+npm audit --omit=dev                        found 0 vulnerabilities
+```
+
+## What's next
+- v0.4.3 (D48, pinned): skills, subagents and slash commands from the allowlisted folders, read-only.
+- Still open from v0.4: resume from the transcript; an opt-in /compact (D55: off by default, it spends tokens).
+
+## Manual checks (need Yaniv's keys; keys stay in the Keychain)
+1. Refresh the catalog so context windows exist (network on your side): `cd ~/ai-term && curl -fsSL https://models.dev/api.json -o /tmp/models-dev.json && npx tsx scripts/update-prices.ts /tmp/models-dev.json && git diff --stat -- data/usage-prices.json` — then commit it if the diff looks right — needs Yaniv.
+2. Restart (stops running agents): `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js` — needs Yaniv.
+3. Re-test Foundry deployments: `cd ~/ai-term && node dist/cli/index.js` → `/settings`, select the Foundry key, `t` → GPT deployments `ready`, Grok/Kimi/DeepSeek/GLM `chat`; Esc — needs Yaniv.
+4. Foundry GPT turn: `cd ~/ai-term && node dist/cli/index.js` → `/cd /tmp/ai-agent-try` (from the v0.4.1 checks), `/model` → FOUNDRY → `gpt-6.1-sol · ai term`, `Add a line "v0.4.2" to README.md`, ⏎ ⏎, go inside, `y` → after the reply a `· turn · … in · … out · $0.0…` line — needs Yaniv.
+5. Non-GPT Foundry turn: same, `/model` → a `chat` deployment (e.g. a Kimi one) → `Say which model you are in five words` → reply and a turn cost line (or `price ?` until step 6) — needs Yaniv.
+6. Mark it: `/settings` → select the Foundry key → `m` → the Kimi deployment → type `kimi` → pick the matching catalog model → ⏎ → `my-kimi is kimi-k2.6`; repeat the turn: the cost line shows dollars — needs Yaniv.
+7. Anthropic key (if you have one): `/login` → Anthropic → API key; `/model` → ANTHROPIC → `claude-sonnet-5 · ai term` (key ····last4) → one turn → reply and cost line — needs Yaniv.
+8. OpenAI key (if you have one): `/login` → OpenAI → API key; `/model` → OPENAI → `gpt-6.1-sol · ai term` → one turn — needs Yaniv.
+9. Context %: after step 1, the card and the bar (`/settings` h → bar on) show `ctx N%` after a turn — needs Yaniv.
+10. Budget stop: home, `b` → daily `0.01` ⏎ → in an agent ask `Read README.md and summarize it` → `● paused · budget: today …`, card `waiting · question`; Esc → `■ stopped`; `b` → clear the daily field ⏎ — needs Yaniv.
+11. Cap pause: inside an agent `/caps turns 2`, then `Read README.md, then AGENTS.md, then PROGRESS.md one by one` → `● paused · cap reached: 2 turns this run · ⏎ allows 2 more`; ⏎ continues; `/caps turns off` — needs Yaniv.
+12. Kill switch: inside an agent (Ask) `Run sleep 120 && echo finished` → `y` → while it runs press Ctrl+K → `✗ killed: the request and 1 running command` at once; then `cd ~/ai-term && pgrep -fl "sleep 120" || echo none` → `none` — needs Yaniv.
+13. Stop from the homepage: same long command, Ctrl+E home, `s` then `y` → the card goes to exited; `cd ~/ai-term && pgrep -fl "sleep 120" || echo none` → `none` — needs Yaniv.
+14. 85% warning (after step 1): `/settings` → `m` → mark a Foundry deployment as a small-context catalog model (e.g. `phi-4`), start it, ask `Read PROGRESS.md in full` twice → `● context 8x% · /clear or start fresh` once, and the card shows the same; `/clear` → the card's line goes; `m` → `(not set)` afterwards — needs Yaniv.
+15. Fallback: `/settings` → `r` → `keys run on: the cli`; Anthropic rows read `· claude code`, OpenAI/Foundry `· codex`; `r` back — needs Yaniv.
+- Still open from v0.4.1, v0.3 and v0.2: the retained sections below.
+
+## Gotchas
+- Until the catalog is refreshed (manual check 1) there is no ctx %, no 85% warning, and no maxOutputTokens is sent; the worst case assumes 16k output, so limit pauses can come early on expensive models.
+- A pause blocks the turn until you answer it: an agent left at a budget pause shows `waiting · question`.
+- A request cut off by Esc/Ctrl+K counts its worst case against the run's cap and budgets for the rest of the run (it may have been billed; the provider never says).
+- Usage now prices cached tokens at the input rate when the catalog has no cache rate, instead of `price ?`.
+- Tests that touch Anthropic/OpenAI keys on the CLIs write `keysRunOn: 'cli'` first (they test the fallback path).
+
+## New dependencies
+- `@ai-sdk/anthropic` 4.0.79: the AI SDK's Anthropic provider (Messages API, `x-api-key`).
+- `@ai-sdk/openai` 4.0.93: the AI SDK's OpenAI provider (Responses API); was already a transitive dependency of `@ai-sdk/azure`, now explicit. No OpenAI-compatible package was needed: Foundry chat deployments go through `@ai-sdk/azure`'s `chat()`.
+
+## Concepts introduced
+- **Worst-case pre-check (`src/agent/limits.ts`):** the exact cost of a request is known only after it runs, so the check before it assumes the most it could cost (a generous token estimate for the input, the full output allowance). If even that fits under every cap and budget, it can't cross them.
+- **Facts from the daemon (`/v1/agent/ai-term`, `src/shared/agent-facts.ts`):** the agent never reads settings or usage files; it asks the daemon, which owns them, before every request, so a budget raised on the homepage applies to the very next request.
+- **Process-group kill (`killAllBash`, `src/agent/bash.ts`):** each bash command runs as the leader of its own process group; signalling the negative pid reaches everything it started, which is what makes the kill switch leave nothing behind.
+
+---
+
+## Previous checkpoint (v0.4.1 AI Term's own agent, retained)
+
+## Checkpoint
 Last commit: ab09fcf fix: page long approvals, cap commands, survive bad imports, unwrap retries
 Roadmap step: v0.4.1 AI Term's own agent — done (a real model call needs Yaniv's key: manual checks below)
 Branch: main. This handover is the last commit; its own hash is in git log.
