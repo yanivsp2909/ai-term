@@ -155,3 +155,30 @@ it('a handoff can continue on another account of the same engine, same folder, t
     await expect(manager.handoffPlan(result.session.id, 'claude-code', 'nobody')).rejects.toThrow('Account not found for this engine');
   } finally { await manager.shutdown(); await usage.close(); }
 });
+
+// Part F security review (2026-10-15).
+it('MEDIUM review: unreadable settings never start an account agent on a guessed account', async () => {
+  const d = await daemon({ accounts: [{ name: 'work', engine: 'codex' }], defaultAccounts: { codex: 'work' } });
+  try {
+    await writeFile(join(d.root, 'settings.json'), '{not json', { mode: 0o600 });
+    const before = d.spawned.length;
+    await expect(d.manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: d.root, permission: 'ask' })).rejects.toThrow("Settings unreadable; can't tell which account to use");
+    expect(d.spawned.length).toBe(before);
+  } finally { await d.close(); }
+});
+it('LOW review: a handoff with no account named checks and starts the same account: the engine default', async () => {
+  const root = await temp(), paths = getPaths(root); await preparePaths(paths);
+  await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off', handoff: true, accounts: [{ name: 'work', engine: 'claude-code' }], defaultAccounts: { 'claude-code': 'work' } }), { mode: 0o600 });
+  const log = new Logger(paths.log), usage = new UsageService(root, log), manager = new SessionManager(paths, log, undefined, undefined, undefined, undefined, usage);
+  manager.setHandoffWriter({ prices: { fetchedAt: 'x', providers: { anthropic: {}, openai: {}, azure: {} } } as PriceSnapshot, summarize: async () => ({ text: 'unused', inputTokens: 0, outputTokens: 0 }) });
+  await usage.start(); await manager.load();
+  const real = pty.spawn; vi.spyOn(pty, 'spawn').mockImplementation((_f, _a, options) => real('/bin/sh', ['-c', 'printf ready; read done; sleep 30'], { ...options, env: { PATH: '/usr/bin:/bin' } }));
+  const checks: (string | undefined)[] = [];
+  vi.spyOn(engines, 'checkEngine').mockImplementation(async (_e, _b, _r, profile) => { checks.push(profile); return { installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' }; });
+  try {
+    const source = await manager.create({ engine: 'claude-code', model: null, auth: { kind: 'account', profile: 'own' }, cwd: root, permission: 'ask', title: 'fixer' });
+    await expect.poll(() => manager.get(source.id).status).toBe('running');
+    expect((await manager.handoffPlan(source.id, 'claude-code')).account).toBe('work');
+    expect(checks.at(-1)).toBe(join(root, 'profiles', 'work'));
+  } finally { await manager.shutdown(); await usage.close(); }
+});
