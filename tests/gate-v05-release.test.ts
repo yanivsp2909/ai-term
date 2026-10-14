@@ -75,3 +75,59 @@ it('LOW/MEDIUM quit: a client that never reports exit cannot block quit forever'
     await done;
   } finally { vi.useRealTimers(); }
 });
+
+// Second review round: control channel and v0.5 diff.
+import { EventEmitter } from 'node:events';
+import { ControlGate } from '../app/main/control-gate.js';
+import { AppControlFilter, encodeAppControl } from '../src/shared/app-control.js';
+import { AppInput } from '../src/client/app-input.js';
+import { BACKGROUND_QUERY } from '../src/client/tui/theme.js';
+const appToken = 'ab'.repeat(32);
+
+it('MEDIUM S24: no control is written before the client has switched to its own screen', () => {
+  const gate = new ControlGate(appToken);
+  expect(gate.command('theme-changed')).toBeNull();
+  expect(gate.output('starting…\r\n')).toBe('starting…\r\n');
+  expect(gate.command('palette')).toBeNull();
+  gate.output('\x1b[?1049h\x1b[H');
+  expect(gate.command('palette')).toBe(encodeAppControl(appToken, 'palette'));
+});
+
+it('MEDIUM S24: a control echoed by a cooked terminal never reaches the screen, whole or split', () => {
+  const echoed = `^[]777;ai-term;${appToken};theme-changed^[\\`, raw = encodeAppControl(appToken, 'home');
+  const gate = new ControlGate(appToken);
+  expect(gate.output(`before ${echoed} after`)).toBe('before  after');
+  expect(gate.output(`x${raw}y`)).toBe('xy');
+  let shown = '';
+  for (const piece of [`one ${echoed.slice(0, 3)}`, echoed.slice(3, 40), echoed.slice(40), ' two']) shown += gate.output(piece);
+  shown += gate.flush();
+  expect(shown).toBe('one  two'); expect(shown).not.toContain(appToken);
+  // Ordinary escapes pass at once; a held partial prefix comes out on flush.
+  expect(gate.output('\x1b]11;?\x1b\\')).toBe('\x1b]11;?\x1b\\');
+  expect(gate.output('tail ^[')).toBe('tail '); expect(gate.flush()).toBe('^[');
+});
+
+it('LOW: Option+[ and Esc-then-[ are released on the Escape timeout, never held until the next key', () => {
+  const filter = new AppControlFilter(appToken);
+  expect(filter.push(Buffer.from('\x1b['))).toEqual([]);
+  expect(filter.flush().toString()).toBe('\x1b[');
+  const later = new AppControlFilter(appToken);
+  later.push(Buffer.from('\x1b')); expect(later.flush().toString()).toBe('\x1b');
+  expect(later.push(Buffer.from('['))).toEqual([]); expect(later.flush().toString()).toBe('[');
+  // A pasted marker after a released prefix still completes and passes whole.
+  expect(Buffer.concat(later.push(Buffer.from('200~x')).flatMap(part => 'data' in part ? [part.data] : [])).toString()).toBe('200~x');
+});
+
+it('MEDIUM: an OSC 11 reply that arrives after its probe timed out is not typed into the agent', async () => {
+  class Tty extends EventEmitter { isTTY = true; isRaw = true; setRawMode() {} resume() {} pause() {} written = ''; write(data: string) { this.written += data; return true; } }
+  const tty = new Tty(), input = new AppInput(tty, appToken), seen: Buffer[] = [];
+  input.on('data', (data: Buffer) => seen.push(data));
+  try {
+    expect(await input.background(tty)).toBeUndefined();
+    expect(tty.written).toBe(BACKGROUND_QUERY);
+    tty.emit('data', Buffer.from('\x1b]11;rgb:ff/ff/ff\x1b\\'));
+    tty.emit('data', Buffer.from('k'));
+    await new Promise(resolve => setTimeout(resolve, 40));
+    expect(Buffer.concat(seen).toString()).toBe('k');
+  } finally { input.dispose(); }
+});
