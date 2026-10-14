@@ -65,6 +65,9 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   const makeModel = (id: string) => foundryModel(endpoint, id, key);
   return new Promise<number>(resolveExit => {
     const restore = () => { terminal.stdout.write('\x1b[?2004l'); terminal.stdin.setRawMode?.(false); terminal.stdin.pause(); };
+    // A crash prints fixed words, never a stack or an error message, which could carry anything a provider sent.
+    const crash = () => { restore(); terminal.stderr.write('\nai agent stopped after an internal error\n'); resolveExit(1); };
+    process.once('uncaughtException', crash); process.once('unhandledRejection', crash);
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
       agent: io => new Agent({ root, permission: parsed.permission, model: makeModel(parsed.model), modelId: parsed.model, instructions, reporter, transcript, io, redact, bashEnv, rg }),
