@@ -39,6 +39,8 @@ test('window uses an existing protocol-compatible dev daemon without stopping it
    // macOS canonicalizes /var to /private/var when it records a session folder.
    await expect.poll(async()=>((await connected.request({kind:'sessions.list'})).sessions??[]).find(session=>session.id!==original?.id)?.cwd).toBe(await realpath(home));
   }
-  await application.close();application=undefined;expect((await client.request({kind:'sessions.list'})).sessions).toHaveLength(packaged?2:1);
+  const appProcess=application.process();await application.close();application=undefined;
+  expect({code:appProcess.exitCode,signal:appProcess.signalCode}).toEqual({code:0,signal:null});
+  expect((await client.request({kind:'sessions.list'})).sessions).toHaveLength(packaged?2:1);
  }finally{if(application)await application.close();client?.close();daemon.kill('SIGTERM');await exited;await rm(home,{recursive:true,force:true});}
 });

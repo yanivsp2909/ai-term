@@ -30,6 +30,7 @@ test.afterEach(async ({}, info) => {
   if (application) {
     await application.evaluate(async ({ clipboard }) => { await clipboard.clear(); });
     await application.close();
+    expect({code:application.process().exitCode,signal:application.process().signalCode}).toEqual({code:0,signal:null});
   }
   // Stop only this test's daemon, using the pid in its private disposable home.
   try {
