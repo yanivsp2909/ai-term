@@ -37,7 +37,12 @@ export class AppInput extends EventEmitter implements Input {
     for (const part of this.filter.push(typeof value === 'string' ? Buffer.from(value) : value)) {
       if ('command' in part) this.emit('command', part.command); else this.data(part.data);
     }
-    this.escapeTimer = setTimeout(() => { this.data(this.filter.flush()); }, 30);
+    this.escapeTimer = setTimeout(() => {
+      this.data(this.filter.flush());
+      // The late-reply window holds an Escape like a probe does; after the timeout it is a real key.
+      const held = this.late?.replies.flush();
+      if (held?.length) this.emit('data', held);
+    }, 30);
   };
   private error = (error: Error): void => { this.emit('error', error); };
   private end = (): void => { this.emit('end'); };

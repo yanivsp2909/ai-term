@@ -154,3 +154,31 @@ it('LOW S24: an unterminated control drops a bounded run after its prefix and sh
   const shown = gate.output('a\x1b]777;ai-term;' + 'x'.repeat(200) + 'KEEP') + gate.flush();
   expect(shown.startsWith('a')).toBe(true); expect(shown.endsWith('KEEP')).toBe(true); expect(shown.length).toBeLessThan(200);
 });
+it('S24: random chunking and flush timing never show the token and keep all other text', () => {
+  let seed = 7; const random = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (let round = 0; round < 300; round++) {
+    const parts: string[] = [], expected: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const text = ['plain ', '\x1b[31mred\x1b[0m ', '^ caret ', '\x1b]11;?\x1b\\', 'x'][random(5)] ?? '';
+      parts.push(text); expected.push(text);
+      if (random(2)) parts.push(random(2) ? encodeAppControl(appToken, 'palette') : `^[]777;ai-term;${appToken};palette^[\\`);
+    }
+    const stream = parts.join(''), gate = new ControlGate(appToken);
+    let shown = '', at = 0;
+    while (at < stream.length) { const size = 1 + random(30); shown += gate.output(stream.slice(at, at + size)); at += size; if (random(3) === 0) shown += gate.flush(); }
+    shown += gate.flush();
+    expect(shown).not.toContain(appToken.slice(0, 6));
+    expect(shown).toBe(expected.join(''));
+  }
+});
+it('LOW: an Escape typed during the late-reply window still arrives after the Escape timeout', async () => {
+  class Tty extends EventEmitter { isTTY = true; isRaw = true; setRawMode() {} resume() {} pause() {} write() { return true; } }
+  const tty = new Tty(), input = new AppInput(tty, appToken), seen: Buffer[] = [];
+  input.on('data', (data: Buffer) => seen.push(data));
+  try {
+    await input.background(tty);
+    tty.emit('data', Buffer.from('a\x1b'));
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(Buffer.concat(seen).toString()).toBe('a\x1b');
+  } finally { input.dispose(); }
+});
