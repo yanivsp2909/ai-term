@@ -54,6 +54,7 @@ function App(): unknown {
     const observer = new ResizeObserver(resize); observer.observe(host.current);
     const action = (item: MenuAction): void => {
       if (item === 'close-note') { setCloseNote(true); return; }
+      if (item === 'focus-terminal') { setSearching(false); setError(''); terminal.focus(); return; }
       const field = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
       if (item === 'copy') {
         const selection = field ? field.value.slice(field.selectionStart ?? 0, field.selectionEnd ?? 0) : terminal.getSelection();
@@ -66,7 +67,7 @@ function App(): unknown {
           report(Object.values(pasteErrors).find(reason => error instanceof Error && error.message.includes(reason)) ?? pasteErrors.unavailable);
         });
       } else if (item === 'select-all') { if (field) field.select(); else terminal.selectAll(); }
-      else if (item === 'find') setSearching(true);
+      else if (item === 'find') { setSearching(true); searchInput.current?.focus(); }
       else { terminal.options.fontSize = item === 'font-reset' ? terminalFontSize : Math.max(8, Math.min(32, (terminal.options.fontSize ?? terminalFontSize) + (item === 'font-decrease' ? -1 : 1))); resize(); }
     };
     const stopMenu = api.onMenuAction(action);

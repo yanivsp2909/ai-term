@@ -48,6 +48,7 @@ function resize(size: TerminalSize): void {
 }
 function command(action: AppCommand): void {
   if (!terminal || !window || window.isDestroyed()) return;
+  if (action !== 'theme-changed') menuAction('focus-terminal');
   try { terminal.write(encodeAppControl(appToken, action)); } catch { failure('Desktop command failed'); }
 }
 function menuAction(action: MenuAction): void { window?.webContents.send(channels.menuAction, action); }

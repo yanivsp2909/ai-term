@@ -1,5 +1,5 @@
 export type AppTheme = 'dark' | 'light';
-export const menuActions = ['copy', 'paste', 'select-all', 'find', 'font-increase', 'font-decrease', 'font-reset', 'close-note'] as const;
+export const menuActions = ['copy', 'paste', 'select-all', 'find', 'font-increase', 'font-decrease', 'font-reset', 'close-note', 'focus-terminal'] as const;
 export type MenuAction = typeof menuActions[number];
 export const pasteErrors = {
   controls: 'Paste contains terminal escape controls',
