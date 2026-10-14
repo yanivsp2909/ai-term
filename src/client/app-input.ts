@@ -20,7 +20,10 @@ export class AppInput extends EventEmitter implements Input {
   resume(): unknown { return this.source.resume(); }
   pause(): unknown { return this.source.pause(); }
   private data(data: Buffer): void {
-    const bytes = this.probe ? this.probe.replies.push(data) : data;
+    // The control filter has already resolved a lone Escape's ambiguity timeout.
+    // Do not buffer that real key again while waiting for an OSC11 reply.
+    const bareEscape = data.length === 1 && data[0] === 27;
+    const bytes = this.probe && !bareEscape ? this.probe.replies.push(data) : data;
     if (bytes.length) this.emit('data', bytes);
   }
   private receive = (value: Buffer | string): void => {

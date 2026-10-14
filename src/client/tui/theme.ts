@@ -98,6 +98,9 @@ export class BackgroundReplies {
         continue;
       }
       if (!this.pending) { if (byte === 27) this.pending = '\x1b'; else output.push(byte); continue; }
+      // A typed Escape can immediately precede a terminal reply. Keep the new
+      // prefix so query traffic is consumed rather than becoming agent keys.
+      if (this.pending === '\x1b' && byte === 27) { output.push(27); continue; }
       this.pending += String.fromCharCode(byte);
       if (this.pending.startsWith('\x1b[')) {
         const start = '\x1b[200~';
