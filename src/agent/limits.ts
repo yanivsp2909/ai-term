@@ -6,6 +6,8 @@ import { estimateCost } from '../daemon/usage-prices.js';
 // stays inside the run's caps and your budgets, using the worst case for that request (estimateTokens for the input, the
 // full output allowance). A check it can't make is a pause too.
 export const CHARS_PER_TOKEN = 3, TOOL_SCHEMA_TOKENS = 1400, DEFAULT_MAX_OUTPUT = 16_000, MAX_OUTPUT_CAP = 32_000;
+// Below this many output tokens a reply isn't useful, so a request that can't get them pauses like any other cap.
+export const MIN_USEFUL_OUTPUT = 1000;
 // Worst-case input tokens: a third of a token per ASCII character (real tokenizers do better), a whole token for every other
 // character, because CJK text and emoji can cost about one each.
 export function estimateTokens(text: string): number {
@@ -37,31 +39,45 @@ export class RunLimits {
   private pending: Partial<AgentCaps> = {};
   // Requests sent but never finished (Esc, kill): their worst case, which the daemon never hears about.
   unreported = 0;
-  // The worst case of the request the last check let through.
+  // The worst case of the request the last check let through, and the output allowance it carries (maxOutputTokens).
   lastWorst = 0;
+  lastMaxOutput = DEFAULT_MAX_OUTPUT;
   get current(): AgentCaps | null { return this.caps; }
   setCaps(caps: AgentCaps): void { const merged = { ...caps, ...this.pending }; this.pending = {}; this.caps = merged; this.base = { ...merged }; }
   chargeUnfinished(worst: number): void { this.spent += worst; this.unreported += worst; }
   // A cost already in spent whose usage AI Term never took: the daemon's budgets don't know it, so checks add it here.
   unconfirmed(cost: number): void { this.unreported += cost; }
   record(cost: number | null): void { if (cost !== null) this.spent += cost; }
-  // The first pause that applies before the next request, or null when it may go.
+  // The first pause that applies before the next request, or null when it may go. A request that may go carries an output
+  // allowance (lastMaxOutput) sized so its worst case, input plus that allowance at the output price, fits what is left of
+  // the run cap and of every budget, never above the model's own limit. Reasoning is output: the Responses API, Anthropic's
+  // max_tokens and Chat Completions all bound it by the same allowance and bill it at the output rate.
   check(facts: AgentFacts | null, inputTokens: number): Pause | null {
     if (!facts) return { text: "AI Term isn't answering, so budgets and caps can't be checked · ⏎ asks again · Esc stops" };
     if (!this.caps) this.setCaps(facts.caps);
-    const caps = this.caps ?? facts.caps, base = this.base ?? facts.caps;
-    this.lastWorst = 0;
+    const caps = this.caps ?? facts.caps, base = this.base ?? facts.caps, modelMax = maxOutputTokens(facts);
+    this.lastWorst = 0; this.lastMaxOutput = modelMax;
     if (caps.turns !== null && this.turns >= caps.turns) return { text: `cap reached: ${caps.turns} turns this run · ⏎ allows ${base.turns ?? caps.turns} more · /caps changes it · Esc stops`, onContinue: () => { caps.turns = (caps.turns ?? 0) + (base.turns ?? caps.turns ?? 0); } };
     const limited = caps.spendUsd !== null || facts.budgets.daily !== null || facts.budgets.weekly !== null || facts.budgets.monthly !== null;
+    // Unknown price: asked once per model and run; going on still sends the model's own allowance, never no limit.
     if (!facts.price) {
       if (!limited || this.unpriced.has(facts.model)) return null;
-      return { text: `no price known for ${facts.model}, so spend limits can't be checked · mark the deployment's model in /settings, or ⏎ goes on without them for this model this run · Esc stops`, onContinue: () => { this.unpriced.add(facts.model); } };
+      return { text: `no price known for ${facts.model}, so spend limits can't be checked · mark the deployment's model in /settings, or ⏎ goes on without them for this model this run (at most ${modelMax.toLocaleString('en-US')} output tokens a request) · Esc stops`, onContinue: () => { this.unpriced.add(facts.model); } };
     }
-    const next = worstCase(facts.price, inputTokens, maxOutputTokens(facts)), extra = this.unreported + this.reserved;
-    if (caps.spendUsd !== null && this.spent + this.reserved + next > caps.spendUsd) return { text: `cap reached: ${usd(caps.spendUsd)} this run · spent ${usd(this.spent)} · the next request could cost up to ${usd(next)} · ⏎ allows ${usd(base.spendUsd ?? caps.spendUsd)} more · Esc stops`, onContinue: () => { caps.spendUsd = (caps.spendUsd ?? 0) + (base.spendUsd ?? caps.spendUsd ?? 0); } };
+    const price = facts.price, input = worstCase(price, inputTokens, 0), extra = this.unreported + this.reserved;
+    const rooms: { room: number; pause: () => Pause }[] = [];
+    if (caps.spendUsd !== null) rooms.push({ room: caps.spendUsd - this.spent - this.reserved, pause: () => ({ text: `cap reached: ${usd(caps.spendUsd ?? 0)} this run · spent ${usd(this.spent)} · what's left fits under ${MIN_USEFUL_OUTPUT.toLocaleString('en-US')} output tokens · ⏎ allows ${usd(base.spendUsd ?? caps.spendUsd ?? 0)} more · Esc stops`, onContinue: () => { caps.spendUsd = (caps.spendUsd ?? 0) + (base.spendUsd ?? caps.spendUsd ?? 0); } }) });
     for (const [limit, spent, label] of [[facts.budgets.daily, facts.spent.day, 'today'], [facts.budgets.weekly, facts.spent.week, 'this week'], [facts.budgets.monthly, facts.spent.month, 'this month']] as const)
-      if (limit !== null && spent + extra + next > limit) return { text: `budget: ${label} ${usd(spent)} of ${usd(limit)} · the next request could cost up to ${usd(next)} · raise it on the homepage (b), then ⏎ checks again · Esc stops` };
-    this.lastWorst = next;
+      if (limit !== null) rooms.push({ room: limit - spent - extra, pause: () => ({ text: `budget: ${label} ${usd(spent)} of ${usd(limit)} · what's left fits under ${MIN_USEFUL_OUTPUT.toLocaleString('en-US')} output tokens · raise it on the homepage (b), then ⏎ checks again · Esc stops` }) });
+    let allowance = modelMax, binding: (typeof rooms)[number] | null = null;
+    for (const limit of rooms) {
+      const left = limit.room - input;
+      // Floor, so the worst case never passes the room by a fraction of a token; a free output rate fits whatever is left.
+      const fits = left < 0 ? -1 : price.output > 0 ? Math.floor(left * 1e6 / price.output) : modelMax;
+      if (fits < allowance) { allowance = fits; binding = limit; }
+    }
+    if (binding && allowance < Math.min(MIN_USEFUL_OUTPUT, modelMax)) return binding.pause();
+    this.lastMaxOutput = allowance; this.lastWorst = worstCase(price, inputTokens, allowance);
     return null;
   }
   // /caps: change this run's caps; null turns a cap off.

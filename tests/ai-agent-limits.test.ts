@@ -69,7 +69,7 @@ it('a budget stop happens before the request that would cross it: nothing is sen
   const { model, agent: a } = await agent([textStep('never')], h);
   expect(await a.turn('hi', go())).toBe('interrupted');
   expect(model.doStreamCalls).toHaveLength(0);
-  expect(h.pauses[0]).toMatch(/^budget: today \$0\.990 of \$1\.00 · the next request could cost up to \$0\.\d+ · raise it on the homepage \(b\), then ⏎ checks again · Esc stops$/);
+  expect(h.pauses[0]).toBe("budget: today $0.990 of $1.00 · what's left fits under 1,000 output tokens · raise it on the homepage (b), then ⏎ checks again · Esc stops");
   expect(h.statuses.map(s => s.event)).toEqual(['turn-start', 'paused', 'answered', 'done']);
   // Raised on the homepage meanwhile: ⏎ checks again and the request goes.
   const raised = new Harness(stubFacts({ price: { input: 2, output: 10 }, budgets: { daily: 1, weekly: null, monthly: null }, spent: { day: 0.99, week: 0, month: 0 } }), [true]);
@@ -89,12 +89,14 @@ it('the turn cap pauses after N requests; ⏎ allows N more, Esc stops with noth
   expect(await raised.agent.turn('loop', go())).toBe('interrupted'); expect(raised.model.doStreamCalls).toHaveLength(4); expect(raiser.pauses).toHaveLength(2);
 });
 
-it('the spend cap counts real cost and pauses before a request that could cross it', async () => {
+it('the spend cap counts real cost: the next request gets only what is left, and pauses when that is too little', async () => {
   const h = new Harness(stubFacts({ price: { input: 1, output: 1 }, caps: { turns: null, spendUsd: 0.05 } }), [false]);
-  const { model, agent: a } = await agent([toolStep('read', { path: '.' }, usage(30_000, 10_000)), textStep('never')], h);
+  const { model, agent: a } = await agent([toolStep('read', { path: '.' }, usage(30_000, 10_000)), toolStep('read', { path: '.' }, usage(5_000, 4_000)), textStep('never')], h);
   expect(await a.turn('go', go())).toBe('interrupted');
-  expect(model.doStreamCalls).toHaveLength(1); expect(a.limits.spent).toBeCloseTo(0.04, 10);
-  expect(h.pauses[0]).toMatch(/^cap reached: \$0\.050 this run · spent \$0\.040 · the next request could cost up to \$0\.0\d+ · ⏎ allows \$0\.050 more · Esc stops$/);
+  expect(a.limits.spent).toBeCloseTo(0.049, 10);
+  // $0.01 left after the first request: the second carries what fits (input and output at $1/M), not 16k.
+  expect(model.doStreamCalls).toHaveLength(2); expect(model.doStreamCalls[1]?.maxOutputTokens).toBeLessThan(10_000);
+  expect(h.pauses[0]).toBe("cap reached: $0.050 this run · spent $0.049 · what's left fits under 1,000 output tokens · ⏎ allows $0.050 more · Esc stops");
 });
 
 it('an unknown price with limits set pauses once per model and run; with no limits it doesn\'t', async () => {

@@ -51,9 +51,11 @@ it('HIGH: a model priced without a cache rate still counts cache hits (at the in
   expect(requestCost(kimi ?? null, 1000, 500, 100)).toBeCloseTo((1000 * (kimi?.input ?? 0) + 100 * (kimi?.output ?? 0)) / 1e6, 12);
   expect(estimateCost({ input: 2, output: 10 }, 1000, 100, 500)).toBeCloseTo((1000 * 2 + 100 * 10) / 1e6, 12);
   const h = new Harness(stubFacts({ price: { input: 1, output: 1 }, caps: { turns: null, spendUsd: 0.05 } }));
-  const { agent: a } = await agent([toolStep(40_000, 30_000), textStep('never')], h);
+  const { model, agent: a } = await agent([toolStep(40_000, 30_000), textStep('small')], h);
   await a.turn('go', go());
-  expect(a.limits.spent).toBeGreaterThan(0.04); expect(h.pauses).toHaveLength(1);
+  // The cache hits count, so the next request gets only what is left of the cap (v0.4 gate: sized allowance, not a pause).
+  expect(a.limits.spent).toBeGreaterThan(0.04); expect(h.pauses).toEqual([]);
+  expect(model.doStreamCalls[1]?.maxOutputTokens).toBeLessThan(Math.floor((0.05 - a.limits.spent + 0.000001) * 1e6));
 });
 
 it('MEDIUM: /caps before the first request changes only what it names; the daemon\'s defaults fill the rest', () => {

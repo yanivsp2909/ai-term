@@ -83,12 +83,11 @@ it('a finished request without usage counts its worst case and says so, instead 
 it('usage AI Term never confirmed still counts against the budgets, and the agent says so', async () => {
   const h = new Harness(stubFacts({ price: PRICE, budgets: { daily: 0.9, weekly: null, monthly: null } }));
   h.confirmed = false;
-  const a = await agent([toolStep('read', { path: '.' }, usage(10_000, 10_000)), textStep('never sent')], h);
-  // Request 1 ($0.60) fits the daily budget; the daemon never got its usage, so its spend stays at 0 there. Request 2's check
-  // must still count request 1, or the budget would be crossed.
-  expect(await a.agent.turn('go', go())).toBe('interrupted');
-  expect(a.model.doStreamCalls).toHaveLength(1);
-  expect(h.pauses.at(-1)).toContain('budget: today');
+  const a = await agent([toolStep('read', { path: '.' }, usage(10_000, 10_000)), textStep('small')], h);
+  // Request 1 ($0.60) fits the daily budget; the daemon never got its usage, so its spend stays at 0 there. Request 2's
+  // allowance must still count request 1: what is left is $0.30, not $0.90 (at $50/M output, under 6,000 tokens).
+  expect(await a.agent.turn('go', go())).toBe('done');
+  expect(a.model.doStreamCalls[1]?.maxOutputTokens).toBeLessThan(6000);
   expect(h.notes.some(n => n.tone === 'warn' && n.text.includes("usage isn't reaching AI Term"))).toBe(true);
 });
 

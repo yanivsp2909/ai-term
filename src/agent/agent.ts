@@ -226,10 +226,11 @@ export class Agent {
         prepareStep: async ({ messages }) => {
           facts = await this.clearance(estimateTokens(system + JSON.stringify(messages)), controller);
           open = this.limits.lastWorst; this.currentWorst = open; started = false;
-          // The request carries exactly the output allowance its check priced (the model's limit capped at 32k, else 16k):
-          // with none, a provider may write up to its own maximum and one request could pass every cap (v0.4 gate). A model
-          // whose real limit is below 16k refuses; marking its catalog model in /settings gives the agent that limit.
-          return { maxOutputTokens: maxOutputTokens(facts) };
+          // The request carries exactly the output allowance its check priced: sized to what is left of the run cap and the
+          // budgets, never above the model's limit (capped at 32k, else 16k). With none, a provider may write up to its own
+          // maximum and one request could pass every cap (v0.4 gate). A model whose real limit is below 16k refuses;
+          // marking its catalog model in /settings gives the agent that limit.
+          return { maxOutputTokens: this.limits.lastMaxOutput };
         },
         // The SDK's default handler prints the error, whose text can carry anything the provider sent, to stderr, which
         // here is the agent's terminal. The same error arrives as the stream's error part below and is handled there.
