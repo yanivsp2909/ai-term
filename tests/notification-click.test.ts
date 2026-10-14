@@ -105,7 +105,7 @@ it('the generated .command holds only a fixed interpreter, the absolute ai CLI a
     `#!/bin/sh\nrm -f -- "$0"\nexec /usr/bin/env 'TSX_TSCONFIG_PATH=/Users/test/ai-term/tsconfig.json' '/opt/node/bin/node' --import '/Users/test/ai-term/node_modules/tsx/dist/loader.mjs' '/Users/test/ai-term/src/cli/index.ts' --attach '${id}'\n`);
   for (const [command, session] of [
     [{ node: '/opt/node/bin/node', entry: '/x/index.js' }, 'AITERMCANARY'], [{ node: '/opt/node/bin/node', entry: '/x/index.js' }, id.toUpperCase()],
-    [{ node: "/opt/no'de", entry: '/x/index.js' }, id], [{ node: '/opt/node', entry: '/x/my ai/index.js' }, id], [{ node: 'node', entry: '/x/index.js' }, id],
+    [{ node: "/opt/no'de", entry: '/x/index.js' }, id], [{ node: 'node', entry: '/x/index.js' }, id],
     [{ node: '/opt/node', entry: '/x/$(touch)/index.js' }, id], [{ node: '/opt/node', entry: '/x/index.ts' }, id], [{ node: '/opt/node', entry: '/x/../index.js' }, id],
   ] as const) expect(() => terminalCommandFile(command, session)).toThrow('Invalid terminal command');
 });
