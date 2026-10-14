@@ -12,7 +12,9 @@ export type AgentStatus =
   | { event: 'turn-failed'; error: string } | { event: 'context'; percent: number | null } | { event: 'model'; model: string };
 export interface TokenUsage { input: number; cached: number; output: number; reasoning?: number }
 export interface ReporterEnv { port: number; status: string; usage?: string }
-const REQUEST_TIMEOUT_MS = 1000, FACTS_MAX_BYTES = 512 * 1024;
+// A 64 KiB file is returned twice (text and body); JSON escaping can expand each byte sixfold. A 500-item
+// catalog also expands multibyte metadata. Keep a bounded response that fits both reader-approved results.
+const REQUEST_TIMEOUT_MS = 1000, FACTS_MAX_BYTES = 2 * 1024 * 1024;
 
 export function reporterEnv(env: NodeJS.ProcessEnv): ReporterEnv | null {
   const port = Number(env.AITERM_STATUS_PORT), status = env.AITERM_STATUS_TOKEN, usage = env.AITERM_USAGE_TOKEN;
