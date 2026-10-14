@@ -295,8 +295,8 @@ export class DaemonServer {
                     this.control(peer,{id:request.id,ok:true,handoffPlan:await this.manager.handoffPlan(request.sessionId,request.engine)});
                     break;
                 case 'sessions.handoff': {
-                    const handed=await this.manager.handoff(request.sessionId,request.engine);
-                    this.control(peer,{id:request.id,ok:true,session:handed.session,handoffSummary:handed.summary});
+                    const handed=await this.manager.handoff(request.sessionId,request.engine,request.writer);
+                    this.control(peer,{id:request.id,ok:true,session:handed.session,handoffSummary:handed.summary,handoffOldRunning:handed.oldKeptRunning});
                     break;
                 }
                 case 'sessions.send':

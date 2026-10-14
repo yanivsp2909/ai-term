@@ -559,20 +559,26 @@ export class Homepage {
   // v0.6.3 /handoff <agent> <claude|codex>: the D49 ask first (who writes the note, tokens, price), ⏎ then hands off.
   private async handoffCommand(argument:string):Promise<void>{
     const words=argument.split(' '),last=words.pop()??'',engine=last==='claude'||last==='claude-code'?'claude-code':last==='codex'?'codex':null,name=words.join(' ');
-    const source=sortSessions(this.sessions).find(s=>s.title===name&&!['exited','error'].includes(s.status));
     if(!engine||!name){this.showNote('/handoff <agent> claude|codex');return;}
+    // Like /send: a name two agents share is refused, never guessed.
+    const named=this.sessions.filter(s=>s.title===name&&!['exited','error'].includes(s.status)),source=named[0];
+    if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}
     if(!source){this.showNote(`no running agent named ${name}`);return;}
     let plan:import('../../shared/handoff.js').HandoffPlan;
     try{plan=validateHandoffPlan((await this.connection.request({kind:'sessions.handoffPlan',sessionId:source.id,engine})).handoffPlan);}
     catch(error){this.showNote(error instanceof Error?error.message:'Handoff unavailable');return;}
     const ask:HandoffAsk=new HandoffAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
       this.showNote(`◐ handing off ${source.title} → ${engine==='codex'?'codex':'claude code'}`);
-      try{
-        const result=await this.connection.request({kind:'sessions.handoff',sessionId:source.id,engine});
-        const session=validateSession(result.session),summary=validateHandoffSummary(result.handoffSummary);
-        this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);
-        this.showNote(handoffDone(source.title,session.title,summary));
-      }catch(error){this.showNote(`handoff stopped: ${error instanceof Error?error.message:'request failed'}`);}
+      let result:SuccessResponse;
+      try{result=await this.connection.request({kind:'sessions.handoff',sessionId:source.id,engine,writer:plan.writer});}
+      catch(error){this.showNote(`handoff stopped: ${error instanceof Error?error.message:'request failed'}`);return;}
+      // From here the handoff happened; a problem showing it must not read as if it didn't.
+      let session:SessionInfo|undefined,summary:import('../../shared/handoff.js').HandoffSummary|null=null;
+      try{session=validateSession(result.session);summary=validateHandoffSummary(result.handoffSummary);}catch{session=undefined;}
+      if(session){this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;}
+      const kept=result.handoffOldRunning===true?` · ${source.title} got busy, so it keeps running: stop it with s when you're ready`:'';
+      this.showNote(session?handoffDone(source.title,session.title,summary)+kept:`✓ handed off ${source.title}${kept} · the list refreshes shortly`);
+      if(session)await this.updatePreview(false);
     });});
     this.popup=ask;this.draw(true);
   }

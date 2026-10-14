@@ -11,7 +11,7 @@ import { catalogModels } from '../shared/model-catalog.js';
 import { DEFAULT_AGENT_CAPS, type AgentFacts } from '../shared/agent-facts.js';
 import { findPrice, findLimits, deploymentAlias, estimateCost, type PriceSnapshot } from './usage-prices.js';
 import { cheapestWriter, handoffPlan, summarizeWithKey, type Summarize } from './handoff.js';
-import { handoffInstructions, handoffMessage, handoffPrompt, type HandoffPlan, type HandoffSummary } from '../shared/handoff.js';
+import { handoffInstructions, handoffMessage, handoffPrompt, type HandoffPlan, type HandoffSummary, type HandoffWriter } from '../shared/handoff.js';
 import { engineLabel } from '../shared/models.js';
 import priceData from '../../data/usage-prices.json' with {type:'json'};
 const PRICES=priceData as PriceSnapshot;
@@ -67,12 +67,16 @@ interface Live {
 const TASK_UPDATE_MS=1000;
 // v0.6.3: a new engine has this long to start; a keyed summary this long to answer; an agent this long to write its note.
 export const HANDOFF_NOT_STARTED="The new agent didn't start; the old one keeps running";
+export const HANDOFF_NOT_STARTED_PAID="The new agent didn't start; the old one keeps running · the note's tokens were spent";
 // Every handoff refusal is one of these fixed texts, so the socket can return it as written.
-export const HANDOFF_ERRORS=['Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED];
-const HANDOFF_START_MS=30_000,HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
+export const HANDOFF_ERRORS=['Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done','Agent is being handed off'];
+const HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
+function sameWriter(approved:HandoffWriter,writer:import('./handoff.js').KeyedWriter|null):boolean{return approved.kind==='agent'?writer===null:writer!==null&&approved.provider===writer.key.provider&&approved.model===writer.model&&approved.last4===writer.key.last4;}
 export class SessionManager extends EventEmitter {
     // /send: how long Enter waits behind the paste (static so a test can widen the window it races).
     static sendEnterDelayMs = 50;
+    // v0.6.3: how long a handed-off agent has to start (a test shortens it).
+    static handoffStartMs = 30_000;
     private sessions = new Map<string, Live>();
     private size = { cols: 85, rows: 30 };
     private saving: Promise<void> = Promise.resolve();
@@ -94,6 +98,10 @@ export class SessionManager extends EventEmitter {
     // v0.6.3: how handoff summaries are written (tests swap the model call), and sources being handed off right now.
     private handoffWriter:{prices:PriceSnapshot;summarize:Summarize}={prices:PRICES,summarize:summarizeWithKey};
     private readonly handingOff=new Set<string>();
+    // Bookings of exited agents' held requests still writing; shutdown waits for them before closing the ledger.
+    private readonly releases=new Set<Promise<void>>();
+    // For tests: the worst case the last keyed handoff summary held.
+    lastHandoffWorst=0;
     private taskDirty=false;
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
@@ -391,7 +399,7 @@ export class SessionManager extends EventEmitter {
                 });
             });
             host.pty.onExit(event => {
-                this.usage?.revoke(info.id);void this.ledger?.releaseSession(info.id);live.outputClock?.dispose();void this.mcp.stop(info.id).catch(()=>this.log.error('MCP session stop failed'));
+                this.usage?.revoke(info.id);this.trackRelease(info.id);live.outputClock?.dispose();void this.mcp.stop(info.id).catch(()=>this.log.error('MCP session stop failed'));
                 // Set terminal precedence synchronously: queued hook bodies must not win a process-exit race.
                 if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:live.statusState.seq+1,at:new Date().toISOString(),kind:'exit',status:'exited',detail:'exited',exitCode:event.exitCode});
                 live.output = live.output.then(async () => {
@@ -471,6 +479,10 @@ export class SessionManager extends EventEmitter {
         const usage=this.usage?.summary(),budgets={daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null};
         return ledger.reserve({sessionId:id,provider:key.provider,model:raw.model,amountUsd:amount},budgets,{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
     }
+    private trackRelease(id:string):void{
+        const release=this.ledger?.releaseSession(id);if(!release)return;
+        this.releases.add(release);void release.finally(()=>this.releases.delete(release));
+    }
     setHandoffWriter(writer:{prices:PriceSnapshot;summarize:Summarize}):void{this.handoffWriter=writer;}
     // v0.6.3 (D55, off by default): only an AI agent that isn't waiting on you or running a tool, to a CLI that is installed
     // and logged in. Account logins only: a key never moves between engines.
@@ -479,50 +491,67 @@ export class SessionManager extends EventEmitter {
         if(settings.handoff!==true)throw new Error('Handoff is off · /settings g turns it on (it spends tokens)');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         if(live.info.engine==='shell'||live.info.login)throw new Error('Only an AI agent can hand off');
-        if(this.handingOff.has(id))throw new Error('Handoff already running');
         await this.caughtUp(live);
-        if(!live.host||live.mirrorFailed||['exited','error'].includes(live.info.status))throw new Error('Agent has exited');
-        if(live.info.status==='waiting'&&live.info.statusDetail==='permission'||live.info.engine==='codex'&&live.codexRun==='action')throw new Error('Agent is asking for permission');
-        if(live.info.status==='waiting'&&live.info.statusDetail==='question')throw new Error('Agent is asking a question');
-        if((live.statusState?.toolsInFlight??0)>0)throw new Error('Agent is running a tool');
+        this.handoffBusy(live);
         const target=await checkEngine(engine);
         if(!target.installed||!target.path)throw new Error(`${engine==='codex'?'codex':'claude'} not found in PATH`);
         if(target.loggedIn!==true)throw new Error(target.loggedIn===false?'Engine is not logged in':'Engine login status unavailable');
         return {live,settings};
+    }
+    // The states a handoff refuses, checked before anything runs and again before the old agent is stopped.
+    private handoffBusy(live:Live):void{
+        if(!live.host||live.mirrorFailed||['exited','error'].includes(live.info.status))throw new Error('Agent has exited');
+        if(live.info.status==='starting')throw new Error("Agent hasn't started yet");
+        if(live.info.status==='waiting'&&live.info.statusDetail==='permission'||live.info.engine==='codex'&&live.codexRun==='action')throw new Error('Agent is asking for permission');
+        if(live.info.status==='waiting'&&live.info.statusDetail==='question')throw new Error('Agent is asking a question');
+        if((live.statusState?.toolsInFlight??0)>0)throw new Error('Agent is running a tool');
     }
     async handoffPlan(id:string,engine:CliEngine):Promise<HandoffPlan>{
         const {live,settings}=await this.handoffSource(id,engine),screen=(await this.text(id)).text;
         return handoffPlan(live.info.title,engine,screen,cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices),live.info.authMethod==='subscription');
     }
     // The note is written first, then the new agent starts in the same folder or worktree with it as its first message;
-    // the old agent is stopped only once the new one is running.
-    async handoff(id:string,engine:CliEngine):Promise<{session:SessionInfo;summary:HandoffSummary|null}>{
-        const {live,settings}=await this.handoffSource(id,engine);
+    // the old agent is stopped only once the new one is running. `approved` is the writer the user saw in the ask (D49).
+    async handoff(id:string,engine:CliEngine,approved?:HandoffWriter):Promise<{session:SessionInfo;summary:HandoffSummary|null;oldKeptRunning:boolean}>{
+        // Taken before the first await, so a second request (another client, a double ⏎) is refused rather than run twice.
+        if(this.handingOff.has(id))throw new Error('Handoff already running');
         this.handingOff.add(id);
         try{
+            const {live,settings}=await this.handoffSource(id,engine);
             const screen=(await this.text(id)).text,writer=cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices);
+            if(approved&&!sameWriter(approved,writer))throw new Error('The summary writer changed; run /handoff again');
             const written=writer?await this.keyedSummary(id,live,engine,screen,writer,settings):{text:await this.agentSummary(live,engine),summary:null};
             if(!written.text.trim())throw new Error('The handoff note came back empty');
+            if(['exited','error'].includes(live.info.status))throw new Error('Agent exited before the handoff finished');
             const title=[...`${live.info.title} · ${engineLabel(engine)}`].slice(0,60).join('');
             const continuation=live.info.worktree?{worktree:live.info.worktree,...(live.info.branch?{branch:live.info.branch}:{})}:{};
             const next=await this.create({engine,model:null,auth:{kind:'account'},cwd:live.info.cwd,permission:'ask',title,firstMessage:handoffMessage(live.info.title,written.text)},continuation);
             for(let waited=0;;waited+=100){
                 const status=this.get(next.id).status;
                 if(['running','waiting','done'].includes(status))break;
-                if(['exited','error'].includes(status)||waited>=HANDOFF_START_MS)throw new Error(HANDOFF_NOT_STARTED);
+                if(['exited','error'].includes(status)||waited>=SessionManager.handoffStartMs){
+                    // Late is not never: a new agent left starting would later work on the same task beside the old one.
+                    try{await this.stop(next.id);}catch{this.log.error('Handoff: stopping the new agent that did not start failed');}
+                    throw new Error(written.summary?HANDOFF_NOT_STARTED_PAID:HANDOFF_NOT_STARTED);
+                }
                 await new Promise(resolve=>setTimeout(resolve,100));
             }
             live.info.handoffTo=next.title;this.event({kind:'session.updated',session:{...live.info}});await this.persist();
-            await this.stop(id);
-            return {session:this.get(next.id),summary:written.summary};
+            // It may have started a tool or asked something while the note was written: then it keeps running, and says so.
+            let oldKeptRunning=false;
+            try{this.handoffBusy(live);await this.stop(id);}
+            catch{oldKeptRunning=true;this.log.error('Handoff: the old agent kept running');}
+            return {session:this.get(next.id),summary:written.summary,oldKeptRunning};
         }finally{this.handingOff.delete(id);}
     }
     // One request to the cheapest keyed model, held against the budgets like an agent's request (B25) and counted in Usage.
     private async keyedSummary(id:string,live:Live,engine:CliEngine,screen:string,writer:import('./handoff.js').KeyedWriter,settings:Settings):Promise<{text:string;summary:HandoffSummary}>{
         const plan=handoffPlan(live.info.title,engine,screen,writer,false),worst=plan.priceUsd?.high??0,usage=this.usage?.summary();
+        this.lastHandoffWorst=worst;
         const held=this.ledger?.reserve({sessionId:id,provider:writer.key.provider,model:writer.model,amountUsd:worst},{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
         if(held&&'refused' in held)throw new Error(held.refused.budget==='unavailable'?'Budget check unavailable; try again':`The handoff would pass your ${held.refused.budget} budget`);
         const grant=held&&'grant' in held?held.grant.id:null,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),HANDOFF_SUMMARY_MS);
+        const settle=(worstCase:boolean):Promise<unknown>=>grant?this.ledger?.settle(id,grant,worstCase).catch(()=>{this.log.error('Budget reservation could not be booked');})??Promise.resolve():Promise.resolve();
         let result:import('./handoff.js').Summary;
         try{
             result=await this.keys.withSecret(writer.key.id,(secret,binding)=>{
@@ -531,22 +560,26 @@ export class SessionManager extends EventEmitter {
                 return this.handoffWriter.summarize(writer,secret,writer.key.provider==='foundry'?binding?.endpoint??null:null,handoffPrompt(engine,screen),controller.signal);
             });
         }catch(error){
-            if(grant)void this.ledger?.settle(id,grant,true);
+            await settle(true);
             if(error instanceof KeyError)throw error;
             this.log.error('Handoff summary request failed');
             // eslint-disable-next-line preserve-caught-error -- provider errors may carry anything the provider sent; only fixed words leave.
             throw new Error('The handoff summary request failed');
         }finally{clearTimeout(timer);}
-        if(result.inputTokens===null||result.outputTokens===null){if(grant)await this.ledger?.settle(id,grant,true);return {text:result.text,summary:{inputTokens:0,outputTokens:0,costUsd:worst}};}
+        // The agent exited meanwhile: its hold was already booked at the worst case, so the real usage isn't added on top.
+        const stillHeld=grant!==null&&this.ledger?.holds(grant)===true;
+        if(result.inputTokens===null||result.outputTokens===null||grant!==null&&!stillHeld){await settle(true);return {text:result.text,summary:{inputTokens:result.inputTokens??0,outputTokens:result.outputTokens??0,costUsd:worst}};}
         const costUsd=estimateCost(writer.price,result.inputTokens,result.outputTokens);
-        await this.usage?.job({ts:new Date().toISOString(),sessionId:id,provider:writer.key.provider,model:writer.model,inputTokens:result.inputTokens,outputTokens:result.outputTokens,costUsd,costSource:'price-table'});
-        if(grant)await this.ledger?.settle(id,grant,false);
+        try{await this.usage?.job({ts:new Date().toISOString(),sessionId:id,provider:writer.key.provider,model:writer.model,inputTokens:result.inputTokens,outputTokens:result.outputTokens,costUsd,costSource:'price-table'});await settle(false);}
+        catch{this.log.error('Handoff summary usage could not be recorded; counted at its worst case');await settle(true);}
         return {text:result.text,summary:{inputTokens:result.inputTokens,outputTokens:result.outputTokens,costUsd}};
     }
-    // No key: the agent writes its own note as its next reply (sent like /send), read from its last reply when its turn ends.
+    // No key: the agent writes its own note as its next reply (sent like /send), read from its last reply when that turn
+    // ends. Only an agent that has finished its turn: a reply still pending would otherwise become the note.
     private async agentSummary(live:Live,engine:CliEngine):Promise<string>{
+        if(live.info.status!=='done')throw new Error('Agent is still working · hand off when it is done');
         const before=live.lastReply;
-        await this.send(live.info.id,`${handoffInstructions(engine)} Reply with the note only.`);
+        await this.sendText(live,`${handoffInstructions(engine)} Reply with the note only.`);
         for(let waited=0;waited<HANDOFF_REPLY_MS;waited+=200){
             if(['exited','error'].includes(live.info.status))throw new Error('Agent exited before writing its handoff note');
             if(live.info.status==='done'&&live.lastReply!==undefined&&live.lastReply!==before)return live.lastReply;
@@ -651,6 +684,12 @@ export class SessionManager extends EventEmitter {
     async send(id:string,text:string):Promise<void>{
         if(!isUUID(id)||!isSendText(text))throw new Error('Invalid send request');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        // While its handoff runs, a /send could become the note or race the stop.
+        if(this.handingOff.has(id))throw new Error('Agent is being handed off');
+        await this.sendText(live,text);
+    }
+    private async sendText(live:Live,text:string):Promise<void>{
+        const id=live.info.id;
         if(this.sending.has(id))throw new Error('Agent is busy with another send');
         this.sending.add(id);
         try{
@@ -800,6 +839,7 @@ export class SessionManager extends EventEmitter {
         const pending=this.taskTimers.size>0||this.taskDirty;for(const timer of this.taskTimers.values())clearTimeout(timer);this.taskTimers.clear();
         await (pending?this.persist():this.saving);
         this.shutDown = true;
+        await Promise.allSettled([...this.releases]);
         await this.ledger?.close();
         try{await this.mcp.shutdown();}catch{this.log.error('MCP shutdown failed');}
         for(const live of this.sessions.values()){live.outputClock?.dispose();live.mirror.dispose();}

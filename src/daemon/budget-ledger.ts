@@ -31,6 +31,7 @@ export class BudgetLedger {
   private readonly released = new Set<string>();
   private readonly rate = new Map<string, { start: number; count: number }>();
   constructor(private readonly options: LedgerOptions) {}
+  holds(id: string): boolean { return this.live.has(id); }
   reserved(): number { let total = 0; for (const { reservation } of this.live.values()) total += reservation.amountUsd; return total; }
   // Reservations a stopped or crashed daemon left behind never got their usage: book each at its worst case, once.
   async load(): Promise<void> {
@@ -79,7 +80,10 @@ export class BudgetLedger {
     if (!held || held.reservation.sessionId !== sessionId) return false;
     this.live.delete(id); clearTimeout(held.timer);
     if (why === 'expired') this.options.log.error('Budget reservation expired; booked at its worst case');
-    if (worstCase && held.reservation.amountUsd > 0) await this.options.book(held.reservation);
+    // A booking that fails is logged and never rejects: callers settle without awaiting (exit, expiry), and an unhandled
+    // rejection would stop the daemon. The file is rewritten either way, so a restart doesn't book it again.
+    try { if (worstCase && held.reservation.amountUsd > 0) await this.options.book(held.reservation); }
+    catch { this.options.log.error('Budget reservation could not be booked'); }
     // Not awaited: the answer doesn't wait for the disk; close() waits for the last write.
     void this.persist();
     return true;

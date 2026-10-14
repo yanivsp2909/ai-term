@@ -120,6 +120,8 @@ it('with no key the agent writes its own note: its next reply becomes the new ag
   expect(plan).toMatchObject({ writer: { kind: 'agent' }, priceUsd: null, subscription: true });
   const manager = d.manager as unknown as { sessions: Map<string, { reported?: boolean; lastReply?: string }>; ingressStatus(id: string, update: unknown): void };
   const live = manager.sessions.get(source.id); if (live) live.reported = true;
+  // The agent finished its turn (H3: only a done agent writes its own note).
+  manager.ingressStatus(source.id, { event: { seq: 50, at: new Date().toISOString(), kind: 'done' }, reply: 'earlier answer' });
   const handing = d.manager.handoff(source.id, 'claude-code');
   // The agent answers the request with its note (here: its turn-complete with a last reply).
   await new Promise(resolve => setTimeout(resolve, 300));
@@ -166,7 +168,7 @@ it('/handoff asks first with who writes the note, tokens and price; ⏎ runs it,
     type(tty, '/handoff fixer claude'); enter(tty); await shows(tty, 'Hand off fixer → claude code');
     enter(tty);
     await shows(tty, '✓ handed off fixer → fixer · claude code · summary 2.4K in · 310 out · $0.0007');
-    expect(requests.find(r => r.kind === 'sessions.handoff')).toEqual({ kind: 'sessions.handoff', sessionId: fixer.id, engine: 'claude-code' });
+    expect(requests.find(r => r.kind === 'sessions.handoff')).toEqual({ kind: 'sessions.handoff', sessionId: fixer.id, engine: 'claude-code', writer: { kind: 'key', provider: 'openai', model: 'gpt-6.1-mini', keyLabel: 'cheap', last4: 'oooo' } });
   } finally { await home.stop(); }
 });
 it('/settings has its own switch for handoff, off by default; g toggles it', async () => {

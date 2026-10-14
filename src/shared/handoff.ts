@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from 'node:util';
 import type { CliEngine, KeyProvider } from './protocol.js';
 
 // v0.6.3 engine handoff (D55, off by default: it spends tokens). An agent's screen text becomes a short summary that a new
@@ -24,17 +25,23 @@ export function handoffPrompt(target: CliEngine, screen: string): string {
 // The new agent's first message: the note, cut on a character boundary to fit, under a fixed header.
 export function handoffMessage(from: string, summary: string): string {
   const header = `Handoff from ${from}. Continue this work in this folder; check the state yourself before changing anything.\n\n`;
-  let body = summary.replace(/\0/g, '').trim();
+  // The note goes into the new CLI's argv: no escapes, C0/C1 controls or bidi/invisible format characters, only text,
+  // new lines and tabs (whatever wrote it: a provider, or the agent's own last reply).
+  // eslint-disable-next-line no-control-regex -- removing terminal controls is the point.
+  let body = stripVTControlCharacters(summary).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]|[\p{Cf}\u2028\u2029]/gu, '').trim();
   while (Buffer.byteLength(header + body) > HANDOFF_SUMMARY_BYTES) body = [...body].slice(0, Math.floor([...body].length * 0.9)).join('');
   return header + body;
 }
 // What the client accepts from the daemon: exact keys, finite numbers, the fixed writer shapes.
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
 const isRange = (v: unknown): v is { low: number; high: number } => !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 2 && 'low' in v && 'high' in v && isCount(v.low) && isCount(v.high) && v.low <= v.high;
+export function isHandoffWriter(value: unknown): value is HandoffWriter {
+  const w = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  return !!w && (w.kind === 'agent' && Object.keys(w).length === 1 || w.kind === 'key' && Object.keys(w).length === 5 && ['anthropic', 'openai', 'foundry'].includes(String(w.provider)) && typeof w.model === 'string' && w.model.length <= 80 && typeof w.keyLabel === 'string' && w.keyLabel.length <= 80 && typeof w.last4 === 'string' && w.last4.length <= 4);
+}
 export function validateHandoffPlan(value: unknown): HandoffPlan {
   const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-  const w = p?.writer && typeof p.writer === 'object' && !Array.isArray(p.writer) ? p.writer as Record<string, unknown> : null;
-  const writerOk = !!w && (w.kind === 'agent' && Object.keys(w).length === 1 || w.kind === 'key' && Object.keys(w).length === 5 && ['anthropic', 'openai', 'foundry'].includes(String(w.provider)) && typeof w.model === 'string' && w.model.length <= 80 && typeof w.keyLabel === 'string' && w.keyLabel.length <= 80 && typeof w.last4 === 'string' && w.last4.length <= 4);
+  const writerOk = isHandoffWriter(p?.writer);
   if (!p || Object.keys(p).length !== 7 || typeof p.source !== 'string' || p.source.length > 60 || !HANDOFF_ENGINES.includes(p.engine as CliEngine) || !writerOk || !isRange(p.inputTokens) || !isRange(p.outputTokens) || !(p.priceUsd === null || isRange(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid handoff plan');
   return p as unknown as HandoffPlan;
 }

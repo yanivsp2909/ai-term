@@ -134,7 +134,10 @@ export type Request = {
     kind:'sessions.send'; sessionId:string; text:string;
 } | {
     // v0.6.3 engine handoff (D55, off by default): what it would run and cost (D49), then the handoff itself.
-    kind:'sessions.handoffPlan'|'sessions.handoff'; sessionId:string; engine:CliEngine;
+    kind:'sessions.handoffPlan'; sessionId:string; engine:CliEngine;
+} | {
+    // writer: the one the user approved in the ask; a different one now refuses.
+    kind:'sessions.handoff'; sessionId:string; engine:CliEngine; writer?: import('./handoff.js').HandoffWriter;
 } | {
     kind:'sessions.find'; text:string;
 } | {
@@ -201,6 +204,7 @@ export interface SuccessResponse {
     matches?:FindMatch[]; moreMatches?:boolean;
     handoffPlan?: import('./handoff.js').HandoffPlan;
     handoffSummary?: import('./handoff.js').HandoffSummary | null;
+    handoffOldRunning?: boolean;
     copy?:SessionText & {more?:boolean}; // Bounded chunks echo the same request id; client joins before resolving.
 }
 export type Response = SuccessResponse | {

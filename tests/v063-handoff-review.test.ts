@@ -48,6 +48,7 @@ it('MEDIUM: two handoffs of one agent at once: exactly one runs, one summary is 
 });
 it('MEDIUM: the note reaching argv carries no escapes, controls or bidi overrides; lines and tabs stay', () => {
   const message = handoffMessage('x', 'a\x1b]52;c;AAAA\x07b\x1b[2Jc‮\u0085d\r\ne\tf');
+  // eslint-disable-next-line no-control-regex -- the controls are what must be gone.
   expect(message).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/);
   expect(message).toContain('\ne\tf');
 });

@@ -1,4 +1,5 @@
 import { validatePresets } from './presets.js';
+import { isHandoffWriter } from './handoff.js';
 import { MCP_MAX_SERVERS, MCP_MAX_TOOLS, mcpTokens, type McpConfig, type McpServer, type McpCatalog, type McpRequest } from './mcp.js';
 import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DESCRIPTION_CHARS, catalogTokens, type ExtensionCatalog, type ExtensionFile } from './extensions.js';
 import { isAgentCaps } from './agent-facts.js';
@@ -142,7 +143,8 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['sessionId','text'];if(!isUUID(v.sessionId)||!isSendText(v.text))throw new ValidationError('Invalid send request');break;
         case 'sessions.handoffPlan':
         case 'sessions.handoff':
-            fields=['sessionId','engine'];if(!isUUID(v.sessionId)||!isCliEngine(v.engine))throw new ValidationError('Invalid handoff request');break;
+            fields=v.kind==='sessions.handoff'?['sessionId','engine','writer']:['sessionId','engine'];
+            if(!isUUID(v.sessionId)||!isCliEngine(v.engine)||v.writer!==undefined&&!isHandoffWriter(v.writer))throw new ValidationError('Invalid handoff request');break;
         case 'sessions.find':
             fields=['text'];if(!isFindQuery(v.text))throw new ValidationError('Invalid find request');break;
         case 'sessions.detach':

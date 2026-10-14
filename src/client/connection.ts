@@ -19,6 +19,15 @@ export function daemonCommand(entry: string): { args: string[]; cwd?: string } {
     if (!entry.endsWith('.ts')) return { args: [entry, 'daemon'] };
     return { args: ['--import', createRequire(import.meta.url).resolve('tsx'), entry, 'daemon'], cwd: resolve(dirname(entry), '..', '..') };
 }
+// How long the client waits for each request. Up to forty deployments, each with a Responses and fallback probe (15 s
+// each); create/resume may run two 5 s engine checks and wait on a Keychain prompt before spawning; a handoff (v0.6.3)
+// may write its note for up to 5 minutes, then give the new agent 30 s to start and stop the old one.
+export function requestTimeout(kind: RequestBody['kind']): number {
+    if (kind === 'keys.test') return 40 * 30_000 + 5000;
+    if (kind === 'sessions.handoff') return 7 * 60_000;
+    if (kind === 'sessions.handoffPlan') return 30_000;
+    return ['keys.add', 'keys.importEnv', 'sessions.create', 'sessions.resume'].includes(kind) ? 60_000 : 5000;
+}
 export class Connection extends EventEmitter {
     private pending = new Map<string, {
         resolve: (value: SuccessResponse) => void;
@@ -85,9 +94,7 @@ export class Connection extends EventEmitter {
     request(body: RequestBody): Promise<SuccessResponse> {
         const id = randomUUID();
         return new Promise((resolve, reject) => {
-            // Up to forty deployments, each with a Responses and fallback probe (15 s each).
-            // Create/resume may run two 5 s engine checks and wait on a Keychain prompt before spawning.
-            const timeout=body.kind==='keys.test'?40*30_000+5000:['keys.add','keys.importEnv','sessions.create','sessions.resume'].includes(body.kind)?60_000:5000;
+            const timeout=requestTimeout(body.kind);
             const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Daemon request timed out')); }, timeout);
             this.pending.set(id, { resolve, reject, timer, ...(body.kind==='sessions.text'?{textSession:body.sessionId}:{}) });
             this.socket.write(encodeControl({ ...body, id }), error => { if (error) {
