@@ -8,9 +8,12 @@ const under = (root: string, path: string) => path === root || path.startsWith(r
 export function deniedExtensionPath(home: string, path: string, directory = false): boolean {
   if (!under(home, path)) return true;
   const parts = relative(home, path).normalize('NFKC').toLowerCase().split(sep);
+  const first = parts[0] ?? '', second = parts[1] ?? '';
+  // These stores use filenames that don't say "auth" (SSH keys, netrc, package registry tokens).
+  if (['.ssh','.gnupg','.aws','.azure','.docker','.kube'].includes(first) || first === '.config' && ['gh','gcloud'].includes(second)) return true;
   return parts.some((part, index) =>
     /^(?:history|sessions|logs|projects)(?:[._-].*)?$/.test(part) ||
-    !directory && index === parts.length - 1 && /(?:credentials?|auth)(?:[._-]|$)/.test(part) || /^settings.*\.json$/.test(part) ||
+    !directory && index === parts.length - 1 && (/(?:credentials?|auth|tokens?|passwords?|secrets?)(?:[._-]|$)/.test(part) || ['.netrc','.npmrc','.pypirc','.dockercfg','.authinfo','.authinfo.gpg','.yarnrc','.yarnrc.yml'].includes(part) || /\.(?:key|pem|p12|pfx)$/.test(part)) || /^settings.*\.json$/.test(part) ||
     part.endsWith('.env') || part === '.env' || part.startsWith('.env.') || part === '.claude.json' || part === 'config.toml');
 }
 // Darwin O_NOFOLLOW_ANY rejects symlinks in every component of an already-resolved path. Node doesn't expose the
