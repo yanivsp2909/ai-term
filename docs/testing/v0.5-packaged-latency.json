@@ -1,7 +1,7 @@
 {
-  "date": "2026-10-14T20:48:11.386Z",
+  "date": "2026-10-14T21:12:45.049Z",
   "baselineCommit": "11362d1",
-  "currentCommit": "c03e02ddc8f99654c131ee3d19090c65fdc02b1a",
+  "currentCommit": "df2c42910f19690c5776ff84163271fc772476db",
   "method": "Normal Electron executable startup for both; same capture-phase keydown to expected command-bar cell + cursor output arrival, Unicode 11 offline; 50 warmup + 300 keys, 15/20/25 ms gaps, Ctrl+U every 60; dev first then packaged, serial on same host",
   "limits": "Output arrival, not physical paint or Terminal.app latency. Gate only on same-session packaged minus checkpoint dev p95.",
   "node": "v26.3.0",
@@ -14,17 +14,17 @@
     "packaged": true
   },
   "dev": {
-    "p50": 1.6,
-    "p95": 2.1,
-    "p99": 2.5,
-    "max": 45.9,
-    "samples": 300
-  },
-  "packaged": {
     "p50": 1.7,
     "p95": 2.2,
     "p99": 2.4,
-    "max": 2.9,
+    "max": 7.3,
+    "samples": 300
+  },
+  "packaged": {
+    "p50": 1.8,
+    "p95": 2.3,
+    "p99": 2.5,
+    "max": 2.5,
     "samples": 300
   },
   "differenceP95": 0.1,

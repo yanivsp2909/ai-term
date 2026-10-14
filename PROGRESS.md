@@ -62,7 +62,7 @@ coverage (src + app/main)   Statements 86.39% · Branches 81.16% · Functions 87
 grep console.log src app/main app/preload app/shared   none
 ```
 - One earlier full run (before df2c429) had 1 failure whose name I didn't capture; three immediate reruns were green. Under coverage only, the known v0.4 `ai-agent-review` "bash over 16 KB" test times out (Screen.fit, recorded at the v0.4 gate).
-- The packaged-latency artifact was not re-committed for the gate reruns (+0.0 and +0.1 ms); the committed one is Part A's.
+- docs/testing/v0.5-packaged-latency.json now holds the final gate run at df2c429 (+0.10 ms); Part A's c03e02d run (+0.10 ms) is in its git history.
 
 ## Previous checkpoint (v0.5 packaging, retained)
 
