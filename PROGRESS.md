@@ -1,6 +1,111 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 014dc16 docs: retain failed native latency gate and checkpoint comparison
+Roadmap step: v0.5 native Mac integration — partial. **BLOCKED at typing latency**: the final app p95 is 2.30 ms, above the frozen v0.5.1 1.00 + 0.20 ms gate. Functional work, reviews and automated checks are complete; this step is not reported done.
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 6ee23b9 after `git pull --ff-only` (already up to date). Baseline: 187 files / 1153 passed / 2 existing opt-in Keychain skips. Final: 191 files / 1181 passed / the same 2 skips, twice consecutively. Session: Codex, GPT-6.1 Sol, high; fresh high TypeScript and security reviews, read-only and sequential. No real daemon stopped, credential folders/keychain/env files inspected, prohibited directories changed, computer use or dependency installation.
+
+Prompt vs code:
+- The code matches the supplied app checkpoint and its startup-only TUI palette. The previous handover called v0.5 partial; the prompt calls it v0.5.1. Package metadata remains 0.1.1, and no release tag/version is invented here.
+- The earlier physical app/Terminal.app comparison remains unmeasured. This session's explicit regression harness uses the same output-arrival method and grid, preserving the old artifact rather than replacing its baseline.
+- CLI startup inherits its caller's environment; no login-shell environment builder exists there. This step adds only the client control token and consumes it before any child can inherit it; daemon/env/key code is untouched.
+- RTK.md is absent. No alternate private instructions were read.
+
+## What works
+- Task 1 (0e16d9b tests, f63b6f0 implementation): random per-app-launch token; bounded streaming OSC 777 control filter before all home/raw/bar/split input. Exact authentication, fixed commands, bracketed-paste exclusion, silent malformed/wrong/no-token drops, no output-to-input loop and no forwarding to an agent. `home` and `settings` are two additional fixed commands needed for Cmd+E and Settings without synthesizing keys; the channel cannot carry text or approval.
+- Task 2 (f63b6f0, 758cbf0, 66b0033): native appearance updates xterm first, then its validated acknowledgement sends theme-changed. The client probes OSC 11 again, consumes the reply upstream of attached input, updates the shared Theme and redraws home/AI Term bars/splits. No restart, saved Terminal.app theme changes, animation or daemon edits.
+- Task 3 (758cbf0, 734c883, 00871bd): native Cmd+K palette, Cmd+F scrollback Find, Cmd+T start box, Cmd+1–9 selection, Cmd+D marked split and Cmd+E home. Home cancels attach/split directly; navigation dismisses old forms before subsequent bytes and returns renderer focus to xterm. Existing copy/bracketed paste/font keys and Option Meta remain; Cmd+W/quit close only the outer client, and activate reopens it with daemon-owned agents intact. The first launch shows one quiet lifecycle note.
+- Task 4 (758cbf0, 9aa6ec1): hidden native title bar, traffic lights inset x16/y14, 40 px draggable system-font chrome and terminal below it. Approved installed JetBrains Mono → SF Mono → Menlo → system monospace; no font distributed. Ligatures are omitted because no shaping addon was added or verified under the sandbox/CSP. Vibrancy is omitted; no zero-cost latency claim is made.
+- Task 5 (758cbf0, 00871bd): App/About/Settings/Quit, File/native AI Term actions/Close, Edit/Copy/Paste/Select All/Find, View/font/Light/Dark/System and Window/Minimize/Zoom. Fixed menu actions share callbacks with main's native-key interception. Preload has exactly nine operations: the old seven plus validated themeApplied and fixed-enum onMenuAction; no generic IPC, Node, token, provider name or logo is exposed in renderer chrome.
+- Task 6 (9fd26c5, 00871bd, 9aa6ec1): README full desktop key list, design.md chrome/shortcuts/font decisions, architecture S23 nine-operation boundary and S24 authenticated client-only controls/process/lifecycle/theme rules. No next roadmap step started.
+
+## Reviewer findings (failing test commit → fix commit)
+- TypeScript, fresh high: HIGH, Escape before a private control could leak its token to an agent. 9b980ab (two failures) → ea17144 (fresh ESC prefix recognition; fourteen control tests green).
+- TypeScript, fresh high: HIGH, deferred native navigation could accept an older stop confirmation or leave Home behind a pending attach. dd0c3ad (two failures) → 734c883 (synchronous dismissal and operation epochs).
+- TypeScript, fresh high: MEDIUM, native navigation left Find focused. dbab2f0 (Electron failure) → 00871bd (fixed focus-terminal action closes search and focuses xterm).
+- Security, fresh high: MEDIUM, a settings refresh could restore a start box after Home dismissed it. 78569d7 (failure) → 8acbd1e (post-await epoch check; seven homepage tests green).
+- Security, fresh high: MEDIUM, OSC 11 after a real Escape could time out the probe and reach attached agent input. a601468 (two failures) → 66b0033 (avoid double-buffering Escape and recognize a fresh OSC prefix; delayed/immediate reply regressions green).
+- Both passes were read-only, with no simultaneous parent edits/tests. Security also examined Electron/preload/IPC/openExternal and the earlier fixes; no additional findings were reported. Only correctness/security/requirement findings were acted on, each with a failing-test commit followed by its fix commit.
+
+## Latency blocker: tried, evidence, what is needed
+All runs use macOS arm64, WebGL, 151×37 cells, 50 warmup + 300 measured keys, 15/20/25 ms gaps and Ctrl+U every 60 keys. Window height adjusts only to preserve the previous grid under native chrome. The frozen docs/testing/v0.5-app-latency.json is unchanged.
+
+| Run | App p50 / p95 / p99 / max (ms) | Direct CLI p95 (ms) | Frozen gate |
+|---|---|---|---|
+| Previous v0.5.1 artifact | 0.70 / 1.00 / 1.30 / 1.30 | 0.55 | baseline |
+| This session before reviews | 0.70 / 1.00 / 1.30 / 1.30 | 0.64 | passed then; not final evidence |
+| After all fixes, first | 1.90 / 2.40 / 3.00 / 7.60 | 1.54 | failed |
+| After an idle interval, repeat | 1.80 / 2.30 / 2.70 / 6.80 | 1.49 | failed |
+| Unchanged 6ee23b9, same current host | 1.80 / 2.30 / 2.50 / 2.70 | 1.57 | checkpoint also above historical limit |
+
+- Tried: serial final measurement without another agent/build/test running; a repeat after a 20 s idle interval; unchanged 6ee23b9 built in a filtered temporary snapshot using the installed dependencies and original harness. The old build matched current app p95 2.30 ms. Both direct-CLI measurements also rose; this suggests changed host measurement conditions, but neither proves their cause nor waives the frozen gate. No unrelated apps/processes or Yaniv's daemon were stopped.
+- Final docs/testing/v0.5-native-app-latency.json records the failing repeat with p95Gate=false (harness exit 1). docs/testing/v0.5-native-app-latency-runs.json retains all session runs, including the failed first and unchanged-checkpoint comparison (014dc16). No passing sample was substituted for the delivered result.
+- Needed: rerun the same harness under controlled idle host conditions and meet p95 ≤1.20 ms; if that still fails, profile before making changes. A paired unchanged-checkpoint run can diagnose drift, but the committed historical limit stays fixed. The older physical Terminal.app/native typing comparison also still needs Yaniv; these output-arrival numbers do not measure physical paint or Terminal.app input latency.
+
+## Check output (actual last lines)
+```
+npm run typecheck   > tsc --noEmit && tsc --noEmit -p app/tsconfig.json   (exit 0)
+npm run lint        > eslint .   (exit 0)
+npm run build       ESM ⚡️ Build success in 27ms
+npm run app:build   ✓ built in 55ms
+npm run app:test    7 passed (32.5s)
+npm test -- --reporter=dot (1)
+ Test Files  191 passed (191)
+      Tests  1181 passed | 2 skipped (1183)
+   Duration  18.47s (tests 92%, import 6%, transform 2%)
+npm test -- --reporter=dot (2)
+ Test Files  191 passed (191)
+      Tests  1181 passed | 2 skipped (1183)
+   Duration  18.51s (tests 91%, import 6%, transform 2%)
+latency repeat      "p95": 2.3 · "p95Gate": false   (exit 1)
+git diff --check    clean
+```
+- Full suites ran consecutively after corrected builds, serially. During development only touched test files ran. The two skipped native Keychain tests predate this step; no new skips.
+- Playwright ran the actual built ai homepage, ordinary typing/multiline paste/resize, native Cmd+K/1/T/F/Settings/D/E/W, reopened agents, first-use note, focus restoration, live nativeTheme/OSC11/palette and a pasted exact authenticated control. Runtime sandbox/nine operations/no Node/URL/new-window checks are green. Native shortcuts use Electron sendInputEvent because CDP key events bypass before-input/native menu accelerators; ordinary typing and the timing harness keep the previous CDP method.
+- One final smoke attempt passed six tests but the seventh timed out waiting for a new Electron window, before test actions. The isolated retry passed (5.0s), then the whole suite passed (32.5s). It is recorded as an intermittent launch failure, not concealed or treated as a passed initial run.
+
+## What's next
+- v0.5 native Mac integration only: close the latency blocker above, then Yaniv's real Mac/manual checks. Do not call this step done or start the next roadmap step yet.
+- The older physical Terminal.app comparison and Finder/Dock packaging/login-environment work remain outside the delivered development bundles. app:dev opens the app; app:build does not create an installable .app.
+
+## Manual checks
+Automated checks listed above: **ran**, using disposable HOME/state and no provider CLIs on PATH. Actual macOS Appearance UI, real agent/vim/native feel and physical keyboard/display checks: **needs Yaniv**. Launch once, then use that same window for these groups; these commands were prepared, not executed against the real home.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: open the window, inspect traffic lights/drag strip/About/Window → Zoom and installed font/fallback; confirm the one-line agents-survive-close note appears only on first use.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: Cmd+K palette, Cmd+T start box, Cmd+, Settings; Cmd+E dismisses each without confirming anything. Open Find first and repeat; subsequent typing belongs in the terminal/form.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: Cmd+1–9 select corresponding existing agents; Space marks two, Cmd+D split; type, switch panes with Ctrl+\, Cmd+E home. Enter a real agent and return with Cmd+E; its work keeps running.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: select terminal text, Cmd+C; Cmd+A selects scrollback; Cmd+V two ordinary lines gives a paste token at home/bracketed paste inside an agent. In Find, Cmd+A/C/V operate on its text selection; clipboard ESC bytes are refused visibly.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: Cmd+F Find, Enter/Shift+Enter next/previous, Esc close; Cmd+plus (or Cmd+=), Cmd+minus, Cmd+0 change/reset the font; Option+left/right edits by word. Confirm ordinary typing feels immediate.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: View → Light/Dark/System, then switch macOS Appearance while ai remains open on home and inside an agent/split. Window, homepage and AI Term bars recolor live without restart or animation; resize each view.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: Cmd+M minimize, Dock restores; Cmd+H hide and Option+Cmd+H hide others; Dock reveals it. Window menu Zoom works.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: with an agent running, Cmd+W closes the window; Dock activation reopens it with that agent still present. Cmd+Q quits; rerun app:dev and confirm the agent remains.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: /shell, Enter, run /usr/bin/vim -Nu NONE -i NONE -n; insert, move, Esc, :q and Cmd+E. Resize and test the real keyboard/display feel.
+- `cd ~/ai-term && npm exec -- tsx scripts/measure-app-latency.ts` — ran with the failed results above; needs Yaniv on a controlled idle host to close the ≤1.20 ms gate. This command uses disposable homes and is not the missing Terminal.app physical comparison.
+
+## Gotchas
+- The token is consumed at CLI module startup before daemon/session inheritance. Agent output never feeds the input filter; every attach/split shares the filtered source. Keep bracketed-paste state across chunks and recognize fresh ESC prefixes after a literal Escape.
+- Navigation must dismiss current forms synchronously, invalidate queued/awaiting UI operations and check epochs again after settings refresh. Home AbortSignal cleanup ends only the client attach/split, never the agent; appearance updates do not detach it or steal input focus.
+- Apply xterm native colors before acknowledging a theme. OSC11 replies must be stripped upstream during attach/split even if a real Escape preceded them; otherwise they become agent input or leave the old palette active.
+- app:dev loads local production bundles; restart after edits, no HMR/eval/network CSP exception. envDir:false remains. The narrow preload now has nine methods and only fixed menu/theme enums; never expose the token or generic IPC.
+- Native accelerator tests need Electron's key entry point, not only page.keyboard. A Chromium window launch can intermittently time out; report it and rerun the full suite after a focused diagnosis.
+- Timings are output arrival, not physical paint. App uses Electron Node 24; direct CLI uses system Node 26. Retain failed samples and the frozen previous artifact; do not claim a code regression or a speedup from host-drift observations alone.
+- Two disposable folders remain: /tmp/ai-term-native-baseline.OawQ42 (filtered old-build snapshot) and /var/folders/y5/vmd9ph1s0c1_p3pdnckwm6600000gn/T/ai-term-desktop-4EkoYl (failed window launch). Automatic approval review rejected their `rm -rf` cleanup because rm -f style commands are prohibited. No Electron test process remains; the measurement harness cleaned up its own disposable daemon homes normally.
+
+## New dependencies
+- None. The installed approved font/system fallback needs no package; optional ligature shaping and vibrancy were omitted.
+
+## Concepts introduced
+- Authenticated terminal controls (src/shared/app-control.ts): the outer client recognizes a small private OSC with a per-launch random token and a fixed command enum. It strips these bytes before ordinary parsers, refuses them inside paste and never interprets agent output as input; there is no command for sending text or approving work.
+- Filtered input ownership (src/client/app-input.ts): one EventEmitter proxy owns the real stdin listener and supplies every home/attach/split reader. It also intercepts background-query replies before attached agent input, so live appearance does not need a daemon protocol or fake keys.
+- Navigation epochs and cancellation (src/client/tui/homepage.ts, src/client/attach.ts, src/client/split.ts): a newer native action invalidates older queued/awaiting UI work, preventing stale confirmations and resurrected forms. AbortSignal returns an active attach/split home through normal cleanup while leaving its daemon-owned agent running.
+- Theme acknowledgement (app/main/index.ts and src/client/tui/theme.ts): renderer defaults change first, then a validated acknowledgement triggers a new OSC11 query. Updating the existing shared Theme object lets home and AI Term attach/split chrome redraw together without restarting the client or altering the agents' own output.
+- Native menu boundary (app/main/menus.ts and app/shared/api.ts): menu accelerators run fixed main callbacks, while renderer-local copy/search/font/focus actions cross a finite enum. Native role items handle window/app lifecycle; the sandbox retains no Node, generic IPC or control token.
+
+---
+
+## Previous checkpoint (initial v0.5 desktop terminal, retained)
+
+## Checkpoint
 Last commit: 109750a docs: refresh desktop latency after reviewer fixes
 Roadmap step: v0.5 desktop terminal — partial. **BLOCKED at the release gate**: required Terminal.app/physical-display comparison is unavailable under this session's no-computer-use limit; live TUI truecolor theme switching is not implemented.
 Branch: main. This handover is the last commit; its own hash is in git log.
