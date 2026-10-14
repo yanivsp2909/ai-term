@@ -58,7 +58,9 @@ export class Screen {
     this.line(this.paint('ink-3', last ? '  y allow · n deny · Esc deny and stop' : '  space shows more · n deny · Esc deny and stop · y works on the last page'));
   }
   answered(allowed: boolean): void { this.line(allowed ? this.paint('ink-3', '  ✓ allowed') : this.paint('status-waiting', '  ✗ denied')); }
-  note(text: string, tone: 'info' | 'error' = 'info'): void { this.line(tone === 'error' ? this.paint('status-error', `✗ ${plain(text)}`) : this.paint('ink-3', `· ${plain(text)}`)); }
+  note(text: string, tone: 'info' | 'warn' | 'error' = 'info'): void { this.line(tone === 'error' ? this.paint('status-error', `✗ ${plain(text)}`) : tone === 'warn' ? this.paint('status-waiting', `● ${plain(text)}`) : this.paint('ink-3', `· ${plain(text)}`)); }
+  pause(text: string): void { this.line(this.paint('status-waiting', `● paused · ${plain(text)}`, true)); }
+  resumed(go: boolean): void { this.line(go ? this.paint('ink-3', '  ✓ going on') : this.paint('status-waiting', '  ■ stopped')); }
   turnEnd(result: 'done' | 'interrupted' | 'failed'): void { if (result === 'interrupted') this.line(this.paint('status-waiting', '■ interrupted')); }
   prompt(buffer: string): void {
     const shown = plain(buffer).replace(/\n/g, ' ⏎ '), room = this.width - 3;

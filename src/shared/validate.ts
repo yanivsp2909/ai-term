@@ -1,3 +1,4 @@
+import { isAgentCaps } from './agent-facts.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
     // eslint-disable-next-line no-useless-escape
@@ -232,11 +233,16 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
         v.defaultCwd !== undefined && (typeof v.defaultCwd !== 'string' || !isAbsolute(v.defaultCwd) || v.defaultCwd.includes('\0')) || JSON.stringify(v).length > 16384) throw new ValidationError('Invalid settings patch; permission default must be ask');
+    // v0.4.2: "this deployment is model X" (values are checked against the catalog by the daemon), AI Term agent's
+    // per-run caps (D53) and the 85% context warning (D55).
+    if(v.deploymentModels!==undefined&&(!v.deploymentModels||typeof v.deploymentModels!=='object'||Array.isArray(v.deploymentModels)||Object.keys(v.deploymentModels).length>200||Object.entries(v.deploymentModels).some(([k,m])=>['__proto__','prototype','constructor'].includes(k)||!isValidModelId(k)||typeof m!=='string'||!isValidModelId(m))))throw new ValidationError('Invalid deployment models');
+    if(v.agentCaps!==undefined&&!isAgentCaps(v.agentCaps))throw new ValidationError('Invalid agent caps');
+    if(v.contextWarning!==undefined&&typeof v.contextWarning!=='boolean')throw new ValidationError('Invalid context warning');
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
     return {...v};
@@ -302,7 +308,7 @@ function isAuthView(v:unknown):boolean {
     return Object.keys(a).length===5&&a.kind==='key'&&isUUID(a.keyId)&&isKeyProvider(a.provider)&&isTitle(a.keyLabel)&&typeof a.last4==='string'&&a.last4.length<=4&&!/[\p{C}]/u.test(a.last4);
 }
 export function validateDeploymentTests(v:unknown):import('./protocol.js').DeploymentTest[]{
-    if(!Array.isArray(v)||v.length>40||v.some(r=>!r||typeof r!=='object'||Object.keys(r).some(k=>!['model','status','httpStatus','errorCode','reason'].includes(k))||typeof r.model!=='string'||!isValidModelId(r.model)||!['ready','not a chat model','error'].includes(r.status)||r.httpStatus!==undefined&&(!Number.isInteger(r.httpStatus)||r.httpStatus<100||r.httpStatus>599)||r.errorCode!==undefined&&(typeof r.errorCode!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(r.errorCode))||r.reason!==undefined&&!['Provider request timed out','Provider connection failed','Provider reply too large','Provider request failed'].includes(r.reason)))throw new ValidationError('Invalid deployment results');
+    if(!Array.isArray(v)||v.length>40||v.some(r=>!r||typeof r!=='object'||Object.keys(r).some(k=>!['model','status','httpStatus','errorCode','reason'].includes(k))||typeof r.model!=='string'||!isValidModelId(r.model)||!['ready','chat','not a chat model','error'].includes(r.status)||r.httpStatus!==undefined&&(!Number.isInteger(r.httpStatus)||r.httpStatus<100||r.httpStatus>599)||r.errorCode!==undefined&&(typeof r.errorCode!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(r.errorCode))||r.reason!==undefined&&!['Provider request timed out','Provider connection failed','Provider reply too large','Provider request failed'].includes(r.reason)))throw new ValidationError('Invalid deployment results');
     return v as import('./protocol.js').DeploymentTest[];
 }
 export function validateKeyView(v:unknown):import('./protocol.js').KeyView {

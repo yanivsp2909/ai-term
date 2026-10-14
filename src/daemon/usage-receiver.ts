@@ -15,10 +15,12 @@ interface StatusContext {id:string;engine:StatusEngine;seq:number;queue:Promise<
 // bytes makes the kernel send a reset that destroys the 413 (B10), and OTLP exporters retry a reset but
 // not a 413. Past the bound the connection is cut. Nothing beyond MAX_BODY is ever kept.
 const MAX_DISCARD=4*MAX_BODY;
+const AGENT_QUERY_CAP=4096,AGENT_QUERY_PATH='/v1/agent/ai-term';
 export class UsageReceiver {
  private readonly server:Server;
  private statusCredentials=new Map<string,StatusContext>();
  private credentials=new Map<string,UsageContext>();
+ private agentQuery?:(id:string,body:unknown)=>Promise<unknown>;
  constructor(private readonly consume:(route:string,body:unknown,context:UsageContext)=>Promise<void>,private readonly log:{error(text:string):void},private readonly consumeStatus?:(id:string,body:unknown,seq:number,engine:StatusEngine)=>Promise<void>){
   const serve=(req:IncomingMessage,res:ServerResponse)=>{void this.handle(req,res).catch(()=>{const status=this.isStatusPath(req.url);this.log.error(status?'Status receiver request failed':'Usage receiver request failed');if(!res.headersSent){if(status)this.statusAnswer(res);else this.answer(res,500);}else res.destroy();});};
   this.server=createServer(serve);
@@ -50,6 +52,25 @@ export class UsageReceiver {
   if(typeof value!=='string'||value.length!==64)return null;const incoming=Buffer.from(value);if(incoming.length!==64)return null;
   for(const [token,context]of this.statusCredentials)if(timingSafeEqual(incoming,Buffer.from(token)))return context;return null;
  }
+ setAgentQuery(handler:(id:string,body:unknown)=>Promise<unknown>):void{this.agentQuery=handler;}
+ // AI Term's agent asks for its facts here (§12.5): the same credential, Host, Origin and JSON rules as status, engine-bound
+ // to 'ai-term'. A 4 KiB body, a one-second read; the answer is 200 JSON, and every refusal or failure is 204 with no body.
+ private async handleAgentQuery(req:IncomingMessage,res:ServerResponse):Promise<void>{
+  const context=this.authorizeStatus(req.headers['x-ai-term-session']);
+  if(!context||context.engine!=='ai-term'||req.method!=='POST'||req.headers.host!==`127.0.0.1:${this.port()}`||Object.hasOwn(req.headers,'origin')||req.headers['content-type']!=='application/json'||!this.agentQuery){this.statusAnswer(res);res.once('finish',()=>req.destroy());req.resume();return;}
+  let bytes=0;const chunks:Buffer[]=[];
+  const body=await new Promise<Buffer|null>(resolve=>{
+   const timer=setTimeout(()=>resolve(null),1000);
+   req.on('data',(chunk:Buffer)=>{bytes+=chunk.length;if(bytes<=AGENT_QUERY_CAP)chunks.push(chunk);});
+   req.on('end',()=>{clearTimeout(timer);resolve(bytes>AGENT_QUERY_CAP?null:Buffer.concat(chunks));});
+   req.on('error',()=>{clearTimeout(timer);resolve(null);});req.on('close',()=>{clearTimeout(timer);if(!req.complete)resolve(null);});
+  });
+  let answer:unknown=null;
+  if(body&&this.authorizeStatus(req.headers['x-ai-term-session'])===context){try{answer=await this.agentQuery(context.id,JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(body)));}catch{this.log.error('Agent query failed');}}
+  if(res.headersSent)return;
+  if(answer===null||answer===undefined){this.statusAnswer(res);res.once('finish',()=>req.destroy());return;}
+  const text=JSON.stringify(answer);res.writeHead(200,{'content-type':'application/json','content-length':Buffer.byteLength(text),'connection':'close'});res.end(text);
+ }
  private async handleStatus(req:IncomingMessage,res:ServerResponse):Promise<void>{
   const context=this.authorizeStatus(req.headers['x-ai-term-session']);
   if(!context||req.url!==STATUS_ROUTES[context.engine].path||req.method!=='POST'||req.headers.host!==`127.0.0.1:${this.port()}`||Object.hasOwn(req.headers,'origin')||req.headers['content-type']!=='application/json'){this.statusAnswer(res);res.once('finish',()=>req.destroy());req.resume();return;}
@@ -72,6 +93,7 @@ export class UsageReceiver {
  }
  private answer(res:ServerResponse,status:number):void{res.writeHead(status,{'content-type':'application/json','connection':'close'});res.end(status===200?'{}':'');}
  private async handle(req:IncomingMessage,res:ServerResponse):Promise<void>{
+  if(req.url===AGENT_QUERY_PATH){await this.handleAgentQuery(req,res);return;}
   if(this.isStatusPath(req.url)){await this.handleStatus(req,res);return;}
   if(req.headers.host!==`127.0.0.1:${this.port()}`){this.answer(res,421);req.resume();return;}
   if(Object.hasOwn(req.headers,'origin')){this.answer(res,403);req.resume();return;}

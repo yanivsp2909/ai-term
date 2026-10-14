@@ -12,7 +12,7 @@ export function buildShellEnv(base: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 import { dirname, resolve } from 'node:path';
-import type { AgentEngine, CliEngine, Permission, Effort, ThemeName } from '../shared/protocol.js';
+import type { AgentEngine, CliEngine, Permission, Effort, ThemeName, KeyProvider } from '../shared/protocol.js';
 import { isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath, isValidModelId, isThemeName, isEndpoint, isSecret } from '../shared/validate.js';
 export const CLAUDE_AUTH_VARS = ['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES','ANTHROPIC_PROFILE','ANTHROPIC_FEDERATION_RULE_ID','ANTHROPIC_ORGANIZATION_ID','ANTHROPIC_WORKSPACE_ID','ANTHROPIC_AWS_*','ANTHROPIC_BEDROCK_*','ANTHROPIC_VERTEX_*','ANTHROPIC_FOUNDRY_*','AWS_BEARER_TOKEN_BEDROCK','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_SIMPLE',
     // B21 (code.claude.com/docs/en/env-vars, 2026-10-13): provider switches, auth skips, auth-capable headers, host routing, mTLS.
@@ -91,14 +91,16 @@ export function buildStatusArgs(path:string):string[]{if(!path.startsWith('/')||
 
 // ---- AI Term's own agent (v0.4.1, architecture §12.5) ----
 export interface AgentCommand {node:string;entry:string;loader?:string}
+// /model choices passed to the agent: a Foundry key's tested deployments (at most 40) or a provider's catalog models.
+const MAX_AGENT_MODELS=200;
 const absolute=(path:unknown):path is string=>typeof path==='string'&&path.startsWith('/')&&!path.includes('\0')&&path.length<=4096;
 // `ai agent` runs like the status commands: node plus AI Term's entry (source mode adds the tsx loader). No shell, no secret:
 // the model, the deployments it may switch to and the mode are plain argv; the key goes only into buildAgentEnv.
-export function buildAgentArgs(request:{command:AgentCommand;model:string;models:readonly string[];permission:Permission;theme:ThemeName;transcript:string;firstMessage?:string}):{executable:string;args:string[]}{
+export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvider;model:string;models:readonly string[];permission:Permission;theme:ThemeName;transcript:string;firstMessage?:string}):{executable:string;args:string[]}{
     const {command}=request;
     if(!absolute(command.node)||!absolute(command.entry)||command.loader!==undefined&&!absolute(command.loader)||command.entry.endsWith('.ts')&&command.loader===undefined)throw new Error('Invalid agent command');
-    if(!isValidModelId(request.model)||!request.models.length||request.models.length>40||!request.models.every(isValidModelId)||!request.models.includes(request.model)||!isPermissionForEngine('ai-term',request.permission)||!isThemeName(request.theme)||!absolute(request.transcript)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid agent arguments');
-    const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[])];
+    if(!['foundry','anthropic','openai'].includes(request.provider)||!isValidModelId(request.model)||!request.models.length||request.models.length>MAX_AGENT_MODELS||!request.models.every(isValidModelId)||!request.models.includes(request.model)||!isPermissionForEngine('ai-term',request.permission)||!isThemeName(request.theme)||!absolute(request.transcript)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid agent arguments');
+    const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--provider=${request.provider}`,`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[])];
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return {executable:command.node,args};
 }
@@ -106,13 +108,14 @@ export function buildAgentArgs(request:{command:AgentCommand;model:string;models
 // credentials, NODE_OPTIONS, npm and AI Term variables) stays out of AI Term's agent.
 const AGENT_BASE_VARS=['PATH','HOME','USER','LOGNAME','SHELL','TMPDIR','LANG','LC_ALL','LC_CTYPE'] as const;
 function pick(base:NodeJS.ProcessEnv,names:readonly string[]):Record<string,string>{const result:Record<string,string>={};for(const name of names){const value=base[name];if(typeof value==='string')result[name]=value;}return result;}
-export function buildAgentEnv(base:NodeJS.ProcessEnv,agent:{secret:string;endpoint:string;status?:UsageTelemetry;usage?:UsageTelemetry;entry:string}):Record<string,string>{
-    if(!isSecret(agent.secret)||!isEndpoint(agent.endpoint)||!absolute(agent.entry))throw new Error('Invalid agent env');
+// endpoint: the Foundry key's Keychain-bound endpoint; null for Anthropic and OpenAI, whose hosts are fixed in the agent.
+export function buildAgentEnv(base:NodeJS.ProcessEnv,agent:{secret:string;endpoint:string|null;status?:UsageTelemetry;usage?:UsageTelemetry;entry:string}):Record<string,string>{
+    if(!isSecret(agent.secret)||agent.endpoint!==null&&!isEndpoint(agent.endpoint)||!absolute(agent.entry))throw new Error('Invalid agent env');
     const result:Record<string,string>={...pick(base,AGENT_BASE_VARS),TERM:'xterm-256color',COLORTERM:'truecolor',TERM_PROGRAM:'AITerm'};
     if(!result.LANG&&!result.LC_ALL&&!result.LC_CTYPE)result.LANG='en_US.UTF-8';
     // Source mode: tsx would read tsconfig.json from the agent's folder, whose `paths` could swap AI Term's imports.
     if(agent.entry.endsWith('.ts'))result.TSX_TSCONFIG_PATH=sourceTsconfig(agent.entry);
-    Object.assign(result,agent.status?buildStatusEnv(agent.status):{},{AITERM_AGENT_KEY:agent.secret,AITERM_AGENT_ENDPOINT:agent.endpoint});
+    Object.assign(result,agent.status?buildStatusEnv(agent.status):{},{AITERM_AGENT_KEY:agent.secret},agent.endpoint?{AITERM_AGENT_ENDPOINT:agent.endpoint}:{});
     if(agent.usage){validTelemetry(agent.usage);result.AITERM_USAGE_TOKEN=agent.usage.credential;}
     return result;
 }

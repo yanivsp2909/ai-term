@@ -1,3 +1,4 @@
+import { catalogIds } from '../shared/model-catalog.js';
 import { createServer, type Socket, type Server } from 'node:net';
 import type { Paths } from '../shared/paths.js';
 import { listenPrivate, closePrivate, type SocketIdentity } from './private-socket.js';
@@ -206,6 +207,8 @@ export class DaemonServer {
                     this.control(peer, { id: request.id, ok: true, settings: await this.settings.get(),notificationPermission:(request.refreshNotifications?await this.notifier?.refreshPermission?.():this.notifier?.permission?.())??'unknown' });
                     break;
                 case 'settings.set':
+                    // A deployment can only be marked as a model the catalog knows: its prices and limits come from there.
+                    if (request.patch.deploymentModels && Object.values(request.patch.deploymentModels).some(model => !catalogIds().includes(model))) throw new Error('Unknown catalog model');
                     this.control(peer, { id: request.id, ok: true, settings: await this.settings.set(request.patch) });
                     break;
                 case 'sessions.list':
@@ -317,6 +320,8 @@ export class DaemonServer {
                 'Session stop timed out','Session stop signal failed',
                 'Invalid key id','Key not found','Invalid key metadata','Invalid key details','Key details must not contain the secret',
                 'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
+                // AI Term's agent (v0.4.1–v0.4.2).
+                'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh",'Pick a model for AI Term agent','Unknown catalog model',
                 'OS keychain unavailable; key was not saved','OS keychain unavailable; key was not removed','OS keychain unavailable',
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',

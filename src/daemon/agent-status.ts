@@ -16,6 +16,8 @@ export function parseAgentStatus(raw: unknown, seq: number, at: string): AgentUp
     case 'tool-start': case 'tool-finish':
       return only(value, ['event', 'tool']) && isToolName(value.tool) ? { event: { ...base, kind: 'running', phase: value.event, tool: value.tool } } : null;
     case 'permission': return only(value, ['event']) ? { event: { ...base, kind: 'waiting', reason: 'permission' } } : null;
+    // A cap or budget pause: the agent asks whether to go on, shown like a question.
+    case 'paused': return only(value, ['event']) ? { event: { ...base, kind: 'waiting', reason: 'question' } } : null;
     // The approval was answered: running again, the tool still in flight.
     case 'answered': return only(value, ['event']) ? { event: { ...base, kind: 'running' } } : null;
     case 'done': return only(value, ['event', 'reply']) && typeof value.reply === 'string' ? { event: { ...base, kind: 'done' }, reply: capReply(value.reply) } : null;

@@ -6,16 +6,19 @@ import { KeyReader, type KeyEvent } from './key-reader.js';
 import type { Screen } from './screen.js';
 import type { Agent, AgentIO, AgentPermission, ToolName } from './agent.js';
 import { loadInstructions } from './instructions.js';
+import { killAllBash } from './bash.js';
+import { MAX_CAP_TURNS, MAX_CAP_USD } from '../shared/agent-facts.js';
 
 export interface AppOptions {
   screen: Screen; permission: AgentPermission; models: readonly string[];
-  makeModel(id: string): LanguageModel;
+  // Async: the daemon says how to reach a model (a Foundry deployment's wire) before it is built.
+  makeModel(id: string): Promise<LanguageModel>;
   // Builds the agent once the app exists, because the app is the agent's IO.
   agent(io: AgentIO): Agent;
   quit(): void;
 }
 const QUIT_WINDOW_MS = 3000;
-const HELP = ['/model [id]   switch to another deployment of this key', '/cd <folder>  work in another folder (AGENTS.md is read again)', '/exit         quit (Ctrl+C twice also quits)', 'Esc interrupts a turn · y / n answer an approval · a message sent during a turn waits for it to end'];
+const HELP = ['/model [id]   switch to another model of this key', '/caps [turns N|off] [spend N|off]   show or change this run\'s caps', '/clear        forget the conversation (frees the context)', '/cd <folder>  work in another folder (AGENTS.md is read again)', '/exit         quit (Ctrl+C twice also quits)', 'Esc interrupts a turn · Ctrl+K kills the request and every running command at once · y / n answer an approval · ⏎ goes on at a limit pause · a message sent during a turn waits for it to end'];
 
 // One controller per agent process: it owns the prompt, the queue of messages typed during a turn, the approval in
 // progress and the quit gesture. The agent turn itself lives in agent.ts.
@@ -26,6 +29,7 @@ export class AgentApp implements AgentIO {
   private queued: string[] = [];
   private turn: AbortController | null = null;
   private approval: { resolve(allowed: boolean): void; title: string; pages: string[][]; page: number } | null = null;
+  private paused: { resolve(go: boolean): void } | null = null;
   private quitArmedAt = 0;
   private closed = false;
   constructor(private readonly options: AppOptions) { this.agent = options.agent(this); }
@@ -34,7 +38,17 @@ export class AgentApp implements AgentIO {
   text(delta: string): void { this.options.screen.text(delta); }
   toolStart(tool: ToolName, summary: string): void { this.options.screen.toolStart(tool, summary); }
   toolEnd(tool: ToolName, outcome: 'ok' | 'denied' | 'failed', summary: string): void { this.options.screen.toolEnd(tool, outcome, summary); }
-  note(text: string, tone: 'info' | 'error' = 'info'): void { this.options.screen.note(text, tone); }
+  note(text: string, tone: 'info' | 'warn' | 'error' = 'info'): void { this.options.screen.note(text, tone); }
+  pause(text: string, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) return Promise.resolve(false);
+    this.options.screen.pause(text);
+    return new Promise(resolvePromise => {
+      const finish = (go: boolean) => { if (!this.paused) return; this.paused = null; signal.removeEventListener('abort', onAbort); this.options.screen.resumed(go); resolvePromise(go); };
+      const onAbort = () => finish(false);
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.paused = { resolve: finish };
+    });
+  }
   approve(request: { title: string; body: string }, signal: AbortSignal): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
     const pages = this.options.screen.approvalPages(request.body);
@@ -55,6 +69,13 @@ export class AgentApp implements AgentIO {
     if (this.closed) return;
     if (event.kind === 'ctrl-c' || event.kind === 'ctrl-d' && !this.running && !this.buffer) { this.quitKey(); return; }
     this.quitArmedAt = 0;
+    if (event.kind === 'ctrl-k') { this.kill(); return; }
+    if (this.paused) {
+      // Only a typed ⏎ goes on past a limit; a paste never does.
+      if (event.kind === 'enter') this.paused.resolve(true);
+      else if (event.kind === 'escape') { this.paused.resolve(false); this.turn?.abort(); }
+      return;
+    }
     if (this.approval) {
       // Only a typed key answers; a paste never does. y counts once every page of what runs has been on screen.
       const approval = this.approval, last = approval.page === approval.pages.length - 1;
@@ -82,10 +103,18 @@ export class AgentApp implements AgentIO {
     this.quitArmedAt = now; this.options.screen.note('press Ctrl+C again to quit');
     if (!this.running) this.options.screen.prompt(this.buffer);
   }
-  close(): void { if (this.closed) return; this.closed = true; this.approval?.resolve(false); this.turn?.abort(); this.options.screen.hidePrompt(); this.options.quit(); }
+  // The kill switch (D53): the request stops, every running command's process group gets SIGKILL now (no grace), queued
+  // messages are dropped, and nothing more is sent until you type again.
+  kill(): void {
+    const commands = killAllBash();
+    if (!this.running) { this.options.screen.note(commands ? `killed ${commands} running command${commands > 1 ? 's' : ''}` : 'nothing is running'); this.options.screen.prompt(this.buffer); return; }
+    this.queued = []; this.approval?.resolve(false); this.paused?.resolve(false); this.turn?.abort();
+    this.options.screen.note(`killed: the request${commands ? ` and ${commands} running command${commands > 1 ? 's' : ''}` : ''}`, 'error');
+  }
+  close(): void { if (this.closed) return; this.closed = true; killAllBash(); this.paused?.resolve(false); this.approval?.resolve(false); this.turn?.abort(); this.options.screen.hidePrompt(); this.options.quit(); }
 
   private submit(message: string): void {
-    const command = message.trim().match(/^\/(help|exit|model|cd)(?:\s+(.*))?$/s);
+    const command = message.trim().match(/^\/(help|exit|model|cd|caps|clear)(?:\s+(.*))?$/s);
     if (command) { void this.command(command[1] ?? '', (command[2] ?? '').trim()); return; }
     this.options.screen.user(message); this.options.screen.working();
     const turn = new AbortController(); this.turn = turn;
@@ -102,11 +131,30 @@ export class AgentApp implements AgentIO {
     else if (name === 'model') {
       if (!argument) for (const id of this.options.models) screen.note(`${id === this.agent.modelId ? '›' : ' '} ${id}`);
       else if (!this.options.models.includes(argument)) screen.note(`${argument} isn't a tested deployment of this key; /model lists them`, 'error');
-      else { this.agent.setModel(this.options.makeModel(argument), argument); screen.note(`model: ${argument}`); }
-    } else if (name === 'cd') {
+      else {
+        try { this.agent.setModel(await this.options.makeModel(argument), argument); screen.note(`model: ${argument}`); }
+        catch { screen.note(`couldn't switch to ${argument}`, 'error'); }
+      }
+    } else if (name === 'caps') screen.note(this.caps(argument));
+    else if (name === 'clear') { this.agent.clear(); screen.note('conversation cleared; the next message starts fresh'); }
+    else if (name === 'cd') {
       try { await this.changeFolder(argument); } catch { screen.note(`couldn't switch to ${argument}`, 'error'); }
     }
     screen.prompt(this.buffer);
+  }
+  // /caps, /caps turns 50, /caps spend 2.5, /caps turns off spend off: this run only; /settings holds the defaults.
+  private caps(argument: string): string {
+    const limits = this.agent.limits;
+    if (!argument) return limits.describe();
+    const words = argument.split(/\s+/), next: { turns?: number | null; spendUsd?: number | null } = {};
+    for (let i = 0; i < words.length; i += 2) {
+      const name = words[i], value = words[i + 1], number = value === 'off' ? null : Number(value);
+      if (name === 'turns' && (number === null || Number.isSafeInteger(number) && number > 0 && number <= MAX_CAP_TURNS)) next.turns = number;
+      else if (name === 'spend' && (number === null || Number.isFinite(number) && number > 0 && number <= MAX_CAP_USD)) next.spendUsd = number;
+      else return 'usage: /caps [turns N|off] [spend USD|off]';
+    }
+    limits.change(next);
+    return limits.describe();
   }
   private async changeFolder(argument: string): Promise<void> {
     const screen = this.options.screen;

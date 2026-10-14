@@ -12,6 +12,7 @@ import { loadInstructions } from '../src/agent/instructions.js';
 import { createTheme } from '../src/client/tui/theme.js';
 import { buildBashEnv } from '../src/daemon/env.js';
 import type { AgentStatus, Reporter } from '../src/agent/report.js';
+import { stubFacts } from './fixtures/agent-facts.js';
 
 // v0.4.1 security review findings: each one reproduced here before its fix.
 const roots: string[] = [];
@@ -23,11 +24,11 @@ const text = (body: string) => ({ stream: convertArrayToReadableStream([{ type: 
 async function app(steps: NonNullable<ConstructorParameters<typeof MockLanguageModelV4>[0]>['doStream'], rows = 30) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-review-'))); roots.push(root);
   const writes: string[] = [], statuses: AgentStatus[] = [], notes: string[] = [];
-  const reporter: Reporter = { status: async s => { statuses.push(s); }, usage: async () => {} };
+  const reporter: Reporter = { status: async s => { statuses.push(s); }, usage: async () => {}, facts: async () => stubFacts() };
   const screen = new Screen({ write: t => { writes.push(t); }, columns: 100, rows }, createTheme('graphite'));
   const note = screen.note.bind(screen); screen.note = (t, tone) => { notes.push(t); note(t, tone); };
   const model = new MockLanguageModelV4({ doStream: steps });
-  const instance = new AgentApp({ screen, permission: 'ask', models: ['m1'], quit: vi.fn(), makeModel: () => model,
+  const instance = new AgentApp({ screen, permission: 'ask', models: ['m1'], quit: vi.fn(), makeModel: async () => model,
     agent: io => new Agent({ root, permission: 'ask', model, modelId: 'm1', instructions: { text: '', files: [], notes: [] }, reporter, transcript: new Transcript(null, t => t, () => {}), io, redact: t => t, bashEnv: buildBashEnv(process.env), rg: null }) });
   return { root, instance, statuses, writes, notes, output: () => writes.join('') };
 }

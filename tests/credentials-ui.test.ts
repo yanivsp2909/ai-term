@@ -29,8 +29,11 @@ it('queued input after disposal cannot restore a cancelled secret',async()=>{
 it('settings keeps its selected key and defaults visible with many saved keys',async()=>{
  const keys=Array.from({length:20},(_,i)=>({id:randomUUID(),provider:'anthropic' as const,label:'key-'+i,last4:'0000'}));
  const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='keys.list'?{keys}:body.kind==='settings.get'?{settings:{theme:'graphite'}}:{})}),changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});await panel.load();for(let i=0;i<19;i++)await panel.key('down');const lines=panel.lines();
- // v0.4.1 adds the keys-run-on row; the popup scrolls to the selected row, so a short terminal still reaches every row.
- expect(lines.length).toBeLessThan(23);expect(lines.join('\n')).toContain('› key-19');expect(lines.join('\n')).toContain('DEFAULTS');
+ // v0.4.1-v0.4.2 add the keys-run-on, caps and context-warning rows; the popup scrolls to the selected row, so a short
+ // terminal still shows it.
+ expect(lines.length).toBeLessThan(25);
+ const {Grid,plainText}=await import('../src/client/tui/grid.js'),{createTheme}=await import('../src/client/tui/theme.js');
+ expect(plainText(panel.draw(new Grid(100,24,createTheme('graphite')).cells,createTheme('graphite')))).toContain('› key-19');expect(lines.join('\n')).toContain('› key-19');expect(lines.join('\n')).toContain('DEFAULTS');
 });
 it('settings arrows and Enter reach action and defaults rows without letter shortcuts',async()=>{
  const defaults:string[]=[];let closed=false;const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='keys.list'?{keys:[]}:body.kind==='settings.get'?{settings:{theme:'graphite'}}:{})}),changed:()=>{},close:()=>{closed=true;},login:async()=>{},defaults:kind=>{defaults.push(kind);},theme:async()=>{}});

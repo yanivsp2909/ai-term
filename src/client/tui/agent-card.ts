@@ -40,7 +40,14 @@ function activity(session: SessionInfo, now: number): Styled | null {
   return session.lastActivity ? { text: session.lastActivity.tool, color: 'ink-3' } : null;
 }
 // Text for one agent card whose text area is `width` cells. Debug shells keep their v0.1 activity line.
-export function cardText(session: SessionInfo, now: number, width: number): CardText {
+// D55: at 85% context a card says so once it gets there, in place of its activity, while the agent isn't waiting on you.
+// AI Term's agent has /clear; the CLIs have /compact. /settings turns it off.
+export const CONTEXT_WARN_PERCENT = 85;
+function contextWarning(session: SessionInfo): Styled | null {
+  if (session.ctxPercent === null || session.ctxPercent < CONTEXT_WARN_PERCENT || !['running', 'done'].includes(session.status)) return null;
+  return { text: `context ${Math.round(session.ctxPercent)}% · ${session.engine === 'ai-term' ? '/clear' : '/compact'} or start fresh`, color: 'status-waiting' };
+}
+export function cardText(session: SessionInfo, now: number, width: number, options: { contextWarning?: boolean } = {}): CardText {
   const [glyph, color, word] = marks[session.status], shell = session.engine === 'shell', narrow = width < NARROW;
   const dontAsk = session.permission === 'dontAsk' ? '! ' : '', withAge = `${dontAsk}${glyph} ${shell ? '' : word + ' '}${age(session, now)}`;
   const status = { text: !shell && textWidth(withAge) + 1 + MIN_NAME > width ? `${dontAsk}${glyph} ${word}` : withAge, color, bold: session.status === 'waiting' };
@@ -54,6 +61,6 @@ export function cardText(session: SessionInfo, now: number, width: number): Card
   const auth = session.auth.kind === 'key' ? `API key ····${session.auth.last4}` : shell ? '' : ownLoginLabel(session.authMethod);
   if (shell) return { status, model, ctx, activity: null, auth, line3: session.statusDetail === word ? word : `${word} · ${session.statusDetail}` };
   if(session.worktreeNote)return {status,model,ctx,activity:null,auth,line3:session.worktreeNote};
-  const act = narrow ? null : activity(session, now), joined = act && auth ? `${act.text} · ${auth}` : null;
+  const act = narrow ? null : (options.contextWarning !== false ? contextWarning(session) : null) ?? activity(session, now), joined = act && auth ? `${act.text} · ${auth}` : null;
   return { status, model, ctx, activity: act, auth, line3: act ? (joined && textWidth(joined) <= width ? joined : act.text) : auth };
 }

@@ -2,7 +2,7 @@
 // pasted or /send-ed "y" can never answer an approval. Cursor keys and other sequences are read and dropped.
 export type KeyEvent =
   | { kind: 'text'; text: string } | { kind: 'paste'; text: string } | { kind: 'enter' } | { kind: 'newline' }
-  | { kind: 'backspace' } | { kind: 'escape' } | { kind: 'ctrl-c' } | { kind: 'ctrl-d' };
+  | { kind: 'backspace' } | { kind: 'escape' } | { kind: 'ctrl-c' } | { kind: 'ctrl-d' } | { kind: 'ctrl-k' };
 const PASTE_START = '\x1b[200~', PASTE_END = '\x1b[201~', MAX_PASTE_CHARS = 1024 * 1024;
 
 export class KeyReader {
@@ -38,6 +38,7 @@ export class KeyReader {
           if (sequence === '\x1b[13u') events.push({ kind: 'enter' });
           else if (sequence === '\x1b[27u') events.push({ kind: 'escape' });
           else if (sequence === '\x1b[99;5u') events.push({ kind: 'ctrl-c' });
+          else if (sequence === '\x1b[107;5u') events.push({ kind: 'ctrl-k' });
           input = input.slice(sequence.length); continue;
         }
         // Alt+key or a bare Esc followed by typing: the Esc counts, the key is read next.
@@ -49,6 +50,7 @@ export class KeyReader {
       else if (char === '\x7f' || char === '\b') { flush(); events.push({ kind: 'backspace' }); }
       else if (char === '\x03') { flush(); events.push({ kind: 'ctrl-c' }); }
       else if (char === '\x04') { flush(); events.push({ kind: 'ctrl-d' }); }
+      else if (char === '\x0b') { flush(); events.push({ kind: 'ctrl-k' }); }
       else if (char === '\t' || char >= ' ' && char !== '\x7f' && !(char >= '\x80' && char <= '\x9f')) text += char;
     }
     flush();

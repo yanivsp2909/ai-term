@@ -41,7 +41,7 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
   const barBytes=()=>{
     if(!barSession)return '';
     const cols=screen?.terminal.cols??stdout.columns??80;
-    const key=JSON.stringify([cols,barSession.title,barSession.engine,barSession.model,barSession.status,...[...others.values()].map(s=>s.status)]);
+    const key=JSON.stringify([cols,barSession.title,barSession.engine,barSession.model,barSession.status,barSession.ctxPercent,...[...others.values()].map(s=>s.status)]);
     if(key!==barKey){const frame:Frame=frameBar(cols,barSession,[...others.values()],theme);barOutput=diffFrame(frame,[],theme).slice(8,-8);barKey=key;}
     return barOutput;
   };

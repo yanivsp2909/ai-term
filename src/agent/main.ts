@@ -1,29 +1,32 @@
 import { realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { AGENT_ASK_FLAG, AGENT_DONT_ASK_FLAG, buildBashEnv } from '../daemon/env.js';
+import { killAllBash } from './bash.js';
 import { isEndpoint, isSecret, isThemeName, isValidModelId } from '../shared/validate.js';
-import type { ThemeName } from '../shared/protocol.js';
+import type { KeyProvider, ThemeName } from '../shared/protocol.js';
 import { createTheme } from '../client/tui/theme.js';
 import { Agent, type AgentPermission } from './agent.js';
 import { AgentApp } from './app.js';
 import { redactor } from './display.js';
 import { loadInstructions } from './instructions.js';
-import { foundryModel } from './provider.js';
+import { makeModel as makeProviderModel } from './provider.js';
+import type { FoundryWire } from './providers/foundry.js';
 import { HttpReporter, reporterEnv } from './report.js';
 import { Screen } from './screen.js';
 import { findRipgrep } from './tools.js';
 import { Transcript } from './transcript.js';
 
-export interface AgentArgs { model: string; models: string[]; theme: ThemeName; transcript: string | null; permission: AgentPermission; firstMessage?: string }
+export interface AgentArgs { provider: KeyProvider; model: string; models: string[]; theme: ThemeName; transcript: string | null; permission: AgentPermission; firstMessage?: string }
 export class AgentUsageError extends Error {}
 // The argv env.ts builds (buildAgentArgs). Anything else is refused: Ask unless the one Don't ask flag is there.
 export function parseAgentArgs(args: readonly string[]): AgentArgs {
-  let model: string | null = null, models: string[] = [], theme: ThemeName = 'graphite', transcript: string | null = null, permission: AgentPermission = 'ask', firstMessage: string | undefined;
+  let provider: KeyProvider | null = null, model: string | null = null, models: string[] = [], theme: ThemeName = 'graphite', transcript: string | null = null, permission: AgentPermission = 'ask', firstMessage: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
     if (arg === '--') { if (i !== args.length - 2) throw new AgentUsageError('Expected one message after --'); firstMessage = args[i + 1]; break; }
     const [name, value] = arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, undefined];
-    if (name === '--model' && value && isValidModelId(value)) model = value;
+    if (name === '--provider' && (value === 'foundry' || value === 'anthropic' || value === 'openai')) provider = value;
+    else if (name === '--model' && value && isValidModelId(value)) model = value;
     else if (name === '--models' && value) { models = value.split(','); if (!models.every(isValidModelId)) throw new AgentUsageError('Invalid --models'); }
     else if (name === '--theme' && isThemeName(value)) theme = value;
     else if (name === '--transcript' && value && isAbsolute(value) && !value.includes('\0')) transcript = value;
@@ -31,9 +34,10 @@ export function parseAgentArgs(args: readonly string[]): AgentArgs {
     else if (arg === AGENT_DONT_ASK_FLAG) permission = 'dontAsk';
     else throw new AgentUsageError(`Unknown argument ${JSON.stringify(arg.slice(0, 40))}`);
   }
+  if (!provider) throw new AgentUsageError('Missing --provider');
   if (!model) throw new AgentUsageError('Missing --model');
   if (!models.includes(model)) models = [model, ...models];
-  return { model, models, theme, transcript, permission, ...(firstMessage !== undefined ? { firstMessage } : {}) };
+  return { provider, model, models, theme, transcript, permission, ...(firstMessage !== undefined ? { firstMessage } : {}) };
 }
 
 // The key and credentials are copied out of the environment and deleted from it before anything else runs, so nothing
@@ -53,7 +57,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   const secrets = takeSecrets(env);
   let parsed: AgentArgs;
   try { parsed = parseAgentArgs(args); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof AgentUsageError ? error.message : 'invalid arguments'}\n`); return 2; }
-  if (!secrets.key || !secrets.endpoint) { terminal.stderr.write("ai agent runs inside AI Term: start it from the homepage with an API key (a Foundry key in this version).\n"); return 2; }
+  if (!secrets.key || parsed.provider === 'foundry' && !secrets.endpoint) { terminal.stderr.write('ai agent runs inside AI Term: start it from the homepage with an API key.\n'); return 2; }
   // The SDK prints its warnings to the console, which here is the agent's own screen.
   (globalThis as { AI_SDK_LOG_WARNINGS?: boolean }).AI_SDK_LOG_WARNINGS = false;
   const { key, endpoint } = secrets, redact = redactor(key);
@@ -62,15 +66,20 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   const reporter = new HttpReporter(secrets.reporter, () => screen.note("status updates aren't reaching AI Term; its card may lag", 'error'));
   const transcript = new Transcript(parsed.transcript, redact, () => screen.note("the transcript couldn't be saved; the conversation goes on", 'error'));
   const instructions = await loadInstructions(root);
-  const makeModel = (id: string) => foundryModel(endpoint, id, key);
+  // A Foundry deployment's wire (Responses or Chat Completions) comes from its test, through the daemon's facts.
+  const makeModel = async (id: string) => { const wire: FoundryWire | null = parsed.provider === 'foundry' ? (await reporter.facts(id))?.wire ?? null : null; return makeProviderModel({ provider: parsed.provider, model: id, key, endpoint, ...(wire ? { wire } : {}) }); };
+  const firstModel = await makeModel(parsed.model);
   return new Promise<number>(resolveExit => {
     const restore = () => { terminal.stdout.write('\x1b[?2004l'); terminal.stdin.setRawMode?.(false); terminal.stdin.pause(); };
     // A crash prints fixed words, never a stack or an error message, which could carry anything a provider sent.
     const crash = () => { restore(); terminal.stderr.write('\nai agent stopped after an internal error\n'); resolveExit(1); };
     process.once('uncaughtException', crash); process.once('unhandledRejection', crash);
+    // Stopped from the homepage (s), by the daemon or by a closed terminal: every running command's process group goes
+    // with it (they run in their own groups, so the PTY's signal alone would leave them behind), then the agent exits.
+    for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: makeModel(parsed.model), modelId: parsed.model, instructions, reporter, transcript, io, redact, bashEnv, rg }),
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, bashEnv, rg }),
       quit: () => { restore(); void transcript.close().then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);

@@ -13,11 +13,19 @@ export interface BashOptions { cwd: string; env: Record<string, string>; timeout
 // The bash tool runs the model's command line as one argv element of /bin/sh -c: running that line *is* the tool, and it is
 // the one shell AI Term starts (S8). It gets its own process group so a timeout or Esc stops everything it started, a
 // fixed env with no key (buildBashEnv), no stdin, and capped output.
+// Process groups of commands still running, so the kill switch and a stop of the agent can end them all at once.
+const running = new Set<number>();
+export function killAllBash(): number {
+  let count = 0;
+  for (const pid of running) { try { process.kill(-pid, 'SIGKILL'); count++; } catch (error) { if (!isFsError(error, 'ESRCH')) count++; } }
+  return count;
+}
 export function runBash(command: string, options: BashOptions): Promise<BashResult> {
   const timeoutMs = Math.min(BASH_MAX_TIMEOUT_MS, Math.max(1000, options.timeoutMs ?? BASH_DEFAULT_TIMEOUT_MS)), maxBytes = options.maxBytes ?? BASH_OUTPUT_MAX_BYTES;
   return new Promise((resolve, reject) => {
     const child = spawn('/bin/sh', ['-c', command], { cwd: options.cwd, env: options.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [], err: Buffer[] = [];
+    if (child.pid !== undefined) running.add(child.pid);
     let outBytes = 0, errBytes = 0, cut = false, timedOut = false, interrupted = false, settled = false, stopFailed = false;
     const take = (chunks: Buffer[], chunk: Buffer, used: number): number => {
       const room = maxBytes - used;
@@ -37,8 +45,9 @@ export function runBash(command: string, options: BashOptions): Promise<BashResu
     const onAbort = (): void => { interrupted = true; stopGroup(); };
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
-    child.on('error', error => { if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', onAbort); reject(error); });
+    child.on('error', error => { if (child.pid !== undefined) running.delete(child.pid); if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', onAbort); reject(error); });
     child.on('close', (code, signal) => {
+      if (child.pid !== undefined) running.delete(child.pid);
       if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', onAbort);
       resolve({ exitCode: code, signal, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8'), timedOut, interrupted, cut, stopFailed });
     });

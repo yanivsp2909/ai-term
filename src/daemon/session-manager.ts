@@ -4,7 +4,12 @@ import { stripVTControlCharacters } from 'node:util';
 import { writeClaudeSettings,claudeStatusLine } from './claude-settings.js';
 import { agentTranscript,removeSessionFiles } from './session-files.js';
 import {parseAgentStatus} from './agent-status.js';
-import { AGENT_PROVIDERS, engineTitle, keyEngine } from '../shared/models.js';
+import { AGENT_PROVIDERS, engineTitle, keyEngine, deploymentWire } from '../shared/models.js';
+import { catalogModels } from '../shared/model-catalog.js';
+import { DEFAULT_AGENT_CAPS, type AgentFacts } from '../shared/agent-facts.js';
+import { findPrice, findLimits, type PriceSnapshot } from './usage-prices.js';
+import priceData from '../../data/usage-prices.json' with {type:'json'};
+const PRICES=priceData as PriceSnapshot;
 import {parseClaudeStatus} from './claude-status.js';
 import {parseCodexStatus,codexTitle,isCodexApproval,type CodexRun} from './codex-status.js';
 import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
@@ -69,7 +74,7 @@ export class SessionManager extends EventEmitter {
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
-        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentFacts(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -234,8 +239,10 @@ export class SessionManager extends EventEmitter {
             if(agent.auth.kind!=='key')throw new KeyError('AI Term agent needs an API key');
             const key=await this.keys.view(agent.auth.keyId);
             if(!AGENT_PROVIDERS.includes(key.provider))throw new KeyError("AI Term agent can't use this key yet");
-            const models=(key.deployments??[]).filter(model=>key.lastTest?.some(r=>r.model===model&&r.status==='ready'));
-            if(!agent.model||!models.includes(agent.model))throw new KeyError('Foundry deployment must pass its test first');
+            // Foundry: deployments whose test found a wire (Responses or Chat Completions, D30). Anthropic and OpenAI: the
+            // catalog's chat models, plus a valid model id typed in /model.
+            const models=key.provider==='foundry'?(key.deployments??[]).filter(model=>deploymentWire(key.lastTest?.find(r=>r.model===model))!==null):[...new Set([...catalogModels(key.provider),...(agent.model?[agent.model]:[])])];
+            if(!agent.model||!models.includes(agent.model))throw new KeyError(key.provider==='foundry'?'Foundry deployment must pass its test first':'Pick a model for AI Term agent');
             agentKey={view:key,models};authMethod='api-key';
             recipe={executable:process.execPath,args:[],env:{}};
         } else if (agent) {
@@ -298,12 +305,12 @@ export class SessionManager extends EventEmitter {
             const transcript=agent?.engine==='ai-term'?await agentTranscript(this.paths.root,info.id):null;
             if(agent?.engine==='ai-term'&&agent.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
                 // B12: only the Keychain's bound endpoint and deployments decide where the key goes and which models it may run.
-                const model=agent.model,models=(agentKey?.models??[]).filter(id=>binding?.deployments.includes(id));
-                if(!binding||!model||!models.includes(model)||!transcript)throw new KeyError('Foundry key details changed outside AI Term; add the key again');
+                const foundry=agentKey?.view.provider==='foundry',model=agent.model,models=(agentKey?.models??[]).filter(id=>!foundry||binding?.deployments.includes(id));
+                if(foundry&&!binding||!model||!models.includes(model)||!transcript||!agentKey)throw new KeyError('Foundry key details changed outside AI Term; add the key again');
                 live.agentModels=models;
                 const command={node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})};
-                const built=buildAgentArgs({command,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
-                recipe={executable:built.executable,args:built.args,env:buildAgentEnv(process.env,{secret,endpoint:binding.endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry})};
+                const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
+                recipe={executable:built.executable,args:built.args,env:buildAgentEnv(process.env,{secret,endpoint:foundry&&binding?binding.endpoint:null,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry})};
                 try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
             });
             else if(agent&&cliEngine&&agent.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
@@ -389,6 +396,20 @@ export class SessionManager extends EventEmitter {
         if(keyEngine(key.provider,keysRunOn)!=='ai-term')return request;
         // AI Term's agent takes no effort level in v0.4.1, and has no Claude-only modes.
         return {...request,engine:'ai-term',effort:null,permission:request.permission==='dontAsk'?'dontAsk':'ask'};
+    }
+    // POST /v1/agent/ai-term (§12.5): what the agent needs before a model request. Only a live AI Term agent asking about a
+    // model it may use (bound to its key and tested) gets an answer; anything else gets none (the receiver answers 204).
+    async agentFacts(id:string,raw:unknown):Promise<AgentFacts|null>{
+        const live=this.sessions.get(id);
+        if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status)||!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).length!==1)return null;
+        const model=(raw as {model?:unknown}).model;
+        if(typeof model!=='string'||!live.agentModels?.includes(model))return null;
+        const key=await this.keys.view(live.info.auth.keyId),settings=await new SettingsStore(this.paths.root).get();
+        const alias=key.provider==='foundry'?settings.deploymentModels?.[model]:undefined,overrides=settings.priceOverrides??{};
+        const price=findPrice(PRICES,key.provider,model,overrides,alias)??null,limits=findLimits(PRICES,key.provider,model,alias),usage=this.usage?.summary();
+        return {model,wire:key.provider==='foundry'?deploymentWire(key.lastTest?.find(r=>r.model===model)):null,context:limits.context??null,output:limits.output??null,price,
+            spent:{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0},budgets:{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},
+            caps:settings.agentCaps??DEFAULT_AGENT_CAPS,contextWarning:settings.contextWarning!==false};
     }
     private ingressAgentStatus(id:string,update:import('./agent-status.js').AgentUpdate|null):void{
         const live=this.sessions.get(id);if(!live||!update)return;

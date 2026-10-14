@@ -1,19 +1,23 @@
 import type { AgentEngine, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings, NotifierState,NotificationAuthorization } from '../../shared/protocol.js';
 import { ownLoginLabel } from '../../shared/models.js';
+import { catalogIds } from '../../shared/model-catalog.js';
+import { DEFAULT_AGENT_CAPS, type AgentCaps } from '../../shared/agent-facts.js';
 import { DaemonRequestError, type RequestBody } from '../connection.js';
 import { isEndpoint, isValidModelId } from '../../shared/validate.js';
 import { Grid, type Frame } from './grid.js';
 import type { Theme } from './theme.js';
 interface Actions {
  request(body:RequestBody):Promise<SuccessResponse>;changed():void;close():void;
- login(engine:AgentEngine):Promise<void>;defaults(kind:'model'|'folder'|'effort'):void;price?():void;theme(theme:ThemeName):Promise<void>;
+ login(engine:AgentEngine):Promise<void>;defaults(kind:'model'|'folder'|'effort'):void;price?():void;caps?(current:AgentCaps|undefined):void;theme(theme:ThemeName):Promise<void>;
 }
 const providers:readonly [string,KeyProvider][]=[['Anthropic','anthropic'],['OpenAI','openai'],['Microsoft Foundry','foundry']];
 const themes:ThemeName[]=['graphite','slate','ink','auto','light'];
 // The daemon answers with fixed texts only (KeyError or a generic fallback), so its reason is safe to show and says what to do.
 const reason=(error:unknown,fallback:string)=>error instanceof DaemonRequestError?error.message:fallback;
 export class CredentialsPanel {
- private screen:'providers'|'method'|'form'|'settings'|'import'|'names'|'result';
+ private screen:'providers'|'method'|'form'|'settings'|'import'|'names'|'result'|'deployments'|'catalog';
+ // "This deployment is model X" (v0.4.2): the Foundry key and deployment being marked, and the catalog filter.
+ private mapping:{key:KeyView;deployment:string;filter:string}|null=null;
  private choice=0;private row=0;private provider:KeyProvider='anthropic';private keys:KeyView[]=[];private engines?:EnginesStatus;private notifier?:NotifierState;private notificationPermission:NotificationAuthorization='unknown';private settings?:Settings;
  private label='';private endpoint='';private deployments='';private secret='';private path='';private names:{name:string;provider:KeyProvider}[]=[];private selected=new Set<string>();private message='';private busy=false;private disposed=false;
  constructor(kind:'login'|'settings',private readonly actions:Actions){this.screen=kind==='login'?'providers':'settings';}
@@ -26,6 +30,16 @@ export class CredentialsPanel {
   try{const status=await this.actions.request({kind:'engines.status'});this.engines=status.engines;this.notifier=status.notifier;}catch(error){failures.push(reason(error,'Engine status unavailable'));}
   try{const result=await this.actions.request({kind:'settings.get',refreshNotifications:true});this.settings=result.settings;this.notificationPermission=result.notificationPermission??'unknown';}catch(error){failures.push(reason(error,'Settings unavailable'));}
   this.message=failures.join(' · ');this.busy=false;this.actions.changed();}
+ private capsText():string{const caps=this.settings?.agentCaps??DEFAULT_AGENT_CAPS;return `${caps.turns===null?'no turn cap':`${caps.turns} turns`} · ${caps.spendUsd===null?'no spend cap':`$${caps.spendUsd.toFixed(2)}`}`;}
+ private catalogRows():string[]{const filter=this.mapping?.filter.toLowerCase()??'';return ['(not set)',...catalogIds().filter(id=>id.toLowerCase().includes(filter))];}
+ private async saveMapping(choice:string|undefined):Promise<void>{
+  const mapping=this.mapping;if(!mapping||!choice)return;
+  const current={...this.settings?.deploymentModels};if(choice==='(not set)')delete current[mapping.deployment];else current[mapping.deployment]=choice;
+  this.busy=true;
+  try{this.settings=(await this.actions.request({kind:'settings.set',patch:{deploymentModels:current}})).settings;this.message=choice==='(not set)'?`${mapping.deployment}: model not set`:`${mapping.deployment} is ${choice}`;this.screen='settings';this.mapping=null;this.choice=0;}
+  catch(error){this.message=reason(error,'Deployment model could not be saved');}
+  finally{this.busy=false;this.actions.changed();}
+ }
  private fieldNames():string[]{return this.provider==='foundry'?['label','endpoint','secret','deployments']:['label','secret'];}
  private field():string{return this.screen==='import'?'path':this.fieldNames()[this.row]??'label';}
  paste(text:string):void{if(this.busy||this.disposed)return;const field=this.field();if(this.screen!=='form'&&this.screen!=='import')return;
@@ -38,13 +52,21 @@ export class CredentialsPanel {
  async key(key:string):Promise<void>{
   if(this.disposed)return;
   if(key==='escape'){this.secret='';this.actions.close();return;}if(this.busy)return;
-  if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?this.keys.length+12:this.screen==='names'?this.names.length:this.screen==='providers'?3:2)-1,this.choice+delta));this.actions.changed();return;}
+  if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?this.keys.length+14:this.screen==='deployments'?this.mapping?.key.deployments?.length??0:this.screen==='catalog'?this.catalogRows().length:this.screen==='names'?this.names.length:this.screen==='providers'?3:2)-1,this.choice+delta));this.actions.changed();return;}
   if(key==='backspace'&&(this.screen==='form'||this.screen==='import')){this.backspace();this.actions.changed();return;}
   if(this.screen==='providers'&&key==='enter'){this.provider=providers[this.choice]?.[1]??'anthropic';this.choice=0;if(this.provider==='foundry')this.form('foundry');else this.screen='method';this.actions.changed();return;}
   if(this.screen==='method'&&key==='enter'){if(this.choice===0){this.busy=true;this.actions.changed();try{await this.actions.login(this.provider==='anthropic'?'claude-code':'codex');this.actions.close();}catch(error){this.message=reason(error,'Login could not start');}finally{this.busy=false;this.actions.changed();}}else this.form(this.provider);this.actions.changed();return;}
+  if(this.screen==='deployments'&&key==='enter'&&this.mapping){this.mapping={...this.mapping,deployment:this.mapping.key.deployments?.[this.choice]??''};this.screen='catalog';this.choice=0;this.actions.changed();return;}
+  if(this.screen==='catalog'&&this.mapping){
+   if(key==='backspace'){this.mapping={...this.mapping,filter:[...this.mapping.filter].slice(0,-1).join('')};this.choice=0;this.actions.changed();return;}
+   if(key==='enter'){await this.saveMapping(this.catalogRows()[this.choice]);return;}
+   // Typing narrows the list; the saved value is always a catalog entry, never the typed text.
+   if([...key].length===1&&/[A-Za-z0-9._:-]/.test(key)){this.mapping={...this.mapping,filter:(this.mapping.filter+key).slice(0,40)};this.choice=0;this.actions.changed();return;}
+   return;
+  }
   if(this.screen==='form'&&key==='enter'){if(this.row<this.fieldNames().length-1){this.row++;this.actions.changed();return;}await this.save();return;}
   if(this.screen==='settings'){
-   if(key==='enter'&&this.choice>=this.keys.length){const action=['a','i','l','d','f','tab','e','p','n','h','w','r'][this.choice-this.keys.length];if(action)await this.key(action);return;}
+   if(key==='enter'&&this.choice>=this.keys.length){const action=['a','i','l','d','f','tab','e','p','n','h','w','r','c','k'][this.choice-this.keys.length];if(action)await this.key(action);return;}
    if(key==='a'||key==='+'){this.screen='providers';this.choice=0;this.actions.changed();return;}
    if(key==='i'){this.screen='import';this.path='';this.message='';this.actions.changed();return;}
    if(key==='l'){this.screen='providers';this.choice=0;this.actions.changed();return;}
@@ -52,6 +74,11 @@ export class CredentialsPanel {
    if(key==='w'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{worktrees:this.settings?.worktrees==='off'?'on':'off'}})).settings;this.message='';}catch{this.message='Worktrees setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    // D47's fallback: Foundry keys start AI Term's agent unless this says the CLI (Codex); accounts never change.
    if(key==='r'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{keysRunOn:this.settings?.keysRunOn==='cli'?'ai-term':'cli'}})).settings;this.message='';}catch{this.message='Keys setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
+   if(key==='c'){this.actions.caps?.(this.settings?.agentCaps);return;}
+   // D55: the 85% context warning has its own switch, on by default.
+   if(key==='k'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{contextWarning:this.settings?.contextWarning===false}})).settings;this.message='';}catch{this.message='Context warning setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
+   const marking=this.keys[this.choice];
+   if(key==='m'&&marking?.provider==='foundry'&&marking.deployments?.length){this.mapping={key:marking,deployment:'',filter:''};this.screen='deployments';this.choice=0;this.message='';this.actions.changed();return;}
    if(key==='h'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{bar:this.settings?.bar==='on'?'off':'on'}})).settings;this.message='';}catch{this.message='Bar setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    if(key==='n'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{notifications:this.settings?.notifications===false}})).settings;this.message='';}catch{this.message='Notifications setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    if(key==='d'||key==='f'||key==='e'){this.actions.defaults(key==='d'?'model':key==='e'?'effort':'folder');return;}
@@ -93,10 +120,12 @@ export class CredentialsPanel {
    for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${k.provider} · key ····${k.last4}${k.endpoint?' · '+k.endpoint:''}`);
    lines.push(action(0,'+ add key (a)'),action(1,'import from .env (i)'),action(2,'login (l)'),'ENGINES');
    for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(status?`${name}: ${status.installed?'✓ installed':'✗ not installed'} · ${status.loggedIn===null?'status unavailable':status.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status.authMethod)}${status.error?' · '+status.error:''}`:`${name}: status unavailable`);
-   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'Foundry input/output price per 1M · p override'),action(8,`notifications: ${this.settings?.notifications===false?'off':this.notificationText()} (n)`),action(9,`bar: ${this.settings?.bar??'off'} (h)`),action(10,`worktrees: ${this.settings?.worktrees??'on'} (w)`),action(11,`keys run on: ${this.settings?.keysRunOn==='cli'?'the cli':'ai term'} (r)`),'keys are never shown in full and never written to .env');
+   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'Foundry input/output price per 1M · p override'),action(8,`notifications: ${this.settings?.notifications===false?'off':this.notificationText()} (n)`),action(9,`bar: ${this.settings?.bar??'off'} (h)`),action(10,`worktrees: ${this.settings?.worktrees??'on'} (w)`),action(11,`keys run on: ${this.settings?.keysRunOn==='cli'?'the cli':'ai term'} (r)`),action(12,`agent caps: ${this.capsText()} per run (c)`),action(13,`context warning at 85%: ${this.settings?.contextWarning===false?'off':'on'} (k)`),'keys are never shown in full and never written to .env');
    // Fixed text only: the daemon reports one of three states.
    if(this.notifier==='not built')lines.push('notifications unavailable: helper not built · run npm run build:notifier');else if(this.notifier==='launch failed')lines.push('notifications unavailable: helper failed to launch');
   }
+  if(this.screen==='deployments'&&this.mapping){lines.push(`Which model is each deployment? · ${this.mapping.key.label}`,...(this.mapping.key.deployments??[]).map((d,i)=>`${i===this.choice?'›':' '} ${d} · ${this.settings?.deploymentModels?.[d]??'model not set'}`),'prices and context come from the model you pick · ↑↓ · ⏎ pick · Esc closes');}
+  if(this.screen==='catalog'&&this.mapping){const rows=this.catalogRows(),start=Math.max(0,this.choice-6);lines.push(`${this.mapping.deployment} is…`,`Filter: ${this.mapping.filter}█`,...rows.slice(start,start+12).map((id,i)=>`${start+i===this.choice?'›':' '} ${id}`),`${rows.length-1} catalog models · ↑↓ · ⏎ saves · Esc closes`);}
   if(this.screen==='import')lines.push('Import from .env',`path: ${this.path}█`,'Names only are shown; source file is never modified');
   if(this.screen==='names')lines.push('Select names to import',...this.names.map((n,i)=>`${i===this.choice?'›':' '} [${this.selected.has(n.name)?'x':' '}] ${n.name} · ${n.provider}`),'↑↓ select · Space toggle · ⏎ import');
   if(this.screen==='result')lines.push('Keys',...this.keys.map(k=>`${k.label} · key ····${k.last4}`),...this.keys.flatMap(k=>(k.lastTest??[]).map(r=>`${r.model} · ${r.status}${r.reason?' · '+r.reason:''}`)));

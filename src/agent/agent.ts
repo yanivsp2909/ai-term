@@ -6,6 +6,8 @@ import { ProviderError } from './provider.js';
 import { systemPrompt, type Instructions } from './instructions.js';
 import type { Reporter } from './report.js';
 import type { Transcript } from './transcript.js';
+import { RunLimits, maxOutputTokens, requestCost } from './limits.js';
+import type { AgentFacts } from '../shared/agent-facts.js';
 
 export type AgentPermission = 'ask' | 'dontAsk';
 export type ToolName = 'read' | 'write' | 'edit' | 'bash' | 'search';
@@ -16,15 +18,17 @@ export interface AgentIO {
   toolEnd(tool: ToolName, outcome: 'ok' | 'denied' | 'failed', summary: string): void;
   // Resolves false when the user says no, presses Esc, or the turn is interrupted.
   approve(request: { title: string; body: string }, signal: AbortSignal): Promise<boolean>;
-  note(text: string, tone?: 'info' | 'error'): void;
+  note(text: string, tone?: 'info' | 'warn' | 'error'): void;
+  // A limit pause: resolves true to go on (a typed ⏎), false to stop (Esc, a kill, or the turn ending).
+  pause(text: string, signal: AbortSignal): Promise<boolean>;
 }
 export interface AgentOptions {
   root: string; permission: AgentPermission; model: LanguageModel; modelId: string; instructions: Instructions;
   reporter: Reporter; transcript: Transcript; io: AgentIO; redact: (text: string) => string;
-  bashEnv: Record<string, string>; rg: string | null; contextWindow?: number; maxSteps?: number;
+  bashEnv: Record<string, string>; rg: string | null; maxSteps?: number;
 }
 export type TurnResult = 'done' | 'interrupted' | 'failed';
-const DEFAULT_MAX_STEPS = 50;
+const DEFAULT_MAX_STEPS = 50, CONTEXT_WARN = 85;
 // Reasons a failed turn shows and reports; the same fixed words Claude's StopFailure uses, never the provider's text.
 type FailureKind = 'rate_limit' | 'overloaded' | 'authentication_failed' | 'billing_error' | 'invalid_request' | 'server_error' | 'unknown';
 const FAILURE_TEXT: Record<FailureKind, string> = { rate_limit: 'rate limited; try again shortly', overloaded: 'the provider is overloaded', authentication_failed: 'the key was refused; test it in /settings', billing_error: 'billing problem on the provider account', invalid_request: 'the provider refused the request', server_error: 'the provider had an error', unknown: "couldn't reach the provider" };
@@ -60,6 +64,8 @@ function schema<T>(required: Fields, optional: Fields, describe: Record<string, 
 
 export class Agent {
   history: ModelMessage[] = [];
+  readonly limits = new RunLimits();
+  private warned = false;
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private options: AgentOptions) {}
   get root(): string { return this.options.root; }
@@ -118,22 +124,35 @@ export class Agent {
     };
   }
 
+  // One message from the user: model requests and tool rounds until the model answers, the user interrupts, or a limit
+  // pause ends in a stop. Every request is checked first (limits.ts); every request's own usage is priced and counted.
   async turn(prompt: string, signal: AbortSignal): Promise<TurnResult> {
     const { io, reporter, transcript, redact } = this.options, user: ModelMessage = { role: 'user', content: prompt };
     void transcript.append({ kind: 'user', text: prompt });
     await reporter.status({ event: 'turn-start' });
-    let stepText = '', lastText = '', streamError: unknown;
+    // The turn's own signal: the user's Esc or kill, or a stop chosen at a limit pause.
+    const controller = new AbortController(), stop = () => controller.abort();
+    signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop();
+    let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId);
+    const totals = { input: 0, cached: 0, output: 0, reasoning: 0, cost: 0 as number | null, requests: 0 };
+    const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' });
     const finishInterrupted = async (): Promise<TurnResult> => {
       // The partial reply stays in the conversation, marked, so the next turn knows what was cut off.
       this.history.push(user, { role: 'assistant', content: `${lastText || stepText}\n(The user interrupted this reply.)`.trim() });
       void transcript.append({ kind: 'note', text: 'interrupted' });
+      this.turnCost(totals);
       await reporter.status({ event: 'done', reply: lastText || stepText });
       return 'interrupted';
     };
     try {
       const result = streamText({
-        model: this.options.model, system: systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' }),
-        messages: [...this.history, user], tools: this.tools(), stopWhen: isStepCount(this.options.maxSteps ?? DEFAULT_MAX_STEPS), abortSignal: signal, toolCallConcurrency: 1, maxRetries: 2,
+        model: this.options.model, system, messages: [...this.history, user], tools: this.tools(), stopWhen: isStepCount(this.options.maxSteps ?? DEFAULT_MAX_STEPS),
+        abortSignal: controller.signal, toolCallConcurrency: 1, maxRetries: 2, maxOutputTokens: maxOutputTokens(facts),
+        // Before every request: caps, budgets and a known price, with a pause that asks when one says no (D49, D53).
+        prepareStep: async ({ messages }) => {
+          facts = await this.clearance(system.length + JSON.stringify(messages).length, controller);
+          return undefined;
+        },
         // The SDK's default handler prints the error, whose text can carry anything the provider sent, to stderr, which
         // here is the agent's terminal. The same error arrives as the stream's error part below and is handled there.
         onError: ({ error }) => { streamError ??= error; },
@@ -143,29 +162,65 @@ export class Agent {
         else if (part.type === 'text-delta') { const text = redact(part.text); stepText += text; io.text(text); }
         else if (part.type === 'finish-step') {
           if (stepText) lastText = stepText;
-          const input = part.usage.inputTokens ?? 0, output = part.usage.outputTokens ?? 0, cached = Math.min(input, part.usage.inputTokenDetails.cacheReadTokens ?? 0);
-          if (input || output) void reporter.usage(this.options.modelId, { input, cached, output });
-          if (this.options.contextWindow && input) void reporter.status({ event: 'context', percent: Math.min(100, Math.round(input / this.options.contextWindow * 100)) });
+          const input = part.usage.inputTokens ?? 0, output = part.usage.outputTokens ?? 0, cached = Math.min(input, part.usage.inputTokenDetails.cacheReadTokens ?? 0), reasoning = part.usage.outputTokenDetails?.reasoningTokens ?? 0;
+          const cost = requestCost(facts?.price ?? null, input, cached, output);
+          this.limits.record(cost);
+          Object.assign(totals, { input: totals.input + input, cached: totals.cached + cached, output: totals.output + output, reasoning: totals.reasoning + reasoning, cost: totals.cost === null || cost === null ? null : totals.cost + cost, requests: totals.requests + 1 });
+          if (input || output) void reporter.usage(this.options.modelId, { input, cached, output, reasoning });
+          this.context(input, facts);
         }
         else if (part.type === 'error') throw part.error;
         else if (part.type === 'abort') break;
       }
-      if (signal.aborted) return await finishInterrupted();
+      if (controller.signal.aborted) return await finishInterrupted();
       if (streamError !== undefined) throw streamError;
       this.history.push(user, ...(await result.responseMessages));
       void transcript.append({ kind: 'assistant', text: lastText });
+      this.turnCost(totals);
       await reporter.status({ event: 'done', reply: lastText });
       return 'done';
     } catch (thrown) {
-      if (signal.aborted) return await finishInterrupted();
+      if (controller.signal.aborted) return await finishInterrupted();
       // A retryable failure (429, 5xx) that used up its retries arrives wrapped; its last attempt says what happened.
       const error = RetryError.isInstance(thrown) ? thrown.lastError : thrown;
       const kind = error instanceof ProviderError ? 'unknown' : failureKind(error);
       const status = APICallError.isInstance(error) && error.statusCode ? ` (HTTP ${error.statusCode})` : '';
       io.note(`turn failed: ${FAILURE_TEXT[kind]}${status}`, 'error');
       void transcript.append({ kind: 'note', text: `turn failed: ${kind}${status}` });
+      this.turnCost(totals);
       await reporter.status({ event: 'turn-failed', error: kind });
       return 'failed';
+    } finally { signal.removeEventListener('abort', stop); }
+  }
+  // Asks the daemon for fresh facts and checks them until the request may go; a pause the user answers with Esc (or a
+  // kill) stops the turn before anything is sent.
+  private async clearance(inputChars: number, controller: AbortController): Promise<AgentFacts | null> {
+    const { io, reporter } = this.options;
+    for (;;) {
+      if (controller.signal.aborted) throw new Error('stopped');
+      const facts = await reporter.facts(this.options.modelId), pause = this.limits.check(facts, inputChars);
+      if (!pause) { this.limits.turns++; return facts; }
+      await reporter.status({ event: 'paused' });
+      const go = await io.pause(pause.text, controller.signal);
+      await reporter.status({ event: 'answered' });
+      if (!go) { controller.abort(); throw new Error('stopped'); }
+      pause.onContinue?.();
     }
   }
+  // Context % for the card and the bar, and the warning once per crossing of 85% (D55, /settings can turn it off).
+  private context(input: number, facts: AgentFacts | null): void {
+    if (!facts?.context || !input) return;
+    const percent = Math.min(100, Math.round(input / facts.context * 100));
+    void this.options.reporter.status({ event: 'context', percent });
+    if (percent < CONTEXT_WARN) { this.warned = false; return; }
+    if (!this.warned && facts.contextWarning) this.options.io.note(`context ${percent}% · /clear or start fresh`, 'warn');
+    this.warned = true;
+  }
+  // The turn's exact cost from the provider's own counts (input, cached, output, reasoning), priced like Usage.
+  private turnCost(t: { input: number; cached: number; output: number; reasoning: number; cost: number | null; requests: number }): void {
+    if (!t.requests) return;
+    const k = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+    this.options.io.note(`turn · ${k(t.input)} in${t.cached ? ` · ${k(t.cached)} cached` : ''} · ${k(t.output)} out${t.reasoning ? ` · ${k(t.reasoning)} reasoning` : ''} · ${t.cost === null ? 'price ?' : `$${t.cost.toFixed(4)}`} · run ${this.limits.describe().replace(/^caps: /, '')}`);
+  }
+  clear(): void { this.history = []; this.warned = false; }
 }

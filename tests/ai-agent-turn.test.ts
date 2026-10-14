@@ -9,6 +9,8 @@ import { Transcript } from '../src/agent/transcript.js';
 import { redactor } from '../src/agent/display.js';
 import { buildBashEnv } from '../src/daemon/env.js';
 import type { AgentStatus, Reporter, TokenUsage } from '../src/agent/report.js';
+import type { AgentFacts } from '../src/shared/agent-facts.js';
+import { stubFacts } from './fixtures/agent-facts.js';
 
 // A whole turn against a stub model (no network): tool calls, Ask approve and deny, Don't ask, the folder jail, Esc,
 // failures, and what reaches the daemon (status, usage), the model, the screen and the transcript.
@@ -21,7 +23,11 @@ const textStep = (text: string) => ({ stream: convertArrayToReadableStream([{ ty
 
 class Recorder implements Reporter, AgentIO {
   statuses: AgentStatus[] = []; usages: { model: string; tokens: TokenUsage }[] = []; screen = ''; approvals: { title: string; body: string }[] = []; notes: string[] = [];
+  current: AgentFacts | null = stubFacts({ model: 'gpt-6.1-sol', context: 1000 });
+  pauses: string[] = []; pauseAnswers: boolean[] = [];
   constructor(private readonly answer: boolean | 'wait' = true) {}
+  async facts() { return this.current; }
+  async pause(text: string) { this.pauses.push(text); return this.pauseAnswers.shift() ?? false; }
   async status(update: AgentStatus) { this.statuses.push(update); }
   async usage(model: string, tokens: TokenUsage) { this.usages.push({ model, tokens }); }
   text(delta: string) { this.screen += delta; }
@@ -39,7 +45,7 @@ async function setup(steps: NonNullable<ConstructorParameters<typeof MockLanguag
   const root = join(temp, 'work'); await (await import('node:fs/promises')).mkdir(root);
   const recorder = new Recorder(answer), model = new MockLanguageModelV4({ doStream: steps }), redact = redactor(KEY), transcriptPath = join(temp, 'transcript.jsonl');
   const transcript = new Transcript(transcriptPath, redact, () => recorder.note('transcript failed')); transcripts.push(transcript);
-  const agent = new Agent({ root, permission, model, modelId: 'gpt-6.1-sol', instructions: { text: '', files: [], notes: [] }, reporter: recorder, transcript, io: recorder, redact, bashEnv: buildBashEnv(process.env), rg: null, contextWindow: 1000 });
+  const agent = new Agent({ root, permission, model, modelId: 'gpt-6.1-sol', instructions: { text: '', files: [], notes: [] }, reporter: recorder, transcript, io: recorder, redact, bashEnv: buildBashEnv(process.env), rg: null });
   return { temp, root, recorder, model, agent, transcript, transcriptPath };
 }
 const promptText = (model: MockLanguageModelV4, call: number) => JSON.stringify(model.doStreamCalls[call]?.prompt ?? null);
@@ -51,7 +57,7 @@ it('Ask, approved: the write shows its diff first, runs, and the turn reports st
   expect(recorder.approvals).toEqual([{ title: 'write hello.txt', body: 'new file\n+ hi there' }]);
   expect(recorder.statuses.filter(s => s.event !== 'context')).toEqual([{ event: 'turn-start' }, { event: 'tool-start', tool: 'write' }, { event: 'permission' }, { event: 'answered' }, { event: 'tool-finish', tool: 'write' }, { event: 'done', reply: 'Wrote hello.txt.' }]);
   expect(recorder.statuses.filter(s => s.event === 'context')).toEqual([{ event: 'context', percent: 10 }, { event: 'context', percent: 15 }]);
-  expect(recorder.usages).toEqual([{ model: 'gpt-6.1-sol', tokens: { input: 100, cached: 40, output: 10 } }, { model: 'gpt-6.1-sol', tokens: { input: 150, cached: 0, output: 20 } }]);
+  expect(recorder.usages).toEqual([{ model: 'gpt-6.1-sol', tokens: { input: 100, cached: 40, output: 10, reasoning: 0 } }, { model: 'gpt-6.1-sol', tokens: { input: 150, cached: 0, output: 20, reasoning: 0 } }]);
   expect(promptText(model, 1)).toContain('wrote hello.txt (1 lines)');
   expect(agent.history.map(m => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
   expect(recorder.screen).toContain('· write hello.txt');

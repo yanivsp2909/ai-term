@@ -11,6 +11,7 @@ import { Transcript } from '../src/agent/transcript.js';
 import { createTheme } from '../src/client/tui/theme.js';
 import { buildBashEnv } from '../src/daemon/env.js';
 import type { AgentStatus, Reporter } from '../src/agent/report.js';
+import { stubFacts } from './fixtures/agent-facts.js';
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -32,11 +33,11 @@ const call = (toolName: string, input: unknown) => ({ stream: convertArrayToRead
 async function app(steps: NonNullable<ConstructorParameters<typeof MockLanguageModelV4>[0]>['doStream'], models = ['m1', 'm2']) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-app-'))); roots.push(root);
   let out = ''; const statuses: AgentStatus[] = [], quit = vi.fn();
-  const reporter: Reporter = { status: async s => { statuses.push(s); }, usage: async () => {} };
+  const reporter: Reporter = { status: async s => { statuses.push(s); }, usage: async () => {}, facts: async () => stubFacts() };
   const screen = new Screen({ write: t => { out += t; }, columns: 100 }, createTheme('graphite'));
   const model = new MockLanguageModelV4({ doStream: steps }), made: string[] = [];
   const instance = new AgentApp({
-    screen, permission: 'ask', models, quit, makeModel: id => { made.push(id); return model; },
+    screen, permission: 'ask', models, quit, makeModel: async id => { made.push(id); return model; },
     agent: io => new Agent({ root, permission: 'ask', model, modelId: 'm1', instructions: { text: '', files: [], notes: [] }, reporter, transcript: new Transcript(null, t => t, () => {}), io, redact: t => t, bashEnv: buildBashEnv(process.env), rg: null }),
   });
   return { root, instance, quit, statuses, made, output: () => out, settle: () => vi.waitFor(() => expect(instance.running).toBe(false)) };

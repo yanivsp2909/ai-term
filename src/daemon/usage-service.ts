@@ -18,7 +18,7 @@ export class UsageService extends EventEmitter {
  constructor(root:string,private readonly log:{error(text:string):void}){super();this.store=new UsageStore(root,log);this.settings=new SettingsStore(root);this.parser=new UsageParser(entry=>{this.observations.push(entry);this.prune();});
   this.receiver=new UsageReceiver(async(route,raw,context)=>{
    const settings=await this.readSettings(),overrides=settings.priceOverrides??{};
-   for(const record of this.parser.parse(route,raw,context)){if(!this.takeRecord(context.sessionId))continue;if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides),record.inputTokens,record.outputTokens,record.cachedTokens??0);await this.store.add(record);}
+   for(const record of this.parser.parse(route,raw,context)){if(!this.takeRecord(context.sessionId))continue;if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides,record.provider==='foundry'?settings.deploymentModels?.[record.model]:undefined),record.inputTokens,record.outputTokens,record.cachedTokens??0);await this.store.add(record);}
   },log,async(id,body,seq,engine)=>{this.emit(engine==='codex'?'codex-status':engine==='ai-term'?'ai-term-status':'claude-status',id,body,seq);});
   this.store.on('warning',(on:boolean)=>this.emit('warning',on));this.store.on('updated',(usage:UsageSummary)=>this.emit('updated',usage));
  }
@@ -36,6 +36,7 @@ export class UsageService extends EventEmitter {
  }
  private scheduleMidnight():void{const now=new Date(),next=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1);this.midnight=setTimeout(()=>{this.emit('updated',this.summary());this.scheduleMidnight();},next.getTime()-now.getTime());this.midnight.unref();}
  registerStatus(sessionId:string,engine:StatusEngine='claude-code'):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.registerStatus(sessionId,engine)};}
+ setAgentQuery(handler:(id:string,body:unknown)=>Promise<unknown>):void{this.receiver.setAgentQuery(handler);}
  enqueueStatus(sessionId:string,apply:(seq:number)=>void):boolean{return this.receiver.enqueueStatus(sessionId,apply);}
  register(context:UsageContext):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.register(context)};}
  revoke(sessionId:string):void{this.receiver.revoke(sessionId);this.parser.revoke(sessionId);this.recordLimits.delete(sessionId);}
