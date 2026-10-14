@@ -2,12 +2,12 @@ import { createMCPClient, type MCPClient, type MCPTransport, type ListToolsResul
 import { tmpdir } from 'node:os';
 import { McpStdio } from './stdio.js';
 import type { KeyStore } from '../keys.js';
-import { MCP_MESSAGE_BYTES, MCP_MAX_TOOLS, type McpServer, type McpTool } from '../../shared/mcp.js';
+import { MCP_MESSAGE_BYTES, MCP_MAX_TOOLS, mcpSecretForms, type McpServer, type McpTool } from '../../shared/mcp.js';
 import { isMcpTool, validateMcpObject } from '../../shared/validate.js';
 import { extensionTokens } from '../../shared/extensions.js';
 
 export const mcpEnv=(cwd:string,values:Record<string,string>):Record<string,string>=>({PATH:'/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin',HOME:cwd,TMPDIR:tmpdir(),LANG:'C.UTF-8',TERM:'dumb',...values});
-const scrub=(text:string,values:Record<string,string>)=>Object.values(values).reduce((out,value)=>out.split(value).join('[redacted]'),text);
+const scrub=(text:string,values:Record<string,string>)=>Object.values(values).flatMap(mcpSecretForms).sort((a,b)=>b.length-a.length).reduce((out,value)=>out.split(value).join('[redacted]'),text);
 function scrubObject(value:unknown,values:Record<string,string>):unknown {
  if(typeof value==='string')return scrub(value,values);
  if(Array.isArray(value))return value.map(v=>scrubObject(v,values));
