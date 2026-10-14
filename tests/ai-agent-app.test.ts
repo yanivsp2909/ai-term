@@ -16,15 +16,15 @@ import { stubFacts } from './fixtures/agent-facts.js';
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
-it('the key reader keeps pastes whole (even split across reads) and drops cursor sequences', () => {
-  // Reproduces the inherited assertion conflict: v0.4.3 needs plain arrows for popup navigation.
+it('the key reader keeps pastes whole (even split across reads) and forwards plain popup arrows while dropping modified cursor sequences', () => {
+  // Plain arrows navigate the popup; modified movement remains outside the agent prompt editor.
   const reader = new KeyReader();
   expect(reader.push('ab\x1b[200~y\nmore')).toEqual([{ kind: 'text', text: 'ab' }]);
   expect(reader.push(' text\x1b[20')).toEqual([]);
   expect(reader.push('1~\r')).toEqual([{ kind: 'paste', text: 'y\nmore text' }, { kind: 'enter' }]);
-  expect(reader.push('\x1b[A\x1b[1;5Cz\x1b')).toEqual([{ kind: 'text', text: 'z' }, { kind: 'escape' }]);
+  expect(reader.push('\x1b[A\x1b[1;5Cz\x1b')).toEqual([{kind:'up'}, { kind: 'text', text: 'z' }, { kind: 'escape' }]);
   expect(reader.push('\x03\x7f\x1b[13u\n')).toEqual([{ kind: 'ctrl-c' }, { kind: 'backspace' }, { kind: 'enter' }, { kind: 'newline' }]);
-  expect(reader.push('\x1b[')).toEqual([]); expect(reader.push('B')).toEqual([]);
+  expect(reader.push('\x1b[')).toEqual([]); expect(reader.push('B')).toEqual([{kind:'down'}]);
 });
 
 const usage = { inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined }, outputTokens: { total: 5, text: 5, reasoning: undefined } };
