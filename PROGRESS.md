@@ -2,7 +2,7 @@
 
 ## Checkpoint
 Last commit: (this handover; see git log)
-Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Part B v0.5 release gate done: **v0.5 is closed**. Parts C–F follow below as they finish.
+Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Part B v0.5 release gate done: **v0.5 is closed**. Part C v0.6.1 done. Parts D–F follow below as they finish.
 Branch: main. Started clean at c03e02d after `git pull --ff-only` (already up to date). No other agent was working in this repo (the running Codex sessions' cwd is ~/NARVIS).
 
 Prompt vs code (overnight):
@@ -22,6 +22,50 @@ Prompt vs code (overnight):
 - Full suite: the first runs failed 1 test every time: `tests/gate-silent-failures.test.ts` M4 used `/Users/test/My Projects/...` as an "unsafe" status-line path, but b2e203f deliberately allowed ASCII spaces (AI Term.app). Stale fixture, not a product bug: 29600d3 uses an apostrophe instead. Then two consecutive full runs, dot reporter: **194 files, 1197 passed, 2 skipped** (opt-in Keychain), 18.91 s and 18.66 s.
 - Smoke after the rebuild: dev `npm run app:test` 9 passed (37.7 s); packaged `AI_TERM_TEST_APP=<.app exe> npm run app:test` 9 passed (39.1 s). No new leaked processes.
 - The test output prints one `Unhandled pty write error [Error: EIO...]` line from a test that writes after its PTY exits; it fails nothing (handed to Part B's silent-failure review).
+
+## Part C: v0.6.1 budgets that hold across agents (B25) + cost per task — done
+Commits bf466a1..HEAD of this part (tests first: bf466a1 RED → ea2ac71 GREEN; review rounds below).
+
+What works:
+- **B25, the daemon holds the budget** (`src/daemon/budget-ledger.ts`; protocol in `src/shared/agent-facts.ts`, then both sides). Before each model request AI Term's agent reserves that request's worst case (input estimate + full output allowance at known prices) on its engine-bound `/v1/agent/ai-term` route (`budget.reserve`). The ledger grants only if every daily/weekly/monthly budget fits counting every live reservation, in one synchronous check-and-insert: two agents racing for the last of a budget → exactly one grant; the other re-checks with fresh facts (which now carry `reserved`) and pauses with the usual budget ask (`tests/v061-budgets-agent.test.ts`, daemon route race in `tests/v061-budgets-daemon.test.ts`). Nothing is sent without a grant: no answer pauses with "AI Term isn't answering" (fail closed across a daemon restart).
+- Settlement (`budget.settle`) in the reporter queue right behind the request's usage post: released when usage was reported; booked at worst case as a `worst-case` usage record (visible in Usage) when it never will be (cut off, failed after the provider answered, no counts, usage not taken). Also booked: an exited agent's reservations, any reservation after 20 minutes (re-armed while the agent waits on you or runs a tool), and at daemon start whatever `~/.ai-term/budget-reservations.json` (0600) still lists. Limits: 16 live per session, 600 a minute per session, 1,000 overall; refused after the agent exited; an unreadable file is moved aside, never overwritten.
+- **Cost per task (D55, on, `/settings` o):** `SessionInfo.taskUsage {tokens, costUsd, unknownPrice?}` per agent, persisted with its record; card line 3 (`API key ····abcd · $0.42`, `own login · sub · 12.3K tok`) and `/usage` → `BY AGENT (start to now)`. API-key sessions in dollars from the records Usage already counts; subscription and unknown-auth Claude Code / Codex now get the same OTel settings in a tokens-only context, never reaching Usage, a budget or a price (Usage totals stay API-key only, D27). Updates reach the card and state.json at most once a second.
+
+Prompt vs code:
+- "Claude Code and Codex use the usage they already report": for subscriptions that is their OTel export, which AI Term previously didn't request for subscriptions; it now does, to a tokens-only context, only while cost per task is on. Off stops it for sessions started afterwards.
+- "from start to done": the total runs from the agent's start for its whole record; a `/retry` or `/resume` is a new record and starts at zero.
+
+Findings (each failing test commit, then fix commit):
+- **HIGH (found while building, pre-existing since v0.4.1):** one saved AI Term agent record made every later daemon start treat state.json as unreadable (B24): the agent list was moved aside and the daemon started empty. 5cfbf43 → 24a04e4.
+- **MEDIUM (security review):** one session could hold all 1,000 reservation slots, or loop reserve/settle to grow the month's usage file past its 64 MiB load cap (that month's spend then skipped). 036bde1 → e2fdcd6.
+- **MEDIUM (TS review):** a grant spans its request's tools; a 20-minute approval expired it into a booked worst case and the real usage counted again. Expiry re-arms while the session waits or has a tool in flight. f80521c → 943848f.
+- **LOW/MEDIUM (TS review):** every usage record rewrote state.json and broadcast; now at most once a second. f80521c → 943848f.
+- **LOW:** a reserve in flight at exit could stay held 20 minutes; an unreadable reservation file was overwritten; the released-session set was unbounded. 036bde1 → e2fdcd6, 943848f.
+- **Pre-existing flake fixed:** `tests/agent-retry` failed ~1 in 3–6 runs with ENOTEMPTY (reproduced at c558cf7): state.json was written after `SessionManager.shutdown()` returned. Shutdown now awaits every exit record, writes only a pending task total, and no write lands after it. 08d3039, 8178295. Two of my own new tests were load-sensitive and were made deterministic (828a05b, a38e9ae, f06cde4).
+- Not fixed, documented (architecture §9): a `budget.settle` lost after the daemon took the usage, or an exit between them, books the worst case on top (over, never under); one grant covers the SDK's up to two retries of a request; `taskCost` off doesn't stop sessions already running from reporting tokens.
+
+- **LOW (fix review):** a task total arriving during shutdown was lost; a remove/rename overlapping shutdown could report done unsaved. See 15180b5 and the test commit before it. Not fixed: a ledger booking finishing after `close()` still writes its file (skipping it would book the same reservation again at the next start).
+- Reviewers (fresh, read-only): typescript-reviewer and security-reviewer on the whole part, then typescript-reviewer on the fix commits (it holds).
+
+Checks (at 15180b5):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0 (ESLint: No issues found)
+npm run build       ESM Build success in 28ms
+npm run app:build   built in 57ms
+npm test (1)        Test Files 201 passed · Tests 1240 passed | 2 skipped · 19.30s
+npm test (2)        Test Files 201 passed · Tests 1240 passed | 2 skipped · 19.58s
+coverage (src)      Statements 87.72% · Branches 82.12% · Functions 88.9% · Lines 94.41%
+```
+- Under coverage only, the known v0.4 `ai-agent-review` "bash over 16 KB" timeout remains (pre-existing).
+
+Concepts introduced:
+- **Reservation (budget hold):** before spending, the agent asks the background service to set aside the most a request could cost; the money is "held" until the request is over (`src/daemon/budget-ledger.ts`). Like a hotel holding an amount on your card, it stops two agents from both spending the last of a budget.
+- **Settlement:** after the request, the hold is either released (the real usage was already counted) or turned into a charge at the held amount (when the real usage can never arrive). Every hold is settled exactly once (`settle` in `src/agent/agent.ts`).
+- **Fail closed:** when the guard can't be asked (daemon restarted, unreachable), the safe answer is "no": nothing is sent until it answers (`clearance` in `src/agent/agent.ts`).
+- **Coalescing:** many quick updates are merged into one write a moment later (`TASK_UPDATE_MS` in `src/daemon/session-manager.ts`), so a busy agent doesn't rewrite state.json a hundred times a minute.
+
+New dependencies: none.
 
 ## Part B: v0.5 release gate — done, v0.5 closed
 Five fresh read-only reviewers on 5ba923a (none had seen the code written): security-reviewer (Electron hardening), security-bounty-hunter (as a general-purpose agent told to load it: control channel S24), security-reviewer (packaging/S25), silent-failure-hunter (app main, preload, packaging scripts, launcher), engineering:code-review (as a general-purpose agent: whole v0.5 diff 027521c..HEAD). Then a fresh typescript-reviewer on the fix diff, twice (round two after its own findings). Each real finding: failing test commit, then fix commit. Tests: tests/gate-v05-release.test.ts (17 cases).
