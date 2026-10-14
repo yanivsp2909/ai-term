@@ -51,7 +51,8 @@ Homepage slash commands:
 | `/model` | Choose provider tab, then own-login/key model or tested Foundry deployment; filter searches across tabs. Key rows show `· ai term` (they start AI Term's agent: Foundry deployments that passed their test, catalog chat models for Anthropic and OpenAI keys) or, with `keys run on: the cli`, the CLI and its own models; an AI Term model can't be saved as the default (defaults carry no key) |
 | `/cd` | Choose folder for the next session, with directory completion |
 | `/login` | Anthropic/OpenAI account login or API key; Microsoft Foundry endpoint/key/deployments and test |
-| `/skills` · `/agents` | One extensions popup: Skills · Agents · Commands · MCP; browse files read-only, choose what loads, see estimated tokens/request |
+| `/skills` · `/agents` · `/mcp` | One extensions popup: Skills · Agents · Commands · MCP; browse files read-only, choose what loads, see estimated tokens/request |
+| `/mcp add` · `/mcp remove <name>` | Add a stdio/HTTP server in the masked form / remove an AI Term server |
 | `/settings` | KEYS, ENGINES, DEFAULTS; add/import/remove/test keys, edit saved defaults/theme, set Foundry input/output prices per 1M tokens |
 | `/effort [CLI default\|<level>]` | Reasoning for next agent; levels follow selected CLI; CLI default passes nothing |
 | `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
@@ -200,17 +201,20 @@ Every API key runs AI Term's own agent (D47; `/settings` → `keys run on: the c
 | Inside the agent | Action |
 |---|---|
 | Type, ⏎ | Send a message; a message sent during a turn waits for it to end. Paste arrives whole |
-| `y` / `n` | Allow / deny the write, edit or command shown. A paste never answers |
+| `y` / `n` | Allow / deny the write, edit, command or MCP call shown. A paste never answers |
 | Space | Next page of a long approval (`y` counts on the last page) |
+| `a` at an MCP tool approval | Allow this exact server configuration/tool for this session only |
 | ⏎ / Esc at a pause | Go on past a cap or a raised budget / stop the turn. A paste never answers |
 | Esc | Interrupt the turn (a pending approval is denied); on an idle prompt, clear it |
-| Ctrl+K | Kill switch: stop the request and kill every running command now |
+| Ctrl+K | Kill switch: stop the request, running commands and in-flight MCP calls now |
 | Ctrl+C twice | Quit the agent (within 3 s); Ctrl+D on an empty prompt counts too |
 | `/model [id]` | List or switch to another model of the same key |
 | `/caps [turns N\|off] [spend USD\|off]` | Show or change this run's caps |
 | `/clear` | Forget the conversation (frees the context) |
 | `/cd <folder>` | Work in another folder; its `AGENTS.md` is read again |
-| `/skills` · `/agents` | Open the extensions popup on Skills / Agents |
+| `/skills` · `/agents` · `/mcp` | Open the extensions popup on Skills / Agents / MCP |
+| `/mcp add` | Add and authorize a stdio or HTTP server in the masked form |
+| `/mcp remove <name>` | Remove an AI Term server and its MCP Keychain entries |
 | `/name [arguments]` | Run an enabled extension slash command; `$ARGUMENTS` is replaced literally; built-ins win clashes |
 | ⏎ / Esc at a task confirmation | Run / cancel the subagent job; its writes, edits and commands still ask for y/n |
 | `/help` · `/exit` | List these · quit |
@@ -231,11 +235,23 @@ Every API key runs AI Term's own agent (D47; `/settings` → `keys run on: the c
 
 Each row shows the name, one-line description, source (Claude, Codex, shared, this project), on/off and estimated tokens per request. The header and agent banner show the enabled manifest's total. The estimate is UTF-8 bytes / three, rounded up; it includes skill and agent names/descriptions. Command rows cost zero until invoked. Bodies and the fixed tool schemas are additional tokens when used. Nothing browsed in this popup makes a model request.
 
-The reader uses exactly these roots: `~/.claude/skills`, `~/.claude/agents`, `~/.claude/commands`, `~/.codex/prompts`, `~/.agents/skills`, and the agent folder's `.claude/skills`, `.claude/agents`, `.claude/commands`, `.agents/skills`. Symlinks to shared files under home work; credentials, auth, settings, env, history, sessions, logs and projects are denied on resolved paths. Known home credential stores and hard-linked files are also refused. No CLI files are modified. Files over 64 KiB, scans over 1 MiB, invalid UTF-8 and unsupported/malformed frontmatter are skipped with notes. The catalog is capped at 500 items, depth eight and 4,000 visited entries.
+The reader uses exactly these roots: `~/.claude/skills`, `~/.claude/agents`, `~/.claude/commands`, `~/.codex/prompts`, `~/.codex/skills`, `~/.codex/agents`, `~/.agents/skills`, and the agent folder's `.claude/skills`, `.claude/agents`, `.claude/commands`, `.agents/skills`. Symlinks to shared files under home work; credentials, auth, settings, env, history, sessions, logs and projects are denied on resolved paths. Known home credential stores and hard-linked files are also refused. No CLI files are modified. Files over 64 KiB, scans over 1 MiB, invalid UTF-8 and unsupported/malformed frontmatter are skipped with notes. The catalog is capped at 500 items, depth eight and 4,000 visited entries.
 
-Skills, agents and commands default on. Only enabled skill/agent names and descriptions (at most 240 characters each) enter the initial prompt. The model's `skill` tool loads a skill's instructions when needed. Toggles apply to the next message, clearing the previous conversation so a disabled body's earlier tool result does not keep costing tokens. If the catalog cannot refresh, the turn stops before a model request. Project names win clashes, then Claude, Codex prompts and shared; duplicate resolved files are listed once per kind. Built-in slash commands always win.
+Skills, agents and commands default on. Only enabled skill/agent names and descriptions (at most 240 characters each) enter the initial prompt. The model's `skill` tool loads a skill's instructions when needed. Toggles apply to the next message, clearing the previous conversation so a disabled body's earlier tool result does not keep costing tokens. If the catalog cannot refresh, the turn stops before a model request. Project names win clashes, then Claude, Codex and shared; duplicate resolved files are listed once per kind. Built-in slash commands always win.
 
-The `task` tool opens a separate subagent conversation using that agent file's instructions and the same project instructions, folder jail, permissions, usage reporter, budgets, caps and Ctrl+K signal. First it shows the job's model, inherited permission mode and estimated token/price range; typed ⏎ runs it, Esc cancels (Space pages long confirmations). Its writes/edits/commands still wait for the parent's y/n in Ask. Only its final answer returns to the parent's model. Tasks run serially and cannot spawn further tasks. `model:` selects an exact model available to the parent key, or a unique keyed Claude model for `sonnet`, `opus`, `haiku`; otherwise it uses the parent. No other key or permission is acquired. MCP is empty until v0.4.4.
+The `task` tool opens a separate subagent conversation using that agent file's instructions and the same project instructions, folder jail, permissions, usage reporter, budgets, caps and Ctrl+K signal. First it shows the job's model, inherited permission mode and estimated token/price range; typed ⏎ runs it, Esc cancels (Space pages long confirmations). Its writes/edits/commands still wait for the parent's y/n in Ask. Only its final answer returns to the parent's model. Tasks run serially and cannot spawn further tasks. `model:` selects an exact model available to the parent key, or a unique keyed Claude model for `sonnet`, `opus`, `haiku`; otherwise it uses the parent. No other key or permission is acquired. Codex agents may use Markdown or TOML: only name, description and instructions (including imported `developer_instructions`) are used; TOML operational fields never change models or permissions.
+
+## MCP servers (v0.4.4)
+
+`/mcp` lists AI Term's own servers and the current folder's `.mcp.json` entries in the MCP tab of the same extensions popup. `/mcp add` opens the form on either terminal surface: name, stdio/http, one executable plus a JSON argv array or an exact URL, then comma-separated env/header names and masked values. Typed Enter reviews and saves the exact command/URL. `/mcp remove <name>` removes an AI Term entry. Project entries are managed in the project's file; AI Term never edits it or the CLIs' files. `~/.claude.json` and `~/.codex/config.toml` stay denied.
+
+MCP tab: ←→ tabs, ↑↓ select server/tool, Space on/off, Enter read-only details, `d` discover a server's tools, `a` add, Esc close. Browsing uses cached metadata and starts nothing. Discovery of a project server first shows the exact command/argv or URL; typed y approves that entry, n/Esc denies, Space pages long entries. Approval is remembered by a hash including configured values; edits ask again. OAuth/login-based servers show `needs login, not supported yet` and are skipped.
+
+Enabled server/tool names and descriptions capped at 240 characters enter the prompt; full schemas load only when selected through `mcp_tools`. The model uses `mcp_call` after selection. Each call shows server, tool, folder and arguments and waits for y/n, including in Don't ask. Typed `a` allows that exact configuration/tool for the session only. No permanent tool permission exists. The popup total and agent banner estimate metadata tokens/request; schemas and results add tokens only on use. Turning a server/tool off clears previously loaded conversation content on the next turn. Model requests still count toward the parent's existing budgets and caps.
+
+Servers run in the daemon and start on selection. Stdio uses `spawn(command, args)` without a shell, cwd set to the agent folder, a fixed minimal base env and only its configured values. It receives no inherited provider key or AI Term variable. This is a trusted third-party program, with the same host access as other commands; the folder is its cwd, not an OS sandbox. HTTP uses only the exact configured URL, refuses redirects, and allows HTTPS or local HTTP. Errors are fixed lines; server stderr never reaches the terminal.
+
+All configured env/header values are treated as secrets and stored in AI Term's Keychain namespace `mcp:<server-id>:<name>`, bound to the approved hash. Settings, responses, transcripts and logs contain no values; views expose at most the last four characters (short values have no suffix). As with the existing key-add form, masked user input travels inward once over the authenticated local socket to the daemon; it is never returned or sent to the model. A project's existing values are read only from its approved bounded `.mcp.json` entry and copied into the same Keychain namespace. Ctrl+K cancels in-flight calls and kills stdio process groups; agent exit stops its connections. Subagents share their parent's MCP permission session and cancellation.
 
 ## Docs
 - `AGENTS.md`: rules for every coding agent working here

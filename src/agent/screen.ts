@@ -61,11 +61,11 @@ export class Screen {
     for (let i = 0; i < rows.length; i += size) pages.push(rows.slice(i, i + size));
     return pages.length ? pages : [[]];
   }
-  approvalPage(title: string, pages: string[][], index: number, job=false): void {
+  approvalPage(title: string, pages: string[][], index: number, job=false,mcp=false): void {
     const last = index === pages.length - 1, page = pages.length > 1 ? ` · page ${index + 1} of ${pages.length}` : '';
     this.line(this.paint('status-waiting', `● allow ${title}?${page}`, true));
     for (const row of pages[index] ?? []) this.line(this.paint(row.startsWith('- ') ? 'status-error' : row.startsWith('+ ') ? 'status-done' : 'ink-2', `  ${row}`));
-    this.line(this.paint('ink-3', last ? job ? '  ⏎ run job · Esc cancel' : '  y allow · n deny · Esc deny and stop' : job ? '  space shows more · Esc cancel · ⏎ works on the last page' : '  space shows more · n deny · Esc deny and stop · y works on the last page'));
+    this.line(this.paint('ink-3', last ? job ? '  ⏎ run job · Esc cancel' : mcp?'  y allow · a allow this tool for this session · n deny · Esc deny and stop':'  y allow · n deny · Esc deny and stop' : job ? '  space shows more · Esc cancel · ⏎ works on the last page' : '  space shows more · n deny · Esc deny and stop · y works on the last page'));
   }
   answered(allowed: boolean): void { this.line(allowed ? this.paint('ink-3', '  ✓ allowed') : this.paint('status-waiting', '  ✗ denied')); }
   note(text: string, tone: 'info' | 'warn' | 'error' = 'info'): void { this.line(tone === 'error' ? this.paint('status-error', `✗ ${plain(text)}`) : tone === 'warn' ? this.paint('status-waiting', `● ${plain(text)}`) : this.paint('ink-3', `· ${plain(text)}`)); }

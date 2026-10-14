@@ -10,6 +10,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/model',description:'Choose model and provider',current:c=>`${c.model??'CLI default'} · ${c.engine==='codex'?'codex':'claude code'}`},
  {name:'/cd',description:'Choose the next agent folder',current:c=>c.cwd},
  {name:'/skills',description:'Browse and enable skills, agents and commands',current:none},
+ {name:'/mcp',description:'MCP servers and per-tool load controls',argumentHint:()=> '[add|remove <name>]',current:none},
  {name:'/agents',description:'Browse subagents in the extensions popup',current:none},
  {name:'/settings',description:'Keys and saved defaults',current:none},
  {name:'/login',description:'Connect an engine or API key',current:none},

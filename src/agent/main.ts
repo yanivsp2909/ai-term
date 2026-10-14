@@ -77,21 +77,23 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   // A Foundry deployment's wire (Responses or Chat Completions) comes from its test, through the daemon's facts.
   const makeModel = async (id: string) => { const wire = parsed.provider === 'foundry' ? await foundryWireFor(id => reporter.facts(id), id) : undefined; return makeProviderModel({ provider: parsed.provider, model: id, key, endpoint, ...(wire ? { wire } : {}) }); };
   let extensionCount=0,extensionCost=0;
+  let mcpCount=0,mcpCost=0;
   try {const catalog=await reporter.list(root);extensionCount=catalog.items.filter(i=>i.enabled).length;extensionCost=catalog.tokens;for(const note of catalog.notes)screen.note(note,'warn');}
   catch {screen.note('extensions unavailable; /skills can retry','warn');}
+  try{const catalog=await reporter.mcp.list(root);mcpCount=catalog.servers.filter(s=>s.enabled&&!s.note).length;mcpCost=catalog.tokens;}catch{screen.note('MCP unavailable; /mcp can retry','warn');}
   let firstModel;
   try { firstModel = await makeModel(parsed.model); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof WireError ? error.message : 'the model could not be set up'}\n`); return 1; }
   return new Promise<number>(resolveExit => {
     const restore = () => { terminal.stdout.write('\x1b[?2004l'); terminal.stdin.setRawMode?.(false); terminal.stdin.pause(); };
     // A crash prints fixed words, never a stack or an error message, which could carry anything a provider sent.
-    const crash = () => { killAllBash(); restore(); terminal.stderr.write('\nai agent stopped after an internal error\n'); resolveExit(1); };
+    const crash = () => { killAllBash(); restore(); terminal.stderr.write('\nai agent stopped after an internal error\n');void reporter.mcp.stop().then(()=>resolveExit(1),()=>resolveExit(1)); };
     process.once('uncaughtException', crash); process.once('unhandledRejection', crash);
     // Stopped from the homepage (s), by the daemon or by a closed terminal: every running command's process group goes
     // with it (they run in their own groups, so the PTY's signal alone would leave them behind), then the agent exits.
     for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, bashEnv, rg, extensions: reporter, models: parsed.models, makeModel }),
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, bashEnv, rg, extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
       quit: () => { restore(); void transcript.close().then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);
@@ -102,6 +104,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     terminal.stdin.on('end', () => app.close());
     screen.banner(parsed.model, root, parsed.permission, instructions.files);
     screen.extensionsBanner(extensionCount,extensionCost);
+    screen.note(`MCP: ${mcpCount} servers on · ≈${mcpCost} tokens/request · schemas load on use`);
     for (const note of instructions.notes) screen.note(note);
     app.start(parsed.firstMessage);
   });

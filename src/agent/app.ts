@@ -19,7 +19,7 @@ export interface AppOptions {
   quit(): void;
 }
 const QUIT_WINDOW_MS = 3000;
-const HELP = ['/skills · /agents   browse Skills, Agents, Commands and MCP; Space toggles, Enter reads', '/name [arguments]   run an enabled extension command', '/model [id]   switch to another model of this key', '/caps [turns N|off] [spend N|off]   show or change this run\'s caps', '/clear        forget the conversation (frees the context)', '/cd <folder>  work in another folder (AGENTS.md is read again)', '/exit         quit (Ctrl+C twice also quits)', 'Esc interrupts a turn · Ctrl+K kills the request and every running command at once · y / n answer an approval · ⏎ goes on at a limit pause · a message sent during a turn waits for it to end'];
+const HELP = ['/mcp [add|remove <name>]   manage MCP servers; a allows a prompted tool for this session', '/skills · /agents   browse Skills, Agents, Commands and MCP; Space toggles, Enter reads', '/name [arguments]   run an enabled extension command', '/model [id]   switch to another model of this key', '/caps [turns N|off] [spend N|off]   show or change this run\'s caps', '/clear        forget the conversation (frees the context)', '/cd <folder>  work in another folder (AGENTS.md is read again)', '/exit         quit (Ctrl+C twice also quits)', 'Esc interrupts a turn · Ctrl+K kills the request and every running command at once · y / n answer an approval · ⏎ goes on at a limit pause · a message sent during a turn waits for it to end'];
 
 // One controller per agent process: it owns the prompt, the queue of messages typed during a turn, the approval in
 // progress and the quit gesture. The agent turn itself lives in agent.ts.
@@ -29,7 +29,7 @@ export class AgentApp implements AgentIO {
   private buffer = '';
   private queued: string[] = [];
   private turn: AbortController | null = null;
-  private approval: { resolve(allowed: boolean): void; title: string; pages: string[][]; page: number; job:boolean } | null = null;
+  private approval: { resolve(allowed: boolean): void; title: string; pages: string[][]; page: number; job:boolean;session?:()=>void } | null = null;
   private paused: { resolve(go: boolean): void } | null = null;
   private quitArmedAt = 0;
   private closed = false;
@@ -53,16 +53,17 @@ export class AgentApp implements AgentIO {
       this.paused = { resolve: finish };
     });
   }
+  async approveMcp(request:{title:string;body:string},signal:AbortSignal):Promise<'allow'|'deny'|'session'>{let session=false;const allowed=await this.approve(request,signal,false,()=>{session=true;});return allowed?(session?'session':'allow'):'deny';}
   confirmJob(request:{title:string;body:string},signal:AbortSignal):Promise<boolean>{return this.approve(request,signal,true);}
-  approve(request: { title: string; body: string }, signal: AbortSignal, job=false): Promise<boolean> {
+  approve(request: { title: string; body: string }, signal: AbortSignal, job=false,session?:()=>void): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
     const pages = this.options.screen.approvalPages(request.body);
-    this.options.screen.approvalPage(request.title, pages, 0, job);
+    this.options.screen.approvalPage(request.title, pages, 0, job,!!session);
     return new Promise(resolvePromise => {
       const finish = (allowed: boolean) => { if (!this.approval) return; this.approval = null; signal.removeEventListener('abort', onAbort); this.options.screen.answered(allowed); resolvePromise(allowed); };
       const onAbort = () => finish(false);
       signal.addEventListener('abort', onAbort, { once: true });
-      this.approval = { resolve: finish, title: request.title, pages, page: 0, job };
+      this.approval = { resolve: finish, title: request.title, pages, page: 0, job,...(session?{session}:{}) };
     });
   }
 
@@ -79,7 +80,7 @@ export class AgentApp implements AgentIO {
     if (event.kind === 'ctrl-c' || event.kind === 'ctrl-d' && !this.running && !this.buffer) { this.quitKey(); return; }
     this.quitArmedAt = 0;
     if (event.kind === 'ctrl-k') { this.kill(); return; }
-    if(this.popup){const panel=this.popup;const key=event.kind==='text'?event.text:event.kind; if(event.kind!=='paste')this.popupQueue=this.popupQueue.then(()=>panel.key(key));return;}
+    if(this.popup){const panel=this.popup;const key=event.kind==='text'?event.text:event.kind; if(event.kind==='paste')panel.paste(event.text);else this.popupQueue=this.popupQueue.then(()=>panel.key(key));return;}
     if (this.paused) {
       // Only a typed ⏎ goes on past a limit; a paste never does.
       if (event.kind === 'enter') this.paused.resolve(true);
@@ -89,7 +90,8 @@ export class AgentApp implements AgentIO {
     if (this.approval) {
       // Only a typed key answers; a paste never does. y counts once every page of what runs has been on screen.
       const approval = this.approval, last = approval.page === approval.pages.length - 1;
-      if (event.kind === 'text' && event.text === ' ' && !last) { approval.page++; this.options.screen.approvalPage(approval.title, approval.pages, approval.page, approval.job); }
+      if (event.kind === 'text' && event.text === ' ' && !last) { approval.page++; this.options.screen.approvalPage(approval.title, approval.pages, approval.page, approval.job,!!approval.session); }
+      else if(last&&event.kind==='text'&&event.text==='a'&&approval.session){approval.session();approval.resolve(true);}
       else if (last && (approval.job ? event.kind==='enter' : event.kind === 'text' && /^[yY]$/.test(event.text))) approval.resolve(true);
       else if (event.kind === 'text' && /^[nN]$/.test(event.text)) this.approval.resolve(false);
       else if (event.kind === 'escape') { this.approval.resolve(false); this.turn?.abort(); }
@@ -120,12 +122,13 @@ export class AgentApp implements AgentIO {
     const commands = killAllBash();
     if (!this.running) { this.options.screen.note(commands ? `killed ${commands} running command${commands > 1 ? 's' : ''}` : 'nothing is running'); this.options.screen.prompt(this.buffer); return; }
     this.queued = []; this.approval?.resolve(false); this.paused?.resolve(false); this.turn?.abort();
+    void this.agent.stopMcp().catch(()=>this.options.screen.note('MCP stop failed','error'));
     this.options.screen.note(`killed: the request${commands ? ` and ${commands} running command${commands > 1 ? 's' : ''}` : ''}`, 'error');
   }
-  close(): void { if (this.closed) return; this.closed = true; this.generation++; this.options.screen.closePopup(); killAllBash(); this.paused?.resolve(false); this.approval?.resolve(false); this.turn?.abort(); this.options.screen.hidePrompt(); this.options.quit(); }
+  close(): void { if (this.closed) return; this.closed = true; this.generation++; this.options.screen.closePopup(); killAllBash(); this.paused?.resolve(false); this.approval?.resolve(false); this.turn?.abort(); this.options.screen.hidePrompt();void this.agent.stopMcp().then(()=>this.options.quit(),()=>{this.options.screen.note('MCP stop failed','error');this.options.quit();}); }
 
   private submit(message: string): void {
-    const command = message.trim().match(/^\/(help|exit|model|cd|caps|clear|skills|agents)(?:\s+(.*))?$/s);
+    const command = message.trim().match(/^\/(help|exit|model|cd|caps|clear|skills|agents|mcp)(?:\s+(.*))?$/s);
     if (command) { this.commandBusy = true; void this.command(command[1] ?? '', (command[2] ?? '').trim()).finally(() => { this.commandBusy = false; this.next(); }); return; }
     const slash=message.trim().match(/^\/([A-Za-z0-9][A-Za-z0-9._:-]{0,79})(?:\s+([\s\S]*))?$/);
     if(slash&&this.agent.extensionAccess){const generation=this.generation;this.commandBusy=true;void this.agent.slash(slash[1]??'',slash[2]??'').then(expanded=>{this.commandBusy=false;if(this.closed||generation!==this.generation){this.next();return;}if(expanded===null){this.options.screen.note('Unknown or disabled command; /skills lists commands','error');this.next();}else this.runTurn(expanded);},()=>{this.commandBusy=false;this.options.screen.note('Command could not load','error');this.next();});return;}
@@ -140,6 +143,7 @@ export class AgentApp implements AgentIO {
   private async command(name: string, argument: string): Promise<void> {
     const screen = this.options.screen;
     if (name === 'exit') { this.close(); return; }
+    if(name==='mcp'){if(argument.startsWith('remove ')){try{await this.agent.mcpAccess?.remove(argument.slice(7).trim());screen.note('MCP server removed');}catch{screen.note('MCP removal failed','error');}}else if(!argument||argument==='add')await this.openExtensions('mcp',argument==='add');else screen.note('usage: /mcp [add|remove <name>]','error');return;}
     if(name==='skills'||name==='agents'){await this.openExtensions(name);return;}
     if (name === 'help') for (const line of HELP) screen.note(line);
     else if (name === 'model') {
@@ -155,9 +159,9 @@ export class AgentApp implements AgentIO {
       try { await this.changeFolder(argument); } catch { screen.note(`couldn't switch to ${argument}`, 'error'); }
     }
   }
-  private async openExtensions(tab:'skills'|'agents'):Promise<void>{
+  private async openExtensions(tab:'skills'|'agents'|'mcp',add=false):Promise<void>{
     const access=this.agent.extensionAccess;if(!access){this.options.screen.note('Extensions unavailable','error');return;}
-    const panel=new ExtensionsPanel(access,this.agent.root,tab,()=>{if(!this.closed&&this.popup===panel)this.options.screen.popup(panel);},()=>{this.popup=undefined;this.options.screen.closePopup();this.next();},()=>{this.agent.clear();});
+    const panel=new ExtensionsPanel(access,this.agent.root,tab,()=>{if(!this.closed&&this.popup===panel)this.options.screen.popup(panel);},()=>{this.popup=undefined;this.options.screen.closePopup();this.next();},()=>{this.agent.clear();},this.agent.mcpAccess,add);
     this.popup=panel;this.options.screen.popup(panel);await panel.load();
   }
   // /caps, /caps turns 50, /caps spend 2.5, /caps turns off spend off: this run only; /settings holds the defaults.

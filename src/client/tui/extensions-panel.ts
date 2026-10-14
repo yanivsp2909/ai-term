@@ -5,6 +5,8 @@ import type { Theme } from './theme.js';
 import { overlay } from './worktree-question.js';
 import { TextPanel } from './text-panel.js';
 import { plain } from '../../agent/display.js';
+import { McpPanel } from './mcp-panel.js';
+import type { McpAccess } from '../../shared/mcp.js';
 
 const TABS = ['Skills', 'Agents', 'Commands', 'MCP'] as const;
 const KINDS = ['skill', 'agent', 'command', 'mcp'] as const;
@@ -17,14 +19,18 @@ export class ExtensionsPanel {
   private preview?: TextPanel;
   private closed = false;
   private busy = false;
-  constructor(private readonly access: ExtensionAccess, private readonly cwd: string, first: 'skills'|'agents', private readonly changed: () => void, private readonly close: () => void, private readonly toggled: () => void = () => {}) { this.tab=first==='agents'?1:0; }
+  private mcp?:McpPanel;
+  constructor(private readonly access: ExtensionAccess, private readonly cwd: string, first: 'skills'|'agents'|'mcp', private readonly changed: () => void, private readonly close: () => void, private readonly toggled: () => void = () => {},mcp?:McpAccess,add=false) { this.tab=first==='agents'?1:first==='mcp'?3:0;if(mcp)this.mcp=new McpPanel(mcp,cwd,changed,close,toggled,add); }
   async load(): Promise<void> {
     try { this.catalog=validateExtensionCatalog(await this.access.list(this.cwd));this.note=this.catalog.notes[0]??''; }
     catch { this.catalog={items:[],notes:[],tokens:0};this.note='Extensions unavailable; try again'; }
+    await this.mcp?.load();
     if(!this.closed)this.changed();
   }
+  paste(text:string):void{if(this.tab===3)this.mcp?.paste(text);}
   async key(key: string): Promise<void> {
     if(this.closed)return;
+    if(this.tab===3&&this.mcp&&(this.mcp.modal||!['left','right'].includes(key))){await this.mcp.key(key);return;}
     if(this.preview){this.preview.key(key);return;}
     if(key==='escape'){this.closed=true;this.close();return;}
     if(this.busy)return;
@@ -48,12 +54,13 @@ export class ExtensionsPanel {
     finally {this.busy=false;if(!this.closed)this.changed();}
   }
   draw(frame: Frame, theme: Theme): Frame {
+    if(this.tab===3&&this.mcp)return this.mcp.draw(frame,theme,this.catalog?.tokens??0);
     const grid=overlay(frame,theme),w=Math.min(grid.cols,120),h=Math.min(grid.rows,Math.max(8,grid.rows-2)),x=Math.floor((grid.cols-w)/2),y=Math.max(0,Math.floor((grid.rows-h)/2)),width=w-6,surface=theme.colors.surface;
-    grid.box(x,y,w,h,`Extensions · ≈${this.catalog?.tokens??0} tokens/request on`,surface);
+    grid.box(x,y,w,h,`Extensions · ≈${(this.catalog?.tokens??0)+(this.mcp?.tokens??0)} tokens/request on`,surface);
     grid.text(x+3,y+1,TABS.map((t,n)=>n===this.tab?`[${t}]`:t).join(' · '),theme.colors.ink,surface,true,width);
     const items=this.catalog?.items.filter(i=>i.kind===KINDS[this.tab])??[],capacity=Math.max(1,Math.floor((h-6)/2)),start=Math.max(0,this.row-capacity+1);
     if(!this.catalog)grid.text(x+3,y+3,'· loading extensions',theme.colors['ink-3'],surface,false,width);
-    else if(!items.length)grid.text(x+3,y+3,this.tab===3?'MCP · empty until v0.4.4':'No extensions in this tab',theme.colors['ink-3'],surface,false,width);
+    else if(!items.length)grid.text(x+3,y+3,this.tab===3?'MCP unavailable in this connection':'No extensions in this tab',theme.colors['ink-3'],surface,false,width);
     items.slice(start,start+capacity).forEach((item,n)=>{
       const selected=start+n===this.row,bg=selected?theme.colors['surface-2']:surface,top=y+2+n*2;
       grid.fill(x+1,top,w-2,2,bg);

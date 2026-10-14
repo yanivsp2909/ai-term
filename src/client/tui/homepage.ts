@@ -1,3 +1,4 @@
+import { socketMcp } from '../mcp.js';
 import { ExtensionsPanel } from './extensions-panel.js';
 import { socketExtensions } from '../extensions.js';
 import { terminalBundle, RAISE_WINDOW } from '../../shared/terminal-app.js';
@@ -233,6 +234,7 @@ export class Homepage {
     if (event.kind === 'mouse') { if(this.helpOffset===null&&!this.box&&!this.credentials&&!this.cleanIds&&!this.worktreeUi&&!this.popup)this.mouse(event); return; }
     if (event.kind === 'paste') {
       // A paste never reaches the worktree question: deleting work needs the branch name typed.
+      if(this.popup instanceof ExtensionsPanel){if(!event.tooLong)this.popup.paste(event.text);this.draw(true);return;}
       if(this.helpOffset!==null||this.cleanIds||this.worktreeUi||this.popup)return;
       if(event.tooLong&&!this.box&&this.field.text.startsWith('/send ')){this.pasteNote=SEND_TOO_LONG;this.draw(true);return;}
       if(event.tooLong){if(this.box?.kind==='start')this.box.messageNote=FIRST_MESSAGE_TOO_LONG;else this.pasteNote=FIRST_MESSAGE_TOO_LONG;this.draw(true);return;}
@@ -385,8 +387,8 @@ export class Homepage {
     await this.selectNew(result);
     this.showNote(`✓ restarted ${session.title}${session.worktree?' in its worktree':''}${session.engine==='shell'?'':' · its first message isn\'t resent'}`,3000);
   }
-  private async openExtensions(tab:'skills'|'agents'):Promise<void>{
-    const panel=new ExtensionsPanel(socketExtensions(body=>this.connection.request(body)),this.folder,tab,()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
+  private async openExtensions(tab:'skills'|'agents'|'mcp',add=false):Promise<void>{
+    const panel=new ExtensionsPanel(socketExtensions(body=>this.connection.request(body)),this.folder,tab,()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},()=>{},socketMcp(body=>this.connection.request(body)),add);
     this.popup=panel;this.draw(true);await panel.load();
   }
   private async openUsage():Promise<void>{
@@ -448,6 +450,7 @@ export class Homepage {
     if(message?.hasPastes){this.openBox('start',text,message);await this.checkSelectedEngine();return;}
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
     if(command==='/copy'){if(argument&&argument!=='all'){this.showNote('/copy or /copy all');return;}await this.copySelected(copyTarget,argument==='all');return;}
+    if(command==='/mcp'){if(argument.startsWith('remove ')){try{await this.connection.request({kind:'mcp.remove',name:argument.slice(7).trim()});this.showNote('MCP server removed');}catch{this.showNote('MCP removal failed');}}else if(!argument||argument==='add')await this.openExtensions('mcp',argument==='add');else this.showNote('usage: /mcp [add|remove <name>]');return;}
     if(command==='/skills'||command==='/agents'){if(argument){this.showNote(`${command} takes no argument`);return;}await this.openExtensions(command==='/skills'?'skills':'agents');return;}
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
     if(['/retry','/budget','/usage','/doctor'].includes(command??'')&&argument){this.showNote(`${command} takes no argument${command==='/retry'?'; it uses the selected agent':''}`);return;}

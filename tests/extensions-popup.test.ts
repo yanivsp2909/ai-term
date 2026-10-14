@@ -27,7 +27,7 @@ it('one popup exposes every tab, per-item tokens, toggles, read-only files, scro
   expect(draw()).toContain('[Skills] · Agents · Commands · MCP');expect(draw()).toContain('safe-skill · shared · ✓ on');const before=(await access.list('/unused')).tokens;
   await panel.key(' ');expect(draw()).toContain('○ off');expect(draw()).not.toContain(`≈${before} tokens/request on`);expect(toggled).toHaveBeenCalledOnce();
   await panel.key('enter');expect(draw()).toContain('read-only');expect(draw()).toContain('FULL FILE BODY');await panel.key('page-down');expect(draw()).toContain('line 25');await panel.key('escape');expect(close).not.toHaveBeenCalled();expect(draw()).toContain('[Skills]');
-  await panel.key('right');expect(draw()).toContain('[Agents]');expect(draw()).toContain('reviewer · Claude');await panel.key('right');expect(draw()).toContain('hello · Codex · ✓ on · ≈0');await panel.key('right');expect(draw()).toContain('empty until v0.4.4');await panel.key('left');expect(draw()).toContain('[Commands]');await panel.key('escape');expect(close).toHaveBeenCalledOnce();
+  await panel.key('right');expect(draw()).toContain('[Agents]');expect(draw()).toContain('reviewer · Claude');await panel.key('right');expect(draw()).toContain('hello · Codex · ✓ on · ≈0');await panel.key('right');expect(draw()).toContain('MCP unavailable in this connection');await panel.key('left');expect(draw()).toContain('[Commands]');await panel.key('escape');expect(close).toHaveBeenCalledOnce();
 });
 
 class TTY extends EventEmitter {isTTY=true;isRaw=false;columns=120;rows=32;output='';setRawMode(raw:boolean){this.isRaw=raw;}resume(){}pause(){}write(s:string|Buffer){this.output+=s.toString();return true;}}
