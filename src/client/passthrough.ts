@@ -48,7 +48,15 @@ export function installPassthrough(term: headless.Terminal, facts: OuterFacts, o
   });
   // The theme query (`CSI ? 996 n`) is about the real terminal; its reply comes back as input.
   // Other DSR queries (cursor position) stay with the mirror, which knows the agent's coordinates.
-  p.registerCsiHandler({ prefix: '?', final: 'n' }, params => { if (params[0] !== 996) return false; out('\x1b[?996n'); return true; });
+  // In a split the reply would come back as input to whichever pane is focused by then, so it is answered here from the
+  // probed background instead (dark 1, light 2), or not at all when the terminal didn't say.
+  p.registerCsiHandler({ prefix: '?', final: 'n' }, params => {
+    if (params[0] !== 996) return false;
+    if (!split) { out('\x1b[?996n'); return true; }
+    const scheme = colorScheme(facts.background);
+    if (scheme) reply(`\x1b[?997;${scheme}n`);
+    return true;
+  });
   // Keypad application/normal mode.
   p.registerEscHandler({ final: '=' }, () => { keypad = true; out('\x1b='); return false; });
   p.registerEscHandler({ final: '>' }, () => { keypad = false; out('\x1b>'); return false; });
@@ -138,4 +146,11 @@ export function parseProbe(text: string): { facts: OuterFacts; done: boolean; re
   // eslint-disable-next-line no-control-regex -- Strip only recognized probe replies.
   const rest = text.replace(/\x1b\](?:10|11);[^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[\?\d+u|\x1b\[\?[\d;]*c/g, '');
   return { facts, done, rest };
+}
+// 1 dark or 2 light for an xterm `rgb:` colour, by relative luminance; undefined when it can't be read.
+function colorScheme(color: string | undefined): 1 | 2 | undefined {
+  const parts = color?.match(/^rgb:([0-9a-fA-F]{1,4})\/([0-9a-fA-F]{1,4})\/([0-9a-fA-F]{1,4})$/)?.slice(1);
+  if (!parts || parts.length !== 3) return undefined;
+  const [r = 0, g = 0, b = 0] = parts.map(hex => parseInt(hex, 16) / (16 ** hex.length - 1));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5 ? 1 : 2;
 }

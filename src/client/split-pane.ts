@@ -20,7 +20,16 @@ export class Pane {
   readonly passthrough: Passthrough;
   private renderer: BodyRenderer;
   state: PaneState = 'live';
-  focused = false;
+  private isFocused = false;
+  // Byte counts: queued so far, fully parsed, where the slice being parsed starts, and how many had arrived when the pane
+  // last took focus. Only output that arrived after that point is the focused pane's own and may reach the terminal
+  // live; the backlog printed while it was in the background stays cells only (S15), and once it is parsed the pane's
+  // modes and title are replayed, so the terminal ends up as the agent left it.
+  private received = 0;
+  private parsedBytes = 0;
+  private sliceStart = 0;
+  private passFrom = 0;
+  private restorePending = false;
   lastFrame = -Infinity;
   timer: ReturnType<typeof setTimeout> | undefined;
   // The pending timer waits out the agent's synchronized-output block rather than frame spacing.
@@ -31,22 +40,28 @@ export class Pane {
   private paused = false;
   private disposed = false;
   private syncSince: number | null = null;
-  constructor(readonly id: string, public info: SessionInfo, public rect: Rect, facts: OuterFacts, out: (data: string) => void, private readonly send: (data: Buffer) => void, private readonly flow: PaneFlow, private readonly changed: (pane: Pane) => void, private readonly failed: (error: Error) => void) {
+  constructor(readonly id: string, public info: SessionInfo, public rect: Rect, facts: OuterFacts, private readonly out: (data: string) => void, private readonly send: (data: Buffer) => void, private readonly flow: PaneFlow, private readonly changed: (pane: Pane) => void, private readonly failed: (error: Error) => void) {
     this.terminal = new headless.Terminal({ cols: rect.w, rows: rect.h - 1, scrollback: 0, allowProposedApi: true, windowOptions: { getWinSizeChars: true, pushTitle: true, popTitle: true } });
     useUnicode11(this.terminal);
     // Only the focused pane may change the real terminal's modes, title or clipboard; the others stay cells (S15).
-    this.passthrough = installPassthrough(this.terminal, facts, data => { if (this.focused) out(data); }, data => this.reply(data), true);
+    this.passthrough = installPassthrough(this.terminal, facts, data => { if (this.isFocused && this.sliceStart >= this.passFrom) out(data); }, data => this.reply(data), true);
     this.terminal.onData(data => this.reply(data));
     this.renderer = new BodyRenderer(this.terminal, rect.y + 1, rect.x);
   }
   // terminal.input('', true) fires onData(''); an empty frame is no reply.
   private reply(data: string): void { if (data && this.state === 'live') this.send(Buffer.from(data)); }
   get live(): boolean { return this.state === 'live'; }
+  get focused(): boolean { return this.isFocused; }
+  set focused(on: boolean) {
+    if (on && !this.isFocused) { this.passFrom = this.received; this.restorePending = this.parsedBytes < this.received; }
+    if (!on) this.restorePending = false;
+    this.isFocused = on;
+  }
   write(data: string | Buffer): void {
     if (this.disposed) return;
     const bytes = typeof data === 'string' ? Buffer.from(data) : data;
     if (!bytes.length) return;
-    this.queue.push(bytes); this.queued += bytes.length;
+    this.queue.push(bytes); this.queued += bytes.length; this.received += bytes.length;
     if (!this.paused && this.queued > HIGH) { this.paused = true; this.flow.pause(); }
     this.parse();
   }
@@ -58,10 +73,11 @@ export class Pane {
     if (!first) return;
     const slice = first.length > SLICE ? first.subarray(0, SLICE) : first;
     if (slice === first) this.queue.shift(); else this.queue[0] = first.subarray(SLICE);
-    this.parsing = true;
+    this.parsing = true; this.sliceStart = this.parsedBytes;
     this.terminal.write(slice, () => {
-      this.parsing = false; this.queued -= slice.length;
+      this.parsing = false; this.queued -= slice.length; this.parsedBytes += slice.length;
       if (this.disposed) return;
+      if (this.restorePending && this.isFocused && this.parsedBytes >= this.passFrom) { this.restorePending = false; this.out(this.passthrough.restore()); }
       if (this.paused && this.queued < LOW) { this.paused = false; this.flow.resume(); }
       try { this.changed(this); } catch (error) { this.failed(error instanceof Error ? error : new Error('Pane render failed')); }
       // setImmediate runs after pending I/O, so typed keys and the focused pane's echo get in between slices.

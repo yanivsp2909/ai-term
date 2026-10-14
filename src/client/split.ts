@@ -158,8 +158,8 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
     if (next) focus(next.pane.id);
     lastPane = { at, from };
   };
-  // Mouse events go to the pane under the pointer, in its coordinates; a press also focuses it. A drag stays with the
-  // pane it started in until the release.
+  // A press focuses the pane under the pointer and reaches it in its coordinates; a drag stays with the pane it started
+  // in until the release. Nothing reaches a pane that isn't focused.
   const mouse = (event: Extract<SplitInputEvent, { kind: 'mouse' }>) => {
     if (!layout) return;
     const motion = (event.button & 32) !== 0, wheel = (event.button & 64) !== 0, press = !event.release && !motion && !wheel;
@@ -170,6 +170,8 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
     if (event.release) captured = null;
     if (!slot) return;
     if (press) focus(slot.pane.id);
+    // Mouse input reaches only the focused pane: a press focuses first, and wheel or motion elsewhere goes nowhere.
+    if (slot.pane.id !== focusedId) return;
     const rect = slot.pane.rect, x = Math.max(0, Math.min(rect.w - 1, event.x - rect.x)), y = event.y - rect.y - 1;
     if (!held && y < 0) return;
     if (press) captured = slot.pane.id;

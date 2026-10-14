@@ -397,6 +397,9 @@ export class SessionManager extends EventEmitter {
         if(live.attached)return 'Agent is open in a session';
         if(live.info.status==='waiting'&&live.info.statusDetail==='permission')return 'Agent is asking for permission';
         if(live.info.status==='waiting'&&live.info.statusDetail==='question')return 'Agent is asking a question';
+        // Codex's approval title stays up for as long as the approval does, and the mirror reads it as it parses; a late
+        // turn-complete notify can mark the card done while the approval is still open, so the title has the final say.
+        if(live.info.engine==='codex'&&live.codexRun==='action')return 'Agent is asking for permission';
         // The late-hook window: Claude's PermissionRequest can arrive seconds after its prompt is drawn, but never outside a
         // tool call. Codex reports approvals in its own output stream, which caughtUp has already read.
         if(live.info.engine==='claude-code'&&(live.statusState?.toolsInFlight??0)>0)return 'Agent is running a tool';
@@ -408,7 +411,13 @@ export class SessionManager extends EventEmitter {
     }
     // Status is only as fresh as what the mirror has parsed: wait for every chunk that arrived before now, then for the
     // status signals those chunks queued. Claude's hooks arrive over HTTP and can still lag (D50).
-    private async caughtUp(live:Live):Promise<void>{await live.output;await new Promise<void>(resolve=>setImmediate(resolve));}
+    private async caughtUp(live:Live):Promise<void>{
+        await live.output;
+        // Status signals the mirror queued apply in order behind any status request still arriving; a no-op entry
+        // resolves once everything before it has.
+        await new Promise<void>(resolve=>{if(!this.usage?.enqueueStatus(live.info.id,()=>resolve()))resolve();});
+        await new Promise<void>(resolve=>setImmediate(resolve));
+    }
     async send(id:string,text:string):Promise<void>{
         if(!isUUID(id)||!isSendText(text))throw new Error('Invalid send request');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
@@ -428,7 +437,8 @@ export class SessionManager extends EventEmitter {
             if(this.unsendable(live))throw new Error('Text pasted but not sent; go inside');
             // With kitty 'report all keys as escapes' (flag 8) Enter is CSI 13 u, not CR.
             live.host?.write(((live.mirror.modes().kittyFlags?.at(-1)??0)&8)?'\x1b[13u':'\r');
-            if(live.info.engine==='codex')this.codexStatus(live,{kind:'running'},state=>state.status==='done'||state.status==='waiting');
+            // Only a finished turn becomes running: a waiting that arrived meanwhile must stay visible.
+            if(live.info.engine==='codex')this.codexStatus(live,{kind:'running'},state=>state.status==='done');
         }finally{this.sending.delete(id);}
     }
     // /find over every agent's mirror; per-agent and total caps keep one search to one small response.

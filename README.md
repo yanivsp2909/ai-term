@@ -91,7 +91,7 @@ Homepage slash commands:
 | `v` | Empty field opens the marked agents side by side, in list order, and clears the marks. With none marked it reopens the split Ctrl+E left; with nothing to open it shows `Space marks 2–4 agents · v opens them side by side` |
 | Split: typing and paste | Go only to the focused pane's agent |
 | Split: Ctrl+\ | Focus the next pane; if a pane's agent has ended, closes the ended panes instead. Twice within 0.4 s sends one real Ctrl+\ to the agent that was focused |
-| Split: click / mouse | A click focuses the pane under the pointer; mouse events go to that pane's agent in its own coordinates (a drag stays with the pane it started in) |
+| Split: click / mouse | A click focuses the pane under the pointer and reaches its agent in its own coordinates (a drag stays with the pane it started in). Mouse input reaches only the focused pane: wheel or motion over another pane does nothing until you click it |
 | Split: Ctrl+E | Home; the agents keep running and `v` with nothing marked reopens the split |
 | PgUp / PgDn / End | Preview scroll / follow live (End only while the command field is empty) |
 | Mouse wheel / drag-release | Preview scroll / copy selection; a click alone does not copy |
