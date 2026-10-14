@@ -12,11 +12,12 @@ const token = 'a'.repeat(64), now = '2026-10-14T12:00:00Z';
 const sessions: SessionInfo[] = ['one','two'].map(title=>({id:randomUUID(),title,engine:'shell',model:null,auth:{kind:'account'},cwd:'/tmp',permission:'ask',status:'running',statusDetail:'',statusSince:now,createdAt:now,lastOutputAt:null,exitCode:null,ctxPercent:null}));
 class TTY extends EventEmitter {
   isTTY=true; isRaw=false; columns=130; rows=45; output='';
+  replyBackground=true;
   setRawMode(value:boolean){this.isRaw=value;} resume(){} pause(){}
   write(data:string|Buffer){
     this.output+=data.toString();
     if(data.toString().includes('\x1b[c')) queueMicrotask(()=>this.emit('data',Buffer.from('\x1b[?1;2c')));
-    if(data===BACKGROUND_QUERY) queueMicrotask(()=>this.emit('data',Buffer.from('\x1b]11;rgb:ff/ff/ff\x1b\\')));
+    if(data===BACKGROUND_QUERY && this.replyBackground) queueMicrotask(()=>this.emit('data',Buffer.from('\x1b]11;rgb:ff/ff/ff\x1b\\')));
     return true;
   }
 }
@@ -50,5 +51,18 @@ it.each(['raw','bar','split'] as const)('%s: controls cannot reach the agent; ou
     const result=await run;expect(typeof result==='string'?result:result.reason).toBe('home key');
     expect(commands).toEqual(['home']);expect(typed()).not.toContain('ai-term');
     expect(clients.flatMap(client=>client.requests).some(request=>request.kind==='sessions.stop')).toBe(false);
+  }finally{controller.abort();await run;input.dispose();}
+});
+it.each([0,40])('OSC11 after a real Escape stays out of an attached agent, delay=%s ms',async delay=>{
+  const tty=new TTY(),input=new AppInput(tty,token),client=new Client(),controller=new AbortController();tty.replyBackground=false;
+  const first=sessions[0];if(!first)throw new Error('No test session');
+  const run=attach(client,first.id,{stdin:input,stdout:tty,signals:new EventEmitter(),home:controller.signal});
+  try{
+    await expect.poll(()=>tty.output).toContain('hello');
+    const probe=input.background(tty);
+    tty.emit('data',Buffer.from('\x1b'));await new Promise(resolve=>setTimeout(resolve,delay));
+    tty.emit('data',Buffer.from('\x1b]11;rgb:ff/ff/ff\x1b\\'));
+    const background=await probe;await new Promise(resolve=>setTimeout(resolve,70));
+    expect({background,input:Buffer.concat(client.sent).toString()}).toEqual({background:'#ffffff',input:'\x1b'});
   }finally{controller.abort();await run;input.dispose();}
 });
