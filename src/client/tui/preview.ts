@@ -53,6 +53,12 @@ export class Preview {
     if (top === base) this.newCount = 0;
     this.selection = null; this.changed();
   }
+  // /find: bring the row `fromEnd` rows above the buffer's last row into view, a third of the way down. Counting from
+  // the bottom works although this buffer holds a different amount of scrollback than the daemon's mirror.
+  scrollTo(fromEnd: number): void {
+    const buffer = this.terminal.buffer.active, row = Math.max(0, buffer.length - 1 - fromEnd);
+    this.scroll(Math.max(0, row - Math.floor(this.terminal.rows / 3)) - this.top);
+  }
   follow(): void { this.anchor?.dispose(); this.anchor = null; this.newCount = 0; this.selection = null; this.changed(); }
   select(start: Point, end: Point): void { this.selection = { start: { ...start, y: start.y + this.top }, end: { ...end, y: end.y + this.top } }; this.changed(); }
   clearSelection(): void { this.selection = null; this.changed(); }

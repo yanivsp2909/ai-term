@@ -37,7 +37,7 @@ it('/retry restarts a failed agent with the same engine, model, effort, mode and
   expect((await listWorktrees(repo)).length).toBe(2);
   expect(m.list().map(s => s.id)).toEqual([retried.id]);
   // A fresh start: never Codex's resume picker.
-  const args = spawn.mock.calls.at(-1)?.[1] ?? [];
+  const args = [spawn.mock.calls.at(-1)?.[1] ?? []].flat();
   expect(args).not.toContain('resume'); expect(spawn.mock.calls.at(-1)?.[2]?.cwd).toBe(first.cwd);
 });
 
@@ -47,7 +47,7 @@ it('a Claude retry starts a new conversation instead of resuming the old one', a
   await finished(m, first.id);
   const retried = await m.retry(first.id);
   expect(retried.conversationId).toBeDefined(); expect(retried.conversationId).not.toBe(first.conversationId);
-  const args = spawn.mock.calls.at(-1)?.[1] ?? [];
+  const args = [spawn.mock.calls.at(-1)?.[1] ?? []].flat();
   expect(args).toContain(`--session-id=${retried.conversationId}`); expect(args.join(' ')).not.toContain('--resume');
 });
 

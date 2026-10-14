@@ -1,7 +1,6 @@
 import { execFile } from 'node:child_process';
-import { access, lstat } from 'node:fs/promises';
-import { constants } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { lstat } from 'node:fs/promises';
+import { findExecutable } from '../shared/executable.js';
 import { Connection } from '../client/connection.js';
 import { getPaths, isFsError } from '../shared/paths.js';
 import { redact } from '../daemon/log.js';
@@ -25,22 +24,6 @@ export function claudeAuth(output: string): string {
 export function codexAuth(code: number | null, output: string): string {
     return `exit ${code ?? 'unavailable'}; ${code === 0 ? /ChatGPT/i.test(output) ? 'ChatGPT' : /API key/i.test(output) ? 'API key' : 'method unknown' : 'logged in no'}`;
 }
-async function executable(name: string): Promise<string | null> {
-    for (const folder of (process.env.PATH ?? '').split(delimiter)) {
-        if (!isAbsolute(folder))
-            continue;
-        const candidate = join(folder, name);
-        try {
-            await access(candidate, constants.X_OK);
-            return candidate;
-        }
-        catch (error) {
-            if (!isFsError(error, 'ENOENT') && !isFsError(error, 'EACCES') && !isFsError(error, 'ENOTDIR'))
-                throw error;
-        }
-    }
-    return null;
-}
 function run(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<{
     code: number | null;
     output: string;
@@ -51,7 +34,12 @@ function run(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<{
     }));
 }
 export async function doctor(entry: string): Promise<void> {
-    const print = (line: string) => process.stdout.write(redact(line) + '\n');
+    await doctorLines(entry, line => process.stdout.write(line + '\n'));
+}
+// The ai doctor report, line by line and redacted, each also handed to `each` as it is found (the CLI prints as it
+// goes); /doctor shows the same lines in a popup.
+export async function doctorLines(entry: string, each: (line: string) => void = () => {}): Promise<string[]> {
+    const lines: string[] = [], print = (line: string) => { const safe = redact(line); lines.push(safe); each(safe); };
     const paths = getPaths();
     print(`Node: ${process.version}`);
     let client: Connection | undefined;
@@ -81,7 +69,7 @@ export async function doctor(entry: string): Promise<void> {
         }
     }
     for (const name of ['claude', 'codex']) {
-        const path = await executable(name);
+        const path = await findExecutable(name);
         if (!path) {
             print(`${name}: not found`);
             continue;
@@ -93,4 +81,5 @@ export async function doctor(entry: string): Promise<void> {
         const auth = await run(path, name === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'], env);
         print(`${name} auth: ${name === 'claude' ? claudeAuth(auth.output) : codexAuth(auth.code, auth.output)}`);
     }
+    return lines;
 }

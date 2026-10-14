@@ -6,7 +6,7 @@ import { type AttachReason } from '../attach.js';
 import { split, type SplitResult } from '../split.js';
 import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
-import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
+import { MAX_FIND_CHARS, type FindMatch, type SessionInfo, type SuccessResponse, type AgentEngine, type EnginesStatus, type AuthRef, type KeyView, type SystemStats, type UsageSummary, type Budgets, type Effort, type Permission } from '../../shared/protocol.js';
 import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText, validateWorktreePreview } from '../../shared/validate.js';
 import { getPaths } from '../../shared/paths.js';
 import { Logger, redact } from '../../daemon/log.js';
@@ -32,11 +32,16 @@ import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLi
 import {drawHelp,wrapHelpLines} from './help.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
 import { MAX_PANES } from '../split-layout.js';
+import { FindPanel } from './find-panel.js';
+import { TextPanel } from './text-panel.js';
+import { usageDetailLines } from './usage-details.js';
+import { openFolder, OpenError, type FolderApp } from './open-folder.js';
+import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-command.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
 export interface HomepageConnection extends EventEmitter { request(body: RequestBody): Promise<SuccessResponse> }
-interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason>; splitSessions?: (ids: string[], theme: Theme) => Promise<SplitResult>; attachOnStart?: string; terminalProgram?:string }
+interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason>; splitSessions?: (ids: string[], theme: Theme) => Promise<SplitResult>; attachOnStart?: string; terminalProgram?:string; doctor?: () => Promise<string[]>; openFolder?: (path: string, app: FolderApp) => Promise<string> }
 const ENTER_HOME = RESET_MODES + '\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1002h\x1b[?1006h\x1b[?2004h';
 export class Homepage {
   readonly done: Promise<void>;
@@ -57,6 +62,8 @@ export class Homepage {
   private effort:Effort|null=null;private permission:Permission='ask';private cleanIds:string[]|null=null;private helpOffset:number|null=null;
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
+  // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
+  private popup?:FindPanel|TextPanel;
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
   private marked=new Set<string>();
   private lastSplit:string[]=[];
@@ -166,7 +173,7 @@ export class Homepage {
   }
   async stop(error?: Error): Promise<void> {
     if (this.ended) return;
-    this.ended = true; this.loading = null; this.credentials?.dispose();this.usageForm=undefined;this.worktreeUi=undefined;
+    this.ended = true; this.loading = null; this.credentials?.dispose();this.usageForm=undefined;this.worktreeUi=undefined;this.popup=undefined;
     if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve?.();
     if (this.noteTimer) clearTimeout(this.noteTimer);
     this.connection.off('event', this.onEvent); this.connection.off('output', this.onOutput); this.connection.off('disconnected', this.onDisconnect);
@@ -218,16 +225,17 @@ export class Homepage {
   }
   private handleInput(event: InputEvent): void {
     if (!this.showing || this.ended) return;
-    if (event.kind === 'mouse') { if(this.helpOffset===null&&!this.box&&!this.credentials&&!this.cleanIds&&!this.worktreeUi)this.mouse(event); return; }
+    if (event.kind === 'mouse') { if(this.helpOffset===null&&!this.box&&!this.credentials&&!this.cleanIds&&!this.worktreeUi&&!this.popup)this.mouse(event); return; }
     if (event.kind === 'paste') {
       // A paste never reaches the worktree question: deleting work needs the branch name typed.
-      if(this.helpOffset!==null||this.cleanIds||this.worktreeUi)return;
+      if(this.helpOffset!==null||this.cleanIds||this.worktreeUi||this.popup)return;
+      if(event.tooLong&&!this.box&&this.field.text.startsWith('/send ')){this.pasteNote=SEND_TOO_LONG;this.draw(true);return;}
       if(event.tooLong){if(this.box?.kind==='start')this.box.messageNote=FIRST_MESSAGE_TOO_LONG;else this.pasteNote=FIRST_MESSAGE_TOO_LONG;this.draw(true);return;}
       this.pasteNote='';
       if(this.credentials){const panel=this.credentials;this.enqueue(async()=>{panel.paste(event.text);});}
       else if(this.usageForm)this.usageForm.paste(event.text);
       else if(this.box)this.boxText(event.text,true);
-      else {const error=this.field.paste(event.text);this.menuChoice=0;this.pasteNote=error??'';}
+      else {const error=this.field.paste(event.text);this.menuChoice=0;this.pasteNote=error===FIRST_MESSAGE_TOO_LONG&&this.field.text.startsWith('/send ')?SEND_TOO_LONG:error??'';}
       this.draw(true);return;
     }
     this.pasteNote='';
@@ -239,6 +247,7 @@ export class Homepage {
     }
     if(this.helpOffset!==null){if(event.key==='escape')this.helpOffset=null;else{const page=Math.max(1,this.size().rows-8),delta=event.key==='up'?-1:event.key==='down'?1:event.key==='page-up'?-page:event.key==='page-down'?page:0;this.helpOffset=Math.max(0,Math.min(Math.max(0,wrapHelpLines(helpLines(this.commandContext()),Math.min(this.size().cols,110)-6).length-page),this.helpOffset+delta));}this.draw(true);return;}
     if(this.worktreeUi){const ui=this.worktreeUi;this.enqueue(()=>ui.key(event.key));return;}
+    if(this.popup){this.popup.key(event.key);this.draw(true);return;}
     if(this.cleanIds){
       const ids=this.cleanIds;
       if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{
@@ -274,11 +283,12 @@ export class Homepage {
       if(event.key==='tab'){this.field.text=completeCommand(this.field.text,this.menuChoice,this.commandContext());this.menuChoice=0;this.draw(true);return;}
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
-        if(command!=='/copy'&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(command!=='/copy'&&command!=='/open'&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
     if(event.key==='b'&&!this.field.text){this.usageForm=new BudgetForm(this.budgets);this.draw(true);return;}
+    if(event.key==='u'&&!this.field.text){this.enqueue(()=>this.openUsage());return;}
     const beforeText=this.field.text, action = this.field.key(event.key);
     if(this.field.text!==beforeText)this.menuChoice=0;
     switch (action.kind) {
@@ -348,6 +358,65 @@ export class Homepage {
     const panel:WorktreesPanel=new WorktreesPanel(body=>this.connection.request(body),()=>this.draw(true),()=>{if(this.worktreeUi===panel)this.worktreeUi=undefined;this.draw(true);});
     this.worktreeUi=panel;this.draw(true);await panel.load();
   }
+  // D50: the one way text typed on the homepage reaches an agent, and only through this explicit command.
+  private async send(input:string):Promise<void>{
+    const parsed=parseSend(input,this.sessions);
+    if('note' in parsed){this.showNote(parsed.note);return;}
+    const {session,text}=parsed,refused=sendRefusal(session);
+    if(refused){this.showNote(refused);return;}
+    try{await this.connection.request({kind:'sessions.send',sessionId:session.id,text});}
+    catch(error){this.showNote(sendFailure(session.title,error instanceof Error?error.message:'Send failed'));return;}
+    const lines=text.split('\n').length;
+    this.showNote(`✓ sent to ${session.title}${lines>1?` · ${lines} lines`:''}`,2000);
+  }
+  // A fresh start of a finished agent with its saved recipe; the new agent replaces it in the list.
+  private async retrySelected(session:SessionInfo|null):Promise<void>{
+    if(!session){this.showNote('select an agent first');return;}
+    if(!['exited','error'].includes(session.status)){this.showNote(`${session.title} is still running · /retry restarts finished agents`);return;}
+    let result:SuccessResponse;
+    try{result=await this.connection.request({kind:'sessions.retry',sessionId:session.id});}
+    catch(error){const reason=error instanceof Error?error.message:'Retry failed';this.showNote(reason==='Its worktree is gone'||reason==='Its folder is gone'?`${session.title}: ${reason.toLowerCase()} · start a new agent`:reason);return;}
+    this.sessions=this.sessions.filter(s=>s.id!==session.id);this.previews.get(session.id)?.dispose();this.previews.delete(session.id);
+    await this.selectNew(result);
+    this.showNote(`✓ restarted ${session.title}${session.worktree?' in its worktree':''}${session.engine==='shell'?'':' · its first message isn\'t resent'}`,3000);
+  }
+  private async openUsage():Promise<void>{
+    const panel:TextPanel=new TextPanel('Usage',()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
+    this.popup=panel;this.draw(true);
+    try{const usage=validateUsageSummary((await this.connection.request({kind:'usage.summary'})).usage);panel.set(usageDetailLines(usage,this.budgets));}
+    catch(error){panel.set([{text:`Usage unavailable: ${error instanceof Error?error.message:'request failed'}`,tone:'status-error'}]);}
+  }
+  private async openDoctor():Promise<void>{
+    const panel:TextPanel=new TextPanel('Doctor',()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},'· checking Node, the daemon, files and the CLIs');
+    this.popup=panel;this.draw(true);
+    const doctor=this.options.doctor;
+    if(!doctor){panel.set([{text:'Doctor unavailable here; run ai doctor',tone:'ink-3'}]);return;}
+    try{panel.set((await doctor()).map(text=>({text,tone:'ink-2'})));}
+    catch(error){panel.set([{text:`Doctor failed: ${error instanceof Error?error.message:'check failed'}`,tone:'status-error'}]);}
+  }
+  private async openFind(query:string):Promise<void>{
+    const text=query.replace(/[\p{C}]/gu,'');
+    if(!text.trim()){this.showNote('/find <text> · plain text, any case');return;}
+    if([...text].length>MAX_FIND_CHARS){this.showNote(`/find takes at most ${MAX_FIND_CHARS} characters`);return;}
+    const panel:FindPanel=new FindPanel(text,body=>this.connection.request(body),()=>this.sessions,()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},match=>this.enqueue(()=>this.showMatch(match)));
+    this.popup=panel;this.draw(true);await panel.load();
+  }
+  // ⏎ on a /find hit: select its agent and scroll the preview so the line is in view.
+  private async showMatch(match:FindMatch):Promise<void>{
+    if(!this.sessions.some(s=>s.id===match.sessionId)){this.showNote('that agent is gone');return;}
+    const resize=!this.visible;this.visible=true;this.selectedId=match.sessionId;this.drag=null;this.previewCells=undefined;
+    await this.updatePreview(resize);
+    this.currentPreview()?.scrollTo(match.fromEnd);this.draw(true);
+  }
+  private async openFolderOf(session:SessionInfo|null,app:FolderApp):Promise<void>{
+    if(!session){this.showNote('select an agent first');return;}
+    const path=session.worktree??session.cwd,home=homedir(),shown=path.startsWith(`${home}/`)?`~${path.slice(home.length)}`:path;
+    try{const where=await (this.options.openFolder??openFolder)(path,app);this.showNote(`opened ${shown} in ${where}`,2000);}
+    catch(error){
+      if(!(error instanceof OpenError))(this.options.copyLog??new Logger(getPaths().log)).error('Open folder failed');
+      this.showNote(error instanceof OpenError?`${error.message} · ${shown}`:`couldn't open ${shown}`);
+    }
+  }
   private async copySelected(session:SessionInfo|null,all=false):Promise<void>{
     if(!session){this.showNote('select an agent first');return;}
     let copy:ReturnType<typeof validateSessionText>;
@@ -360,14 +429,23 @@ export class Homepage {
     const lines=text?text.split('\n').length:0;
     if(!this.ended)this.showNote(`✓ copied ${lines} lines from ${session.title}${copy.truncated?' (oldest lines cut at 5 MB)':''}${all||copy.source==='last-reply'?'':' · last reply only comes with v0.2'}`,2000,true);
   }
-  private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title};}
+  private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title,agents:sortSessions(this.sessions).filter(s=>!['exited','error'].includes(s.status)).map(s=>s.title)};}
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
   private queueSubmit(text:string,message?:MessageField):void{const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.submit(text,selected,message));}
   private async submit(text: string, copyTarget:SessionInfo|null=null,message?:MessageField): Promise<void> {
+    // /send carries its text, paste tokens included, to the agent; it never opens the start box.
+    if(text==='/send'||text.startsWith('/send ')){await this.send(text);return;}
     if(message?.hasPastes){this.openBox('start',text,message);await this.checkSelectedEngine();return;}
     const [command,...parts]=text.trim().split(/\s+/),argument=parts.join(' ');
     if(command==='/copy'){if(argument&&argument!=='all'){this.showNote('/copy or /copy all');return;}await this.copySelected(copyTarget,argument==='all');return;}
     if(command==='/help'){this.helpOffset=0;this.draw(true);return;}
+    if(['/retry','/budget','/usage','/doctor'].includes(command??'')&&argument){this.showNote(`${command} takes no argument${command==='/retry'?'; it uses the selected agent':''}`);return;}
+    if(command==='/retry'){await this.retrySelected(copyTarget);return;}
+    if(command==='/budget'){this.usageForm=new BudgetForm(this.budgets);this.draw(true);return;}
+    if(command==='/usage'){await this.openUsage();return;}
+    if(command==='/doctor'){await this.openDoctor();return;}
+    if(command==='/find'){await this.openFind(text.trim().slice('/find'.length).trim());return;}
+    if(command==='/open'){if(argument&&argument!=='code'){this.showNote('/open or /open code');return;}await this.openFolderOf(copyTarget,argument==='code'?'code':'finder');return;}
     if(command==='/worktrees'){if(argument){this.showNote('/worktrees takes no argument');return;}await this.openWorktrees();return;}
     if(command==='/clean'){if(argument){this.showNote('/clean takes no argument');return;}this.cleanIds=this.sessions.filter(s=>['exited','error'].includes(s.status)).map(s=>s.id);if(!this.cleanIds.length){this.cleanIds=null;this.showNote('No finished agents to remove');}else this.showNote(`remove ${this.cleanIds.length} finished agents? y/n`);return;}
     if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));}catch(error){this.showNote(error instanceof Error?error.message:'Shell could not start');}return;}
@@ -724,6 +802,7 @@ export class Homepage {
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);
       if(this.usageForm)grid=drawUsageForm(grid,this.usageForm.lines(),this.usageFormError,this.theme);
       if(this.worktreeUi)grid=this.worktreeUi.draw(grid,this.theme);
+      if(this.popup)grid=this.popup.draw(grid,this.theme);
       const output = diffFrame(grid, this.previous, this.theme, this.options.truecolor ?? true); this.previous = grid; this.forceRedraw = false;
       this.scheduleCardTick(visibleCards({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, previewVisible: this.visible }));
       if (output) this.blocked = !this.stdout.write(output);
@@ -731,8 +810,8 @@ export class Homepage {
   }
 }
 // `connect` opens one more daemon connection: a split gives each pane its own (split.ts).
-export async function homepage(connection: import('../connection.js').Connection, connect: () => Promise<import('../connection.js').Connection>, attachOnStart?: string): Promise<void> {
+export async function homepage(connection: import('../connection.js').Connection, connect: () => Promise<import('../connection.js').Connection>, attachOnStart?: string, doctor?: () => Promise<string[]>): Promise<void> {
   const truecolor = process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', log = new Logger(getPaths().log);
-  const home = new Homepage(connection, { truecolor, attachSession: id => configuredAttach(connection, id), splitSessions: (ids, theme) => split(ids, { connect, theme, truecolor, log: text => log.error(text) }), ...(attachOnStart ? { attachOnStart } : {}) });
+  const home = new Homepage(connection, { truecolor, attachSession: id => configuredAttach(connection, id), splitSessions: (ids, theme) => split(ids, { connect, theme, truecolor, log: text => log.error(text) }), ...(attachOnStart ? { attachOnStart } : {}), ...(doctor ? { doctor } : {}) });
   await Promise.all([home.start(), home.done]);
 }

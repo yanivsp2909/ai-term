@@ -50,7 +50,7 @@ it('caps results per agent and in total, and says there were more', async () => 
   const paths = getPaths(root); await preparePaths(paths);
   const lines = Array.from({ length: 80 }, (_, i) => `hit ${i}`).join('; echo ');
   const m = new SessionManager(paths, new Logger(paths.log), { executable: '/bin/sh', args: ['-c', `echo ${lines}; read answer`], env: { PATH: '/usr/bin:/bin' } }); managers.push(m); await m.load();
-  const ids = [];
+  const ids: string[] = [];
   for (let i = 0; i < 5; i++) ids.push((await m.create({ cwd: root })).id);
   await expect.poll(() => ids.every(id => m.find('hit 79').matches.some(match => match.sessionId === id))).toBe(true);
   const { matches, more } = m.find('HIT');
