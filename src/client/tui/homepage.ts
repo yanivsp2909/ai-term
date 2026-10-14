@@ -106,6 +106,8 @@ export class Homepage {
   private previewRequestId: string | null = null;
   private loading: { id: string; chunks: Buffer[]; bytes: number } | null = null;
   private serial: Promise<void> = Promise.resolve();
+  private navigationEpoch = 0;
+  private operationEpoch = 0;
   private previous: Frame | null = null;
   private previewCells?: Frame;
   private nextPreview = 0;
@@ -162,7 +164,7 @@ export class Homepage {
       // Notification clicks select agents here while this homepage is open. An older daemon refuses the request;
       // its clicks then open a new Terminal window instead, which is all this homepage needs to know.
       await this.connection.request({ kind: 'clicks.subscribe', on: true, ...(this.terminal?{terminal:this.terminal}:{}) }).catch((error: unknown) => { if (!(error instanceof DaemonRequestError)) throw error; });
-      if (this.options.attachOnStart) this.attachOnStart(this.options.attachOnStart);
+      if (this.options.attachOnStart && this.navigationEpoch === 0) this.attachOnStart(this.options.attachOnStart);
     } catch (error) { await this.stop(error instanceof Error ? error : new Error('Homepage failed')); throw error; }
   }
   private enter(): void {
@@ -246,20 +248,30 @@ export class Homepage {
       }).catch(this.onError);
       return;
     }
+    this.navigationEpoch++;
     this.returnHome?.abort();
+    // Dismiss before another byte in this stdin chunk can accept an old form.
+    const refresh = !!this.credentials;
+    this.credentials?.dispose(); this.credentials = undefined; this.box = undefined;
+    this.popup = undefined; this.worktreeUi = undefined; this.usageForm = undefined;
+    this.cleanIds = null; this.confirmId = null; this.renameId = null; this.helpOffset = null;
+    this.savingDefault = false; this.returnToStart = false; this.permission = 'ask';
+    this.parser.dispose(); this.replies.flush();
+    this.field.text = command === 'palette' ? '/' : ''; this.menuChoice = 0; this.pasteNote = ''; this.note = '';
+    const ready = this.showing && !this.attached && !this.returnHome;
+    if (command === 'new-agent' && ready) this.openBox('start');
+    const preparedBox = this.box;
+    const preparedSettings = command === 'settings' && ready ? this.createCredentials('settings') : undefined;
+    this.draw(true);
     this.enqueue(async () => {
-      // These actions dismiss forms rather than submitting or accepting them.
-      const refresh = !!this.credentials;
-      this.credentials?.dispose(); this.credentials = undefined; this.box = undefined;
-      this.popup = undefined; this.worktreeUi = undefined; this.usageForm = undefined;
-      this.cleanIds = null; this.confirmId = null; this.renameId = null; this.helpOffset = null;
-      this.savingDefault = false; this.returnToStart = false; this.permission = 'ask';
-      this.field.text = ''; this.menuChoice = 0; this.pasteNote = '';
       if (refresh) await this.refreshSettings();
-      if (command === 'palette') this.field.text = '/';
-      else if (command === 'new-agent') { this.openBox('start'); await this.checkSelectedEngine(); }
-      else if (command === 'settings') await this.openCredentials('settings');
-      else if (command === 'split') await this.openSplit();
+      if (command === 'new-agent') {
+        if (preparedBox) this.box = preparedBox; else this.openBox('start');
+        await this.checkSelectedEngine();
+      } else if (command === 'settings') {
+        const panel = preparedSettings ?? this.createCredentials('settings');
+        this.credentials = panel; await panel.load();
+      } else if (command === 'split') await this.openSplit();
       else if (command.startsWith('select ')) {
         const session = sortSessions(this.sessions)[Number(command.slice(7)) - 1];
         if (session) { this.selectedId = session.id; await this.updatePreview(false); }
@@ -268,7 +280,12 @@ export class Homepage {
     });
   };
   private enqueue(task: () => Promise<void>): void {
-    this.serial = this.serial.then(async () => { if (!this.ended) await task(); }).catch(error => this.onError(error));
+    const epoch = this.navigationEpoch;
+    // Navigation cancels work not yet started. In-flight work keeps its epoch so
+    // it cannot open a late attach after a newer Home request.
+    this.serial = this.serial.then(async () => {
+      if (!this.ended && epoch === this.navigationEpoch) { this.operationEpoch = epoch; await task(); }
+    }).catch(error => this.onError(error));
   }
   private showNote(text: string, duration?: number, copying = false): void {
     if (this.noteTimer) clearTimeout(this.noteTimer);
@@ -526,7 +543,8 @@ export class Homepage {
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
   }
-  private async openCredentials(kind:'login'|'settings'):Promise<void>{
+  private async openCredentials(kind:'login'|'settings'):Promise<void>{await this.createCredentials(kind).load();}
+  private createCredentials(kind:'login'|'settings'):CredentialsPanel{
     this.box=undefined;
     const panel=new CredentialsPanel(kind,{
       request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.enqueue(async()=>{await this.refreshSettings();this.draw(true);});},
@@ -535,7 +553,7 @@ export class Homepage {
       caps:current=>{this.credentials=undefined;this.usageForm=new CapsForm(current??DEFAULT_AGENT_CAPS);this.draw(true);},
       defaults:kind=>{this.credentials=undefined;this.openBox(kind);this.savingDefault=true;},
       theme:async theme=>{await this.submit('/theme '+theme);},
-    });this.credentials=panel;this.draw(true);await panel.load();
+    });this.credentials=panel;this.draw(true);return panel;
   }
   private openBox(kind: AgentBox['kind'], message = '',messageField?:MessageField): void {
     // The box edits its first message only at the end; a cursor or selection left in the bar would act there unseen.
@@ -795,6 +813,7 @@ export class Homepage {
   }
   // Hands the terminal to an attach or a split and takes it back afterwards, with the returned note.
   private async away(run: (home: AbortSignal) => Promise<string>): Promise<void> {
+    if (this.operationEpoch !== this.navigationEpoch) return;
     const controller = new AbortController(); this.returnHome = controller;
     await this.connection.request({ kind: 'sessions.preview', sessionId: null }); this.previewId = null; this.loading = null;
     await this.subscribeStats(false);await this.subscribeUsage(false);
