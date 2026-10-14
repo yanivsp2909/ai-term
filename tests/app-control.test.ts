@@ -13,6 +13,18 @@ function read(text: string, auth: string | null = token, chunkSize = 1) {
   return { commands, text: Buffer.concat(data).toString() };
 }
 describe('private app input control', () => {
+  it.each([false,true])('a preceding Escape cannot leak the next authenticated control, flushed=%s', flushed => {
+    for (const command of ['palette','new-agent','home','settings','split','select 1','theme-changed'] as const) {
+      const filter = new AppControlFilter(token), data:Buffer[] = [], commands:AppCommand[] = [];
+      for (const part of filter.push(Buffer.from('\x1b'))) if ('data' in part) data.push(part.data);
+      if (flushed) data.push(filter.flush());
+      for (const part of filter.push(Buffer.from(sequence(command)))) {
+        if ('command' in part) commands.push(part.command); else data.push(part.data);
+      }
+      expect(commands).toEqual([command]);
+      expect(Buffer.concat(data).toString()).toBe('\x1b');
+    }
+  });
   it.each<AppCommand>(['palette', 'new-agent', 'select 1', 'select 9', 'split', 'theme-changed', 'home', 'settings'])('accepts only authenticated real input: %s', command => {
     expect(read('before' + sequence(command) + 'after')).toEqual({ commands: [command], text: 'beforeafter' });
   });
