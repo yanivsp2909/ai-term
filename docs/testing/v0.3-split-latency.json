@@ -1,0 +1,111 @@
+{
+  "method": "outer PTY 120x40 write to arrival of the chunk that shows the typed cell and moves the cursor; real daemon, sockets and client; 50 warmup, 500 keys, 15/20/25 ms gaps; yes = an agent printing like yes; count = numbered lines as fast; split = 2 panes, echo focused, the other flooding",
+  "node": "v26.3.0",
+  "platform": "darwin arm64",
+  "results": [
+    {
+      "round": 1,
+      "config": "raw",
+      "measured": 500,
+      "outerKBps": 0,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 1.88,
+      "p95": 2.14,
+      "p99": 2.45,
+      "max": 4.34
+    },
+    {
+      "round": 1,
+      "config": "raw+count",
+      "measured": 500,
+      "outerKBps": 0,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 1.88,
+      "p95": 2.06,
+      "p99": 2.22,
+      "max": 3.08
+    },
+    {
+      "round": 1,
+      "config": "split+yes",
+      "measured": 500,
+      "outerKBps": 1,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 2.28,
+      "p95": 2.63,
+      "p99": 2.8,
+      "max": 9.36
+    },
+    {
+      "round": 1,
+      "config": "split+count",
+      "measured": 500,
+      "outerKBps": 46,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 2.02,
+      "p95": 2.41,
+      "p99": 3.2,
+      "max": 6.35
+    },
+    {
+      "round": 2,
+      "config": "split+count",
+      "measured": 500,
+      "outerKBps": 47,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 2.02,
+      "p95": 2.32,
+      "p99": 2.71,
+      "max": 5.73
+    },
+    {
+      "round": 2,
+      "config": "split+yes",
+      "measured": 500,
+      "outerKBps": 2,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 2.14,
+      "p95": 2.55,
+      "p99": 2.75,
+      "max": 3.91
+    },
+    {
+      "round": 2,
+      "config": "raw+count",
+      "measured": 500,
+      "outerKBps": 0,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 1.74,
+      "p95": 2.01,
+      "p99": 2.18,
+      "max": 3.15
+    },
+    {
+      "round": 2,
+      "config": "raw",
+      "measured": 500,
+      "outerKBps": 0,
+      "timeouts": 0,
+      "cols": 120,
+      "rows": 40,
+      "p50": 1.85,
+      "p95": 2.07,
+      "p99": 2.33,
+      "max": 2.48
+    }
+  ]
+}
