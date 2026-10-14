@@ -7,6 +7,7 @@ import { readTool, writeTool, editTool, searchTool, ToolError, type GatedTool } 
 import { runBash, bashReport, bashPreview, checkCommand, BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS } from './bash.js';
 import { JailError } from './jail.js';
 import { ProviderError } from './provider.js';
+import type { StreamRedactor } from './display.js';
 import { systemPrompt, type Instructions } from './instructions.js';
 import type { Reporter } from './report.js';
 import type { Transcript } from './transcript.js';
@@ -31,6 +32,8 @@ export interface AgentIO {
 export interface AgentOptions {
   root: string; permission: AgentPermission; model: LanguageModel; modelId: string; instructions: Instructions;
   reporter: Reporter; transcript: Transcript; io: AgentIO; redact: (text: string) => string;
+  // Streamed model text: a key split across deltas is still caught (display.ts). Without one, each delta is redacted alone.
+  redactStream?: () => StreamRedactor;
   bashEnv: Record<string, string>; rg: string | null; maxSteps?: number;
   extensions?: ExtensionAccess; models?: readonly string[]; makeModel?(id: string): Promise<LanguageModel>;
   limits?: RunLimits; child?: boolean;
@@ -209,7 +212,11 @@ export class Agent {
     const totals = { input: 0, cached: 0, output: 0, reasoning: 0, cost: 0 as number | null, requests: 0 };
     const manifest = [extensionManifest(this.catalog.items),mcpManifest(this.mcpCatalog)].filter(Boolean).join('\n');
     const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' }) + (manifest ? '\n\n# Enabled extensions (skill loads skills; task runs agents; mcp_tools loads MCP metadata/schema then mcp_call calls one tool)\n' + manifest : '');
+    const stream = this.options.redactStream?.() ?? { push: redact, flush: () => '' };
+    // What the stream held back (a possible start of the key) is shown once the step or the turn ends.
+    const release = () => { const rest = stream.flush(); if (rest) { stepText += rest; io.text(rest); } };
     const finishInterrupted = async (): Promise<TurnResult> => {
+      release();
       // A request cut off after it was sent may still be billed; its worst case counts against this run and the budgets.
       if (open) { this.limits.chargeUnfinished(open); open = 0; }
       // The partial reply stays in the conversation, marked, so the next turn knows what was cut off.
@@ -240,8 +247,9 @@ export class Agent {
       for await (const part of result.stream) {
         // The first part of a step arrives once the provider has answered: from here on it may bill the request.
         if (part.type === 'start-step') { stepText = ''; started = true; }
-        else if (part.type === 'text-delta') { const text = redact(part.text); stepText += text; io.text(text); }
+        else if (part.type === 'text-delta') { const text = stream.push(part.text); stepText += text; if (text) io.text(text); }
         else if (part.type === 'finish-step') {
+          release();
           if (stepText) lastText = stepText;
           const worst = open; open = 0; started = false; this.currentWorst = 0;
           if (part.usage.inputTokens === undefined && part.usage.outputTokens === undefined) {

@@ -27,3 +27,20 @@ export function redactor(secret: string | null): (text: string) => string {
   if (!secret) return text => text;
   return text => text.split(secret).join('[redacted]');
 }
+// Streamed text arrives in pieces, so a key split across two deltas would pass a per-piece redactor. Whole keys are
+// replaced first, then only the longest tail that could still become the key is held back until the next piece or flush.
+export interface StreamRedactor { push(text: string): string; flush(): string }
+export function streamRedactor(secret: string | null): StreamRedactor {
+  const redact = redactor(secret);
+  let held = '';
+  return {
+    push(text) {
+      const all = redact(held + text);
+      let keep = 0;
+      if (secret) for (let n = Math.min(secret.length - 1, all.length); n > 0; n--) if (secret.startsWith(all.slice(-n))) { keep = n; break; }
+      held = all.slice(all.length - keep);
+      return all.slice(0, all.length - keep);
+    },
+    flush() { const rest = held; held = ''; return rest; },
+  };
+}
