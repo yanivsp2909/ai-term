@@ -8,7 +8,7 @@ import { Transcript } from '../src/agent/transcript.js';
 import { worstCase } from '../src/agent/limits.js';
 import { catalogTokens, extensionTokens, type ExtensionAccess, type ExtensionFile } from '../src/shared/extensions.js';
 import type { AgentFacts } from '../src/shared/agent-facts.js';
-import type { AgentStatus, Reporter, TokenUsage } from '../src/agent/report.js';
+import type { AgentStatus, Reporter } from '../src/agent/report.js';
 import { stubFacts } from './fixtures/agent-facts.js';
 
 // v0.4 gate (Yaniv): before each request the output allowance is sized so its worst case (input + max output × output
@@ -25,7 +25,7 @@ class Harness implements Reporter, AgentIO {
   statuses: AgentStatus[] = []; pauses: string[] = []; worst: number[] = [];
   constructor(public current: AgentFacts | null, private readonly answers: boolean[] = []) {}
   async status(update: AgentStatus) { this.statuses.push(update); }
-  async usage(_model: string, _tokens: TokenUsage) { return true; }
+  async usage() { return true; }
   async facts(model: string) { return this.current && { ...this.current, model }; }
   text() {} toolStart() {} toolEnd() {} note() {}
   async approve() { return true; }
