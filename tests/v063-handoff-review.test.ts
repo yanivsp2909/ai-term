@@ -88,3 +88,38 @@ it('MEDIUM: a booking that fails never stops the daemon (no unhandled rejection)
   expect(errors).toContain('Budget reservation could not be booked');
   await ledger.close();
 });
+
+import { requestTimeout } from '../src/client/connection.js';
+it('HIGH: the client waits as long as a handoff can take (note, start, stop), and the plan longer than a quick request', () => {
+  expect(requestTimeout('sessions.handoff')).toBeGreaterThanOrEqual(360_000);
+  expect(requestTimeout('sessions.handoffPlan')).toBeGreaterThanOrEqual(30_000);
+  expect(requestTimeout('sessions.list')).toBe(5000);
+});
+it('HIGH: with no key, an agent still working is refused, so its pending reply can never become the note; /send waits too', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-handoff-stale-'))), paths = getPaths(root); await preparePaths(paths);
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off', handoff: true }), { mode: 0o600 });
+  const log = new Logger(paths.log), usage = new UsageService(root, log), manager = new SessionManager(paths, log, undefined, undefined, undefined, undefined, usage);
+  await usage.start(); await manager.load(); cleanups.push(async () => { await manager.shutdown(); await usage.close(); });
+  const real = pty.spawn;
+  vi.spyOn(pty, 'spawn').mockImplementation((_file, _args, options) => real('/bin/sh', ['-c', 'printf ready; read done; sleep 30'], { ...options, env: { PATH: '/usr/bin:/bin' } }));
+  vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
+  const source = await manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: root, permission: 'ask', title: 'fixer' });
+  await expect.poll(() => manager.get(source.id).status).toBe('running');
+  await expect(manager.handoff(source.id, 'claude-code')).rejects.toThrow('Agent is still working · hand off when it is done');
+});
+it('MEDIUM: the source exiting while the note is written is charged once, and no new agent starts from it', async () => {
+  let release = () => {}; const gate = new Promise<void>(resolve => { release = resolve; });
+  const d = await daemon(async () => { await gate; return { text: '## Goal\nship', inputTokens: 100, outputTokens: 20 }; });
+  const handing = d.manager.handoff(d.source.id, 'claude-code');
+  await new Promise(resolve => setTimeout(resolve, 100));
+  await d.manager.stop(d.source.id);
+  release();
+  await expect(handing).rejects.toThrow('Agent exited before the handoff finished');
+  const usage = (d.manager as unknown as { usage: UsageService }).usage;
+  const worst = usage.summary().today.costUsd;
+  expect(worst).toBeGreaterThan(0);
+  expect(d.manager.list().filter(s => s.engine === 'claude-code')).toHaveLength(0);
+  // One charge: the held worst case, not that plus the real usage.
+  expect(worst).toBeCloseTo((d.manager as unknown as { lastHandoffWorst: number }).lastHandoffWorst, 10);
+});

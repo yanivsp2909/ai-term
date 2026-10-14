@@ -177,3 +177,16 @@ it('/settings has its own switch for handoff, off by default; g toggles it', asy
   await panel.key('g'); expect(settings.handoff).toBe(true);
   expect(panel.lines().join('\n')).toContain('handoff: on · /handoff spends tokens (g)');
 });
+it('MEDIUM review: /handoff refuses a name two agents share, like /send', async () => {
+  const now = new Date().toISOString(), base = { engine: 'codex' as const, model: null, auth: { kind: 'account' as const }, cwd: '/tmp', permission: 'ask' as const, status: 'done' as const, statusDetail: 'done', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null };
+  const twins: SessionInfo[] = [{ ...base, id: randomUUID(), title: 'Codex' }, { ...base, id: randomUUID(), title: 'Codex' }];
+  const requests: RequestBody[] = [];
+  const client = new (class extends EventEmitter { async request(body: RequestBody): Promise<SuccessResponse> { requests.push(body); const r: SuccessResponse = { id: randomUUID(), ok: true }; if (body.kind === 'settings.get') r.settings = { theme: 'graphite', handoff: true }; if (body.kind === 'sessions.list') r.sessions = twins; if (body.kind === 'sessions.preview') { r.snapshot = 'x'; r.cols = 85; r.rows = 30; } return r; } })();
+  const tty = new TTY(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp', terminalProgram: 'unknown' });
+  await home.start();
+  try {
+    type(tty, '/handoff Codex claude'); enter(tty);
+    await shows(tty, '2 agents are named Codex · rename one with r');
+    expect(requests.some(r => r.kind === 'sessions.handoffPlan')).toBe(false);
+  } finally { await home.stop(); }
+});
