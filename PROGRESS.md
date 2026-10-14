@@ -1,6 +1,111 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: dd87b1b fix: quit immediately when no MCP cleanup is required
+Roadmap step: v0.4.4 MCP servers and Codex discovery — done (real servers, Keychain and real-folder checks need Yaniv below)
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 9ffac2f after `git pull --ff-only` (already up to date). Baseline: 169 files / 1079 passed / 2 existing opt-in Keychain skips. Final: 173 files / 1108 passed / the same 2 skips, twice consecutively. Session: Codex, GPT-6.1 Sol, high. No real daemon was stopped or real CLI folders/credentials/native Keychain entries inspected.
+Prompt vs code and decisions:
+- The checkpoint matches the code. S21 previously excluded Codex skills/agents; this step adds those two roots without relaxing the CLI config denial.
+- The plan's ui.ts reference is stale; actual agent UI is app.ts and screen.ts. RTK.md is still absent.
+- Literal source grep already contains four `sk-` redaction/rejection guards and two lines of RegExp `.exec`, not process execution or stored keys. They remain intact. No new such hits, execSync or shell:true were added.
+- All configured MCP env/header values are treated as secret; there is no plaintext-value storage option. Masked user input follows the existing transient inward-only key-add socket pattern to the daemon. This is the documented interpretation of the prompt's protocol rule: no outward value, model prompt, transcript, settings or log contains a secret; the inbound secret-entry request necessarily carries the new value once.
+- MCP servers are trusted third-party programs with cwd set to the agent folder; this is not an OS sandbox, like existing S19 bash. No new permissions or Don't ask bypass were introduced. HTTPS or loopback HTTP only, no URL query/userinfo/fragment, no redirects or OAuth. Approving an add form authorizes that own server; project servers require separate exact-entry approval.
+
+## What works
+- **Task 0 — Codex discovery** (`c153ab6`, S21 docs in `8120cca`): ~/.codex/skills and ~/.codex/agents through the same D48 reader and symlink/deny rules. Markdown and restricted TOML name/description/instructions or imported developer_instructions; operational TOML fields never grant models/permissions. Unsupported definitions skip with a note. Temp-home tests and adversarial alias/race probes ran; no real home inventory was read.
+- **Task 1 — own/project MCP list** (`1c6eb19`, `8120cca`): `/mcp`, `/mcp add`, `/mcp remove <name>` on homepage and agent, configurations and switches in AI Term settings only. Bounded project `.mcp.json` goes through the reader, offered without starting anything. Exact command/argv or URL is paged for per-server approval; canonical config/value hash is rechecked on use, changed entries ask again. Unsupported/login servers have fixed notes. No CLI MCP configuration reads or project writes.
+- **Task 2 — runtime** (`1c6eb19`, review fixes below): custom bounded stdio transport uses Node spawn with exact argv, fixed minimal env plus only server values, agent cwd, drained stderr and owned process groups. Streamable HTTP uses the AI SDK with an exact-URL/no-redirect guard and cancellation. Servers start on selection, homepage discovery probes stop immediately, agent exit/removal/server-off stop connections, Ctrl+K stops active, idle and pending MCP work including descendants. Errors are fixed lines.
+- **Task 3 — secrets** (`1c6eb19`, review fixes below): keys.ts changes only add MCP accounts `mcp:<opaque server-id>:<name>`, payload bound to approval hash. Keychain stubs store values; settings and views have names/last four only (short secrets expose no suffix). Secrets duplicated in public config, including JSON text, are refused before writes. Schema/result/metadata redaction handles raw and JSON-escaped string spellings. Tests prove settings/logs/outward replies exclude values.
+- **Task 4 — tools/cost/Ask** (`1c6eb19`, `8120cca`, `0802dd2`): only enabled server/tool names and capped descriptions enter the prompt. `mcp_tools` loads metadata or the selected tool's schema; `mcp_call` requires that schema and always Ask, even in Don't ask. Shows folder/server/tool/arguments; y/n or typed a for this exact configuration/tool/session, no permanent permission. Identity/hash and on/off rechecked after approval. Children share the parent's access/session/cancellation and existing budget reporter. Turning switches off clears stale content on the next turn; first discovery preserves task history. Token totals use the same deterministic UTF-8 bytes/three estimate; model requests still share caps/budgets.
+- **Task 5 — popup/docs** (`8120cca`): same Skills/Agents/Commands/MCP popup on both surfaces. MCP rows show source, on/off, description and token estimate; total in header, MCP count/cost in banner. Arrows/Space/Enter/Esc, d explicit discovery, a masked add form; exact approval is typed and paged. README full command/key list, architecture S21/S22 and §12.8, implementation choices in v0.4 plan.
+
+## What's next
+- Next roadmap step: v0.4.5 according to the v0.4 plan. No product work from it started.
+- Real-server/native-Keychain/real-Codex inventory checks below need Yaniv. Existing transcript resume, opt-in compact, catalog refresh and older manual deferrals are retained in the previous checkpoints.
+
+## Reviews
+Fresh high TypeScript, security and final general code reviews ran serially with root paused. Reviewers were read-only, used temporary homes/processes/stub HTTP/vault/model only, and reported concrete requirement/correctness/security findings. Every finding received a failing-test commit before its fix.
+- TypeScript HIGH: escaped secrets in structured schema/result — `9718636` → `b4f9839`.
+- TypeScript HIGH: escaped secret duplication in public config — `83788c7` → `4d8f0cf`.
+- TypeScript HIGH: cancellation before pending selection starts a connection — `f42c7e2` → `72ca4f1`.
+- TypeScript HIGH: close before spawn callback leaves child alive — `89fde17` → `b9096e8`.
+- Security HIGH: secret inside ordinary JSON text in schema/result — `0dd8392` → `15a1f99`.
+- Security HIGH: secret inside public JSON argv — `9b02ebd` → `67d65a4`.
+- Security MEDIUM: Ctrl+K skipped idle connections/popup discovery — `810262d` → `69056ca`; `82302ad` supplies the missing extension catalog in the popup test fixture. Final focused test passes.
+- Final MEDIUM: first discovery unnecessarily cleared conversation — `c2fcbee` → `0802dd2`.
+- Full-suite compatibility regression: non-MCP Ctrl+C quit became asynchronous — `ee12094` → `dd87b1b`.
+- Final follow-up verified both final fixes, 2 files / 16 tests, no remaining findings. Prior security fixes were also inspected by the general review.
+- Reader probes: denied aliases, .., case/Unicode and final/parent symlink swaps yielded zero denied content reads. Project aliases escaping its folder, hard links and private CLI roots were refused. No further TOML/reader findings.
+
+## Check output
+Actual final output (commands exit 0):
+```text
+npm run typecheck
+> ai-term@0.1.1 typecheck
+> tsc --noEmit
+
+npm run lint
+> ai-term@0.1.1 lint
+> eslint .
+
+npm run build
+ESM dist/cli/main-7POJ4EDF.js              225.93 KB
+ESM ⚡️ Build success in 27ms
+
+npm test -- --reporter=dot (1)
+ Test Files  173 passed (173)
+      Tests  1108 passed | 2 skipped (1110)
+   Duration  17.70s (tests 92%, import 6%, transform 2%)
+
+npm test -- --reporter=dot (2)
+ Test Files  173 passed (173)
+      Tests  1108 passed | 2 skipped (1110)
+   Duration  17.36s (tests 92%, import 6%, transform 2%)
+```
+- Both full runs are consecutive after the last code fix. Earlier final run found the immediate-exit regression; repaired before restarting the pair. Implementation/review runs used only touched tests.
+- The two skips are existing opt-in native Keychain tests, not enabled under the user's no-real-Keychain constraint. Existing passing PTY flood tests emit EIO/EBADF stderr, as in the baseline.
+- Source grep: literal CLI extension-root paths occur only in the reader. No new `.exec(`, `execSync(`, `shell: true` or secret-prefix source hits; existing RegExp calls/redaction guards above are the only literal exceptions. No process exec/execSync/shell:true. `git diff --check 9ffac2f..HEAD` clean.
+- Restricted source/trees unchanged (env.ts, notifier, worktree deletion, spikes and repo dot-agent folders). keys.ts changes only MCP entry support. All tests use temporary state and stub Keychain; no real ~/.ai-term, daemon stop, credential read, env-file read, external API request or computer use. External network only git pull/push and the authorized package install.
+
+## Manual checks
+- Temp-home Codex/TOML/denied aliases/races/project reader caps: ran; allowed definitions listed, denied files never content-read, malformed files skipped.
+- Stub stdio/HTTP, exact URL/no redirects, no inherited provider/AI Term env, secret Keychain-only storage/redaction, hash approval/reapproval, server/tool toggles and deferred schemas: ran.
+- Stub model Ask/deny/session allow including Don't ask, disabled metadata/token total, changed approval refused, preserved follow-up context: ran.
+- Ctrl+K slow call, pre-selection cancel/exit, early spawn, descendants, idle and popup discovery, cleanup before quit: ran with temporary processes/stubs.
+- Headless MCP tab/form/read-only/paged approval/token controls and isolated cancel transport: ran.
+- `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js` # reload when convenient; this stops running agents — needs Yaniv, not executed here.
+- `cd ~/ai-term && node dist/cli/index.js` # /mcp add: enter a local server you use, exact executable plus JSON argv, env names and masked values; review and save — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` # keyed AI Term agent in Ask: ask for that server/tool, load schema, inspect server/tool/arguments, y allows and n denies — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` # at the same tool's Ask prompt, typed a allows for this session; invoke again, then start a fresh session to see Ask again — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` # /cd to a project with .mcp.json, /mcp, d on one entry: approve exact entry once; edit its command/URL, d again must ask — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` # /mcp: arrows/tab, d, token totals, Space server/tool off, Enter read-only details, Esc; Ctrl+K during a slow call and after idle discovery — needs Yaniv.
+- `cd ~/ai-term && node dist/cli/index.js` # /skills and /agents: verify real Codex definitions/source/token totals and a TOML agent; no real inventory was inspected here — needs Yaniv.
+
+## Gotchas
+- CLI MCP files remain forbidden. Add AI Term's own server explicitly or use a bounded project .mcp.json offered for per-entry approval.
+- Browsing caches is not server discovery. Use d to discover explicitly, or let the model select a server; schemas never join the initial prompt.
+- Env/header values are all secrets, delivered inward once by the masked add form; no plaintext value option. Keychain payload hash binding prevents redirected configuration from reusing an old value. Own server IDs are opaque, project IDs include canonical folder/name.
+- Stdio has host access, no OS sandbox; cwd/env/argv are controlled. Fixed PATH may require an absolute executable path for version-manager installations. HTTP is Streamable HTTP, not OAuth or legacy SSE login.
+- Per-session tool allowances are not saved. Server/tool switches are saved, changing selection clears prior bodies; first discovery does not erase the user's task.
+- Existing 16 KiB UTF-8 settings cap remains: an oversized configuration/switch set refuses atomically and preserves prior readable settings. Server count 16 own + 16 project, 64 tools/server, 240-char descriptions, 1 MiB transport, 64 KiB project/schema/result/arguments caps.
+- Real manual checks must reload the daemon when convenient; this session deliberately left Yaniv's daemon untouched.
+
+## New dependencies
+- @ai-sdk/mcp 2.0.74: authorized AI SDK MCP client for negotiation/cancellation/Streamable HTTP. Node/existing AI SDK did not provide this client; its default stdio inherits ambient env/stderr, so a small custom transport enforces the required boundary. Installed with --ignore-scripts; npm reported one low vulnerability, no audit/upgrade network action performed.
+
+## Concepts introduced
+- **Approval hash (`src/daemon/mcp/project.ts`, `service.ts`):** approval names the executable configuration and values, not just a friendly name. Re-reading and comparing that hash keeps an edited project entry from inheriting permission.
+- **Connection owner (`src/daemon/mcp/runtime.ts`, `service.ts`):** every live agent owns pending requests and server connections. Cancellation registers before asynchronous selection, so stopping the owner also stops work that has not spawned yet.
+- **Hash-bound secret (`src/daemon/keys.ts`):** a MCP Keychain account stores its value together with the approved hash. A changed URL/argv cannot use the old value until explicitly approved again; only daemon-owned server requests receive it.
+- **Deferred schema (`src/agent/agent.ts`, `src/shared/mcp.ts`):** a short manifest helps the model select a server/tool; a separate tool result supplies that schema only when selected. Discovery updates metadata without dropping task history, while explicit switches clear stale loaded content.
+- **Structured redaction (`src/daemon/mcp/runtime.ts`):** redact strings and object keys before serializing, including the JSON-escaped spelling inside ordinary text. Comparing a raw secret against serialized JSON is insufficient because quotes/backslashes change its representation.
+
+---
+
+## Previous checkpoint (v0.4.3, retained)
+
+## Checkpoint
 Last commit: 2d905f3 test: select menu entries by their registered name
 Roadmap step: v0.4.3 skills, subagents, slash commands and load controls — done (real folders and real-key turns need Yaniv's manual checks below)
 Branch: main. This handover is the last commit; its own hash is in git log.
