@@ -117,3 +117,10 @@ it('refuses resolved command aliases to known credential stores before opening t
   }
   const c=new ExtensionReader(home,project).scan();expect(c.items).toEqual([]);expect(c.notes.filter(n=>n.includes('denied'))).toHaveLength(9);
 });
+
+it('refuses hard-linked aliases of denied auth files without reading their contents',async()=>{
+  const {home,project,file}=await setup(),target=await file('.codex/auth.json','MOCK PRIVATE CONTENT');
+  await mkdir(join(home,'.claude/commands'),{recursive:true});await link(target,join(home,'.claude/commands/hardlink.md'));
+  vi.mocked(fs.readSync).mockClear();const c=new ExtensionReader(home,project).scan();
+  expect(c.items).toEqual([]);expect(c.notes.some(n=>n.includes('hard link'))).toBe(true);expect(fs.readSync).not.toHaveBeenCalled();
+});
