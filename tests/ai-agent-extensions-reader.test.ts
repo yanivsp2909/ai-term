@@ -20,19 +20,32 @@ async function setup() {
 }
 const skill = (name: string, description = 'A short description') => `---\nname: ${name}\ndescription: ${description}\n---\nBODY-${name}`;
 
-it('reads exactly the five user roots and four project roots, following shared links inside the home', async () => {
+it('reads the seven user roots and four project roots, following shared links inside the home', async () => {
   const { home, project, file } = await setup();
   for (const [folder, name] of [['.claude/skills/a','a'],['.agents/skills/b','b'],['work/.claude/skills/c','c'],['work/.agents/skills/d','d']]) await file(`${folder}/SKILL.md`, skill(name ?? ''));
   for (const folder of ['.claude/agents','work/.claude/agents','.claude/commands','work/.claude/commands','.codex/prompts']) await file(`${folder}/run.md`, `---\ndescription: Do something\n---\nDo $ARGUMENTS`);
   await file('.codex/skills/excluded/SKILL.md', skill('excluded'));
   const shared = await file('shared/e/SKILL.md', skill('e')); await symlink(dirname(shared), join(home,'.agents/skills/e'));
   const reader = new ExtensionReader(home, project), catalog = reader.scan();
-  expect(catalog.items).toHaveLength(7); // The duplicate command name prefers this project; agent name does too.
-  expect(catalog.items.map(i=>i.name)).not.toContain('excluded');
+  expect(catalog.items).toHaveLength(8); // The duplicate command name prefers this project; agent name does too.
+  expect(catalog.items.find(i=>i.name==='excluded')?.source).toBe('Codex');
   expect(catalog.items.find(i=>i.name==='e')?.source).toBe('shared');
   expect(reader.read(catalog.items.find(i=>i.name==='a')?.id ?? '').body).toBe('BODY-a');
   expect(validateExtensionCatalog(catalog)).toBe(catalog);
   expect(validateExtensionFile(reader.read(catalog.items[0]?.id ?? ''))).toBeTruthy();
+});
+
+it('reads Codex TOML text instructions and ignores operational settings without opening denied aliases',async()=>{
+  const {home,project,file}=await setup();
+  await file('.codex/agents/review.toml',`name = "review"\ndescription = "Review carefully"\ninstructions = """\nKeep the diff small.\nAsk before commands.\n"""\nmodel = "unkeyed"\n`);
+  await file('.codex/agents/imported.toml',`name = 'imported'\ndeveloper_instructions = '''Use the installed instructions.'''\n`);
+  await file('.codex/agents/broken.toml','name = "broken"\ninstructions = """never closes');
+  await file('.codex/agents/other.json','{}');
+  const secret=await file('.codex/config.toml','private');await symlink(secret,join(home,'.codex/agents/alias.toml'));
+  const reader=new ExtensionReader(home,project),catalog=reader.scan();
+  expect(catalog.items.map(i=>i.name)).toEqual(['imported','review']);
+  expect(reader.read(catalog.items.find(i=>i.name==='review')?.id??'').body).toContain('Ask before commands.');
+  expect(catalog.items.find(i=>i.name==='review')?.model).toBeUndefined();expect(catalog.notes).toHaveLength(3);
 });
 
 it('denies credential, auth, config, env, history and data paths after symlink resolution, with case folding', async () => {

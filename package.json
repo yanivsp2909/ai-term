@@ -36,6 +36,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.79",
     "@ai-sdk/azure": "4.0.101",
+    "@ai-sdk/mcp": "2.0.74",
     "@ai-sdk/openai": "4.0.93",
     "@napi-rs/keyring": "2.1.1",
     "@xterm/addon-serialize": "0.14.0",

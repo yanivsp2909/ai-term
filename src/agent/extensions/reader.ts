@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { EXTENSION_FILE_BYTES, EXTENSION_TOTAL_BYTES, EXTENSION_MAX_ITEMS, extensionTokens, catalogTokens, type ExtensionCatalog, type ExtensionFile, type ExtensionKind, type ExtensionSource } from '../../shared/extensions.js';
 import { parseExtension } from './frontmatter.js';
+import { parseCodexAgent } from './toml.js';
 
 const under = (root: string, path: string) => path === root || path.startsWith(root + sep);
 export function deniedExtensionPath(home: string, path: string, directory = false): boolean {
@@ -47,7 +48,7 @@ export class ExtensionReader {
       ['.claude/skills', 'skill', 'this project'], ['.claude/agents', 'agent', 'this project'], ['.claude/commands', 'command', 'this project'], ['.agents/skills', 'skill', 'this project'],
     ].map(([path, kind, source]) => ({ path: join(projectRoot, path ?? ''), kind: kind as ExtensionKind, source: source as ExtensionSource }));
     for (const [path, kind, source] of [
-      ['.claude/skills', 'skill', 'Claude'], ['.claude/agents', 'agent', 'Claude'], ['.claude/commands', 'command', 'Claude'], ['.codex/prompts', 'command', 'Codex'], ['.agents/skills', 'skill', 'shared'],
+      ['.claude/skills', 'skill', 'Claude'], ['.claude/agents', 'agent', 'Claude'], ['.claude/commands', 'command', 'Claude'], ['.codex/prompts', 'command', 'Codex'], ['.codex/skills', 'skill', 'Codex'], ['.codex/agents', 'agent', 'Codex'], ['.agents/skills', 'skill', 'shared'],
     ] as const) this.roots.push({ path: join(this.home, path), kind, source });
   }
   scan(overrides: Record<string, boolean> = {}): ExtensionCatalog {
@@ -81,7 +82,8 @@ export class ExtensionReader {
           return;
         }
         if (!info.isFile()) { note(logical, 'not a regular file'); return; }
-        if (kind === 'skill' ? basename(logical) !== 'SKILL.md' : !logical.endsWith('.md')) return;
+        const toml = kind === 'agent' && source === 'Codex' && logical.endsWith('.toml');
+        if (kind === 'skill' ? basename(logical) !== 'SKILL.md' : !logical.endsWith('.md') && !toml) { note(logical, 'unsupported file'); return; }
         if (info.size > EXTENSION_FILE_BYTES || bytes + info.size > EXTENSION_TOTAL_BYTES) { note(logical, 'size limit'); return; }
         const buffer = Buffer.alloc(Math.min(info.size + 1, EXTENSION_TOTAL_BYTES - bytes)), count = readSync(fd, buffer, 0, buffer.length, 0);
         // Rejected contents still consumed IO and memory. Charge them before decoding or parsing can throw.
@@ -90,7 +92,7 @@ export class ExtensionReader {
         if (count !== info.size || after.size !== info.size || after.nlink !== 1 || realpathSync(logical) !== real) throw new Error('changed file');
         const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, count));
         if (text.includes('\0')) throw new Error('binary file');
-        const parsed = parseExtension(text, kind, kind === 'skill' ? basename(resolve(logical, '..')) : basename(logical, '.md'));
+        const parsed = toml ? parseCodexAgent(text, basename(logical, '.toml')) : parseExtension(text, kind, kind === 'skill' ? basename(resolve(logical, '..')) : basename(logical, '.md'));
         const nameKey = kind + ':' + parsed.name;
         if (names.has(nameKey)) { note(logical, 'name clash; first source wins'); return; }
         names.add(nameKey);
