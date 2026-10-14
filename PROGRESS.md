@@ -1,6 +1,83 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 77ee7d8 test: capture the paste-then-prompt outcome at once; document the login flag
+Roadmap step: remaining homepage commands + B24 (tasks 1–8) done
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at ec8a01c after `git pull --ff-only` (already up to date). Baseline 141 files / 886 passed / 2 opt-in Keychain skips. Final 147 files / 937 passed / same 2 skips, twice in a row. Session: Claude Code, Opus 5.5 (the prompt was written for Codex; it was pasted into this session, as with v0.3 splits).
+Prompt vs code:
+- **`u` didn't exist.** design.md lists `u` as "Usage details (… v0.1 can ship without it)" and it never shipped. `/usage` and `u` now open that popup, by period and provider: the daemon's summary has no by-model or by-agent breakdown, so those wait.
+- **The first message is not kept** anywhere after spawn (it goes into argv only), so `/retry` never resends it and says so.
+- **Retry replaces the old record** (the prompt says "restart the selected agent"); the worktree record is untouched. A failed `/login` session reruns the login; sessions started by /login now carry `login: true` (older login records lack it and would retry as an agent).
+- **`/send` gates beyond the prompt:** besides permission/question waits, exited agents and attached agents (any session or split, on any client), an AI agent must have sent one hook or run-state signal first, because Claude's and Codex's folder-trust prompts report nothing and an Enter there accepts. In practice: start agents with a first message, or go inside once. Without bracketed paste only one line may go. Enter is a separate write 50 ms after the paste, rechecked; kitty flag 8 makes it CSI 13 u.
+- **`/send` limits:** 16 KB (16,384 UTF-8 bytes), the first-message cap. Controls except newlines are dropped, tabs included (the prompt says "stripped"). Names match exactly; with names that prefix each other the longest wins (reviewers flagged the surprise; the success note names the recipient).
+- **B24 note is a `daemon.notice`, not a warning.** A daemon warning holds the note line, so it would have hidden every other note (including /send refusals) for the daemon's lifetime. Found by running the built app. It shows each time a homepage opens until the daemon restarts.
+- **B24 scope:** a corrupt or symlinked state.json is moved aside (the link itself; its target untouched), not refused. A non-list `worktrees` field counts as validate. A single invalid worktree record is still skipped (existing documented behaviour) rather than moving the whole file.
+- **`/open`:** `/usr/bin/open -- <path>` was checked to honour `--` (a missing path, no GUI). A folder whose name has an extension (`Tool.app`) is revealed with `-R` instead of launched (review L3). `code` gets a minimal env allowlist, never the shell's API keys.
+- No protocol version bump: `sessions.retry`, `sessions.send`, `sessions.find` and `daemon.notice` are additive. An old daemon answers the new commands with "Unknown request kind" until it restarts.
+- homepage.ts is now 818 lines (over the 800 guideline); the new handlers live in their own modules where they could.
+
+## What works
+- **`/retry`** (`session-manager.ts retry`, homepage `retrySelected`): same engine, model, auth, effort, mode and folder, in its worktree if the record and folder still exist; a new Claude conversation, never Codex's resume picker; an agent that ran in place stays in place even with worktrees turned back on. Refused: running (`<name> is still running · /retry restarts finished agents`), worktree gone, folder gone, a worktree another live agent uses, a busy worktree, a retry already starting.
+- **`/send <agent> <text>`** (D50; `send-command.ts`, `session-manager.ts unsendable/send/caughtUp`): Tab completes and cycles running agents; paste tokens go whole; one bracketed paste then Enter. Refusals name the agent: `<agent> is asking for permission, go inside to answer`, `… is asking a question, …`, `… is open in a session or split · type there`, `… has exited · /retry restarts it`, `… may be asking to trust its folder · go inside first`, `… is printing too fast to check · try again`, `… started asking something · text pasted but not sent, go inside`. The daemon waits for its mirror to parse every earlier chunk (and the status signals they queue) before the paste and before Enter. Text is never logged or saved.
+- **`/find <text>`** (`mirror.ts find`, `find-panel.ts`, `preview.ts scrollTo`): plain text, case-folded, scrollback + screen, soft wraps joined; ≤ 200 query chars, ≤ 50 hits per agent, 200 total. Popup rows: agent name, line with the match accent + bold. ⏎ selects the agent (showing a hidden preview) and scrolls so the line sits a third down, refinding the matched text near the reported row if the agent printed since.
+- **`/open`, `/open code`** (`open-folder.ts`, `shared/executable.ts`): worktree root or cwd; fixed one-line reasons.
+- **`/doctor`** (`cli/doctor.ts doctorLines`): the same redacted lines as `ai doctor`, in a popup; `ai doctor` still prints as it goes.
+- **`/budget`** = `b`; **`/usage`** = **`u`** (new key) = usage details popup.
+- **B24** (`store.ts moveAside`, `session-manager.ts load/readSaved/validateState/migrateState`): read, parse, validate or migrate failure → `state.json.corrupt-<ISO timestamp>` (0600, `-N` if taken), empty list, fixed log `Agent list could not be loaded (<stage>)`, note `couldn't read your agent list; saved it as <file>`. If it can't be moved, the daemon stops with a fixed reason and the file untouched. Lost worktree records leave those folders `Not in AI Term's record`, so S14 refuses to delete them (tested).
+- Docs: README command list and keys, design.md (/find popup and the other commands), architecture (requests, B24, D50 as built, S17).
+
+### Tried in the built app (headless PTY, temporary HOME and AI_TERM_HOME, its own daemon, stopped after)
+B24 note and move-aside; `/send one echo sent-$((40+2))` ran in a zsh login shell (the preview showed `sent-42`); `/send` unknown name, missing text and Tab completion; `/find` popup and Enter; `/doctor` popup (claude/codex not found on that PATH); `/usage`, `u`, `/budget`; `/retry` refusing a running shell and restarting a stopped one. `/open` was not run: it would open a Finder window on Yaniv's screen.
+
+### Reviewers (fresh context, high, diff ec8a01c..HEAD)
+- **security-reviewer:** no CRITICAL or HIGH. MEDIUM M1 (status could be stale behind the mirror queue), LOW L1 (a context report counted as "reported"), L3 (`.app` folder launched), L4 (a directory named `code` shadowed PATH), L6 (non-list worktrees dropped) → failing tests b034167, fixes 0dcfd00. L2 (shells ungated) and L5 (longest-name rule) are by design and documented; the lost-Claude-hook window (M1 part 1) can't be closed here and is documented in D50 and the README.
+- **typescript-reviewer:** no CRITICAL or HIGH. MEDIUM: concurrent retries both started; login sessions retried as agents; a /find hit scrolled past its line after more output. LOW: final sigma never matched → failing tests ae28736, fixes 430aa75. LOW longest-name rule (by design), skipped invalid worktree record (existing behaviour) and `.app` (already fixed) not changed. It saw one unrepeatable failure of the paste-then-prompt race test; that test now captures its outcome at once (77ee7d8).
+
+### Final check output
+```
+npm run typecheck   > tsc --noEmit                      (exit 0)
+npm run lint        > eslint .                          (exit 0)
+npm run build       ESM ⚡️ Build success in 22ms
+npm test (1)        Test Files  147 passed (147) · Tests  937 passed | 2 skipped (939) · 14.53s
+npm test (2)        Test Files  147 passed (147) · Tests  937 passed | 2 skipped (939) · 14.43s
+```
+
+## What's next
+- The next roadmap step. Nothing is left from this one except the manual checks below.
+
+## Manual checks
+All need Yaniv, after restarting the daemon when it's safe (`cd ~/ai-term && node dist/cli/index.js daemon stop`):
+- /send to an idle agent, needs Yaniv: `cd ~/ai-term && npm run build && node dist/cli/index.js`, start an agent with a first message, wait for it to finish (✓ done), then `/send <name> ` + Tab, paste two lines, ⏎: `✓ sent to <name> · 2 lines` and the agent gets one message.
+- /send to one asking permission, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`, ask an agent in Ask mode to run a shell command, and while it shows `◐ waiting · permission` type `/send <name> 1` ⏎: `<name> is asking for permission, go inside to answer` and nothing reaches it.
+- /send to a fresh agent at its trust prompt, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`, start an agent with no first message in a new worktree, `/send <name> hi` ⏎: `<name> may be asking to trust its folder · go inside first` (also confirms the reviewers' L1 assumption).
+- /retry, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`, select a failed or exited agent, `/retry` ⏎: it restarts in the same worktree (same `ai/<slug>` on the card) and the old card is gone.
+- /find, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`, `/find error` ⏎, ↑↓, ⏎: that agent is selected and its preview shows the line with `↑ N lines back`.
+- /open, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`, select an agent, `/open` ⏎ (Finder opens its worktree), `/open code` ⏎ (VS Code, or the note when `code` isn't on PATH).
+- /doctor, needs Yaniv: `cd ~/ai-term && node dist/cli/index.js`, `/doctor` ⏎: the same lines as `ai doctor`; Esc closes.
+- B24, needs Yaniv (optional, uses a copy): `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js` once and quit, then `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js daemon stop && printf '{"sessions":[' > /tmp/ai-b24/state.json && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js`: the note names `state.json.corrupt-…`; then `AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js daemon stop`.
+- Headless (ran): the tests above and the built-app run listed under What works.
+
+## Gotchas
+- `/send` won't go to an AI agent until it has sent a hook or run-state signal; an agent started without a first message needs one visit inside first.
+- A Claude permission prompt is seen only through its HTTP hook. If the hook is lost, a `/send` during the prompt can still hit it (D50). Don't /send to an agent you expect to ask something.
+- In tests, unblock `/send` with a hook event such as `Stop`, not `AITermContext`; `SessionManager.sendEnterDelayMs` is static so a race test can widen the window (restore it).
+- `String.prototype.replace` with a string replacement eats `$$`; edit scripts that insert template literals must use split/join.
+- The macOS temp folder is `/var/folders/…` but `realpath` gives `/private/var/…`; worktree listings use the real path.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- **Moving aside instead of overwriting (`store.ts moveAside`):** a state file that fails to load is renamed, never read again or rewritten, before the daemon writes a fresh one. `rename` moves a symlink itself rather than its target, and only a regular file of ours is chmodded, because chmod follows links.
+- **Status freshness (`session-manager.ts caughtUp`):** the daemon's idea of an agent's status comes from parsing its output in order. Waiting on the output chain, then one `setImmediate`, means every chunk that arrived before the check, and the status signals it queued, is applied before /send decides.
+- **Counting from the bottom (`mirror.find`, `preview.scrollTo`):** the daemon's mirror and the homepage's preview keep different amounts of scrollback but end at the same row, so a row named by its distance from the end means the same line in both, until the agent prints more. Then the preview looks for the matched text nearest that row.
+
+---
+
+## Previous checkpoint (v0.3 splits, retained)
+
+## Checkpoint
 Last commit: 7c7a6b7 test: record split latency against a single raw attach
 Roadmap step: v0.3 splits (tasks 1–6) done
 Branch: main. This handover is the last commit; its own hash is in git log.
