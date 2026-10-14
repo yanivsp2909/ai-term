@@ -155,6 +155,22 @@ test('live native theme changes recolor the TUI through a fresh OSC11 probe', as
     await expect.poll(()=>page.evaluate(()=>String(Reflect.get(window,'themeOutput')))).toContain(`38;2;${rgb}`);
   }
 });
+test('native navigation closes search and returns typing focus to xterm', async () => {
+  const page=await application.firstWindow(),screen=page.locator('.xterm-accessibility-tree');
+  await expect(screen).toContainText('What do you want to build?');
+  await commandKey('E');
+  for(const key of ['K','T','E']){
+    await commandKey('F'); await expect(page.getByRole('textbox',{name:'Search scrollback'})).toBeFocused();
+    await commandKey(key);
+    await expect(page.getByRole('textbox',{name:'Search scrollback'})).toHaveCount(0);
+    await expect(page.locator('.xterm-helper-textarea')).toBeFocused();
+    if(key==='T'){
+      await expect(screen).toContainText('Start a new agent');
+      for(let row=0;row<4;row++)await page.keyboard.press('ArrowDown');
+      await page.keyboard.type('focus smoke');await expect(screen).toContainText('focus smoke');
+    }
+  }
+});
 
 test('a pasted authenticated control sequence does nothing in the real ai client', async () => {
   const page = await application.firstWindow(), screen = page.locator('.xterm-accessibility-tree');
