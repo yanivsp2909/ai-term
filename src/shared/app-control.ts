@@ -63,8 +63,10 @@ export class AppControlFilter {
     flush(); return parts;
   }
   flush(): Buffer {
-    // Only a bare Escape is ambiguous with a native key. Private prefixes never leak.
-    if (this.pending !== '\x1b' || this.emitted) return Buffer.alloc(0);
-    this.emitted = 1; return Buffer.from('\x1b');
+    // After the Escape timeout a bare Escape, or a prefix only a paste marker could complete (Option+[), is a real key.
+    // A longer prefix of the app control (Option+] is one) waits for its next byte, so a token can never leak as data.
+    if (this.control || !this.pending || this.pending !== '\x1b' && PREFIX.startsWith(this.pending)) return Buffer.alloc(0);
+    const held = this.pending.slice(this.emitted); this.emitted = this.pending.length;
+    return Buffer.from(held, 'latin1');
   }
 }

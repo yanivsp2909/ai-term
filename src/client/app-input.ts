@@ -3,12 +3,16 @@ import type { Input, Output } from './attach.js';
 import { AppControlFilter } from '../shared/app-control.js';
 import { BACKGROUND_QUERY, BackgroundReplies } from './tui/theme.js';
 
+const LATE_REPLY_MS = 2000;
 // All home/attach/split readers receive this stream. Only real stdin feeds the filter;
 // neither agent output nor the socket can dispatch a desktop command.
 export class AppInput extends EventEmitter implements Input {
   private readonly filter: AppControlFilter;
   private escapeTimer?: ReturnType<typeof setTimeout>;
   private probe?: { replies: BackgroundReplies; finish: (background?: string) => void; timer: ReturnType<typeof setTimeout> };
+  // A reply can come after its probe gave up (a hidden window's throttled renderer): it is swallowed for a while, never
+  // typed into the agent, whose CLI would read its Escape as an interrupt.
+  private late?: { replies: BackgroundReplies; until: number };
   readonly enabled: boolean;
   constructor(private readonly source: Input, token?: string) {
     super(); this.enabled = !!token; this.filter = new AppControlFilter(token);
@@ -23,7 +27,9 @@ export class AppInput extends EventEmitter implements Input {
     // The control filter has already resolved a lone Escape's ambiguity timeout.
     // Do not buffer that real key again while waiting for an OSC11 reply.
     const bareEscape = data.length === 1 && data[0] === 27;
-    const bytes = this.probe && !bareEscape ? this.probe.replies.push(data) : data;
+    if (this.late && Date.now() > this.late.until) this.late = undefined;
+    const replies = this.probe?.replies ?? this.late?.replies;
+    const bytes = replies && !bareEscape ? replies.push(data) : data;
     if (bytes.length) this.emit('data', bytes);
   }
   private receive = (value: Buffer | string): void => {
@@ -39,7 +45,7 @@ export class AppInput extends EventEmitter implements Input {
   background(stdout: Output): Promise<string | undefined> {
     this.probe?.finish();
     return new Promise((resolve, reject) => {
-      const finish = (background?: string): void => { if (this.probe) clearTimeout(this.probe.timer); this.probe = undefined; resolve(background); };
+      const finish = (background?: string): void => { if (this.probe) clearTimeout(this.probe.timer); if (background === undefined) this.late = { replies: new BackgroundReplies(() => undefined), until: Date.now() + LATE_REPLY_MS }; this.probe = undefined; resolve(background); };
       this.probe = { replies: new BackgroundReplies(finish), finish, timer: setTimeout(finish, 200) };
       try { stdout.write(BACKGROUND_QUERY); } catch (error) { finish(); reject(error); }
     });
