@@ -40,3 +40,17 @@ it('Stop retains a bounded reply only separately from status; tool/error metadat
  expect(parseClaudeStatus({hook_event_name:'PreToolUse',tool_name:'\x1b[31mAITERMCANARY'},1,at)?.event).not.toHaveProperty('tool');
  expect(parseClaudeStatus({hook_event_name:'StopFailure',error:'unknown'},1,at)?.event).toMatchObject({error:'unknown'});
 });
+it('counts Claude tools in flight: starts add, finishes subtract (never below 0), a new turn, done, a failed turn and exit reset', () => {
+  const at = new Date().toISOString(); let seq = 0;
+  const step = (state: ReturnType<typeof initialStatus>, event: Record<string, unknown>) => reduceStatus(state, { seq: ++seq, at, ...event } as Parameters<typeof reduceStatus>[1]);
+  let s = step(initialStatus(at), { kind: 'running', phase: 'turn-start' });
+  s = step(s, { kind: 'running', phase: 'tool-start', tool: 'Bash' }); s = step(s, { kind: 'running', phase: 'tool-start', tool: 'Read' });
+  expect(s.toolsInFlight).toBe(2);
+  s = step(s, { kind: 'waiting', reason: 'permission' }); expect(s.toolsInFlight).toBe(2);
+  s = step(s, { kind: 'running', phase: 'tool-finish' }); s = step(s, { kind: 'running', phase: 'tool-finish' }); s = step(s, { kind: 'running', phase: 'tool-finish' });
+  expect(s.toolsInFlight).toBe(0);
+  s = step(s, { kind: 'running', phase: 'tool-start' }); expect(step(s, { kind: 'done' }).toolsInFlight).toBe(0);
+  expect(step(s, { kind: 'running', phase: 'turn-start' }).toolsInFlight).toBe(0);
+  expect(step(s, { kind: 'waiting', reason: 'turn failed', error: 'unknown' }).toolsInFlight).toBe(0);
+  expect(step(s, { kind: 'exit', status: 'exited', detail: 'exited', exitCode: 0 }).toolsInFlight).toBe(0);
+});

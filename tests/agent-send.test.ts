@@ -112,3 +112,24 @@ it('review L1: a status-line context report alone does not count as having repor
   await m.send(session.id, 'hello');
   expect(writes).toEqual(['\x1b[200~hello\x1b[201~', '\r']);
 });
+
+it('late hook: /send is refused while a Claude tool call is in flight, since its permission prompt may not be reported yet', async () => {
+  const { m, session, writes, feed, status } = await agent();
+  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'Stop' });
+  await status({ hook_event_name: 'UserPromptSubmit' });
+  await status({ hook_event_name: 'PreToolUse', tool_name: 'Bash' });
+  // The PermissionRequest hook is lost or late: the agent still reads as running.
+  expect(m.get(session.id).status).toBe('running');
+  await expect(m.send(session.id, 'y')).rejects.toThrow('Agent is running a tool');
+  // Two tools in parallel: one finishing leaves the other in flight.
+  await status({ hook_event_name: 'PreToolUse', tool_name: 'Read' });
+  await status({ hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  await expect(m.send(session.id, 'y')).rejects.toThrow('Agent is running a tool');
+  await status({ hook_event_name: 'PostToolUseFailure', tool_name: 'Read' });
+  await m.send(session.id, 'between tools');
+  // A turn that ends resets the count even if a finish hook was lost.
+  await status({ hook_event_name: 'PreToolUse', tool_name: 'Bash' });
+  await status({ hook_event_name: 'Stop' });
+  await m.send(session.id, 'after the turn');
+  expect(writes).toEqual(['\x1b[200~between tools\x1b[201~', '\r', '\x1b[200~after the turn\x1b[201~', '\r']);
+});
