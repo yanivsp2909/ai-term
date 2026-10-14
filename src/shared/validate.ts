@@ -144,7 +144,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'sessions.handoffPlan':
         case 'sessions.handoff':
             fields=v.kind==='sessions.handoff'?['sessionId','engine','writer']:['sessionId','engine'];
-            if(!isUUID(v.sessionId)||!isCliEngine(v.engine)||v.writer!==undefined&&!isHandoffWriter(v.writer))throw new ValidationError('Invalid handoff request');break;
+            if(!isUUID(v.sessionId)||!isCliEngine(v.engine)||v.kind==='sessions.handoff'&&!isHandoffWriter(v.writer))throw new ValidationError('Invalid handoff request');break;
         case 'sessions.find':
             fields=['text'];if(!isFindQuery(v.text))throw new ValidationError('Invalid find request');break;
         case 'sessions.detach':

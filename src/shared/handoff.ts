@@ -22,13 +22,17 @@ export function handoffPrompt(target: CliEngine, screen: string): string {
   const tail = screen.length > HANDOFF_SOURCE_CHARS ? screen.slice(screen.length - HANDOFF_SOURCE_CHARS) : screen;
   return `${handoffInstructions(target)}\n\nThe agent's terminal, most recent last:\n<terminal>\n${tail}\n</terminal>`;
 }
-// The new agent's first message: the note, cut on a character boundary to fit, under a fixed header.
+// The note goes into the new CLI's argv: no escapes, C0/C1 controls, bidi overrides, BOM or line/paragraph separators,
+// only text, new lines and tabs (whatever wrote it: a provider, or the agent's own last reply). ZWJ, ZWNJ, emoji tag
+// characters and LRM/RLM stay: emoji sequences and Persian, Arabic and Indic text need them.
+export function cleanNote(text: string): string {
+  // eslint-disable-next-line no-control-regex -- removing terminal controls is the point.
+  return stripVTControlCharacters(text).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2028\u2029]/g, '').trim();
+}
+// The new agent's first message: the cleaned note, cut on a character boundary to fit, under a fixed header.
 export function handoffMessage(from: string, summary: string): string {
   const header = `Handoff from ${from}. Continue this work in this folder; check the state yourself before changing anything.\n\n`;
-  // The note goes into the new CLI's argv: no escapes, C0/C1 controls or bidi/invisible format characters, only text,
-  // new lines and tabs (whatever wrote it: a provider, or the agent's own last reply). ZWJ stays, for emoji (as in S15).
-  // eslint-disable-next-line no-control-regex -- removing terminal controls is the point.
-  let body = stripVTControlCharacters(summary).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]|[\p{Cf}\u2028\u2029]/gu, char => char === '\u200d' ? char : '').trim();
+  let body = cleanNote(summary);
   while (Buffer.byteLength(header + body) > HANDOFF_SUMMARY_BYTES) body = [...body].slice(0, Math.floor([...body].length * 0.9)).join('');
   return header + body;
 }

@@ -137,7 +137,7 @@ export type Request = {
     kind:'sessions.handoffPlan'; sessionId:string; engine:CliEngine;
 } | {
     // writer: the one the user approved in the ask; a different one now refuses.
-    kind:'sessions.handoff'; sessionId:string; engine:CliEngine; writer?: import('./handoff.js').HandoffWriter;
+    kind:'sessions.handoff'; sessionId:string; engine:CliEngine; writer: import('./handoff.js').HandoffWriter;
 } | {
     kind:'sessions.find'; text:string;
 } | {

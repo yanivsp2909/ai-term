@@ -11,7 +11,7 @@ import { catalogModels } from '../shared/model-catalog.js';
 import { DEFAULT_AGENT_CAPS, type AgentFacts } from '../shared/agent-facts.js';
 import { findPrice, findLimits, deploymentAlias, estimateCost, type PriceSnapshot } from './usage-prices.js';
 import { cheapestWriter, handoffPlan, summarizeWithKey, type Summarize } from './handoff.js';
-import { handoffInstructions, handoffMessage, handoffPrompt, type HandoffPlan, type HandoffSummary, type HandoffWriter } from '../shared/handoff.js';
+import { cleanNote, handoffInstructions, handoffMessage, handoffPrompt, type HandoffPlan, type HandoffSummary, type HandoffWriter } from '../shared/handoff.js';
 import { engineLabel } from '../shared/models.js';
 import priceData from '../../data/usage-prices.json' with {type:'json'};
 const PRICES=priceData as PriceSnapshot;
@@ -521,7 +521,7 @@ export class SessionManager extends EventEmitter {
             const screen=(await this.text(id)).text,writer=cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices);
             if(approved&&!sameWriter(approved,writer))throw new Error('The summary writer changed; run /handoff again');
             const written=writer?await this.keyedSummary(id,live,engine,screen,writer,settings):{text:await this.agentSummary(live,engine),summary:null};
-            if(!written.text.trim())throw new Error('The handoff note came back empty');
+            if(!cleanNote(written.text))throw new Error('The handoff note came back empty');
             if(['exited','error'].includes(live.info.status))throw new Error('Agent exited before the handoff finished');
             const title=[...`${live.info.title} · ${engineLabel(engine)}`].slice(0,60).join('');
             const continuation=live.info.worktree?{worktree:live.info.worktree,...(live.info.branch?{branch:live.info.branch}:{})}:{};
@@ -536,11 +536,12 @@ export class SessionManager extends EventEmitter {
                 }
                 await new Promise(resolve=>setTimeout(resolve,100));
             }
-            live.info.handoffTo=next.title;this.event({kind:'session.updated',session:{...live.info}});await this.persist();
-            // It may have started a tool or asked something while the note was written: then it keeps running, and says so.
+            // It may have started a tool or asked something while the note was written: then it keeps running, and says so;
+            // only an agent that really stopped is marked handed off.
             let oldKeptRunning=false;
             try{this.handoffBusy(live);await this.stop(id);}
             catch{oldKeptRunning=true;this.log.error('Handoff: the old agent kept running');}
+            if(!oldKeptRunning){live.info.handoffTo=next.title;this.event({kind:'session.updated',session:{...live.info}});await this.persist();}
             return {session:this.get(next.id),summary:written.summary,oldKeptRunning};
         }finally{this.handingOff.delete(id);}
     }
