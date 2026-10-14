@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync } from 'node:fs';
@@ -56,12 +56,12 @@ function registerIpc(): void {
     try { trusted(event); await shell.openExternal(validateUrl(validateOne(args))); }
     catch { log.error('External link refused or failed'); throw new Error('Could not open http/https link'); }
   });
-  ipcMain.handle(channels.copy, (event, ...args: unknown[]) => {
-    try { trusted(event); clipboard.writeText(validateWrite(validateOne(args), MAX_COPY_BYTES)); }
+  ipcMain.handle(channels.copy, async (event, ...args: unknown[]) => {
+    try { trusted(event); await clipboard.writeText(validateWrite(validateOne(args), MAX_COPY_BYTES)); }
     catch { log.error('Clipboard copy refused or failed'); throw new Error('Could not copy terminal selection'); }
   });
-  ipcMain.handle(channels.paste, (event, ...args: unknown[]) => {
-    try { trusted(event); validateEmpty(args); return validateWrite(clipboard.readText(), MAX_WRITE_BYTES - 12); }
+  ipcMain.handle(channels.paste, async (event, ...args: unknown[]) => {
+    try { trusted(event); validateEmpty(args); return validateWrite(await clipboard.readText(), MAX_WRITE_BYTES - 12); }
     catch { log.error('Clipboard paste refused or failed'); throw new Error('Paste exceeds 64 KiB or clipboard is unavailable'); }
   });
 }
@@ -70,6 +70,9 @@ void app.whenReady().then(async () => {
   mkdirSync(dataPath, { recursive: true, mode: 0o700 });
   log = new Logger(join(dataPath, 'app.log'));
   log.on('writeFailed', () => { console.error('Desktop log could not be written'); });
+  // Keep the application menu minimal so native Edit/View accelerators cannot
+  // compete with xterm's clipboard, search and font shortcuts.
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'AI Term', submenu: [{ role: 'quit' }] }]));
   const colors = tokenColors(nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
   window = new BrowserWindow({ title: 'AI Term', width: 1100, height: 720, minWidth: 480, minHeight: 300, backgroundColor: colors.bg, webPreferences: secureWebPreferences(join(here, '../preload/index.cjs')) });
   window.setMenu(null);

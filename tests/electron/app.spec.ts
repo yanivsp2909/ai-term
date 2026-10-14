@@ -47,7 +47,7 @@ test('opens ai homepage, types immediately, preserves paste, searches and resize
   await expect(screen).toContainText('desktop smoke');
   await page.keyboard.press('Meta+e');
   await page.keyboard.press('Control+u');
-  await application.evaluate(({ clipboard }) => { clipboard.writeText('first line\nsecond line'); });
+  await application.evaluate(async ({ clipboard }) => { await clipboard.writeText('first line\nsecond line'); });
   await page.keyboard.press('Meta+v');
   await expect(screen).toContainText('pasted');
   await page.keyboard.press('Meta+k');
@@ -74,4 +74,3 @@ test('runtime sandbox and preload expose only the seven operations', async () =>
   expect(await page.evaluate(() => window.open('https://example.com'))).toBe(null);
   expect(application.windows()).toHaveLength(1);
 });
-
