@@ -36,6 +36,7 @@ export function sendFailure(title: string, reason: string): string {
     'Agent does not accept pasted lines': `${title} doesn't accept pasted lines · send one line or go inside`,
     'Text pasted but not sent; go inside': `${title} started asking something · text pasted but not sent, go inside`,
     'Agent is busy with another send': `${title} is still taking the last /send`,
+    'Agent is printing too fast to check': `${title} is printing too fast to check · try again`,
   };
   return Object.hasOwn(notes, reason) ? notes[reason] ?? reason : reason;
 }

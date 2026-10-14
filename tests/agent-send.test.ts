@@ -29,14 +29,14 @@ async function agent(engine: 'claude-code' | 'codex' = 'claude-code') {
 
 it('multi-line /send arrives as one bracketed paste, then Enter as its own write', async () => {
   const { m, session, writes, feed, status } = await agent();
-  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'AITermContext', used_percentage: 3 });
+  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'Stop' });
   await m.send(session.id, 'first line\nsecond line\n  indented');
   expect(writes).toEqual(['\x1b[200~first line\nsecond line\n  indented\x1b[201~', '\r']);
 });
 
 it('refuses while the agent asks for permission or a question, and sends nothing', async () => {
   const { m, session, writes, feed, status } = await agent();
-  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'AITermContext', used_percentage: 3 });
+  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'Stop' });
   await status({ hook_event_name: 'PermissionRequest' }); expect(m.get(session.id).status).toBe('waiting');
   await expect(m.send(session.id, '1')).rejects.toThrow('Agent is asking for permission');
   await status({ hook_event_name: 'PostToolUse', tool_name: 'Bash' });
@@ -54,7 +54,7 @@ it('refuses an agent that has not reported status yet (it may be at its folder-t
 
 it('refuses an attached agent (a session or split someone is typing in) and an exited one', async () => {
   const { m, session, writes, feed, status, exit } = await agent();
-  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'AITermContext', used_percentage: 3 });
+  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'Stop' });
   await m.attach(session.id, 80, 24, () => {});
   await expect(m.send(session.id, 'hello')).rejects.toThrow('Agent is open in a session');
   await m.detach(session.id, () => true);
@@ -65,7 +65,7 @@ it('refuses an attached agent (a session or split someone is typing in) and an e
 
 it('an Enter is not sent when a permission prompt appears between the paste and Enter', async () => {
   const { m, session, writes, feed, status } = await agent();
-  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'AITermContext', used_percentage: 3 });
+  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'Stop' });
   SessionManager.sendEnterDelayMs = 1000; cleanups.push(async () => { SessionManager.sendEnterDelayMs = 50; });
   const sending = m.send(session.id, 'do it');
   await status({ hook_event_name: 'PermissionRequest' });
@@ -75,7 +75,7 @@ it('an Enter is not sent when a permission prompt appears between the paste and 
 
 it('without bracketed paste only one line may go; kitty flag 8 makes Enter CSI 13 u', async () => {
   const { m, session, writes, feed, status } = await agent();
-  await feed('ready'); await status({ hook_event_name: 'AITermContext', used_percentage: 3 });
+  await feed('ready'); await status({ hook_event_name: 'Stop' });
   await expect(m.send(session.id, 'one\ntwo')).rejects.toThrow('Agent does not accept pasted lines');
   await m.send(session.id, 'one line');
   await feed('\x1b[>9u');

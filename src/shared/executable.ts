@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { isFsError } from './paths.js';
@@ -11,7 +11,9 @@ export async function findExecutable(name: string, path = process.env.PATH ?? ''
         const candidate = join(folder, name);
         try {
             await access(candidate, constants.X_OK);
-            return candidate;
+            // A searchable directory passes X_OK too; only a file can be the command.
+            if ((await stat(candidate)).isFile())
+                return candidate;
         }
         catch (error) {
             if (!isFsError(error, 'ENOENT') && !isFsError(error, 'EACCES') && !isFsError(error, 'ENOTDIR'))

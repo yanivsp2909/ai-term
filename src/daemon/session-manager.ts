@@ -26,7 +26,7 @@ import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
 export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry already starting','Worktree in use by a running agent','Its worktree is gone','Its folder is gone',
     'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
-    'Agent does not accept pasted lines','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
+    'Agent does not accept pasted lines','Agent is printing too fast to check','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
     info: SessionInfo;
     host?: PtyHost;
@@ -42,6 +42,8 @@ interface Live {
     paused:boolean;
     attached:boolean;
     clientPaused:boolean;
+    // A hook or run-state signal has arrived (not just a context report): the agent is past its startup dialogs.
+    reported?:boolean;
 }
 export class SessionManager extends EventEmitter {
     // /send: how long Enter waits behind the paste (static so a test can widen the window it races).
@@ -109,7 +111,7 @@ export class SessionManager extends EventEmitter {
         catch { throw new StateLoadError('migrate'); }
     }
     private validateState(state: unknown): { sessions: SessionInfo[]; worktrees: unknown[] } {
-        if (!state || typeof state !== 'object' || !('sessions' in state) || !Array.isArray(state.sessions))
+        if (!state || typeof state !== 'object' || !('sessions' in state) || !Array.isArray(state.sessions) || 'worktrees' in state && !Array.isArray(state.worktrees))
             throw new Error('Invalid daemon state');
         const sessions: SessionInfo[] = [];
         for (const raw of state.sessions as unknown[]) {
@@ -333,6 +335,7 @@ export class SessionManager extends EventEmitter {
         const live=this.sessions.get(id);if(!live?.statusState||live.mirrorFailed||['exited','error'].includes(live.statusState.status)||!update)return;
         // A reply stays the newest reply even when its status event lost to a newer one.
         if(update.reply!==undefined)live.lastReply=update.reply;
+        if(update.event.kind!=='context')live.reported=true;
         this.applyStatus(live,reduceStatus(live.statusState,update.event));
     }
     private applyStatus(live:Live,next:StatusState):void{
@@ -349,6 +352,7 @@ export class SessionManager extends EventEmitter {
     private codexStatus(live:Live,event:{kind:'running'}|{kind:'waiting';reason:'permission'}|{kind:'context';percent:number},when?:(state:StatusState)=>boolean):void{
         this.usage?.enqueueStatus(live.info.id,seq=>{
             const state=live.statusState;if(!state||live.mirrorFailed||['exited','error'].includes(state.status)||when&&!when(state))return;
+            if(event.kind!=='context')live.reported=true;
             const next=reduceStatus(state,{...event,seq,at:new Date().toISOString()});
             if(next.status===state.status&&next.statusDetail===state.statusDetail&&next.ctxPercent===state.ctxPercent)return;
             this.applyStatus(live,next);
@@ -379,23 +383,31 @@ export class SessionManager extends EventEmitter {
         if(live.attached)return 'Agent is open in a session';
         if(live.info.status==='waiting'&&live.info.statusDetail==='permission')return 'Agent is asking for permission';
         if(live.info.status==='waiting'&&live.info.statusDetail==='question')return 'Agent is asking a question';
-        if(live.info.engine!=='shell'&&(!live.statusState||live.statusState.seq===0))return 'Agent has not reported its status yet';
+        // A status-line context report can come while a dialog is up; only a hook or run-state signal counts.
+        if(live.info.engine!=='shell'&&!live.reported)return 'Agent has not reported its status yet';
+        // A paused PTY holds unread output, which may be a prompt the status below hasn't seen.
+        if(live.paused)return 'Agent is printing too fast to check';
         return null;
     }
+    // Status is only as fresh as what the mirror has parsed: wait for every chunk that arrived before now, then for the
+    // status signals those chunks queued. Claude's hooks arrive over HTTP and can still lag (D50).
+    private async caughtUp(live:Live):Promise<void>{await live.output;await new Promise<void>(resolve=>setImmediate(resolve));}
     async send(id:string,text:string):Promise<void>{
         if(!isUUID(id)||!isSendText(text))throw new Error('Invalid send request');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
-        const refused=this.unsendable(live);if(refused)throw new Error(refused);
         if(this.sending.has(id))throw new Error('Agent is busy with another send');
-        const paste=live.mirror.modes().bracketedPaste;
-        // Without bracketed paste every newline would be its own Enter, so only one line may go.
-        if(!paste&&text.includes('\n'))throw new Error('Agent does not accept pasted lines');
         this.sending.add(id);
         try{
+            await this.caughtUp(live);
+            const refused=this.unsendable(live);if(refused)throw new Error(refused);
+            const paste=live.mirror.modes().bracketedPaste;
+            // Without bracketed paste every newline would be its own Enter, so only one line may go.
+            if(!paste&&text.includes('\n'))throw new Error('Agent does not accept pasted lines');
             live.host?.write(paste?`\x1b[200~${text}\x1b[201~`:text);
             // Enter is its own write a moment later, so the agent has taken the whole paste in before it submits. The
             // checks run again: a prompt that appeared in between must not get this Enter.
             await new Promise(resolve=>setTimeout(resolve,SessionManager.sendEnterDelayMs));
+            await this.caughtUp(live);
             if(this.unsendable(live))throw new Error('Text pasted but not sent; go inside');
             // With kitty 'report all keys as escapes' (flag 8) Enter is CSI 13 u, not CR.
             live.host?.write(((live.mirror.modes().kittyFlags?.at(-1)??0)&8)?'\x1b[13u':'\r');

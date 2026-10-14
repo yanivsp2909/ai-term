@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { basename, isAbsolute } from 'node:path';
 import { findExecutable } from '../../shared/executable.js';
 
 export type FolderApp = 'finder' | 'code';
@@ -22,7 +22,9 @@ export async function openFolder(path: string, app: FolderApp, runner: Runner = 
   try { folder = await stat(path); } catch { throw new OpenError('folder is gone'); }
   if (!folder.isDirectory()) throw new OpenError('folder is gone');
   if (app === 'finder') {
-    try { await runner('/usr/bin/open', ['--', path], { PATH: '/usr/bin:/bin' }); } catch { throw new OpenError("Finder couldn't open it"); }
+    // open launches a folder with an extension as a package (Tool.app, X.xcodeproj); -R only reveals it in Finder.
+    const reveal = /\.[A-Za-z0-9]+$/.test(basename(path)) ? ['-R'] : [];
+    try { await runner('/usr/bin/open', [...reveal, '--', path], { PATH: '/usr/bin:/bin' }); } catch { throw new OpenError("Finder couldn't open it"); }
     return 'Finder';
   }
   const code = await find('code');
