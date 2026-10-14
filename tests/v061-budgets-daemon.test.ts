@@ -70,7 +70,10 @@ it('the route refuses what isn\'t this agent\'s to reserve, and an agent that ex
 
 it('cost per task: an agent\'s own usage adds up on its record, priced from the table', async () => {
   const d = await daemon(), a = await agent(d);
-  await a.reporter.usage('gpt-6.1-sol', { input: 1200, cached: 200, output: 300 });
+  // Posted as the agent's reporter posts it, without its one-second client timeout (full-suite load can exceed it).
+  const env = d.spawned.at(-1)?.env ?? {}, time = String(Date.now() * 1e6), point = (type: string, value: number) => ({ asInt: String(value), startTimeUnixNano: time, timeUnixNano: time, attributes: [{ key: 'type', value: { stringValue: type } }, { key: 'model', value: { stringValue: 'gpt-6.1-sol' } }] });
+  const posted = await fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/metrics`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': env.AITERM_USAGE_TOKEN ?? '' }, body: JSON.stringify({ resourceMetrics: [{ scopeMetrics: [{ metrics: [{ name: 'ai_term.token.usage', sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [point('input', 1000), point('cacheRead', 200), point('output', 300)] } }] }] }] }) });
+  expect(posted.status).toBe(200);
   await expect.poll(() => d.manager.get(a.session.id).taskUsage?.tokens, { timeout: 4000 }).toBe(1500);
   expect(d.manager.get(a.session.id).taskUsage?.costUsd).toBeCloseTo(d.usage.summary().today.costUsd, 10);
   // It survives a daemon restart with the record (once the coalesced state write, at most a second later, has landed).
