@@ -275,7 +275,7 @@ export class Agent {
     try {
       const catalog = this.options.extensions?await this.options.extensions.list(this.root):this.catalog;
       if(this.options.mcp){this.mcpCatalog=await this.options.mcp.list(this.root);for(const s of this.mcpCatalog.servers)if(s.note)this.options.io.note(`${s.config.name}: ${s.note}`,'warn');}
-      const signature = JSON.stringify([catalog.items.filter(i=>i.enabled).map(i=>[i.id,i.name,i.description]),this.mcpCatalog.servers.filter(s=>s.enabled).map(s=>[s.id,s.hash,s.available.filter(t=>t.enabled).map(t=>t.name)])]);
+      const signature = JSON.stringify([catalog.items.filter(i=>i.enabled).map(i=>[i.id,i.name,i.description]),this.mcpCatalog.servers.filter(s=>s.enabled).map(s=>[s.id,s.hash,Object.entries(s.tools).sort(([a],[b])=>a.localeCompare(b))])]);
       if(this.loadedSignature!==null&&signature!==this.loadedSignature){this.clear();this.options.io.note('extension selection changed; conversation cleared so disabled instructions stop loading');}
       this.loadedSignature=signature; this.catalog=catalog;
     } catch {
