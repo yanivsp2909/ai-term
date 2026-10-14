@@ -23,7 +23,10 @@ test.afterEach(async ({}, info) => {
       try { console.log(await readFile(path, "utf8")); } catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error; }
     }
   }
-  if (application) await application.close();
+  if (application) {
+    await application.evaluate(async ({ clipboard }) => { await clipboard.clear(); });
+    await application.close();
+  }
   // Stop only this test's daemon, using the pid in its private disposable home.
   try {
     const pid = Number(await readFile(join(home, '.ai-term/run/daemon.pid'), 'utf8'));
@@ -73,4 +76,18 @@ test('runtime sandbox and preload expose only the seven operations', async () =>
   })).toBe(true);
   expect(await page.evaluate(() => window.open('https://example.com'))).toBe(null);
   expect(application.windows()).toHaveLength(1);
+});
+
+test('clipboard paste refuses a paste-end escape before it can become an approval key', async () => {
+  const page = await application.firstWindow();
+  await expect(page.locator('.xterm-accessibility-tree')).toContainText('What do you want to build?');
+  expect(await page.evaluate(async () => {
+    await window.terminal.copy('\x1b[201~y');
+    try { await window.terminal.paste(); return false; } catch { return true; }
+  })).toBe(true);
+  expect(await page.evaluate(async () => {
+    const text = 'first line\nsecond line\x05';
+    await window.terminal.copy(text);
+    return await window.terminal.paste();
+  })).toBe('first line\nsecond line\x05');
 });
