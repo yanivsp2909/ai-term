@@ -25,18 +25,20 @@ export interface AttachTTY extends EventEmitter {
 export interface Input extends EventEmitter {isTTY?:boolean;isRaw?:boolean;setRawMode(raw:boolean):unknown;resume():unknown;pause():unknown}
 export interface Output extends EventEmitter {isTTY?:boolean;columns?:number;rows?:number;write(data:string|Buffer):boolean}
 export interface AttachConnection extends EventEmitter {request(body:RequestBody):Promise<SuccessResponse>;input(id:string,data:Buffer):void;pauseOutput?():void;resumeOutput?():void}
-export interface AttachOptions {stdin?:Input;stdout?:Output;signals?:EventEmitter;debugLog?:Logger;bar?:'on'|'off';settings?:Settings;fallbackLog?:(text:string)=>void}
+export interface AttachOptions {stdin?:Input;stdout?:Output;signals?:EventEmitter;debugLog?:Logger;bar?:'on'|'off';settings?:Settings;fallbackLog?:(text:string)=>void;home?:AbortSignal;appTheme?:()=>import('./tui/theme.js').Theme;themeEvents?:EventEmitter}
 export async function attach(connection:AttachConnection,id:string,options:AttachOptions={}):Promise<AttachReason> {
   const stdin:Input=options.stdin??process.stdin,stdout:Output=options.stdout??process.stdout,signals:EventEmitter=options.signals??process;
   if(!stdin.isTTY){options.debugLog?.info('attach reason=stdin not a TTY inputBytes=0');throw new AttachError('stdin not a TTY',new Error('Attach requires an interactive stdin'));}
   if(!isUUID(id)||!stdout.isTTY){options.debugLog?.info('attach reason=error inputBytes=0');throw new AttachError('error',new Error('Attach requires a session UUID and an interactive terminal'));}
+  if(options.home?.aborted)return 'home key';
   const originalRaw=stdin.isRaw??false;
   const probed=options.bar==='on'&&(stdout.rows??24)>1?await terminalProbe(stdin,stdout):null;
+  if(options.home?.aborted)return 'home key';
   const probe=probed?.success?probed:null;
   if(options.bar==='on'&&!probe)options.fallbackLog?.('Bar startup probe failed; using raw passthrough for this attach');
   let screen:SessionScreen|undefined;
   let barSession:SessionInfo|undefined;const others=new Map<string,SessionInfo>();
-  const theme=createTheme(options.settings?.theme??'graphite');
+  const theme=options.appTheme?.()??createTheme(options.settings?.theme??'graphite');
   let barKey='',barOutput='';
   const barBytes=()=>{
     if(!barSession)return '';
@@ -97,6 +99,8 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
   const onDisconnect=()=>end(new Error('Daemon connection closed'),'daemon gone');
   const onError=(error:Error)=>end(error);
   const onUncaught=(error:Error)=>end(error);
+  const onHome=()=>end(undefined,'home key');
+  const onTheme=()=>{barKey='';screen?.changed();};
   const onSignal=()=>end();
   const onInputEnd=()=>end(new Error('Terminal input closed'));
   const onTerm=()=>end(new ClientSignal(143),'client interrupted');
@@ -104,6 +108,7 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
   const onQuit=()=>end(new ClientSignal(131),'client interrupted');
   const size=()=>{const cols=stdout.columns??80,rows=(stdout.rows??24)-(probe?1:0);if(!isSize(cols,rows))throw new Error('Terminal size outside supported range');return {cols,rows};};
   const onResize=()=>{if(!active)return;try{const dimensions=size();screen?.resize(dimensions.cols,dimensions.rows);void connection.request({kind:'sessions.resize',sessionId:id,...dimensions}).catch(onError);}catch(error){onError(error instanceof Error?error:new Error('Resize failed'));}};
+  options.home?.addEventListener('abort',onHome);options.themeEvents?.on('theme',onTheme);
   connection.on('output',onOutput);connection.on('event',onEvent);connection.on('disconnected',onDisconnect);
   stdin.on('data',onData);stdin.on('error',onError);if(probe){stdin.on('end',onInputEnd);stdin.on('close',onInputEnd);}stdout.on('error',onError);stdout.on('drain',onDrain);
   signals.on('SIGWINCH',onResize);signals.on('SIGINT',onSignal);signals.on('SIGTERM',onTerm);signals.on('SIGHUP',onHup);signals.on('SIGQUIT',onQuit);signals.on('uncaughtException',onUncaught);signals.on('unhandledRejection',onUncaught);
@@ -134,6 +139,7 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
   }catch(error){end(error instanceof Error?error:new Error('Attach failed'),error instanceof AttachError?error.reason:error instanceof DaemonRequestError?'attach rejected':'error');}
   finally{
     active=false;ended=true;screen?.dispose();if(escapeTimer)clearTimeout(escapeTimer);
+    options.home?.removeEventListener('abort',onHome);options.themeEvents?.off('theme',onTheme);
     connection.off('output',onOutput);connection.off('event',onEvent);connection.off('disconnected',onDisconnect);
     stdin.off('data',onData);stdin.off('error',onError);stdin.off('end',onInputEnd);stdin.off('close',onInputEnd);stdout.off('error',onError);stdout.off('drain',onDrain);connection.resumeOutput?.();
     signals.off('SIGWINCH',onResize);signals.off('SIGINT',onSignal);signals.off('SIGTERM',onTerm);signals.off('SIGHUP',onHup);signals.off('SIGQUIT',onQuit);signals.off('uncaughtException',onUncaught);signals.off('unhandledRejection',onUncaught);

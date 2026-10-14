@@ -3,8 +3,8 @@ import { AppControlFilter, encodeAppControl, takeAppToken, type AppCommand } fro
 
 const token = 'a'.repeat(64);
 const sequence = (command: AppCommand) => encodeAppControl(token, command);
-function read(text: string, auth: string | undefined = token, chunkSize = 1) {
-  const filter = new AppControlFilter(auth), commands: AppCommand[] = [], data: Buffer[] = [];
+function read(text: string, auth: string | null = token, chunkSize = 1) {
+  const filter = new AppControlFilter(auth ?? undefined), commands: AppCommand[] = [], data: Buffer[] = [];
   const bytes = Buffer.from(text);
   for (let i = 0; i < bytes.length; i += chunkSize) for (const event of filter.push(bytes.subarray(i, i + chunkSize))) {
     if ('command' in event) commands.push(event.command); else data.push(event.data);
@@ -21,7 +21,7 @@ describe('private app input control', () => {
   });
   it('drops wrong tokens, missing launch tokens and malformed or oversized commands', () => {
     expect(read(sequence('palette'), 'b'.repeat(64))).toEqual({ commands: [], text: '' });
-    expect(read(sequence('palette'), undefined)).toEqual({ commands: [], text: '' });
+    expect(read(sequence('palette'), null)).toEqual({ commands: [], text: '' });
     for (const command of ['select 0', 'select 10', 'palette;approve', 'send y', 'x'.repeat(10000)]) {
       expect(read('\x1b]777;ai-term;' + token + ';' + command + '\x1b\\ok')).toEqual({ commands: [], text: 'ok' });
     }

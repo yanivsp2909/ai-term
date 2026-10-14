@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { takeAppToken } from '../shared/app-control.js';
+import { AppInput } from '../client/app-input.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 import { fileURLToPath } from 'node:url';
 import { constants } from 'node:fs';
@@ -12,12 +14,14 @@ import { redact, Logger } from '../daemon/log.js';
 import { AttachError } from '../client/attach.js';
 import { ClientSignal } from '../client/signals.js';
 import {aiSubcommands,debugActions} from '../client/tui/commands.js';
+// Consume before any connection can spawn a daemon or agent child.
+const appToken = takeAppToken(process.env);
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
 function usage(): void { process.stderr.write('Usage:\n'+aiSubcommands.map(command=>'  '+command).join('\n')+'\n'); process.exitCode = 2; }
 async function main(): Promise<void> {
     if (args.length === 0) {
         const client = await Connection.connect(getPaths(), { entry });
-        try { const { homepage } = await import('../client/tui/homepage.js'), { doctorLines } = await import('./doctor.js'); await homepage(client, () => Connection.connect(getPaths(), { entry, autoStart: false }), undefined, () => doctorLines(entry)); }
+        try { const { homepage } = await import('../client/tui/homepage.js'), { doctorLines } = await import('./doctor.js'); await homepage(client, () => Connection.connect(getPaths(), { entry, autoStart: false }), undefined, () => doctorLines(entry), appToken); }
         finally { client.close(); }
         return;
     }
@@ -25,7 +29,7 @@ async function main(): Promise<void> {
     if (args[0] === '--attach') {
         if (args.length !== 2 || !isUUID(args[1])) { usage(); return; }
         const client = await Connection.connect(getPaths(), { entry });
-        try { const { homepage } = await import('../client/tui/homepage.js'), { doctorLines } = await import('./doctor.js'); await homepage(client, () => Connection.connect(getPaths(), { entry, autoStart: false }), args[1], () => doctorLines(entry)); }
+        try { const { homepage } = await import('../client/tui/homepage.js'), { doctorLines } = await import('./doctor.js'); await homepage(client, () => Connection.connect(getPaths(), { entry, autoStart: false }), args[1], () => doctorLines(entry), appToken); }
         finally { client.close(); }
         return;
     }
@@ -145,13 +149,14 @@ async function main(): Promise<void> {
         }
         if(action==='attach'&&args[2]){
             const {configuredAttach:attach}=await import('../client/configured-attach.js');
+            const input = new AppInput(process.stdin);
             try{
-                const reason=await attach(client,args[2],{debugLog:process.env.AI_TERM_DEBUG==='1'?new Logger(paths.log):undefined});
+                const reason=await attach(client,args[2],{stdin: input, debugLog:process.env.AI_TERM_DEBUG==='1'?new Logger(paths.log):undefined});
                 process.stdout.write(`back in your shell (${reason})\n`);
             }catch(error){
                 process.stdout.write(`back in your shell (${error instanceof AttachError?error.reason:'error'})\n`);
                 throw error;
-            }
+            }finally{input.dispose();}
         }
         if (action === 'peek' && args[2]) {
             const result = await client.request({ kind: 'sessions.preview', sessionId: args[2] });

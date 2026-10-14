@@ -19,7 +19,7 @@ import type { Theme } from './tui/theme.js';
 // One daemon connection per pane: the daemon lets a connection own one attached agent, and separate sockets keep a
 // flooding pane's bytes from queueing ahead of the focused pane's echo.
 export interface SplitConnection extends EventEmitter { request(body: RequestBody): Promise<SuccessResponse>; input(id: string, data: Buffer): void; pauseOutput(): void; resumeOutput(): void; close(): void }
-export interface SplitOptions { stdin?: Input; stdout?: Output; signals?: EventEmitter; connect: () => Promise<SplitConnection>; theme: Theme; truecolor?: boolean; now?: () => number; log?: (text: string) => void }
+export interface SplitOptions { home?: AbortSignal; themeEvents?: EventEmitter; stdin?: Input; stdout?: Output; signals?: EventEmitter; connect: () => Promise<SplitConnection>; theme: Theme; truecolor?: boolean; now?: () => number; log?: (text: string) => void }
 export type SplitReason = 'home key' | 'one left' | 'all closed' | 'client interrupted';
 export interface SplitResult { reason: SplitReason; remaining?: string; dropped: number }
 export class SplitError extends Error { constructor(readonly reason: 'daemon gone' | 'error', cause: Error) { super(cause.message, { cause }); } }
@@ -37,12 +37,14 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
   if (!stdin.isTTY || !stdout.isTTY) throw new Error('A split requires an interactive terminal');
   if (ids.some(id => !isUUID(id)) || new Set(ids).size !== ids.length) throw new Error('A split takes distinct session UUIDs');
   const size = () => { const cols = stdout.columns ?? 80, rows = stdout.rows ?? 24; if (!isSize(cols, rows)) throw new Error('Terminal size outside supported range'); return { cols, rows }; };
+  if (options.home?.aborted) return { reason: 'home key', dropped: 0 };
   const start = size(), count = fitPanes(start.cols, start.rows, ids.length), dropped = ids.length - count;
   const first = splitLayout(start.cols, start.rows, count);
   // Fewer than two fit: the first agent becomes a normal attach.
   if (!first) return { reason: 'one left', ...(ids[0] ? { remaining: ids[0] } : {}), dropped };
   const originalRaw = stdin.isRaw ?? false;
   const probed = await terminalProbe(stdin, stdout);
+  if (options.home?.aborted) return { reason: 'home key', dropped: 0 };
   const facts: OuterFacts = probed.success ? probed.facts : { kitty: false };
   if (!probed.success) options.log?.('Split startup probe failed; terminal color and kitty queries go unanswered');
 
@@ -203,10 +205,14 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
   const onResize = () => { try { if (active) relayout(); } catch (error) { fail(error); } };
   const onDrain = () => { if (!blocked) return; blocked = false; draw(); };
   const onError = (error: Error) => fail(error);
+  const onHome = () => end('home key');
+  const onTheme = () => { try { draw(true); } catch (error) { fail(error); } };
   const onSignal = () => end('client interrupted');
   const onTerm = () => end('client interrupted', new ClientSignal(143)), onHup = () => end('client interrupted', new ClientSignal(129)), onQuit = () => end('client interrupted', new ClientSignal(131));
   const listen = (on: boolean) => {
     const method = on ? 'on' : 'off';
+    if (on) options.home?.addEventListener('abort', onHome); else options.home?.removeEventListener('abort', onHome);
+    options.themeEvents?.[method]('theme', onTheme);
     stdin[method]('data', onData); stdin[method]('error', onError); stdout[method]('error', onError); stdout[method]('drain', onDrain);
     signals[method]('SIGWINCH', onResize); signals[method]('SIGINT', onSignal); signals[method]('SIGTERM', onTerm); signals[method]('SIGHUP', onHup); signals[method]('SIGQUIT', onQuit);
     signals[method]('uncaughtException', onError); signals[method]('unhandledRejection', onError);

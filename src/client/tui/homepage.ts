@@ -3,6 +3,8 @@ import { ExtensionsPanel } from './extensions-panel.js';
 import { socketExtensions } from '../extensions.js';
 import { terminalBundle, RAISE_WINDOW } from '../../shared/terminal-app.js';
 import { EventEmitter } from 'node:events';
+import { AppInput } from '../app-input.js';
+import type { AppCommand } from '../../shared/app-control.js';
 import { homedir } from 'node:os';
 import { DaemonRequestError, type RequestBody } from '../connection.js';
 import { type AttachReason } from '../attach.js';
@@ -45,7 +47,7 @@ interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawM
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
 export interface HomepageConnection extends EventEmitter { request(body: RequestBody): Promise<SuccessResponse> }
-interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason>; splitSessions?: (ids: string[], theme: Theme) => Promise<SplitResult>; attachOnStart?: string; terminalProgram?:string; doctor?: () => Promise<string[]>; openFolder?: (path: string, app: FolderApp) => Promise<string> }
+interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; controls?: AppInput; attachSession?: (id: string, home?: AbortSignal) => Promise<AttachReason>; splitSessions?: (ids: string[], theme: Theme, home?: AbortSignal) => Promise<SplitResult>; attachOnStart?: string; terminalProgram?:string; doctor?: () => Promise<string[]>; openFolder?: (path: string, app: FolderApp) => Promise<string> }
 const ENTER_HOME = RESET_MODES + '\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1002h\x1b[?1006h\x1b[?2004h';
 export class Homepage {
   readonly done: Promise<void>;
@@ -58,6 +60,8 @@ export class Homepage {
   private showing = false;
   private ended = false;
   private attached = false;
+  private returnHome?: AbortController;
+  private themeRefresh: Promise<void> = Promise.resolve();
   private sessions: SessionInfo[] = [];
   private selectedId: string | null = null;
   private visible = true;
@@ -128,6 +132,7 @@ export class Homepage {
     this.parser = new InputParser(event => this.handleInput(event));
     this.replies = new BackgroundReplies(background => { this.background = background; this.backgroundResolve?.(); });
   }
+  currentTheme(): Theme { return this.theme; }
   private size() { const cols = this.stdout.columns ?? 80, rows = this.stdout.rows ?? 24; if (!isSize(cols, rows)) throw new Error('Terminal size outside supported range'); return { cols, rows }; }
   async start(): Promise<void> {
     if (!this.stdin.isTTY || !this.stdout.isTTY) throw new Error('Homepage requires an interactive terminal');
@@ -135,6 +140,7 @@ export class Homepage {
     this.connection.on('event', this.onEvent); this.connection.on('output', this.onOutput); this.connection.on('disconnected', this.onDisconnect);
     for (const [name, guard] of this.guards) this.signals.on(name, guard);
     try {
+      this.options.controls?.on('command', this.onAppCommand);
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
       this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;
@@ -143,9 +149,9 @@ export class Homepage {
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
       if(settings.defaultEffort!==undefined&&isEffortForEngine(this.engine,settings.defaultEffort))this.effort=settings.defaultEffort;
       if(settings.defaultCwd && await validCwd(settings.defaultCwd))this.folder=settings.defaultCwd;
-      if (settings.theme === 'auto') await this.detectBackground();
+      if (settings.theme === 'auto' || this.options.controls?.enabled) await this.detectBackground();
       if (this.ended) return;
-      this.theme = createTheme(settings.theme, this.background);
+      this.theme = createTheme(this.options.controls?.enabled ? 'auto' : settings.theme, this.background);
       const result = await this.connection.request({ kind: 'sessions.list' });
       if (!Array.isArray(result.sessions)) throw new Error('Missing daemon sessions');
       this.sessions = result.sessions.map(validateSession); this.selectedId = sortSessions(this.sessions)[0]?.id ?? null;
@@ -179,6 +185,8 @@ export class Homepage {
   }
   async stop(error?: Error): Promise<void> {
     if (this.ended) return;
+    this.options.controls?.off('command', this.onAppCommand);
+    this.returnHome?.abort();
     this.ended = true; this.loading = null; this.credentials?.dispose();this.usageForm=undefined;this.worktreeUi=undefined;this.popup=undefined;
     if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve?.();
     if (this.noteTimer) clearTimeout(this.noteTimer);
@@ -220,6 +228,44 @@ export class Homepage {
       const data = this.replies.push(typeof value === 'string' ? Buffer.from(value) : value); this.parser.push(data);
       this.inputTimer = setTimeout(() => { try { this.parser.push(this.replies.flush()); } catch (error) { this.onError(error); } }, 30);
     } catch (error) { this.onError(error); }
+  };
+  private onAppCommand = (command: AppCommand): void => {
+    if (this.ended) return;
+    if (command === 'theme-changed') {
+      // Theme must not queue behind a long-lived attach. The query's replies are
+      // intercepted upstream, so they cannot become keys in the focused agent.
+      this.themeRefresh = this.themeRefresh.then(async () => {
+        const controls = this.options.controls;
+        if (!controls || this.ended) return;
+        const background = await controls.background(this.stdout);
+        if (this.ended) return;
+        this.background = background;
+        Object.assign(this.theme, createTheme('auto', background));
+        this.previous = null; this.previewCells = undefined; this.forceRedraw = true;
+        controls.emit('theme'); this.draw(true);
+      }).catch(this.onError);
+      return;
+    }
+    this.returnHome?.abort();
+    this.enqueue(async () => {
+      // These actions dismiss forms rather than submitting or accepting them.
+      const refresh = !!this.credentials;
+      this.credentials?.dispose(); this.credentials = undefined; this.box = undefined;
+      this.popup = undefined; this.worktreeUi = undefined; this.usageForm = undefined;
+      this.cleanIds = null; this.confirmId = null; this.renameId = null; this.helpOffset = null;
+      this.savingDefault = false; this.returnToStart = false; this.permission = 'ask';
+      this.field.text = ''; this.menuChoice = 0; this.pasteNote = '';
+      if (refresh) await this.refreshSettings();
+      if (command === 'palette') this.field.text = '/';
+      else if (command === 'new-agent') { this.openBox('start'); await this.checkSelectedEngine(); }
+      else if (command === 'settings') await this.openCredentials('settings');
+      else if (command === 'split') await this.openSplit();
+      else if (command.startsWith('select ')) {
+        const session = sortSessions(this.sessions)[Number(command.slice(7)) - 1];
+        if (session) { this.selectedId = session.id; await this.updatePreview(false); }
+      }
+      this.draw(true);
+    });
   };
   private enqueue(task: () => Promise<void>): void {
     this.serial = this.serial.then(async () => { if (!this.ended) await task(); }).catch(error => this.onError(error));
@@ -342,13 +388,13 @@ export class Homepage {
     if(ids.length<2){this.showNote(marked.length===1?'Space marks one more agent · v opens the split':'Space marks 2–4 agents · v opens them side by side');return;}
     const split=this.options.splitSessions;if(!split){this.showNote('Split unavailable');return;}
     this.marked=new Set();
-    await this.away(async()=>{
-      const result=await split(ids,this.theme);
+    await this.away(async signal=>{
+      const result=await split(ids,this.theme,signal);
       this.lastSplit=result.reason==='home key'?ids:[];
       if(!result.remaining)return result.reason==='client interrupted'?result.reason:'';
       // One pane left (or only one fits) is a normal attach.
       const note=result.dropped?`only one pane fits · ${result.dropped} ${result.dropped===1?'agent':'agents'} didn't fit`:'';
-      const reason=this.options.attachSession?await this.options.attachSession(result.remaining):'home key';
+      const reason=this.options.attachSession?await this.options.attachSession(result.remaining,signal):'home key';
       return reason==='home key'?note:reason;
     });
   }
@@ -630,6 +676,7 @@ export class Homepage {
   }
   private async detectBackground(): Promise<void> {
     if (this.background) return;
+    if (this.options.controls?.enabled) { this.background = await this.options.controls.background(this.stdout); return; }
     await new Promise<void>(resolve => {
       this.backgroundResolve = () => { if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve = undefined; resolve(); };
       this.backgroundTimer = setTimeout(() => this.backgroundResolve?.(), 200); this.stdout.write(BACKGROUND_QUERY);
@@ -744,17 +791,18 @@ export class Homepage {
     if (session && (session.status === 'exited' || session.status === 'error')) { this.showNote(`${session.title} has exited · x removes it`); return; }
     const attachSession = this.options.attachSession;
     if (!id || !attachSession) { this.showNote(id ? 'Attach unavailable' : 'No session selected'); return; }
-    await this.away(async () => { const reason = await attachSession(id); return reason === 'home key' ? '' : reason; });
+    await this.away(async signal => { const reason = await attachSession(id,signal); return reason === 'home key' ? '' : reason; });
   }
   // Hands the terminal to an attach or a split and takes it back afterwards, with the returned note.
-  private async away(run: () => Promise<string>): Promise<void> {
+  private async away(run: (home: AbortSignal) => Promise<string>): Promise<void> {
+    const controller = new AbortController(); this.returnHome = controller;
     await this.connection.request({ kind: 'sessions.preview', sessionId: null }); this.previewId = null; this.loading = null;
     await this.subscribeStats(false);await this.subscribeUsage(false);
     this.attached = true; this.leave();
     let note: string;
-    try { note = await run(); }
+    try { note = await run(controller.signal); }
     catch (error) { if (error instanceof ClientSignal) throw error; note = error instanceof Error ? error.message : 'Attach failed'; }
-    finally { this.attached = false; }
+    finally { this.attached = false; this.returnHome = undefined; }
     if (this.ended) return;
     if (this.pendingSignal) throw this.pendingSignal;
     this.enter();
@@ -836,8 +884,9 @@ export class Homepage {
   }
 }
 // `connect` opens one more daemon connection: a split gives each pane its own (split.ts).
-export async function homepage(connection: import('../connection.js').Connection, connect: () => Promise<import('../connection.js').Connection>, attachOnStart?: string, doctor?: () => Promise<string[]>): Promise<void> {
+export async function homepage(connection: import('../connection.js').Connection, connect: () => Promise<import('../connection.js').Connection>, attachOnStart?: string, doctor?: () => Promise<string[]>, appToken?: string): Promise<void> {
   const truecolor = process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', log = new Logger(getPaths().log);
-  const home = new Homepage(connection, { truecolor, attachSession: id => configuredAttach(connection, id), splitSessions: (ids, theme) => split(ids, { connect, theme, truecolor, log: text => log.error(text) }), ...(attachOnStart ? { attachOnStart } : {}), ...(doctor ? { doctor } : {}) });
-  await Promise.all([home.start(), home.done]);
+  const input = new AppInput(process.stdin, appToken);
+  const home: Homepage = new Homepage(connection, { stdin: input, controls: input, truecolor, attachSession: (id, signal) => configuredAttach(connection, id, { stdin: input, home: signal, appTheme: () => home.currentTheme(), themeEvents: input }), splitSessions: (ids, theme, signal) => split(ids, { stdin: input, home: signal, themeEvents: input, connect, theme, truecolor, log: text => log.error(text) }), ...(attachOnStart ? { attachOnStart } : {}), ...(doctor ? { doctor } : {}) });
+  try { await Promise.all([home.start(), home.done]); } finally { input.dispose(); }
 }
