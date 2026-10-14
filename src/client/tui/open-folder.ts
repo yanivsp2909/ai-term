@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
+import { isFsError } from '../../shared/paths.js';
 import { basename, isAbsolute } from 'node:path';
 import { findExecutable } from '../../shared/executable.js';
 
@@ -19,7 +20,8 @@ const run: Runner = (file, args, env) => new Promise((resolve, reject) => {
 export async function openFolder(path: string, app: FolderApp, runner: Runner = run, find = findExecutable): Promise<'Finder' | 'VS Code'> {
   if (!isAbsolute(path) || path.includes('\0')) throw new OpenError('folder path is not absolute');
   let folder;
-  try { folder = await stat(path); } catch { throw new OpenError('folder is gone'); }
+  try { folder = await stat(path); }
+  catch (error) { throw new OpenError(isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR') ? 'folder is gone' : 'folder is unavailable'); }
   if (!folder.isDirectory()) throw new OpenError('folder is gone');
   if (app === 'finder') {
     // open launches a folder with an extension as a package (Tool.app, X.xcodeproj); -R only reveals it in Finder.

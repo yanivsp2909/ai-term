@@ -6,12 +6,13 @@ import { isFsError } from '../shared/paths.js';
 import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
 
 export class GitError extends Error {
-    constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed') { super(message); }
+    constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed' | 'Not a git repo') { super(message); }
 }
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // An explicit env prevents inherited GIT_DIR/GIT_WORK_TREE, hooks and routing from targeting a different checkout.
-interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; literal?: boolean }
-function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true }: RunOptions = {}): Promise<string> {
+// notRepo: git's own "not a git repository" answer becomes GitError('Not a git repo'), so callers can tell it from a failure.
+interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; literal?: boolean; notRepo?: boolean }
+function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true, notRepo = false }: RunOptions = {}): Promise<string> {
     if (!isSafeAbsolutePath(cwd)) return Promise.reject(new GitError(failure));
     return new Promise((resolve, reject) => {
         const child = execFile('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', ...args], {
@@ -19,7 +20,8 @@ function run(cwd: string, args: string[], failure: ConstructorParameters<typeof 
             // Literal pathspecs: file names from a repo reach ls-files/check-ignore after --, and ":(...)" magic must stay a name.
             cwd, env: { PATH: '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}) },
             timeout, maxBuffer, encoding: 'utf8',
-        }, (error, stdout) => error ? reject(new GitError(failure)) : resolve(stdout));
+        // The env has no LANG, so git's messages are its fixed English ones; stderr is matched here and never logged.
+        }, (error, stdout, stderr) => error ? reject(new GitError(notRepo && typeof error.code === 'number' && /not a git repository/.test(stderr) ? 'Not a git repo' : failure)) : resolve(stdout));
         // A failed stdin write (git exited early) surfaces through the exit callback above.
         child.stdin?.on('error', () => undefined);
         child.stdin?.end(input ?? '');
@@ -28,12 +30,10 @@ function run(cwd: string, args: string[], failure: ConstructorParameters<typeof 
 export async function repoTopLevel(cwd: string): Promise<string | null> {
     // No positional refs or paths here: cwd is an execFile option, not a git argument.
     let top: string;
-    try { top = (await run(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel'])).replace(/\n$/, ''); }
-    catch (error) {
-        // Both non-repositories and bare repos lack a working checkout; callers fall back in place.
-        try { await run(cwd, ['rev-parse', '--is-inside-work-tree']); } catch { return null; }
-        throw error;
-    }
+    // Only git's own "not a git repository" means none: a timeout, an unsafe path, a bare repo or an ownership refusal is
+    // a failure, so the agent's card says the check failed instead of quietly running without a worktree.
+    try { top = (await run(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel'], 'Git check failed', { notRepo: true })).replace(/\n$/, ''); }
+    catch (error) { if (error instanceof GitError && error.message === 'Not a git repo') return null; throw error; }
     if (!isSafeAbsolutePath(top)) throw new GitError('Git check failed');
     return realpath(top);
 }
@@ -152,7 +152,9 @@ export async function inspectWorktree(repo: string, path: string, branch: string
     if (!isSafeAbsolutePath(path) || !isWorktreeBranch(branch)) throw new GitError('Git check failed');
     const listed = await listWorktrees(repo), entry = listed.find(item => item.path === path);
     if (!entry) return null;
-    const main = listed[0]?.path === path || path === repo, missing = Boolean(entry.prunable) || await folderMissing(path);
+    // Git also calls a worktree prunable when only its .git file is gone; the folder (and any work in it) may still be
+    // there, so only the folder itself decides "missing". Without .git it then fails the identity check and is refused.
+    const main = listed[0]?.path === path || path === repo, missing = await folderMissing(path);
     const result: WorktreeInspection = {
         main, locked: Boolean(entry.locked), missing, onBranch: entry.branch === branch, elsewhere: listed.some(item => item !== entry && item.branch === branch),
         matchesRepo: true, changed: 0, untracked: 0, ignored: 0, repos: 0, commits: 0, base: '', baseSource: 'recorded', fingerprint: '',

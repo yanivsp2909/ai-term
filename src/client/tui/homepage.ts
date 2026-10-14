@@ -413,7 +413,8 @@ export class Homepage {
     const path=session.worktree??session.cwd,home=homedir(),shown=path.startsWith(`${home}/`)?`~${path.slice(home.length)}`:path;
     try{const where=await (this.options.openFolder??openFolder)(path,app);this.showNote(`opened ${shown} in ${where}`,2000);}
     catch(error){
-      if(!(error instanceof OpenError))(this.options.copyLog??new Logger(getPaths().log)).error('Open folder failed');
+      // OpenError messages are fixed text, so they can go to the log as they are.
+      (this.options.copyLog??new Logger(getPaths().log)).error(`Open folder failed (${app}): ${error instanceof OpenError?error.message:'unexpected error'}`);
       this.showNote(error instanceof OpenError?`${error.message} · ${shown}`:`couldn't open ${shown}`);
     }
   }

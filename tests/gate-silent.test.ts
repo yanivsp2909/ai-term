@@ -27,13 +27,17 @@ async function fixture(files: Record<string, string> = { 'README': 'base' }) {
 }
 const manager = async (paths: ReturnType<typeof getPaths>) => { const m = new SessionManager(paths, new Logger(paths.log)); managers.push(m); await m.load(); return m; };
 
-it('M1: a worktree add that fails after git made the branch leaves no branch and no folder behind, and says so in the log', async () => {
+it('M1: a worktree add that fails after git made the branch stops at once, tries to undo it, and logs what it left', async () => {
   const { repo, home } = await fixture();
   await chmod(join(repo, '.git'), 0o555); locked.push(join(repo, '.git'));
-  const start = await prepareWorktree(home, repo, 'agent one');
+  const lines: string[] = [];
+  const start = await prepareWorktree(home, repo, 'agent one', text => lines.push(text));
   await chmod(join(repo, '.git'), 0o755);
   expect(start).toMatchObject({ worktreeNote: 'worktree off: creation failed' });
-  expect((await branchNames(repo)).filter(b => b.startsWith('ai/'))).toEqual([]);
+  // It stops at the first failure instead of trying five slugs. The read-only .git that broke the add also stops git
+  // deleting the half-made branch, so that one is left and said so; the empty folder is gone.
+  expect((await branchNames(repo)).filter(b => b.startsWith('ai/'))).toEqual(['ai/agent-one']);
+  expect(lines).toEqual(['Worktree start rollback: branch left in place', 'Worktree start failed; agent starts in place']);
   expect(await readdir(join(home, 'worktrees', repoDirectory(repo))).catch(() => [])).toEqual([]);
 });
 

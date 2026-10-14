@@ -22,6 +22,9 @@ export function claudeAuth(output: string): string {
     return `logged in yes; ${method === 'claude.ai' ? 'subscription' : method === 'api_key' ? 'API key' : 'method unknown'}`;
 }
 export function codexAuth(code: number | null, output: string): string {
+    // null: the check never finished (spawn failure, timeout, output cap), which says nothing about the login.
+    if (code === null)
+        return 'status unavailable';
     return `exit ${code ?? 'unavailable'}; ${code === 0 ? /ChatGPT/i.test(output) ? 'ChatGPT' : /API key/i.test(output) ? 'API key' : 'method unknown' : 'logged in no'}`;
 }
 function run(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<{

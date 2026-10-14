@@ -13,7 +13,7 @@ import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRec
 import { SettingsStore } from './settings.js';
 import { prepareWorktree, serialize } from './worktrees.js';
 import { checkWorktree, deleteWorktree, unrecordedFolders, WorktreeError } from './worktree-removal.js';
-import { atomicWrite, moveAside, readState, StateLoadError } from './store.js';
+import { atomicWrite, keepCopy, moveAside, readState, StateLoadError } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror, type MirrorSignal } from './mirror.js';
@@ -77,8 +77,16 @@ export class SessionManager extends EventEmitter {
         const text = this.warningText(); this.event(text ? { kind: 'daemon.warning', text } : { kind: 'daemon.warningCleared' });
     }
     async load(): Promise<void> {
-        let loaded: { sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord> };
-        try { loaded = await this.readSaved(); }
+        let loaded: { sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord>; rejected?: number };
+        try {
+            loaded = await this.readSaved();
+            // An invalid worktree record is skipped, and the next save would erase it: keep the file as it was first.
+            if (loaded.rejected) {
+                this.log.error(`Worktree records skipped: ${loaded.rejected}; keeping a copy of the agent list`);
+                try { this.notice = `couldn't read part of your agent list; saved it as ${await keepCopy(this.paths.state)}`; }
+                catch { this.log.error('Agent list copy failed; skipped worktree records will not be saved'); }
+            }
+        }
         catch (error) {
             // B24: an agent list that can't be loaded is never overwritten. It is moved aside and the daemon starts empty.
             // Only the fixed stage is logged: the raw error and the file can carry prompts, titles and paths.
@@ -100,7 +108,7 @@ export class SessionManager extends EventEmitter {
         await this.persist();
     }
     // Each stage throws StateLoadError with its fixed name and nothing else.
-    private async readSaved(): Promise<{ sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord> }> {
+    private async readSaved(): Promise<{ sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord>; rejected: number }> {
         let state: unknown;
         try { state = await readState(this.paths.state); }
         catch (error) { throw new StateLoadError(error instanceof SyntaxError ? 'parse' : 'read'); }
@@ -125,17 +133,18 @@ export class SessionManager extends EventEmitter {
         }
         return { sessions, worktrees: 'worktrees' in state && Array.isArray(state.worktrees) ? state.worktrees as unknown[] : [] };
     }
-    private migrateState(saved: { sessions: SessionInfo[]; worktrees: unknown[] }): { sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord> } {
+    private migrateState(saved: { sessions: SessionInfo[]; worktrees: unknown[] }): { sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord>; rejected: number } {
         const now = new Date().toISOString(), worktrees = new Map<string, WorktreeRecord>();
+        let rejected = 0;
         const sessions = saved.sessions.map(info => ['exited','error'].includes(info.status) ? info : { ...info, status: 'exited' as const, statusDetail: 'background service restarted', statusSince: now, exitCode: null });
         for (const entry of saved.worktrees) {
             try { const record = validateWorktreeRecord(entry); worktrees.set(record.path, record); }
-            catch { this.log.error('Invalid worktree record skipped; that worktree is kept'); }
+            catch { rejected++; this.log.error('Invalid worktree record skipped; that worktree is kept'); }
         }
         // v0.3.1 kept worktree metadata only on session records; those become records without repo or base.
         for (const info of sessions)
             if (info.worktree && info.branch && !worktrees.has(info.worktree)) worktrees.set(info.worktree, { path: info.worktree, branch: info.branch, createdAt: info.createdAt });
-        return { sessions, worktrees };
+        return { sessions, worktrees, rejected };
     }
     list(): SessionInfo[] { return [...this.sessions.values()].map(s => ({ ...s.info })); }
     get(id: string): SessionInfo { const live = this.sessions.get(id); if (!live)
@@ -227,13 +236,17 @@ export class SessionManager extends EventEmitter {
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
-            try {
-                if((await new SettingsStore(this.paths.root).get()).worktrees!=='off'){
-                    const {repo,baseBranch,baseCommit,...start}=await prepareWorktree(this.paths.root,request.cwd,info.title);Object.assign(info,start);
+            // Isolation is the default: settings that can't be read keep it on rather than quietly turning it off.
+            let isolate=true;
+            try{isolate=(await new SettingsStore(this.paths.root).get()).worktrees!=='off';}catch{this.log.error('Settings unreadable; new agents keep their worktrees');}
+            if(isolate){
+                try {
+                    const {repo,baseBranch,baseCommit,...start}=await prepareWorktree(this.paths.root,request.cwd,info.title,text=>this.log.error(text));Object.assign(info,start);
                     if(start.worktree&&start.branch&&repo)this.worktreeRecords.set(start.worktree,{path:start.worktree,branch:start.branch,repo,...(baseBranch?{baseBranch}:{}),...(baseCommit?{baseCommit}:{}),createdAt:now});
-                }
-            } catch { info.worktreeNote='worktree off: git check failed'; }
-            if(info.worktreeNote)this.log.info(info.worktreeNote);
+                } catch { info.worktreeNote='worktree off: git check failed'; }
+            }
+            // Not a repo and no commits are the user's situation; anything else lost isolation by failing, so it's an error.
+            if(info.worktreeNote)(['worktree off: not a git repo','worktree off: repo has no commits'].includes(info.worktreeNote)?this.log.info:this.log.error).call(this.log,info.worktreeNote);
         }
         const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
         const telemetry=agent&&!agent.login&&authMethod==='api-key'&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model}):undefined;

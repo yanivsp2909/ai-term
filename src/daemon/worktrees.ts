@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import { basename, join, relative, resolve, sep } from 'node:path';
-import { lstat, mkdir, realpath, readdir, chmod } from 'node:fs/promises';
+import { lstat, mkdir, realpath, readdir, chmod, rmdir } from 'node:fs/promises';
 import { privateDirectory, isFsError } from '../shared/paths.js';
 import { availableWorktreeSlug, isSafeAbsolutePath, worktreeSlug } from '../shared/validate.js';
 import type { WorktreePreview } from '../shared/protocol.js';
-import { addWorktree, branchNames, checkoutDirty, currentBranch, GitError, headCommit, repoTopLevel } from './git.js';
+import { addWorktree, branchNames, checkoutDirty, currentBranch, deleteBranch, GitError, headCommit, removeWorktree, repoTopLevel } from './git.js';
 
 const queues = new Map<string, Promise<unknown>>();
 export function repoDirectory(top: string): string {
@@ -43,10 +43,18 @@ export function serialize<T>(root: string, task: () => Promise<T>): Promise<T> {
     void settled.then(() => { if (queues.get(root) === settled) queues.delete(root); });
     return next;
 }
-export function prepareWorktree(root: string, cwd: string, title: string): Promise<WorktreeStart> {
-    return serialize(root, () => create(root, cwd, title));
+// `log` gets fixed lines only: a failed start, and anything a rollback had to leave behind.
+export function prepareWorktree(root: string, cwd: string, title: string, log: (text: string) => void = () => {}): Promise<WorktreeStart> {
+    return serialize(root, () => create(root, cwd, title, log));
 }
-async function create(root: string, cwd: string, title: string): Promise<WorktreeStart> {
+// Undoes a start that failed part way: the plain remove and -d refuse anything with work in it, and the folder is
+// removed only when empty. What can't be undone is logged, since it would show up in /worktrees unrecorded.
+async function rollback(top: string, path: string, branch: string, added: boolean, log: (text: string) => void): Promise<void> {
+    if (added) { try { await removeWorktree(top, path); } catch { log('Worktree start rollback: worktree left in place'); } }
+    try { if ((await branchNames(top)).includes(branch)) await deleteBranch(top, branch); } catch { log('Worktree start rollback: branch left in place'); }
+    try { await rmdir(path); } catch (error) { if (!isFsError(error, 'ENOENT')) log('Worktree start rollback: folder left in place'); }
+}
+async function create(root: string, cwd: string, title: string, log: (text: string) => void): Promise<WorktreeStart> {
     const plan = await inspect(root, cwd, title);
     if (!plan.top || !plan.head || !plan.branch) return {cwd, worktreeNote: plan.note ?? 'worktree off: git check failed'};
     try {
@@ -55,7 +63,7 @@ async function create(root: string, cwd: string, title: string): Promise<Worktre
         const canonical = await realpath(root), worktrees = join(canonical, 'worktrees');
         await privateDirectory(worktrees);
         const repo = join(worktrees, repoDirectory(plan.top)); await privateDirectory(repo);
-        const used = await occupied(canonical, plan.top);
+        const used = await occupied(canonical, plan.top), existing = new Set(await branchNames(plan.top));
         // Read before anything is created, so a failure here never leaves an unrecorded worktree behind.
         const baseBranch = await currentBranch(plan.top);
         // A concurrent external git process may reserve a branch too. Recheck only collisions; other failures fall back.
@@ -67,23 +75,37 @@ async function create(root: string, cwd: string, title: string): Promise<Worktre
             const stat = await lstat(path);
             if (stat.isSymbolicLink() || stat.uid !== process.getuid?.() || !inside(worktrees, await realpath(path))) throw new Error('Unsafe worktree path');
             try { await addWorktree(plan.top, path, branch, plan.head); }
-            catch (error) { if ((await branchNames(plan.top)).includes(branch)) continue; throw error; }
-            await chmod(path, 0o700);
-            const subfolder = relative(plan.top, await realpath(cwd));
-            const target = resolve(path, subfolder);
-            if (!inside(path, target)) throw new Error('Unsafe worktree cwd');
-            // Validate every selected subfolder without following a repository-controlled symlink.
-            let current = path;
-            for (const part of subfolder.split(sep).filter(Boolean)) {
-                current = join(current, part);
-                try{await mkdir(current,{mode:0o700});}catch(error){if(!isFsError(error,'EEXIST'))throw error;}
-                const dir = await lstat(current);
-                if (!dir.isDirectory() || dir.isSymbolicLink()) throw new Error('Worktree subfolder unavailable');
-                await chmod(current, 0o700);
+            catch (error) {
+                // A branch that existed before this attempt is a collision (another git process took the name): try the
+                // next slug. One that didn't is git's own half-made branch from the failed add: undo it and stop. (-d refuses
+                // a branch with unmerged commits or checked out anywhere, so even a name taken in that instant loses no work.)
+                const now = new Set(await branchNames(plan.top));
+                if (now.has(branch) && !existing.has(branch)) { await rollback(plan.top, path, branch, false, log); throw error; }
+                await rmdir(path).catch((cause: unknown) => { if (!isFsError(cause, 'ENOENT')) log('Worktree start rollback: folder left in place'); });
+                if (now.has(branch)) continue;
+                throw error;
             }
-            if (!inside(path, await realpath(target))) throw new Error('Unsafe worktree cwd');
-            return {cwd: target, worktree: path, branch, repo: plan.top, baseCommit: plan.head, ...(baseBranch ? {baseBranch} : {})};
+            try { return await finish(path, branch, plan.top, cwd, worktrees, plan.head, baseBranch); }
+            catch (error) { await rollback(plan.top, path, branch, true, log); throw error; }
         }
-    } catch { return {cwd, worktreeNote: 'worktree off: creation failed'}; }
+    } catch { log('Worktree start failed; agent starts in place'); return {cwd, worktreeNote: 'worktree off: creation failed'}; }
     return {cwd, worktreeNote: 'worktree off: creation failed'};
+}
+// The steps after git added the worktree; a failure here is rolled back by the caller.
+async function finish(path: string, branch: string, top: string, cwd: string, worktrees: string, head: string, baseBranch: string | undefined): Promise<WorktreeStart> {
+    await chmod(path, 0o700);
+    const subfolder = relative(top, await realpath(cwd));
+    const target = resolve(path, subfolder);
+    if (!inside(path, target)) throw new Error('Unsafe worktree cwd');
+    // Validate every selected subfolder without following a repository-controlled symlink.
+    let current = path;
+    for (const part of subfolder.split(sep).filter(Boolean)) {
+        current = join(current, part);
+        try{await mkdir(current,{mode:0o700});}catch(error){if(!isFsError(error,'EEXIST'))throw error;}
+        const dir = await lstat(current);
+        if (!dir.isDirectory() || dir.isSymbolicLink()) throw new Error('Worktree subfolder unavailable');
+        await chmod(current, 0o700);
+    }
+    if (!inside(path, await realpath(target)) || !inside(worktrees, path)) throw new Error('Unsafe worktree cwd');
+    return {cwd: target, worktree: path, branch, repo: top, baseCommit: head, ...(baseBranch ? {baseBranch} : {})};
 }

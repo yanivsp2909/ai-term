@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { chmod, lstat, open, rename, unlink } from 'node:fs/promises';
+import { chmod, copyFile, lstat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, basename } from 'node:path';
 import { isFsError } from '../shared/paths.js';
@@ -76,4 +76,17 @@ export async function moveAside(path: string, now = new Date()): Promise<{ path:
         catch { return { path: target, private: false }; }
     }
     throw new Error('No free name for the moved-aside state file');
+}
+// A private copy of a state file that loaded only in part, under the same `.corrupt-<timestamp>` name, before the next
+// save writes the readable part back. COPYFILE_EXCL never replaces an existing copy.
+export async function keepCopy(path: string, now = new Date()): Promise<string> {
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    for (let attempt = 0; attempt < 100; attempt++) {
+        const target = `${path}.corrupt-${stamp}${attempt ? `-${attempt}` : ''}`;
+        try { await copyFile(path, target, constants.COPYFILE_EXCL); }
+        catch (error) { if (isFsError(error, 'EEXIST')) continue; throw error; }
+        await chmod(target, 0o600);
+        return target;
+    }
+    throw new Error('No free name for the copied state file');
 }
