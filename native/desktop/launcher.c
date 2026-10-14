@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
  args[at++]=entry;
 #endif
  for(int i=1;i<argc;i++)args[at++]=argv[i];
- unsetenv("NODE_OPTIONS");unsetenv("NODE_PATH");unsetenv("ELECTRON_NO_ASAR");
+ unsetenv("NODE_OPTIONS");unsetenv("NODE_PATH");unsetenv("ELECTRON_NO_ASAR");unsetenv("NAPI_RS_NATIVE_LIBRARY_PATH");
  if(setenv("ELECTRON_RUN_AS_NODE","1",1)!=0)goto fail;
  execv(electron,args);
 fail:

@@ -13,5 +13,5 @@ export function configureCliRuntime(entry:string,processLike:{execPath:string}=p
  if(entry.endsWith('/Contents/Resources/app/dist/cli/index.js'))processLike.execPath=resolve(dirname(entry),'../../../../MacOS/ai-node');
 }
 export function runtimeEnv(base:NodeJS.ProcessEnv):NodeJS.ProcessEnv {
- const env:NodeJS.ProcessEnv={...base,ELECTRON_RUN_AS_NODE:'1'};delete env.NODE_OPTIONS;delete env.NODE_PATH;delete env.ELECTRON_NO_ASAR;return env;
+ const env:NodeJS.ProcessEnv={...base,ELECTRON_RUN_AS_NODE:'1'};delete env.NODE_OPTIONS;delete env.NODE_PATH;delete env.ELECTRON_NO_ASAR;delete env.NAPI_RS_NATIVE_LIBRARY_PATH;return env;
 }
