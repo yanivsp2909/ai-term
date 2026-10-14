@@ -122,3 +122,12 @@ it('Esc cancels a slash command that is still looking up its extension',async()=
   const app=new AgentApp({screen:new Screen({write:()=>{},columns:100,rows:30},createTheme('graphite')),permission:'ask',models:['m1'],makeModel:async()=>a.model,agent:io=>new Agent({...a.options,io}),quit:vi.fn()});
   app.start();app.input('/greet Ada\r');expect(app.running).toBe(true);app.input('\x1b');release();await vi.waitFor(()=>expect(app.running).toBe(false));expect(a.model.doStreamCalls).toHaveLength(0);app.close();
 });
+
+it('releases the captured reservation after parent abort while child extension loading is pending',async()=>{
+  const a=await setup([call('task',{name:'reviewer',prompt:'review'}),text('never')]),original=a.catalog.list.bind(a.catalog);
+  let count=0,held=false,release:()=>void=()=>{};
+  a.catalog.list=async()=>{if(++count===4){held=true;await new Promise<void>(r=>{release=r;});}return original();};
+  const controller=new AbortController(),turn=a.agent.turn('go',controller.signal);
+  await vi.waitFor(()=>{expect(held).toBe(true);expect(a.agent.limits.reserved).toBeGreaterThan(0);});controller.abort();expect(await turn).toBe('interrupted');release();
+  await vi.waitFor(()=>expect(a.agent.limits.reserved).toBe(0));expect(a.model.doStreamCalls).toHaveLength(1);
+});
