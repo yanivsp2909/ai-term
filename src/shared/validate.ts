@@ -9,7 +9,7 @@ export function isUUID(value: unknown): value is string {
 import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
-import {MAX_COPY_BYTES, type Request, type SuccessResponse } from './protocol.js';
+import {MAX_COPY_BYTES, MAX_SEND_BYTES, MAX_FIND_CHARS, MAX_FIND_RESULTS, FIND_LINE_CHARS, type FindMatch, type Request, type SuccessResponse } from './protocol.js';
 export class ValidationError extends Error {
     readonly code = 'INVALID_REQUEST';
 }
@@ -20,6 +20,28 @@ export function isFirstMessage(value: unknown): value is string {
 export function warningText(value: string): string {
     // Strip whole escape sequences as well as individual controls before drawing.
     return [...stripVTControlCharacters(value).replace(/[\p{C}]/gu, '')].slice(0, 200).join('');
+}
+// /send keeps newlines and nothing else from C0/C1: no escape can end its bracketed paste early or press a key.
+// eslint-disable-next-line no-control-regex -- the controls are the point.
+const SEND_CONTROLS = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g;
+export function cleanSendText(text: string): string { return text.replace(/\r\n?/g, '\n').replace(SEND_CONTROLS, ''); }
+export function isSendText(value: unknown): value is string {
+    return typeof value === 'string' && value.trim() !== '' && Buffer.byteLength(value) <= MAX_SEND_BYTES && cleanSendText(value) === value;
+}
+export function isFindQuery(value: unknown): value is string {
+    return typeof value === 'string' && value.trim() !== '' && [...value].length <= MAX_FIND_CHARS && !/[\p{C}]/u.test(value);
+}
+export function validateFindMatches(value: unknown): FindMatch[] {
+    if (!Array.isArray(value) || value.length > MAX_FIND_RESULTS) throw new Error('Invalid find results');
+    return value.map((entry: unknown) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid find results');
+        const m = entry as Record<string, unknown>;
+        const whole = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+        if (Object.keys(m).some(k => !['sessionId', 'fromEnd', 'text', 'start', 'length'].includes(k)) || !isUUID(m.sessionId) || !whole(m.fromEnd) || m.fromEnd > 1_000_000
+            || typeof m.text !== 'string' || m.text.length > FIND_LINE_CHARS * 2 + MAX_FIND_CHARS * 2 || /[\p{C}]/u.test(m.text)
+            || !whole(m.start) || !whole(m.length) || m.length < 1 || m.start + m.length > m.text.length) throw new Error('Invalid find results');
+        return { sessionId: m.sessionId, fromEnd: m.fromEnd, text: m.text, start: m.start, length: m.length };
+    });
 }
 export function isTitle(value: unknown): value is string {
     return typeof value === 'string' && [...value].length >= 1 && [...value].length <= 60 && !/[\p{C}]/u.test(value);
@@ -104,10 +126,15 @@ export async function validateRequest(value: unknown): Promise<Request> {
             break;
         case 'sessions.text':
             fields=['sessionId','lastReply'];if(!isUUID(v.sessionId)||v.lastReply!==undefined&&typeof v.lastReply!=='boolean')throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.send':
+            fields=['sessionId','text'];if(!isUUID(v.sessionId)||!isSendText(v.text))throw new ValidationError('Invalid send request');break;
+        case 'sessions.find':
+            fields=['text'];if(!isFindQuery(v.text))throw new ValidationError('Invalid find request');break;
         case 'sessions.detach':
         case 'sessions.stop':
         case 'sessions.remove':
         case 'sessions.resume':
+        case 'sessions.retry':
         case 'sessions.rename':
             fields = v.kind === 'sessions.rename' ? ['sessionId', 'title'] : ['sessionId'];
             if (!isUUID(v.sessionId) || (v.kind === 'sessions.rename' && !isTitle(v.title)))

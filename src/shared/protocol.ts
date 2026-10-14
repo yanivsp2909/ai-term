@@ -3,6 +3,13 @@ export const PROTOCOL_VERSION = 1;
 // Length counts the type byte and payload, excluding the four-byte prefix.
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 export const MAX_COPY_BYTES = 5 * 1024 * 1024;
+// /send (D50): text pasted into a running agent, capped like a first message.
+export const MAX_SEND_BYTES = 16 * 1024;
+// /find: plain-text search of every agent's mirror. Queries and results are capped so one search stays one small frame.
+export const MAX_FIND_CHARS = 200, MAX_FIND_RESULTS = 200, MAX_FIND_PER_AGENT = 50, FIND_LINE_CHARS = 160;
+// One /find hit: fromEnd counts rows up from the bottom of the agent's buffer (0 = last row), so the preview can find
+// the row even though its own buffer holds a different amount of scrollback. start/length mark the match in text.
+export interface FindMatch {sessionId:string;fromEnd:number;text:string;start:number;length:number}
 export const COPY_CHUNK_BYTES = 1024 * 1024;
 export interface SessionText {sessionId:string;text:string;truncated:boolean;source?:'last-reply'|'session'}
 export type Engine = 'claude-code' | 'codex' | 'shell'; // Shell spawning remains internal; the homepage can display it.
@@ -106,10 +113,14 @@ export type Request = {
     kind: 'sessions.preview';
     sessionId: string | null;
 } | {
-    kind: 'sessions.stop' | 'sessions.remove' | 'sessions.resume';
+    kind: 'sessions.stop' | 'sessions.remove' | 'sessions.resume' | 'sessions.retry';
     sessionId: string;
 } | {
     kind:'sessions.text'; sessionId:string; lastReply?:boolean;
+} | {
+    kind:'sessions.send'; sessionId:string; text:string;
+} | {
+    kind:'sessions.find'; text:string;
 } | {
     kind: 'sessions.rename';
     sessionId: string;
@@ -166,6 +177,7 @@ export interface SuccessResponse {
     cols?: number;
     rows?: number;
     modes?: TerminalModes;
+    matches?:FindMatch[]; moreMatches?:boolean;
     copy?:SessionText & {more?:boolean}; // Bounded chunks echo the same request id; client joins before resolving.
 }
 export type Response = SuccessResponse | {

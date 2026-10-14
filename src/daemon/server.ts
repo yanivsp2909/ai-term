@@ -7,7 +7,7 @@ import { WORKTREE_DELETE_ERRORS } from './worktree-removal.js';
 import { activateTerminal } from './terminal-activate.js';
 import type { TerminalBundle } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
-import { SessionManager } from './session-manager.js';
+import { SessionManager, AGENT_COMMAND_ERRORS } from './session-manager.js';
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
@@ -270,13 +270,24 @@ export class DaemonServer {
                 case 'sessions.remove': {
                     const keptWorktree=this.manager.get(request.sessionId).worktree;
                     await this.manager.remove(request.sessionId);
-                    const removedOwner=this.owners.get(request.sessionId);
-                    if(removedOwner)removedOwner.attached=null;
-                    this.owners.delete(request.sessionId);
-                    for (const p of this.peers)
-                        if (p.preview === request.sessionId)
-                            p.preview = null;
+                    this.forget(request.sessionId);
                     this.control(peer, { id: request.id, ok: true, ...(keptWorktree?{keptWorktree}:{}) });
+                    break;
+                }
+                case 'sessions.retry': {
+                    // The new agent replaces the old record, which retry has already removed (or logged that it couldn't).
+                    const session=await this.manager.retry(request.sessionId);
+                    if(!this.manager.list().some(s=>s.id===request.sessionId))this.forget(request.sessionId);
+                    this.control(peer,{id:request.id,ok:true,session});
+                    break;
+                }
+                case 'sessions.send':
+                    await this.manager.send(request.sessionId,request.text);
+                    this.control(peer,{id:request.id,ok:true});
+                    break;
+                case 'sessions.find': {
+                    const {matches,more}=this.manager.find(request.text);
+                    this.control(peer,{id:request.id,ok:true,matches,moreMatches:more});
                     break;
                 }
                 case 'sessions.rename':
@@ -309,7 +320,7 @@ export class DaemonServer {
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
-                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...WORKTREE_DELETE_ERRORS
+                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS
             ]);
             const message = error instanceof Error && (fixed.has(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.
@@ -319,6 +330,12 @@ export class DaemonServer {
     }
     // Sampling runs only while some connected client wants it (architecture §10).
     private updateSampling(): void { if (this.closed) return; this.sampler.setSubscribers([...this.peers].filter(peer => peer.stats).length); }
+    // A removed record has no owner and no previewers left.
+    private forget(id:string):void{
+        const owner=this.owners.get(id);if(owner)owner.attached=null;
+        this.owners.delete(id);
+        for(const p of this.peers)if(p.preview===id)p.preview=null;
+    }
     private async detach(peer:Peer):Promise<void> {
         const id=peer.attached;if(!id)return;
         await this.manager.detach(id,()=>{

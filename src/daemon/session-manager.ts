@@ -8,8 +8,8 @@ import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
-import type { SessionInfo, SessionEvent, TerminalModes, CreateSession, ClaudeStatusEvent, WorktreeRecord, WorktreeView } from '../shared/protocol.js';
-import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord } from '../shared/validate.js';
+import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch } from '../shared/protocol.js';
+import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
 import { prepareWorktree, serialize } from './worktrees.js';
 import { checkWorktree, deleteWorktree, unrecordedFolders, WorktreeError } from './worktree-removal.js';
@@ -23,6 +23,10 @@ import { checkEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
 import { OutputClock } from './output-clock.js';
+// Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
+export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry already starting','Worktree in use by a running agent','Its worktree is gone','Its folder is gone',
+    'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
+    'Agent does not accept pasted lines','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
     info: SessionInfo;
     host?: PtyHost;
@@ -40,12 +44,16 @@ interface Live {
     clientPaused:boolean;
 }
 export class SessionManager extends EventEmitter {
+    // /send: how long Enter waits behind the paste (static so a test can widen the window it races).
+    static sendEnterDelayMs = 50;
     private sessions = new Map<string, Live>();
     private size = { cols: 85, rows: 30 };
     private saving: Promise<void> = Promise.resolve();
     private closing = false;
     private warnings = new Map<string, string>();
     private resuming=new Set<string>();
+    private retrying=new Set<string>();
+    private sending=new Set<string>();
     // Worktrees AI Term created, by path. A record outlives its agent and goes only when its worktree is deleted.
     private worktreeRecords=new Map<string,WorktreeRecord>();
     private busyWorktrees=new Set<string>();
@@ -160,9 +168,31 @@ export class SessionManager extends EventEmitter {
         // A resume and a delete of one worktree exclude each other until the other has finished.
         if(saved.worktree&&this.busyWorktrees.has(saved.worktree))throw new Error('Worktree is busy');
         this.resuming.add(identity);if(saved.worktree)this.busyWorktrees.add(saved.worktree);
-        try{return await this.create({engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},{...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{})});}finally{this.resuming.delete(identity);if(saved.worktree)this.busyWorktrees.delete(saved.worktree);}
+        try{return await this.create({engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},{resume:true,...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{})});}finally{this.resuming.delete(identity);if(saved.worktree)this.busyWorktrees.delete(saved.worktree);}
     }
-    async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{conversationId?:string;worktree?:string;branch?:string}): Promise<SessionInfo> {
+    // /retry: the same engine, model, auth, effort, mode and folder (its worktree too, if it still exists), started fresh:
+    // no conversation is resumed and no first message is resent, because AI Term never keeps one. The new agent replaces
+    // the old record; the worktree record is untouched.
+    async retry(id:string):Promise<SessionInfo>{
+        const saved=this.get(id);
+        if(!['exited','error'].includes(saved.status))throw new Error('Retry needs a finished agent');
+        if(this.retrying.has(id))throw new Error('Retry already starting');
+        if(saved.worktree){
+            if(this.busyWorktrees.has(saved.worktree))throw new Error('Worktree is busy');
+            if(this.list().some(s=>s.worktree===saved.worktree&&!['exited','error'].includes(s.status)))throw new Error('Worktree in use by a running agent');
+            if(!this.worktreeRecords.has(saved.worktree)||!(await validCwd(saved.cwd)))throw new Error('Its worktree is gone');
+        }else if(!(await validCwd(saved.cwd)))throw new Error('Its folder is gone');
+        const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const};
+        this.retrying.add(id);if(saved.worktree)this.busyWorktrees.add(saved.worktree);
+        let next:SessionInfo;
+        try{
+            // An empty continuation still counts as one: an agent that ran in place gets no new worktree.
+            next=await this.create(saved.engine==='shell'?{cwd:saved.cwd,title:saved.title}:{engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{});
+        }finally{this.retrying.delete(id);if(saved.worktree)this.busyWorktrees.delete(saved.worktree);}
+        try{await this.remove(id);}catch{this.log.error('Retried agent: old record could not be removed');}
+        return next;
+    }
+    async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{resume?:boolean;conversationId?:string;worktree?:string;branch?:string}): Promise<SessionInfo> {
         const cwdValid=await validCwd(request.cwd);
         if (this.closing || !cwdValid || (request.title !== undefined && !isTitle(request.title)))
             throw new Error('Invalid session request');
@@ -171,7 +201,7 @@ export class SessionManager extends EventEmitter {
         // Status is not billing: subscription and key sessions both report it. Login sessions only sign in.
         const withStatus=Boolean(agent&&!agent.login&&this.usage);
         const codexStatus=withStatus&&agent?.engine==='codex'?{node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})}:undefined;
-        const argvRequest=agent?{...agent,...(conversationId?{conversationId}:{}),...(continuation?{resume:true}:{}),...(codexStatus?{codexStatus}:{})}:null;
+        const argvRequest=agent?{...agent,...(conversationId?{conversationId}:{}),...(continuation?.resume?{resume:true}:{}),...(codexStatus?{codexStatus}:{})}:null;
         let recipe: SpawnRecipe;
         let authMethod: SessionInfo['authMethod'];
         if (agent) {
@@ -338,6 +368,49 @@ export class SessionManager extends EventEmitter {
         if(title.run===previous)return;
         if(title.run==='working')this.codexStatus(live,{kind:'running'});
         else if(title.run==='action')this.codexStatus(live,{kind:'waiting',reason:'permission'});
+    }
+    // D50: /send is the one way homepage text reaches an agent. It is refused whenever the text could answer something the
+    // user hasn't seen: a permission prompt or question, an agent someone is typing in, or an AI agent that hasn't reported
+    // status yet (it may still be at its folder-trust prompt, which no hook reports).
+    private unsendable(live:Live):string|null{
+        if(!live.host||live.mirrorFailed||['exited','error'].includes(live.info.status))return 'Agent has exited';
+        if(live.attached)return 'Agent is open in a session';
+        if(live.info.status==='waiting'&&live.info.statusDetail==='permission')return 'Agent is asking for permission';
+        if(live.info.status==='waiting'&&live.info.statusDetail==='question')return 'Agent is asking a question';
+        if(live.info.engine!=='shell'&&(!live.statusState||live.statusState.seq===0))return 'Agent has not reported its status yet';
+        return null;
+    }
+    async send(id:string,text:string):Promise<void>{
+        if(!isUUID(id)||!isSendText(text))throw new Error('Invalid send request');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        const refused=this.unsendable(live);if(refused)throw new Error(refused);
+        if(this.sending.has(id))throw new Error('Agent is busy with another send');
+        const paste=live.mirror.modes().bracketedPaste;
+        // Without bracketed paste every newline would be its own Enter, so only one line may go.
+        if(!paste&&text.includes('\n'))throw new Error('Agent does not accept pasted lines');
+        this.sending.add(id);
+        try{
+            live.host?.write(paste?`\x1b[200~${text}\x1b[201~`:text);
+            // Enter is its own write a moment later, so the agent has taken the whole paste in before it submits. The
+            // checks run again: a prompt that appeared in between must not get this Enter.
+            await new Promise(resolve=>setTimeout(resolve,SessionManager.sendEnterDelayMs));
+            if(this.unsendable(live))throw new Error('Text pasted but not sent; go inside');
+            // With kitty 'report all keys as escapes' (flag 8) Enter is CSI 13 u, not CR.
+            live.host?.write(((live.mirror.modes().kittyFlags?.at(-1)??0)&8)?'\x1b[13u':'\r');
+            if(live.info.engine==='codex')this.codexStatus(live,{kind:'running'},state=>state.status==='done'||state.status==='waiting');
+        }finally{this.sending.delete(id);}
+    }
+    // /find over every agent's mirror; per-agent and total caps keep one search to one small response.
+    find(query:string):{matches:FindMatch[];more:boolean}{
+        if(!isFindQuery(query))throw new Error('Invalid find request');
+        const matches:FindMatch[]=[];let more=false;
+        for(const live of this.sessions.values()){
+            if(live.mirrorFailed)continue;
+            const found=live.mirror.find(query,MAX_FIND_PER_AGENT+1);
+            if(found.length>MAX_FIND_PER_AGENT)more=true;
+            for(const match of found.slice(0,MAX_FIND_PER_AGENT)){if(matches.length>=MAX_FIND_RESULTS){more=true;break;}matches.push({sessionId:live.info.id,...match});}
+        }
+        return {matches,more};
     }
     async snapshot(id: string, publish?: (snapshot: string, size:{cols:number;rows:number}) => void): Promise<string> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); return live.output.then(() => { const snapshot = live.mirror.snapshot(); publish?.(snapshot,{cols:live.mirror.terminal.cols,rows:live.mirror.terminal.rows}); return snapshot; }); }

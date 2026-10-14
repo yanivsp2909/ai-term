@@ -1,11 +1,20 @@
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
-import { MAX_FRAME_BYTES, MAX_COPY_BYTES, type TerminalModes } from '../shared/protocol.js';
+import { MAX_FRAME_BYTES, MAX_COPY_BYTES, FIND_LINE_CHARS, type FindMatch, type TerminalModes } from '../shared/protocol.js';
 import { useUnicode11 } from '../shared/unicode-width.js';
 // Terminal signals the daemon reads for status (S15: the daemon's mirror, never the client). Text is passed on, never stored or logged here.
 export type MirrorSignal={kind:'bell'}|{kind:'osc9';text:string}|{kind:'title';title:string};
 // eslint-disable-next-line no-control-regex -- C0/C1 controls never reach the clipboard.
 const COPY_STRIP=/[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/gu;
+// /find results are drawn as plain text: every control, format and private-use character goes.
+const FIND_STRIP=/[\p{C}\p{Zl}\p{Zp}]/gu;
+// Lower-cased text plus, for each of its UTF-16 units, the offset in the original. A few characters change length when
+// lower-cased (İ), so matching on the folded text and slicing the original needs the map.
+function fold(text:string):{text:string;map:number[]}{
+    let folded='',offset=0;const map:number[]=[];
+    for(const char of text){const lower=char.toLowerCase();for(let i=0;i<lower.length;i++)map.push(offset);folded+=lower;offset+=char.length;}
+    map.push(offset);return {text:folded,map};
+}
 export class Mirror {
     readonly terminal: headless.Terminal;
     private readonly addon: serialize.SerializeAddon;
@@ -69,6 +78,26 @@ export class Mirror {
         // A byte cap can land inside a multibyte code point. Keep only its complete newer suffix.
         while(start<bytes.length&&((bytes[start]??0)&0xc0)===0x80)start++;
         return {text:bytes.subarray(start).toString('utf8'),truncated:true};
+    }
+    // /find: plain-text, case-insensitive matches in the scrollback and screen, newest first, at most `limit`.
+    // Rows joined by soft wraps are searched as one line; fromEnd names the row the match starts on.
+    find(query:string,limit:number):Omit<FindMatch,'sessionId'>[]{
+        const buffer=this.terminal.buffer.active,needle=query.toLowerCase(),found:Omit<FindMatch,'sessionId'>[]=[];
+        for(let bottom=buffer.length-1;bottom>=0&&found.length<limit;){
+            let top=bottom;while(top>0&&buffer.getLine(top)?.isWrapped)top--;
+            let line='';const starts:number[]=[];
+            for(let row=top;row<=bottom;row++){starts.push(line.length);line+=buffer.getLine(row)?.translateToString(row===bottom)??'';}
+            const folded=fold(line),hits:Omit<FindMatch,'sessionId'>[]=[];
+            for(let at=folded.text.indexOf(needle);at>=0;at=folded.text.indexOf(needle,at+Math.max(1,needle.length))){
+                const start=folded.map[at]??0,end=folded.map[at+needle.length]??line.length;if(end<=start)continue;
+                const row=top+starts.filter(offset=>offset<=start).length-1;
+                const before=line.slice(Math.max(0,start-40),start).replace(FIND_STRIP,'').trimStart(),match=line.slice(start,end).replace(FIND_STRIP,'');
+                const after=[...line.slice(end).replace(FIND_STRIP,'')].slice(0,Math.max(0,FIND_LINE_CHARS-before.length-match.length)).join('').trimEnd();
+                if(match)hits.push({fromEnd:buffer.length-1-row,text:before+match+after,start:before.length,length:match.length});
+            }
+            found.push(...hits.reverse().slice(0,limit-found.length));bottom=top-1;
+        }
+        return found;
     }
     snapshot(): string {
         // Reserve JSON escaping/envelope space; retain the screen before scrollback.
