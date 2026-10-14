@@ -1,0 +1,24 @@
+import { expect, it, vi } from 'vitest';
+import type { TerminalApi } from '../app/shared/api.js';
+const mocks = vi.hoisted(() => ({ expose: vi.fn(), send: vi.fn(), invoke: vi.fn().mockResolvedValue('clipboard'), on: vi.fn(), remove: vi.fn() }));
+vi.mock('electron', () => ({ contextBridge: { exposeInMainWorld: mocks.expose }, ipcRenderer: { send: mocks.send, invoke: mocks.invoke, on: mocks.on, removeListener: mocks.remove } }));
+it('exposes only fixed-channel wrappers and strips IPC events from subscriptions', async () => {
+  await import('../app/preload/index.js');
+  expect(mocks.expose).toHaveBeenCalledOnce();
+  expect(mocks.expose.mock.calls[0]?.[0]).toBe('terminal');
+  const api = mocks.expose.mock.calls[0]?.[1] as TerminalApi;
+  expect(Object.keys(api).sort()).toEqual(['write', 'resize', 'onOutput', 'openUrl', 'copy', 'paste', 'onTheme'].sort());
+  api.write('hello'); api.resize({ cols: 80, rows: 24 });
+  expect(mocks.send.mock.calls).toEqual([['terminal:write', 'hello'], ['terminal:resize', { cols: 80, rows: 24 }]]);
+  await api.openUrl('https://example.com'); await api.copy('copy'); expect(await api.paste()).toBe('clipboard');
+  expect(mocks.invoke.mock.calls).toEqual([['terminal:open-url', 'https://example.com'], ['terminal:copy', 'copy'], ['terminal:paste']]);
+  const output = vi.fn(), off = api.onOutput(output);
+  const listener = mocks.on.mock.calls[0]?.[1] as (event: unknown, value: unknown) => void;
+  listener({ secretEvent: true }, 'text'); listener({}, 5);
+  expect(output.mock.calls).toEqual([['text']]); off();
+  expect(mocks.remove).toHaveBeenCalledWith('terminal:output', listener);
+  const theme = vi.fn(); api.onTheme(theme);
+  const themeListener = mocks.on.mock.calls[1]?.[1] as (event: unknown, value: unknown) => void;
+  themeListener({}, 'dark'); themeListener({}, 'unknown');
+  expect(theme.mock.calls).toEqual([['dark']]);
+});
