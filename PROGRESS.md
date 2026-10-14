@@ -2,7 +2,7 @@
 
 ## Checkpoint
 Last commit: (this handover; see git log)
-Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Parts B–F follow below as they finish.
+Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Part B v0.5 release gate done: **v0.5 is closed**. Parts C–F follow below as they finish.
 Branch: main. Started clean at c03e02d after `git pull --ff-only` (already up to date). No other agent was working in this repo (the running Codex sessions' cwd is ~/NARVIS).
 
 Prompt vs code (overnight):
@@ -22,6 +22,47 @@ Prompt vs code (overnight):
 - Full suite: the first runs failed 1 test every time: `tests/gate-silent-failures.test.ts` M4 used `/Users/test/My Projects/...` as an "unsafe" status-line path, but b2e203f deliberately allowed ASCII spaces (AI Term.app). Stale fixture, not a product bug: 29600d3 uses an apostrophe instead. Then two consecutive full runs, dot reporter: **194 files, 1197 passed, 2 skipped** (opt-in Keychain), 18.91 s and 18.66 s.
 - Smoke after the rebuild: dev `npm run app:test` 9 passed (37.7 s); packaged `AI_TERM_TEST_APP=<.app exe> npm run app:test` 9 passed (39.1 s). No new leaked processes.
 - The test output prints one `Unhandled pty write error [Error: EIO...]` line from a test that writes after its PTY exits; it fails nothing (handed to Part B's silent-failure review).
+
+## Part B: v0.5 release gate — done, v0.5 closed
+Five fresh read-only reviewers on 5ba923a (none had seen the code written): security-reviewer (Electron hardening), security-bounty-hunter (as a general-purpose agent told to load it: control channel S24), security-reviewer (packaging/S25), silent-failure-hunter (app main, preload, packaging scripts, launcher), engineering:code-review (as a general-purpose agent: whole v0.5 diff 027521c..HEAD). Then a fresh typescript-reviewer on the fix diff, twice (round two after its own findings). Each real finding: failing test commit, then fix commit. Tests: tests/gate-v05-release.test.ts (17 cases).
+
+Findings fixed:
+- **HIGH (fix review, my own first gate fix):** the first output scrubber held at most 13 characters, so a caret echo split right after `^[]777;ai-term` (14) showed the token; a control cut by the 15 ms flush showed the rest of its token. Rewritten as a state machine with a 300-round random chunking test; re-review fuzzed 200,000 streams, 0 leaks. abe1bf3 → df2c429.
+- **MEDIUM (S24, two reviewers independently):** the app-control token was echoed onto the screen at every launch: main wrote `theme-changed` while the client's PTY was still cooked (node-pty starts with echo on), and again around attach/home. Main now writes controls only after the client's alternate-screen switch and drops any control returning as output. 0a19738 → e3a1c45, df2c429.
+- **MEDIUM (env):** `ELECTRON_RUN_AS_NODE=1` from the packaged launcher reached every Claude Code, Codex and shell session and everything they ran (an agent starting `code` or `electron .` got plain Node). Stripped in `buildShellEnv`, kept only for a dev daemon that is itself the plain Electron binary. dca8b64 → 2ca12ea.
+- **MEDIUM (input):** an OSC 11 reply arriving after its 200 ms probe timed out (hidden window, throttled renderer) was typed into the attached agent, whose CLI reads the Escape as an interrupt. Swallowed for 2 s. 0a19738 → 59e4a13.
+- **MEDIUM (silent):** a signal-killed `ai` showed `ai exited (0)` and logged nothing → `✗ ai stopped by signal N` + log. dca8b64 → f6e06d6.
+- **MEDIUM (silent):** a failed desktop startup quit with no message (Finder has no stderr) → error dialog + app.log line. dca8b64 → f6e06d6.
+- **MEDIUM (silent):** every main-process catch dropped the error → app.log keeps its code or class (never the message). dca8b64 → f6e06d6.
+- **LOW/MEDIUM:** after `ai` exited, every key/resize printed `✗ Terminal message refused…` → dropped quietly; Cmd+Q could hang forever on a client that never exits → 3 s deadline; render-process-gone logs its reason from a fixed list. dca8b64 → f6e06d6.
+- **LOW:** Option+[ (and Esc, pause, [) was held until the next key → released on the Escape timeout; the late-reply window releases a held Escape too. 0a19738 → 59e4a13, df2c429.
+
+Not fixed, with reasons:
+- **LOW/MEDIUM devtools:** the packaged binary honors `--remote-debugging-port`/`--inspect` (no fuses flipped). Fixed (b0f0e78), then reverted (23f19fa): Playwright drives the packaged smoke suite and the latency A/B through exactly those switches, and using them needs a same-user process that can already run `ai` and reach the daemon (D35).
+- **LOW (dev app only):** a daemon started by `npm run app:dev` runs as the plain Electron binary; AI Term's own agent (allowlisted env) and the notification-click Terminal script then lack Electron Node mode. Pre-existing; the packaged app pins `ai-node`.
+- **LOW:** the theme re-probe can land between two raw-passthrough output chunks of an attached agent (bar off) and garble one escape until the agent redraws. Rare (system appearance change while attached); self-heals.
+- **LOW:** a packaged app silently adopts any same-protocol daemon (no build/version check); intentional for the dev-daemon handoff.
+- **LOW:** node-pty prints `Unhandled pty write error` (EIO/EBADF) to the daemon's ignored stderr when a write races a dying session; it is inside node-pty's write queue with no hook. The session is exiting anyway.
+- **LOW:** a missing preload leaves a blank window; launcher.c's one-line failure has no step; `status-notify` failures leave no trace (by design: Codex must see exit 0); build-notifier doesn't restore `previous.app` if the final rename fails. No headless harness for the first two; noted for the next desktop step.
+- **Informational (D35):** the token is visible to same-user processes via `ps -E` even after it is deleted from the client's env.
+
+Checks (after the last fix, df2c429):
+```
+npm run typecheck   tsc --noEmit && tsc --noEmit -p app/tsconfig.json   (exit 0)
+npm run lint        ESLint: No issues found
+npm run build       ESM Build success in 27ms
+npm run app:build   built in 55ms
+npm run app:dist    AI Term.app + helper: valid on disk; Packaged app and zip
+npm run app:test                         9 passed (37.4s)
+AI_TERM_TEST_APP=<packaged> app:test     9 passed (39.3s)
+latency A/B (dev 11362d1 vs packaged df2c429)   p95 2.2 vs 2.3 ms, difference +0.10 (limit +0.30) PASS
+npm test (1)   Test Files 195 passed · Tests 1214 passed | 2 skipped · 18.53s
+npm test (2)   Test Files 195 passed · Tests 1214 passed | 2 skipped · 18.98s
+coverage (src + app/main)   Statements 86.39% · Branches 81.16% · Functions 87.08% · Lines 92.75%
+grep console.log src app/main app/preload app/shared   none
+```
+- One earlier full run (before df2c429) had 1 failure whose name I didn't capture; three immediate reruns were green. Under coverage only, the known v0.4 `ai-agent-review` "bash over 16 KB" test times out (Screen.fit, recorded at the v0.4 gate).
+- The packaged-latency artifact was not re-committed for the gate reruns (+0.0 and +0.1 ms); the committed one is Part A's.
 
 ## Previous checkpoint (v0.5 packaging, retained)
 
