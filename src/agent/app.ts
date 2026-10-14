@@ -120,9 +120,9 @@ export class AgentApp implements AgentIO {
   kill(): void {
     this.generation++;
     const commands = killAllBash();
+    void this.agent.stopMcp().catch(()=>this.options.screen.note('MCP stop failed','error'));
     if (!this.running) { this.options.screen.note(commands ? `killed ${commands} running command${commands > 1 ? 's' : ''}` : 'nothing is running'); this.options.screen.prompt(this.buffer); return; }
     this.queued = []; this.approval?.resolve(false); this.paused?.resolve(false); this.turn?.abort();
-    void this.agent.stopMcp().catch(()=>this.options.screen.note('MCP stop failed','error'));
     this.options.screen.note(`killed: the request${commands ? ` and ${commands} running command${commands > 1 ? 's' : ''}` : ''}`, 'error');
   }
   close(): void { if (this.closed) return; this.closed = true; this.generation++; this.options.screen.closePopup(); killAllBash(); this.paused?.resolve(false); this.approval?.resolve(false); this.turn?.abort(); this.options.screen.hidePrompt();void this.agent.stopMcp().then(()=>this.options.quit(),()=>{this.options.screen.note('MCP stop failed','error');this.options.quit();}); }
