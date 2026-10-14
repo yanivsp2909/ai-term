@@ -47,11 +47,11 @@ it('MEDIUM: two handoffs of one agent at once: exactly one runs, one summary is 
   expect(d.calls()).toBe(1);
 });
 it('MEDIUM: the note reaching argv carries no escapes, controls or bidi overrides; lines and tabs stay', () => {
-  const message = handoffMessage('x', 'a\x1b]52;c;AAAA\x07b\x1b[2Jc‮\u0085d\r\ne\tf');
+  const message = handoffMessage('x', 'a\x1b]52;c;AAAA\x07b\x1b[2Jc\u202e\u0085d\r\ne\tf');
   // eslint-disable-next-line no-control-regex -- the controls are what must be gone.
-  expect(message).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/);
+  expect(message).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/);
   expect(message).toContain('\ne\tf');
-  expect(handoffMessage('x', '👩‍💻 日本')).toContain('👩‍💻 日本');
+  expect(handoffMessage('x', '👩\u200d💻 日本')).toContain('👩\u200d💻 日本');
 });
 it('LOW: the handoff runs only with the writer the user approved', async () => {
   const d = await daemon();
@@ -130,11 +130,11 @@ it('MEDIUM: the source exiting while the note is written is charged once, and no
 // Fix review (2026-10-15).
 import { validateRequest } from '../src/shared/validate.js';
 it('MEDIUM fix review: only bidi overrides and line separators go; ZWJ, ZWNJ, emoji tags and RLM stay', () => {
-  const text = 'team 👨‍👩‍👧 and 🏴󠁧󠁢󠁥󠁮󠁧󠁿 and می‌خواهم ‏', message = handoffMessage('a', text + '‮⁦x ');
-  expect(message).toContain(text.trim()); expect(message).not.toMatch(/[‪-‮⁦-⁩  ]/);
+  const text = 'team 👨\u200d👩\u200d👧 and 🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f} and می\u200cخواهم \u200f', message = handoffMessage('a', text + '\u202e\u2066x\u2028');
+  expect(message).toContain(text.trim()); expect(message).not.toMatch(/[\u202a-\u202e\u2066-\u2069\u2028\u2029]/);
 });
 it('LOW fix review: a note of only escapes is empty; the socket needs the approved writer; a kept agent is not marked handed off', async () => {
-  const d = await daemon(async () => ({ text: '\x1b[0m‮', inputTokens: 1, outputTokens: 1 }));
+  const d = await daemon(async () => ({ text: '\x1b[0m\u202e', inputTokens: 1, outputTokens: 1 }));
   await expect(d.manager.handoff(d.source.id, 'claude-code')).rejects.toThrow('The handoff note came back empty');
   await expect(validateRequest({ id: crypto.randomUUID(), kind: 'sessions.handoff', sessionId: d.source.id, engine: 'codex' })).rejects.toThrow('Invalid handoff request');
 });
