@@ -24,10 +24,10 @@ export class Screen {
   hidePrompt(): void { if (this.promptShown) { this.out.write('\r\x1b[2K'); this.promptShown = false; this.atLineStart = true; } }
 
   banner(model: string, root: string, permission: 'ask' | 'dontAsk', files: string[]): void {
-    this.line(`${this.paint('accent', 'AI Term agent', true)} ${this.paint('ink-3', `· ${model} · ${root}`)}`);
+    this.line(`${this.paint('accent', 'AI Term agent', true)} ${this.paint('ink-3', `· ${plain(model)} · ${plain(root)}`)}`);
     if (permission === 'dontAsk') this.line(this.paint('status-error', "! don't ask · writes, edits and commands run without asking", true));
     else this.line(this.paint('ink-3', 'ask · every write, edit and command waits for your y or n'));
-    if (files.length) this.line(this.paint('ink-3', `· read ${files.join(', ')}`));
+    if (files.length) this.line(this.paint('ink-3', `· read ${plain(files.join(', '))}`));
     this.line(this.paint('ink-3', '/help · Esc interrupts · Ctrl+C twice quits'));
   }
   user(text: string): void { this.line(''); for (const [i, row] of plain(text).split('\n').entries()) this.line(`${this.paint('accent', i ? '  ' : '› ')}${row}`); }
