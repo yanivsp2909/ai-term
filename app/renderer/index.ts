@@ -8,6 +8,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { monoFont, sansFont, terminalFontSize, tokenColors } from '../../src/shared/theme-tokens.js';
 import { pasteErrors, type AppTheme } from '../shared/api.js';
+import { fitToWindow } from './resize.js';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
 
@@ -47,8 +48,7 @@ function App(): unknown {
     const stopOutput = api.onOutput(data => { terminal.write(data); });
     const stopTheme = api.onTheme(theme);
     const resize = (): void => {
-      fit.fit();
-      api.resize({ cols: Math.max(2, Math.min(500, terminal.cols)), rows: Math.max(2, Math.min(300, terminal.rows)) });
+      fitToWindow(fit, terminal, size => { api.resize(size); });
     };
     const observer = new ResizeObserver(resize); observer.observe(host.current);
     terminal.attachCustomKeyEventHandler(event => {
