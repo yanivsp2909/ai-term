@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, readFile, writeFile, symlink } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readdir, lstat, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getPaths, preparePaths } from '../src/shared/paths.js';
@@ -35,9 +35,16 @@ it('bounds serialized snapshots by trimming scrollback',async()=>{
  const mirror=new Mirror(1000,500,()=>{});
  try{await mirror.write(('x'.repeat(1000)+'\r\n').repeat(5500));expect(Buffer.byteLength(mirror.snapshot())).toBeLessThan(MAX_FRAME_BYTES-2048);}finally{mirror.dispose();}
 },10000);
-it('fails safely on a corrupted state file and refuses a symlinked state',async()=>{
- const p=await paths();await writeFile(p.state,'{bad');const manager=new SessionManager(p,new Logger(p.log));await expect(manager.load()).rejects.toThrow();
- await rm(p.state);const target=join(p.root,'target');await writeFile(target,'{"sessions":[]}');await symlink(target,p.state);await expect(manager.load()).rejects.toThrow();
+it('moves a corrupted state file aside, and moves a symlinked state aside without following it (B24)',async()=>{
+ const p=await paths();await writeFile(p.state,'{bad');const manager=new SessionManager(p,new Logger(p.log));await manager.load();expect(manager.list()).toEqual([]);
+ const moved=async()=>(await readdir(p.root)).filter(name=>name.startsWith('state.json.corrupt-'));expect(await moved()).toHaveLength(1);
+ await rm(p.state);for(const name of await moved())await rm(join(p.root,name));
+ const target=join(p.root,'target');await writeFile(target,'{"sessions":[]}');await symlink(target,p.state);
+ const next=new SessionManager(p,new Logger(p.log));await next.load();
+ // The link itself moved; its target is untouched, and the new state.json is a regular file, not written through the link.
+ const [link]=await moved();expect((await lstat(join(p.root,link??''))).isSymbolicLink()).toBe(true);
+ expect(await readFile(target,'utf8')).toBe('{"sessions":[]}');expect((await lstat(p.state)).isFile()).toBe(true);
+ await next.shutdown();await manager.shutdown();
 });
 it('keeps a running session through ENOSPC and retries state on the next change',async()=>{
  const p=await paths();let fail=false;
