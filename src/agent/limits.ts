@@ -42,6 +42,8 @@ export class RunLimits {
   get current(): AgentCaps | null { return this.caps; }
   setCaps(caps: AgentCaps): void { const merged = { ...caps, ...this.pending }; this.pending = {}; this.caps = merged; this.base = { ...merged }; }
   chargeUnfinished(worst: number): void { this.spent += worst; this.unreported += worst; }
+  // A cost already in spent whose usage AI Term never took: the daemon's budgets don't know it, so checks add it here.
+  unconfirmed(cost: number): void { this.unreported += cost; }
   record(cost: number | null): void { if (cost !== null) this.spent += cost; }
   // The first pause that applies before the next request, or null when it may go.
   check(facts: AgentFacts | null, inputTokens: number): Pause | null {

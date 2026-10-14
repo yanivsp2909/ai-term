@@ -97,11 +97,13 @@ it('MEDIUM: a model whose wire is unknown (no facts) is refused, never sent down
   await expect(foundryWireFor(async () => stubFacts({ wire: 'chat' }), 'kimi-k3')).resolves.toBe('chat');
 });
 
-it('MEDIUM: with no known output limit no maxOutputTokens is sent (the worst case still assumes 16k)', async () => {
+// Reversed by the v0.4 gate: with nothing sent, a provider writes up to its own maximum (128k for Claude) and one checked
+// request could pass the $5 cap. The request now carries the 16k the check assumed (tests/v04-gate-money.test.ts).
+it('MEDIUM: with no known output limit the request carries the 16k allowance the worst case assumes', async () => {
   const h = new Harness(stubFacts());
   const { model, agent: a } = await agent([textStep('ok')], h);
   await a.turn('go', go());
-  expect(model.doStreamCalls[0]?.maxOutputTokens).toBeUndefined();
+  expect(model.doStreamCalls[0]?.maxOutputTokens).toBe(16_000);
   const known = new Harness(stubFacts({ output: 8000 })), second = await agent([textStep('ok')], known);
   await second.agent.turn('go', go()); expect(second.model.doStreamCalls[0]?.maxOutputTokens).toBe(8000);
 });

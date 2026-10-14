@@ -24,7 +24,9 @@ export function reporterEnv(env: NodeJS.ProcessEnv): ReporterEnv | null {
   return { port, status, ...(usage && /^[a-f0-9]{64}$/.test(usage) ? { usage } : {}) };
 }
 
-export interface Reporter { status(update: AgentStatus): Promise<void>; usage(model: string, tokens: TokenUsage): Promise<void>; facts(model: string): Promise<AgentFacts | null> }
+// usage resolves false when AI Term didn't take the record (a failed post, no usage credential): the agent then keeps
+// counting that cost itself, because the budgets the daemon answers with would otherwise forget it.
+export interface Reporter { status(update: AgentStatus): Promise<void>; usage(model: string, tokens: TokenUsage): Promise<boolean | void>; facts(model: string): Promise<AgentFacts | null> }
 
 // Requests go one at a time: the receiver numbers them in arrival order, so overlapping requests could reorder a turn.
 // Awaiting status() therefore means the daemon has applied this update and everything before it.
@@ -50,8 +52,8 @@ export class HttpReporter implements Reporter, ExtensionAccess {
       req.on('close',()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(new Error('MCP operation stopped'));});req.on('error',()=>reject(new Error('MCP operation failed')));req.end(body);
     });
   }
-  status(update: AgentStatus): Promise<void> { return this.post('/v1/status/ai-term', this.env?.status, JSON.stringify(update)); }
-  usage(model: string, tokens: TokenUsage): Promise<void> {
+  status(update: AgentStatus): Promise<void> { return this.post('/v1/status/ai-term', this.env?.status, JSON.stringify(update)).then(() => undefined); }
+  usage(model: string, tokens: TokenUsage): Promise<boolean> {
     const now = BigInt(Date.now()) * 1_000_000n + BigInt(this.sequence++ % 1_000_000), time = now.toString();
     const point = (type: string, value: number) => ({ asInt: String(value), startTimeUnixNano: time, timeUnixNano: time, attributes: [{ key: 'type', value: { stringValue: type } }, { key: 'model', value: { stringValue: model } }] });
     // Reasoning is already inside output (it is billed as output); it isn't sent twice.
@@ -85,17 +87,18 @@ export class HttpReporter implements Reporter, ExtensionAccess {
     }));
     return this.queue.then(() => answer);
   }
-  private post(path: string, token: string | undefined, body: string): Promise<void> {
+  private post(path: string, token: string | undefined, body: string): Promise<boolean> {
     const env = this.env;
-    if (!env || !token) return this.queue;
+    if (!env || !token) return this.queue.then(() => false);
+    let ok = false;
     this.queue = this.queue.then(() => new Promise<void>(resolve => {
       const fail = () => { if (this.failures++ === 0) this.onFirstFailure(); resolve(); };
       const req = request({ hostname: '127.0.0.1', port: env.port, path, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-ai-term-session': token } }, res => {
-        res.resume(); res.on('end', () => { if ((res.statusCode ?? 0) >= 300) fail(); else resolve(); }); res.on('error', fail);
+        res.resume(); res.on('end', () => { if ((res.statusCode ?? 0) >= 300) fail(); else { ok = true; resolve(); } }); res.on('error', fail);
       });
       const timer = setTimeout(() => { req.destroy(); }, REQUEST_TIMEOUT_MS);
       req.on('close', () => clearTimeout(timer)); req.on('error', fail); req.end(body);
     }));
-    return this.queue;
+    return this.queue.then(() => ok);
   }
 }

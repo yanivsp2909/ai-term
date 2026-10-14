@@ -82,6 +82,7 @@ export class Agent {
   private confirmedMcp:{server:McpView;input:string}|null=null;
   private confirmedTask: {file:ExtensionFile;modelId:string;name:string;prompt:string} | null = null;
   private warned = false;
+  private usageWarned = false;
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private options: AgentOptions) { this.limits = options.limits ?? new RunLimits();this.mcpSession=options.mcpSession??{allowed:new Set(),schemas:new Set()}; }
   get extensionAccess(): ExtensionAccess | undefined { return this.options.extensions; }
@@ -203,7 +204,7 @@ export class Agent {
     // The turn's own signal: the user's Esc or kill, or a stop chosen at a limit pause.
     const controller = new AbortController(), stop = () => controller.abort();
     signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop();
-    let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId), open = 0;
+    let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId), open = 0, started = false;
     const totals = { input: 0, cached: 0, output: 0, reasoning: 0, cost: 0 as number | null, requests: 0 };
     const manifest = [extensionManifest(this.catalog.items),mcpManifest(this.mcpCatalog)].filter(Boolean).join('\n');
     const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' }) + (manifest ? '\n\n# Enabled extensions (skill loads skills; task runs agents; mcp_tools loads MCP metadata/schema then mcp_call calls one tool)\n' + manifest : '');
@@ -220,29 +221,39 @@ export class Agent {
     try {
       const result = streamText({
         model: this.options.model, system, messages: [...this.history, user], tools: this.tools(), stopWhen: isStepCount(this.options.maxSteps ?? DEFAULT_MAX_STEPS),
-        // Only a known output limit is sent: a guessed one would make models with smaller limits refuse every request.
-        abortSignal: controller.signal, toolCallConcurrency: 1, maxRetries: 2, ...(facts?.output ? { maxOutputTokens: maxOutputTokens(facts) } : {}),
+        abortSignal: controller.signal, toolCallConcurrency: 1, maxRetries: 2,
         // Before every request: caps, budgets and a known price, with a pause that asks when one says no (D49, D53).
         prepareStep: async ({ messages }) => {
           facts = await this.clearance(estimateTokens(system + JSON.stringify(messages)), controller);
-          open = this.limits.lastWorst; this.currentWorst = open;
-          return undefined;
+          open = this.limits.lastWorst; this.currentWorst = open; started = false;
+          // The request carries exactly the output allowance its check priced (the model's limit capped at 32k, else 16k):
+          // with none, a provider may write up to its own maximum and one request could pass every cap (v0.4 gate). A model
+          // whose real limit is below 16k refuses; marking its catalog model in /settings gives the agent that limit.
+          return { maxOutputTokens: maxOutputTokens(facts) };
         },
         // The SDK's default handler prints the error, whose text can carry anything the provider sent, to stderr, which
         // here is the agent's terminal. The same error arrives as the stream's error part below and is handled there.
         onError: ({ error }) => { streamError ??= error; },
       });
       for await (const part of result.stream) {
-        if (part.type === 'start-step') stepText = '';
+        // The first part of a step arrives once the provider has answered: from here on it may bill the request.
+        if (part.type === 'start-step') { stepText = ''; started = true; }
         else if (part.type === 'text-delta') { const text = redact(part.text); stepText += text; io.text(text); }
         else if (part.type === 'finish-step') {
           if (stepText) lastText = stepText;
-          open = 0; this.currentWorst = 0;
+          const worst = open; open = 0; started = false; this.currentWorst = 0;
+          if (part.usage.inputTokens === undefined && part.usage.outputTokens === undefined) {
+            // A billed request the provider sent no counts for: unknown is not free, so its worst case counts (D53).
+            this.limits.chargeUnfinished(worst);
+            Object.assign(totals, { cost: null, requests: totals.requests + 1 });
+            io.note(`the provider sent no usage for a request; this run and your budgets count it at its worst case ($${worst.toFixed(3)})`, 'warn');
+            continue;
+          }
           const input = part.usage.inputTokens ?? 0, output = part.usage.outputTokens ?? 0, cached = Math.min(input, part.usage.inputTokenDetails.cacheReadTokens ?? 0), reasoning = part.usage.outputTokenDetails?.reasoningTokens ?? 0;
           const cost = requestCost(facts?.price ?? null, input, cached, output);
           this.limits.record(cost);
           Object.assign(totals, { input: totals.input + input, cached: totals.cached + cached, output: totals.output + output, reasoning: totals.reasoning + reasoning, cost: totals.cost === null || cost === null ? null : totals.cost + cost, requests: totals.requests + 1 });
-          if (input || output) void reporter.usage(this.options.modelId, { input, cached, output, reasoning });
+          if (input || output) void reporter.usage(this.options.modelId, { input, cached, output, reasoning }).then(taken => { if (taken === false) this.usageLost(cost); });
           this.context(input, facts);
         }
         else if (part.type === 'error') throw part.error;
@@ -257,6 +268,9 @@ export class Agent {
       return 'done';
     } catch (thrown) {
       if (controller.signal.aborted) return await finishInterrupted();
+      // A request that failed after the provider started answering may still be billed, like one cut off by Esc.
+      if (open && started) this.limits.chargeUnfinished(open);
+      open = 0;
       // A retryable failure (429, 5xx) that used up its retries arrives wrapped; its last attempt says what happened.
       const error = RetryError.isInstance(thrown) ? thrown.lastError : thrown;
       const kind = error instanceof ProviderError ? 'unknown' : failureKind(error);
@@ -370,6 +384,12 @@ export class Agent {
     if (!t.requests) return;
     const k = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
     this.options.io.note(`turn · ${k(t.input)} in${t.cached ? ` · ${k(t.cached)} cached` : ''} · ${k(t.output)} out${t.reasoning ? ` · ${k(t.reasoning)} reasoning` : ''} · ${t.cost === null ? 'price ?' : `$${t.cost.toFixed(4)}`} · run ${this.limits.describe().replace(/^caps: /, '')}`);
+  }
+  // AI Term didn't take a request's usage: Usage and the daemon's budget totals miss it, so this run keeps counting it.
+  private usageLost(cost: number | null): void {
+    if (cost) this.limits.unconfirmed(cost);
+    if (!this.usageWarned) this.options.io.note("usage isn't reaching AI Term; this run still counts it against your budgets, but Usage may read low", 'warn');
+    this.usageWarned = true;
   }
   clear(): void { this.history = []; this.warned = false; void this.options.reporter.status({ event: 'context', percent: 0 }); }
 }
