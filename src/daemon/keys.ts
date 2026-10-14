@@ -49,7 +49,8 @@ export class KeyStore extends EventEmitter {
   const account=this.mcpAccount(server,name);if(!isMcpHash(hash)||!secret||Buffer.byteLength(secret)>2048||/[\p{C}]/u.test(secret))throw new KeyError('Invalid MCP secret');
   try{await this.vault.write(account,JSON.stringify({v:1,secret,hash}));}catch{throw new KeyError('MCP keychain write failed');}return lastFour(secret);
  }
- async removeMcp(server:string,names:string[]):Promise<void>{for(const name of names){try{await this.vault.remove(this.mcpAccount(server,name));}catch{throw new KeyError('MCP keychain remove failed');}}}
+ // Every name is tried even after one fails, so one locked entry doesn't leave the rest behind.
+ async removeMcp(server:string,names:string[]):Promise<void>{let failed=false;for(const name of names){try{await this.vault.remove(this.mcpAccount(server,name));}catch{failed=true;}}if(failed)throw new KeyError('MCP keychain remove failed');}
  async withMcp<T>(server:string,names:string[],hash:string,use:(values:Record<string,string>)=>Promise<T>):Promise<T>{
   if(!isMcpHash(hash))throw new KeyError('Invalid MCP binding');const values:Record<string,string>={};
   try{for(const name of names){let raw:string|null;try{raw=await this.vault.read(this.mcpAccount(server,name));}catch{throw new KeyError('MCP keychain read failed');}

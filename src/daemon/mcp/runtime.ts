@@ -64,7 +64,9 @@ export class McpRuntime {
  }
  async schema(owner:string,cwd:string,server:McpServer,tool:string,signal:AbortSignal):Promise<Record<string,unknown>>{const c=await this.connection(owner,cwd,server,signal);if(!c.schema.size)await this.discover(owner,cwd,server,signal);const schema=c.schema.get(tool);if(!schema)throw new Error('MCP tool unavailable');return schema;}
  async call(owner:string,cwd:string,server:McpServer,tool:string,args:Record<string,unknown>,signal:AbortSignal):Promise<string>{
-  const c=await this.connection(owner,cwd,server,signal);if(!c.schema.has(tool))throw new Error('MCP schema must be selected first');
+  // A cancel or Ctrl+K drops the connection with its schemas while the agent still holds the tool it selected: reconnect
+  // and list again rather than fail every later call. The agent's own gate still required the schema first.
+  const c=await this.connection(owner,cwd,server,signal);if(!c.schema.size)await this.discover(owner,cwd,server,signal);if(!c.schema.has(tool))throw new Error('MCP schema must be selected first');
   const names=server.config.type==='stdio'?server.config.env:server.config.headers;
   return this.keys.withMcp(server.id,names,server.hash,async values=>{
    const abort=()=>{c.controller.abort();void c.transport?.close();};signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
@@ -73,6 +75,7 @@ export class McpRuntime {
   });
  }
  async stopServer(id:string):Promise<void>{await this.closeEntries([...this.connections].filter(([,e])=>e.serverId===id));}
+ async stopAll():Promise<void>{await this.closeEntries([...this.connections]);}
  async stop(owner:string):Promise<void>{await this.closeEntries([...this.connections].filter(([key])=>JSON.parse(key)[0]===owner));}
  private async closeEntries(entries:[string,{pending:Promise<Connection>;controller:AbortController;serverId:string}][]):Promise<void>{for(const [key,entry]of entries){this.connections.delete(key);entry.controller.abort();}
   await Promise.all(entries.map(async([,entry])=>{try{const c=await entry.pending;c.controller.abort();await c.transport?.close();await c.client.close();}catch{this.onFailure();}}));

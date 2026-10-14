@@ -13,6 +13,8 @@ import { McpRuntime, mcpConnector, type McpConnect } from './runtime.js';
 export class McpService {
  private requests=new Map<string,Set<AbortController>>();private runtime:McpRuntime;private queue:Promise<unknown>=Promise.resolve();
  constructor(private settings:SettingsStore,private keys:KeyStore,private log:Logger,private home=homedir(),connect?:McpConnect){this.runtime=new McpRuntime(keys,connect??mcpConnector(keys),()=>log.error('MCP server stop failed'));}
+ // A value left behind by a failed rollback is logged by account name (never a value), so it can be removed by hand.
+ private async rollback(id:string,names:string[]):Promise<void>{try{await this.keys.removeMcp(id,names);}catch{this.log.error(`MCP keychain cleanup failed: remove ai-term accounts mcp:${id}:* in Keychain Access`);}}
  private serial<T>(work:()=>Promise<T>):Promise<T>{const next=this.queue.then(work);this.queue=next.then(()=>undefined,()=>undefined);return next;}
  async list(cwd:string):Promise<McpCatalog>{
   const root=await realpath(cwd),settings=await this.settings.get(),servers:McpView[]=[],notes:string[]=[];
@@ -36,7 +38,7 @@ export class McpService {
     const id=randomBytes(8).toString('hex'),hash=hashMcp({id,config:r.config}),names=r.config.type==='stdio'?r.config.env:r.config.headers,values:McpServer['values']=[],written:string[]=[];
     try{for(const name of names){values.push({name,last4:await this.keys.saveMcp(id,name,r.values[name]??'',hash)});written.push(name);}
      const server=validateMcpServer({id,config:r.config,hash,values,enabled:true,tools:{}});await this.settings.update(async s=>({...s,mcp:[...s.mcp??[],server]}));
-    }catch{if(written.length)await this.keys.removeMcp(id,written);throw new Error('MCP server could not be saved');}return {};
+    }catch{if(written.length)await this.rollback(id,written);throw new Error('MCP server could not be saved');}return {};
    });
    if(r.kind==='mcp.remove')return this.serial(async()=>{const settings=await this.settings.get(),s=settings.mcp?.find(s=>s.config.name===r.name);if(!s)throw new Error('MCP server not found');await this.runtime.stopServer(s.id);await this.keys.removeMcp(s.id,s.values.map(v=>v.name));await this.settings.update(async s=>({...s,mcp:s.mcp?.filter(server=>server.config.name!==r.name)}));return {};});
    if(r.kind==='mcp.list')return {mcp:await this.list(r.cwd)};
@@ -46,7 +48,7 @@ export class McpService {
    }
    if(r.kind==='mcp.approve'){
     if(s.source==='this project')await this.serial(async()=>{const p=projectMcp(this.home,cwd).entries.find(p=>p.server.id===s.id&&p.server.hash===r.hash&&!p.note);if(!p)throw new Error('MCP project changed');
-     await this.runtime.stopServer(s.id);const written:string[]=[];try{for(const [name,value]of Object.entries(p.secrets)){await this.keys.saveMcp(s.id,name,value,s.hash);written.push(name);}await this.settings.update(async settings=>({...settings,mcpApprovals:{...settings.mcpApprovals,[s.id]:s.hash}}));}catch{if(written.length)await this.keys.removeMcp(s.id,written);throw new Error('MCP project approval failed');}
+     await this.runtime.stopServer(s.id);const written:string[]=[];try{for(const [name,value]of Object.entries(p.secrets)){await this.keys.saveMcp(s.id,name,value,s.hash);written.push(name);}await this.settings.update(async settings=>({...settings,mcpApprovals:{...settings.mcpApprovals,[s.id]:s.hash}}));}catch{if(written.length)await this.rollback(s.id,written);throw new Error('MCP project approval failed');}
     });return {};
    }
    if(!s.approved)throw new Error('MCP project server needs approval');
@@ -59,5 +61,7 @@ export class McpService {
    throw new Error('MCP operation unavailable');
   }catch{this.log.error('MCP operation failed');throw new Error('MCP operation failed; check configuration or approval');}finally{if(controller){const pending=this.requests.get(owner);pending?.delete(controller);if(pending?.size===0)this.requests.delete(owner);}}
  }
+ // The daemon is exiting: every owner's requests and servers stop before it returns, or detached stdio groups outlive it.
+ async shutdown():Promise<void>{for(const pending of this.requests.values())for(const controller of pending)controller.abort();this.requests.clear();await this.runtime.stopAll();}
  stop(owner:string):Promise<void>{for(const controller of this.requests.get(owner)??[])controller.abort();this.requests.delete(owner);return this.runtime.stop(owner);}
 }

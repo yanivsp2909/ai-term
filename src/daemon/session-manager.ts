@@ -649,6 +649,7 @@ export class SessionManager extends EventEmitter {
         const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
         for(const [index,result]of stopped.entries())if(result.status==='rejected')this.log.error(`Session stop failed: ${ids[index]}`);
         await this.saving;
+        try{await this.mcp.shutdown();}catch{this.log.error('MCP shutdown failed');}
         for(const live of this.sessions.values()){live.outputClock?.dispose();live.mirror.dispose();}
         this.log.off('writeFailed',this.onLogFailure);this.log.off('writeRecovered',this.onLogRecovery);
     }

@@ -22,7 +22,7 @@ const roots: string[] = [], services: McpService[] = [];
 afterEach(async () => { for (const s of services.splice(0)) await s.stop('agent'); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function fixture(vaultOverride?: Partial<KeyVault>) {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'ai-gate-mcp-'))); roots.push(home);
-  const cwd = join(home, 'work'), state = join(home, 'state'); await mkdir(cwd); await mkdir(state);
+  const cwd = join(home, 'work'), state = join(home, 'state'); await mkdir(cwd); await mkdir(join(state, 'logs'), { recursive: true });
   const values = new Map<string, string>(), vault: KeyVault = { read: async n => values.get(n) ?? null, write: async (n, v) => { values.set(n, v); }, remove: async n => { values.delete(n); }, ...vaultOverride };
   const keys = new KeyStore(state, { vault }), log = new Logger(join(state, 'logs/daemon.log'));
   const service = new McpService(new SettingsStore(state), keys, log, home, mcpConnector(keys)); services.push(service);
@@ -54,7 +54,8 @@ it('a daemon shutdown stops every running MCP server before it returns', async (
   await f.service.query('agent', { kind: 'mcp.discover', cwd: f.cwd, serverId: s.id, hash: s.hash });
   const running = await pid(); expect(alive(running)).toBe(true);
   await f.service.shutdown();
-  expect(alive(running)).toBe(false);
+  // SIGKILL went to the whole group; the child is gone once Node reaps it.
+  await vi.waitFor(() => expect(alive(running)).toBe(false), { timeout: 2000 });
 });
 
 it('/cd stops the servers the old folder started', async () => {

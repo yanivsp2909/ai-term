@@ -191,6 +191,8 @@ export class AgentApp implements AgentIO {
     try { folder = await realpath(wanted); if (!(await stat(folder)).isDirectory()) throw new Error('not a folder'); }
     catch { screen.note(`${argument} isn't a folder you can open`, 'error'); return; }
     const instructions = await loadInstructions(folder);
+    // Servers started for the old folder (cwd and HOME there) aren't in the new folder's catalog: stop them.
+    if (folder !== this.agent.root) await this.agent.stopMcp().catch(() => screen.note('MCP stop failed', 'error'));
     this.agent.setRoot(folder, instructions);
     screen.note(`folder: ${folder}${instructions.files.length ? ` · read ${instructions.files.join(', ')}` : ''}`);
     for (const note of instructions.notes) screen.note(note);
