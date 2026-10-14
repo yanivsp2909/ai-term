@@ -116,3 +116,9 @@ it('runs the model and instructions confirmed for a task even if its file change
   await agent.turn('go',signal());expect(a.recorder.approvals[0]?.body).toContain('AI Term · m1');expect(made).toEqual([]);
   expect(prompt(a.model,1)).toContain('PRIVATE AGENT INSTRUCTIONS');expect(prompt(a.model,1)).not.toContain('CHANGED INSTRUCTIONS');
 });
+
+it('Esc cancels a slash command that is still looking up its extension',async()=>{
+  const a=await setup([text('must not run')]);let release:()=>void=()=>{};const waiting=new Promise<void>(r=>{release=r;}),original=a.catalog.list.bind(a.catalog);a.catalog.list=async()=>{await waiting;return original();};
+  const app=new AgentApp({screen:new Screen({write:()=>{},columns:100,rows:30},createTheme('graphite')),permission:'ask',models:['m1'],makeModel:async()=>a.model,agent:io=>new Agent({...a.options,io}),quit:vi.fn()});
+  app.start();app.input('/greet Ada\r');expect(app.running).toBe(true);app.input('\x1b');release();await vi.waitFor(()=>expect(app.running).toBe(false));expect(a.model.doStreamCalls).toHaveLength(0);app.close();
+});
