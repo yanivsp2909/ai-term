@@ -82,6 +82,7 @@ it('LOW: an agent that got busy while the note was written keeps running, and th
   const result = await handing;
   expect(result.oldKeptRunning).toBe(true);
   expect(d.manager.get(d.source.id).status).toBe('running');
+  expect(d.manager.get(d.source.id).handoffTo).toBeUndefined();
 });
 it('MEDIUM: a booking that fails never stops the daemon (no unhandled rejection) and is logged', async () => {
   const errors: string[] = [], ledger = new BudgetLedger({ book: async () => { throw new Error('x'); }, log: { error: text => { errors.push(text); } } });
@@ -124,4 +125,16 @@ it('MEDIUM: the source exiting while the note is written is charged once, and no
   expect(d.manager.list().filter(s => s.engine === 'claude-code')).toHaveLength(0);
   // One charge: the held worst case, not that plus the real usage.
   expect(worst).toBeCloseTo((d.manager as unknown as { lastHandoffWorst: number }).lastHandoffWorst, 10);
+});
+
+// Fix review (2026-10-15).
+import { validateRequest } from '../src/shared/validate.js';
+it('MEDIUM fix review: only bidi overrides and line separators go; ZWJ, ZWNJ, emoji tags and RLM stay', () => {
+  const text = 'team 👨‍👩‍👧 and 🏴󠁧󠁢󠁥󠁮󠁧󠁿 and می‌خواهم ‏', message = handoffMessage('a', text + '‮⁦x ');
+  expect(message).toContain(text.trim()); expect(message).not.toMatch(/[‪-‮⁦-⁩  ]/);
+});
+it('LOW fix review: a note of only escapes is empty; the socket needs the approved writer; a kept agent is not marked handed off', async () => {
+  const d = await daemon(async () => ({ text: '\x1b[0m‮', inputTokens: 1, outputTokens: 1 }));
+  await expect(d.manager.handoff(d.source.id, 'claude-code')).rejects.toThrow('The handoff note came back empty');
+  await expect(validateRequest({ id: crypto.randomUUID(), kind: 'sessions.handoff', sessionId: d.source.id, engine: 'codex' })).rejects.toThrow('Invalid handoff request');
 });
