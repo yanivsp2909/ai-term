@@ -1,3 +1,13 @@
+import { engineLabel } from '../../shared/models.js';
+// design.md: two letters for the model family (CL Claude, GP GPT, KI Kimi, GR Grok, DS DeepSeek, GL GLM). AI Term's agent can
+// run any of them, so its badge follows the deployment name; an unknown family reads AT.
+const FAMILIES: [RegExp, string][] = [[/^claude|^opus|^sonnet|^haiku/i, 'CL'], [/^gpt|^o\d|^codex/i, 'GP'], [/^kimi/i, 'KI'], [/^grok/i, 'GR'], [/^deepseek/i, 'DS'], [/^glm/i, 'GL']];
+function badge(session: SessionInfo): string {
+  if (session.engine === 'shell') return 'SH';
+  if (session.engine === 'codex') return 'GP';
+  if (session.engine === 'claude-code') return 'CL';
+  return FAMILIES.find(([pattern]) => pattern.test(session.model ?? ''))?.[1] ?? 'AT';
+}
 import type { SessionInfo, AgentEngine, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
 import { Grid, graphemes, type Frame } from './grid.js';
 import { textWidth } from '../../shared/unicode-width.js';
@@ -48,7 +58,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     const y = 2 + i * 3, selected = session.id === view.selectedId, bg = selected ? t['surface-2'] : t.bg, textW = panel.w - 9, card = cardText(session, view.now, textW), statusW = textWidth(card.status.text);
     grid.fill(1, y, panel.w - 2, 3, bg);
     if (selected) for (let r = 0; r < 3; r++) grid.text(1, y + r, '▎', t.accent, bg);
-    grid.text(2, y, ` ${session.engine === 'shell' ? 'SH' : session.engine === 'codex' ? 'GP' : 'CL'} `, t.ink, t['surface-2'], true);
+    grid.text(2, y, ` ${badge(session)} `, t.ink, t['surface-2'], true);
     grid.text(2, y + 1, '    ', t.ink, t['surface-2']);
     grid.text(7, y, session.title, t.ink, bg, selected, textW - statusW - 1);
     grid.text(panel.w - statusW - 2, y, card.status.text, t[card.status.color], bg, card.status.bold);
@@ -92,7 +102,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   grid.box(0, rows - 4, cols, 3, '', t.surface); grid.text(2, rows - 3, '›', t.accent, t.surface);
   const units = graphemes(view.input); drawField(grid, view.field ?? { units, caret: units.length, selection: null }, cols, rows - 3, theme);
   const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;
-  const defaultWidth=Math.max(0,hintsX-2),auth=view.engine?` · ${view.authLabel??'own login'} · ${view.effort??'CLI default'} · ${modeLabel(view.permission??'ask')}${view.worktrees?' · worktree '+view.worktrees:''}`:'',model=view.engine?`${view.model??'CLI default'} · ${view.engine==='codex'?'codex':'claude code'}`:'shell';
+  const defaultWidth=Math.max(0,hintsX-2),auth=view.engine?` · ${view.authLabel??'own login'} · ${view.effort??'CLI default'} · ${modeLabel(view.permission??'ask')}${view.worktrees?' · worktree '+view.worktrees:''}`:'',model=view.engine?`${view.model??'CLI default'} · ${engineLabel(view.engine)}`:'shell';
   let clippedModel='';for(const char of graphemes(model)){if(textWidth(clippedModel+char)>Math.max(0,defaultWidth-textWidth(auth)-3))break;clippedModel+=char;}
   const prefix=`${clippedModel} · `,folderWidth=Math.max(0,defaultWidth-textWidth(prefix)-textWidth(auth));
   let folder='';for(const char of graphemes(view.cwd)){if(textWidth(folder+char)>folderWidth)break;folder+=char;}

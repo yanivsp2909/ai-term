@@ -1,5 +1,6 @@
 import {expect,it,vi} from 'vitest';
-import {mkdtemp,rm,readFile} from 'node:fs/promises';
+import {mkdtemp,rm,readFile,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
 import pty from 'node-pty';
 import {getPaths,preparePaths} from '../src/shared/paths.js';
 import {Logger} from '../src/daemon/log.js';
@@ -21,7 +22,7 @@ it('Claude own login eligibility and all keyed engines get private telemetry bef
  const keys=new KeyStore(root,{vault:{read:async account=>values.get(account)??null,write:async(account,secret)=>{values.set(account,secret);},remove:async account=>{values.delete(account);}}});
  const m=new SessionManager(p,log,undefined,undefined,undefined,keys,usage),status=vi.spyOn(engines,'checkEngine');const real=pty.spawn;let argv:string[]=[];let env:NodeJS.ProcessEnv={};const spy=vi.spyOn(pty,'spawn').mockImplementation((_exe,args,opts)=>{argv=Array.isArray(args)?[...args]:[];env={...opts?.env};return real('/bin/sh',['-c','printf ready; read done'],{...opts,env:{PATH:'/usr/bin:/bin'}});});
  try{await usage.start();await m.load();for(const authMethod of ['api-key','subscription','unknown']as const){status.mockResolvedValue({installed:true,path:'/bin/sh',version:'1',loggedIn:true,authMethod});const s=await m.create({engine:'claude-code',model:null,auth:{kind:'account'},cwd:root,permission:'ask'});expect(env.CLAUDE_CODE_ENABLE_TELEMETRY==='1').toBe(authMethod==='api-key');await expect.poll(()=>m.get(s.id).status).toBe('running');await m.stop(s.id);}
- const secret='sk-ant-'+'AITERMCANARY0000';status.mockResolvedValue({installed:true,path:'/bin/sh',version:'1',loggedIn:false,authMethod:'unknown'});
+ await writeFile(join(root,'settings.json'),JSON.stringify({theme:'graphite',keysRunOn:'cli'}),{mode:0o600});const secret='sk-ant-'+'AITERMCANARY0000';status.mockResolvedValue({installed:true,path:'/bin/sh',version:'1',loggedIn:false,authMethod:'unknown'});
  for(const provider of ['anthropic','openai','foundry']as const){const key=await keys.add({provider,label:'test',secret,...(provider==='foundry'?{endpoint:'https://example.com/openai/v1',deployments:['gpt-6.1-sol']}: {})});if(provider==='foundry')await keys.saveTest(key.id,[{model:'gpt-6.1-sol',status:'ready'}]);
  const engine=provider==='anthropic'?'claude-code':'codex';const s=await m.create({engine,model:provider==='anthropic'?'sonnet':'gpt-6.1-sol',auth:{kind:'key',keyId:key.id},cwd:root,permission:'ask',firstMessage:'reply with ok'});const expectedKey=provider==='anthropic'?'ANTHROPIC_API_KEY':provider==='openai'?'OPENAI_API_KEY':'AITERM_FOUNDRY_KEY';expect(env[expectedKey]).toBe(secret);for(const name of ['ANTHROPIC_API_KEY','OPENAI_API_KEY','AITERM_FOUNDRY_KEY'])if(name!==expectedKey)expect(env[name]).not.toBe(secret);
  expect(argv.slice(-2)).toEqual(['--','reply with ok']);expect(argv.join(' ')).not.toContain(secret);expect(env.OTEL_METRICS_EXPORTER).toBe(provider==='anthropic'?'otlp':undefined);expect(argv.some(a=>a.startsWith('otel.exporter='))).toBe(provider!=='anthropic');

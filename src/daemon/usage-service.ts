@@ -19,7 +19,7 @@ export class UsageService extends EventEmitter {
   this.receiver=new UsageReceiver(async(route,raw,context)=>{
    const settings=await this.readSettings(),overrides=settings.priceOverrides??{};
    for(const record of this.parser.parse(route,raw,context)){if(!this.takeRecord(context.sessionId))continue;if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides),record.inputTokens,record.outputTokens,record.cachedTokens??0);await this.store.add(record);}
-  },log,async(id,body,seq,engine)=>{this.emit(engine==='codex'?'codex-status':'claude-status',id,body,seq);});
+  },log,async(id,body,seq,engine)=>{this.emit(engine==='codex'?'codex-status':engine==='ai-term'?'ai-term-status':'claude-status',id,body,seq);});
   this.store.on('warning',(on:boolean)=>this.emit('warning',on));this.store.on('updated',(usage:UsageSummary)=>this.emit('updated',usage));
  }
  async start():Promise<void>{await this.readSettings();await this.store.load();await this.receiver.listen();this.scheduleMidnight();}

@@ -167,7 +167,7 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
 - **Keys:** ←→ switch provider (Tab also moves right); ↑↓ select a model inside that provider; ⏎ selects; Esc returns without changing the selection.
 - **Filter:** typing searches model names across all providers, jumps to the first matching provider, and selects its first result. All provider tabs remain available. A custom valid ID in an Anthropic/OpenAI tab uses the CLI's own login; Foundry only lists tested ready deployments.
 - **Each row:** `model · engine · auth`. CLI-managed auth is `own login · sub`, `own login · API key`, or `own login` when unknown. Saved key rows stay `key ····last4`.
-- **Footer:** `own login → official CLI · API key → Claude Code / Codex` until v0.4.
+- **Footer:** `own login → official CLI · Foundry key → ai term (or its CLI: /settings r)` from v0.4.1 (D47; Anthropic and OpenAI keys keep their CLIs until v0.4.2). A Foundry row's engine reads `ai term`, or `codex` with `keys run on: the cli`.
 
 ### /cd
 A path field with completion. It sets the folder for the next agent only. A folder that doesn't exist or isn't a directory is an inline error.
@@ -176,7 +176,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - **Popup** with sections:
   - **KEYS** (OS keychain): label, endpoint, `key ····last4`, plus `+ add key` (paste, or import from .env).
   - **ENGINES:** Claude Code / Codex, each with `✓ installed` and `✓ logged in` (or `✗ not logged in` with `/login`).
-  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget, notifications (`on`/`off`, n toggles; default on), worktrees (`on`/`off`, w toggles; default on), attached bar (`off`/`on`, h toggles; default off, applies at next attach). Permissions remain Ask-only as saved defaults. The notifications row adds permission words: `on · allowed`, `on · blocked: turn on AI Term in System Settings → Notifications`, `on · not asked yet: you'll be asked at the first notification`, or `on · permission unknown`. If notifications can't be sent, a fixed `notifications unavailable: …` line follows.
+  - **DEFAULTS:** model, folder, permissions (`ask` only; don't ask is per agent), theme, effort (`CLI default` or selected engine level; e edits), copy on select, budget, notifications (`on`/`off`, n toggles; default on), worktrees (`on`/`off`, w toggles; default on), attached bar (`off`/`on`, h toggles; default off, applies at next attach), keys run on (`ai term`/`the cli`, r toggles; default ai term, D47's fallback). Permissions remain Ask-only as saved defaults. The notifications row adds permission words: `on · allowed`, `on · blocked: turn on AI Term in System Settings → Notifications`, `on · not asked yet: you'll be asked at the first notification`, or `on · permission unknown`. If notifications can't be sent, a fixed `notifications unavailable: …` line follows.
 - **Footer:** `keys are never shown in full and never written to .env`.
 
 ### /login

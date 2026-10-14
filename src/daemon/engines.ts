@@ -3,7 +3,7 @@ import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
-import type { AgentEngine, EngineStatus, EnginesStatus, AuthMethod, EngineCheckError } from '../shared/protocol.js';
+import type { CliEngine, EngineStatus, EnginesStatus, AuthMethod, EngineCheckError } from '../shared/protocol.js';
 import { buildSpawnEnv } from './env.js';
 export async function resolveExecutable(name:string,path:string):Promise<string|null>{
     if(!/^[A-Za-z0-9._-]+$/.test(name))throw new Error('Invalid executable name');
@@ -18,7 +18,7 @@ export async function resolveExecutable(name:string,path:string):Promise<string|
 export interface EngineRunResult {code:number|null;stdout:string;stderr:string}
 export type EngineRunner=(file:string,args:string[],options:{env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number})=>Promise<EngineRunResult>;
 const run:EngineRunner=(file,args,options)=>new Promise(resolve=>execFile(file,args,options,(error,stdout,stderr)=>resolve({code:error?typeof error.code==='number'?error.code:null:0,stdout,stderr})));
-export async function checkEngine(engine:AgentEngine,base:NodeJS.ProcessEnv=process.env,runner:EngineRunner=run):Promise<EngineStatus>{
+export async function checkEngine(engine:CliEngine,base:NodeJS.ProcessEnv=process.env,runner:EngineRunner=run):Promise<EngineStatus>{
     const env=buildSpawnEnv(engine,{kind:'account'},base), name=engine==='claude-code'?'claude':'codex';
     let path:string|null;
     try{path=await resolveExecutable(name,env.PATH??'');}catch{return {installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown',error:'Engine executable check failed'};}

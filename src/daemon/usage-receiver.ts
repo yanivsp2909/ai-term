@@ -8,7 +8,8 @@ const MAX_BODY=1024*1024;
 export type StatusEngine=Exclude<AgentEngine,'shell'>;
 // Claude puts whole files and replies in hook bodies. Codex bodies come only from ai status-notify: a type plus a
 // last reply capped at 256 KiB, which JSON escaping can grow up to six times (\u00XX), so 2 MiB always fits it.
-const STATUS_ROUTES:Record<StatusEngine,{path:string;cap:number}>={'claude-code':{path:'/v1/status/claude',cap:4*MAX_BODY},codex:{path:'/v1/status/codex',cap:2*MAX_BODY}};
+// AI Term's agent sends small events plus a last reply capped like Codex's, so the same 2 MiB bound fits.
+const STATUS_ROUTES:Record<StatusEngine,{path:string;cap:number}>={'claude-code':{path:'/v1/status/claude',cap:4*MAX_BODY},codex:{path:'/v1/status/codex',cap:2*MAX_BODY},'ai-term':{path:'/v1/status/ai-term',cap:2*MAX_BODY}};
 interface StatusContext {id:string;engine:StatusEngine;seq:number;queue:Promise<void>}
 // An oversized body is read and thrown away up to this bound before the 413, because closing with unread
 // bytes makes the kernel send a reset that destroys the 413 (B10), and OTLP exporters retry a reset but

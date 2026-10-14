@@ -1,14 +1,17 @@
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { stripVTControlCharacters } from 'node:util';
-import { writeClaudeSettings,removeClaudeSettings,claudeStatusLine } from './claude-settings.js';
+import { writeClaudeSettings,claudeStatusLine } from './claude-settings.js';
+import { agentTranscript,removeSessionFiles } from './session-files.js';
+import {parseAgentStatus} from './agent-status.js';
+import { AGENT_PROVIDERS, engineTitle, keyEngine } from '../shared/models.js';
 import {parseClaudeStatus} from './claude-status.js';
 import {parseCodexStatus,codexTitle,isCodexApproval,type CodexRun} from './codex-status.js';
 import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
-import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch } from '../shared/protocol.js';
+import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
 import { prepareWorktree, serialize } from './worktrees.js';
@@ -17,7 +20,7 @@ import { atomicWrite, keepCopy, moveAside, readState, StateLoadError } from './s
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror, type MirrorSignal } from './mirror.js';
-import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs } from './env.js';
+import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv } from './env.js';
 import { KeyStore, KeyError } from './keys.js';
 import { checkEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
@@ -44,6 +47,8 @@ interface Live {
     clientPaused:boolean;
     // A hook or run-state signal has arrived (not just a context report): the agent is past its startup dialogs.
     reported?:boolean;
+    // AI Term's agent: the deployments its /model may switch to (bound to the key and tested).
+    agentModels?:string[];
 }
 export class SessionManager extends EventEmitter {
     // /send: how long Enter waits behind the paste (static so a test can widen the window it races).
@@ -64,7 +69,7 @@ export class SessionManager extends EventEmitter {
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
-        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -174,6 +179,7 @@ export class SessionManager extends EventEmitter {
         const saved=this.get(id);
         if(!['exited','error'].includes(saved.status))throw new Error('Resume needs a finished agent');
         if(saved.engine==='shell')throw new Error('A shell has no AI conversation to resume');
+        if(saved.engine==='ai-term')throw new Error("AI Term agent can't resume yet; /retry starts it fresh");
         if(saved.engine==='claude-code'&&!saved.conversationId)throw new Error('This older Claude agent has no conversation ID');
         if(saved.conversationId&&this.list().some(s=>s.conversationId===saved.conversationId&&!['exited','error'].includes(s.status)))throw new Error('Conversation already running');
         const identity=saved.conversationId??saved.id;if(this.resuming.has(identity))throw new Error('Conversation already starting');
@@ -210,7 +216,11 @@ export class SessionManager extends EventEmitter {
         const cwdValid=await validCwd(request.cwd);
         if (this.closing || !cwdValid || (request.title !== undefined && !isTitle(request.title)))
             throw new Error('Invalid session request');
-        const agent = 'engine' in request && request.engine !== 'shell' ? request : null;
+        const agent = 'engine' in request && request.engine !== 'shell' ? await this.route(request) : null;
+        // Read once per start: AI Term's agent takes the theme, and worktrees decide isolation below. Unreadable settings
+        // keep the defaults (ask, worktrees on, keys on AI Term's agent).
+        let settings: Settings | null = null;
+        if (agent && !agent.login) { try { settings = await new SettingsStore(this.paths.root).get(); } catch { this.log.error('Settings unreadable; new agents keep their worktrees'); } }
         const conversationId=agent?.engine==='claude-code'&&!agent.login?(continuation?.conversationId??randomUUID()):undefined;
         // Status is not billing: subscription and key sessions both report it. Login sessions only sign in.
         const withStatus=Boolean(agent&&!agent.login&&this.usage);
@@ -218,27 +228,37 @@ export class SessionManager extends EventEmitter {
         const argvRequest=agent?{...agent,...(conversationId?{conversationId}:{}),...(continuation?.resume?{resume:true}:{}),...(codexStatus?{codexStatus}:{})}:null;
         let recipe: SpawnRecipe;
         let authMethod: SessionInfo['authMethod'];
-        if (agent) {
-            const status = await checkEngine(agent.engine);
+        let agentKey: {view:KeyView;models:string[]}|undefined;
+        if (agent?.engine === 'ai-term') {
+            // AI Term's agent is this program: no engine check or login. Only a key it supports, and a tested deployment.
+            if(agent.auth.kind!=='key')throw new KeyError('AI Term agent needs an API key');
+            const key=await this.keys.view(agent.auth.keyId);
+            if(!AGENT_PROVIDERS.includes(key.provider))throw new KeyError("AI Term agent can't use this key yet");
+            const models=(key.deployments??[]).filter(model=>key.lastTest?.some(r=>r.model===model&&r.status==='ready'));
+            if(!agent.model||!models.includes(agent.model))throw new KeyError('Foundry deployment must pass its test first');
+            agentKey={view:key,models};authMethod='api-key';
+            recipe={executable:process.execPath,args:[],env:{}};
+        } else if (agent) {
+            const engine=agent.engine;
+            const status = await checkEngine(engine);
             if (!status.installed || !status.path) throw new Error(`${agent.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`);
             if (agent.auth.kind==='account' && !agent.login && status.loggedIn !== true) throw new Error(status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable');
             authMethod = status.authMethod;
             if(agent.auth.kind==='key'){
                 const key=await this.keys.view(agent.auth.keyId);
-                if(agent.engine==='claude-code'&&key.provider!=='anthropic'||agent.engine==='codex'&&key.provider==='anthropic')throw new KeyError('Key provider does not match engine');
+                if(engine==='claude-code'&&key.provider!=='anthropic'||engine==='codex'&&key.provider==='anthropic')throw new KeyError('Key provider does not match engine');
                 if(key.provider==='foundry'&&(!agent.model||!key.deployments?.includes(agent.model)||!key.lastTest?.some(r=>r.model===agent.model&&r.status==='ready')))throw new KeyError('Foundry deployment must pass its test first');
                 authMethod='api-key';
-                recipe={executable:status.path,args:buildArgs({...agent,...argvRequest,...(key.provider==='foundry'?{foundryEndpoint:key.endpoint}:{}),...(key.provider==='openai'?{openaiKey:true}:{})}),env:{}};
-            }else recipe = { executable: status.path, args: agent.login ? (agent.engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false','login']:['auth','login']) : buildArgs({...agent,...argvRequest}), env: buildSpawnEnv(agent.engine, {kind:'account'}, process.env) };
+                recipe={executable:status.path,args:buildArgs({...agent,...argvRequest,engine,...(key.provider==='foundry'?{foundryEndpoint:key.endpoint}:{}),...(key.provider==='openai'?{openaiKey:true}:{})}),env:{}};
+            }else recipe = { executable: status.path, args: agent.login ? (engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false','login']:['auth','login']) : buildArgs({...agent,...argvRequest,engine}), env: buildSpawnEnv(engine, {kind:'account'}, process.env) };
         } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
-        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
+        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
             // Isolation is the default: settings that can't be read keep it on rather than quietly turning it off.
-            let isolate=true;
-            try{isolate=(await new SettingsStore(this.paths.root).get()).worktrees!=='off';}catch{this.log.error('Settings unreadable; new agents keep their worktrees');}
+            const isolate=settings?.worktrees!=='off';
             if(isolate){
                 try {
                     const {repo,baseBranch,baseCommit,...start}=await prepareWorktree(this.paths.root,request.cwd,info.title,text=>this.log.error(text));Object.assign(info,start);
@@ -250,7 +270,9 @@ export class SessionManager extends EventEmitter {
         }
         const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
         const telemetry=agent&&!agent.login&&authMethod==='api-key'&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model}):undefined;
-        if(telemetry){const extra=buildUsageArgs(agent?.engine??'codex',telemetry),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);Object.assign(recipe.env,buildUsageEnv(agent?.engine??'codex',telemetry));}
+        const cliEngine=agent&&agent.engine!=='ai-term'?agent.engine:null;
+        // AI Term's agent gets its usage credential through buildAgentEnv at spawn; the CLIs through their own settings here.
+        if(telemetry&&cliEngine){const extra=buildUsageArgs(cliEngine,telemetry),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);Object.assign(recipe.env,buildUsageEnv(cliEngine,telemetry));}
         const replies = new ReplyBudget();
         let dropping = false;
         const reply = (data: string) => {
@@ -273,11 +295,22 @@ export class SessionManager extends EventEmitter {
                 const extra=buildStatusArgs(settings),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);
                 Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
             }
-            if(agent?.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
+            const transcript=agent?.engine==='ai-term'?await agentTranscript(this.paths.root,info.id):null;
+            if(agent?.engine==='ai-term'&&agent.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
+                // B12: only the Keychain's bound endpoint and deployments decide where the key goes and which models it may run.
+                const model=agent.model,models=(agentKey?.models??[]).filter(id=>binding?.deployments.includes(id));
+                if(!binding||!model||!models.includes(model)||!transcript)throw new KeyError('Foundry key details changed outside AI Term; add the key again');
+                live.agentModels=models;
+                const command={node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})};
+                const built=buildAgentArgs({command,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
+                recipe={executable:built.executable,args:built.args,env:buildAgentEnv(process.env,{secret,endpoint:binding.endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry})};
+                try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
+            });
+            else if(agent&&cliEngine&&agent.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
                 // B12: argv was built from settings.json's copy; the secret goes only to the endpoint bound to it in the Keychain.
                 if(keyView?.provider==='foundry'&&(!binding||!recipe.args.includes(`model_providers.aiterm_foundry.base_url="${binding.endpoint}"`)||!agent.model||!binding.deployments.includes(agent.model)))throw new KeyError('Foundry key details changed outside AI Term; add the key again');
-                recipe.env=buildSpawnEnv(agent.engine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env);
-                if(telemetry)Object.assign(recipe.env,buildUsageEnv(agent.engine,telemetry));
+                recipe.env=buildSpawnEnv(cliEngine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env);
+                if(telemetry)Object.assign(recipe.env,buildUsageEnv(cliEngine,telemetry));
                 if(statusTelemetry)Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
                 try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
             });
@@ -345,6 +378,27 @@ export class SessionManager extends EventEmitter {
         this.event({ kind: 'session.updated', session: { ...info } });
         return { ...info };
     }
+    // D47: a key whose provider AI Term's agent supports starts that agent, unless the fallback setting says the CLI.
+    // Account logins always start the official CLIs. The homepage shows the same choice (models.ts keyEngine).
+    private async route<T extends Exclude<CreateSession,{engine:'shell'}>>(request:T):Promise<T>{
+        if(request.auth.kind!=='key'||request.login||request.engine==='ai-term')return request;
+        let keysRunOn:Settings['keysRunOn'];
+        try{keysRunOn=(await new SettingsStore(this.paths.root).get()).keysRunOn;}catch{this.log.error('Settings unreadable; keys run on AI Term agent');}
+        if(keysRunOn==='cli')return request;
+        const key=await this.keys.view(request.auth.keyId);
+        if(keyEngine(key.provider,keysRunOn)!=='ai-term')return request;
+        // AI Term's agent takes no effort level in v0.4.1, and has no Claude-only modes.
+        return {...request,engine:'ai-term',effort:null,permission:request.permission==='dontAsk'?'dontAsk':'ask'};
+    }
+    private ingressAgentStatus(id:string,update:import('./agent-status.js').AgentUpdate|null):void{
+        const live=this.sessions.get(id);if(!live||!update)return;
+        if(update.model!==undefined){
+            // Only a deployment this session may use (bound to its key and tested) can become its model.
+            if(!live.agentModels?.includes(update.model)||['exited','error'].includes(live.info.status)||live.info.model===update.model)return;
+            live.info.model=update.model;this.event({kind:'session.updated',session:{...live.info}});void this.persist();return;
+        }
+        if(update.event)this.ingressStatus(id,{event:update.event,...(update.reply!==undefined?{reply:update.reply}:{})});
+    }
     private ingressStatus(id:string,update:{event:ClaudeStatusEvent;reply?:string}|null):void{
         const live=this.sessions.get(id);if(!live?.statusState||live.mirrorFailed||['exited','error'].includes(live.statusState.status)||!update)return;
         // A reply stays the newest reply even when its status event lost to a newer one.
@@ -402,7 +456,7 @@ export class SessionManager extends EventEmitter {
         if(live.info.engine==='codex'&&live.codexRun==='action')return 'Agent is asking for permission';
         // The late-hook window: Claude's PermissionRequest can arrive seconds after its prompt is drawn, but never outside a
         // tool call. Codex reports approvals in its own output stream, which caughtUp has already read.
-        if(live.info.engine==='claude-code'&&(live.statusState?.toolsInFlight??0)>0)return 'Agent is running a tool';
+        if((live.info.engine==='claude-code'||live.info.engine==='ai-term')&&(live.statusState?.toolsInFlight??0)>0)return 'Agent is running a tool';
         // A status-line context report can come while a dialog is up; only a hook or run-state signal counts.
         if(live.info.engine!=='shell'&&!live.reported)return 'Agent has not reported its status yet';
         // A paused PTY holds unread output, which may be a prompt the status below hasn't seen.
@@ -470,7 +524,7 @@ export class SessionManager extends EventEmitter {
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
     async remove(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
-        throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; await removeClaudeSettings(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
+        throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; await removeSessionFiles(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
     // A worktree shared by resumed agents belongs to whichever is still live, else the newest record.
     private worktreeAgent(path:string):SessionInfo|undefined{
         const agents=[...this.sessions.values()].map(s=>s.info).filter(info=>info.worktree===path);

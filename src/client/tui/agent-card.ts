@@ -1,5 +1,5 @@
 import type { SessionInfo, Status } from '../../shared/protocol.js';
-import { ownLoginLabel } from '../../shared/models.js';
+import { ownLoginLabel, engineLabel } from '../../shared/models.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { ColorName } from './theme.js';
 // design.md status marks. The card says "done"; the top line counts the same agents as "to review".
@@ -44,7 +44,7 @@ export function cardText(session: SessionInfo, now: number, width: number): Card
   const [glyph, color, word] = marks[session.status], shell = session.engine === 'shell', narrow = width < NARROW;
   const dontAsk = session.permission === 'dontAsk' ? '! ' : '', withAge = `${dontAsk}${glyph} ${shell ? '' : word + ' '}${age(session, now)}`;
   const status = { text: !shell && textWidth(withAge) + 1 + MIN_NAME > width ? `${dontAsk}${glyph} ${word}` : withAge, color, bold: session.status === 'waiting' };
-  const baseModel = shell ? 'shell' : `${session.model ?? 'CLI default'} · ${session.engine === 'codex' ? 'codex' : 'claude code'}`;
+  const baseModel = shell ? 'shell' : `${session.model ?? 'CLI default'} · ${engineLabel(session.engine)}`;
   const withBranch=baseModel+(session.branch?` · ${session.branch}`:'');
   const model=textWidth(withBranch)<=width?withBranch:baseModel;
   // Full `ctx NN%` when it fits beside the whole model text; else the mockup's bare `NN%`; else none. The model is never clipped for it.

@@ -12,10 +12,14 @@ export const MAX_FIND_CHARS = 200, MAX_FIND_RESULTS = 200, MAX_FIND_PER_AGENT = 
 export interface FindMatch {sessionId:string;fromEnd:number;text:string;start:number;length:number}
 export const COPY_CHUNK_BYTES = 1024 * 1024;
 export interface SessionText {sessionId:string;text:string;truncated:boolean;source?:'last-reply'|'session'}
-export type Engine = 'claude-code' | 'codex' | 'shell'; // Shell spawning remains internal; the homepage can display it.
+export type Engine = 'claude-code' | 'codex' | 'ai-term' | 'shell'; // Shell spawning remains internal; the homepage can display it.
 export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'exited' | 'error';
 export type ThemeName = 'graphite' | 'slate' | 'ink' | 'auto' | 'light';
-export type AgentEngine = 'claude-code' | 'codex';
+// 'ai-term' is AI Term's own agent (v0.4): it runs only on an API key (D47). The official CLIs are CliEngine.
+export type CliEngine = 'claude-code' | 'codex';
+export type AgentEngine = CliEngine | 'ai-term';
+// D47's fallback: where a key whose provider AI Term's agent supports starts. Absent means 'ai-term'.
+export type KeysRunOn = 'ai-term' | 'cli';
 export type Permission = 'ask' | 'auto' | 'dontAsk';
 export type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'persistent';
 export type AuthMethod = 'subscription' | 'api-key' | 'unknown';
@@ -37,7 +41,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'}
-export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: AgentEngine; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}

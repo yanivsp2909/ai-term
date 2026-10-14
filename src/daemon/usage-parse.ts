@@ -20,8 +20,11 @@ export class UsageParser {
  private record(context:UsageContext,model:string):UsageRecord{return {ts:new Date(this.now()).toISOString(),sessionId:context.sessionId,provider:context.provider,model,inputTokens:0,outputTokens:0,costUsd:context.engine==='claude-code'?0:null,costSource:context.engine==='claude-code'?'cli-estimate':'price-table'};}
  parse(route:string,raw:unknown,context:UsageContext):UsageRecord[]{
   const records:UsageRecord[]=[];
-  if(route==='/v1/metrics'&&context.engine==='claude-code')for(const resource of list(object(raw).resourceMetrics))for(const scope of list(object(resource).scopeMetrics))for(const metricRaw of list(object(scope).metrics)){
-   const metric=object(metricRaw);if(metric.name!=='claude_code.token.usage'&&metric.name!=='claude_code.cost.usage')continue;
+  // AI Term's agent exports the same delta token points as Claude Code under its own name, without a cost metric: its
+  // cost comes from the price table, as for Codex.
+  const tokenMetric=context.engine==='claude-code'?'claude_code.token.usage':context.engine==='ai-term'?'ai_term.token.usage':null;
+  if(route==='/v1/metrics'&&tokenMetric)for(const resource of list(object(raw).resourceMetrics))for(const scope of list(object(resource).scopeMetrics))for(const metricRaw of list(object(scope).metrics)){
+   const metric=object(metricRaw);if(metric.name!==tokenMetric&&!(context.engine==='claude-code'&&metric.name==='claude_code.cost.usage'))continue;
    const sum=object(metric.sum);for(const pointRaw of list(sum.dataPoints)){
     const point=object(pointRaw),model=this.model(point.attributes,context),type=metric.name==='claude_code.cost.usage'?'cost':stringAttribute(point.attributes,'type');if(!type||!(metric.name==='claude_code.cost.usage'?type==='cost':['input','output','cacheRead','cacheCreation'].includes(type)))continue;
     let value=numeric(point.asInt??point.asDouble);if(value===null||type!=='cost'&&!Number.isSafeInteger(value)||value>(type==='cost'?MAX_RECORD_COST_USD:MAX_RECORD_TOKENS))continue;

@@ -111,6 +111,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
             if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermissionForEngine(v.engine,v.permission) || v.effort !== undefined && !isEffortForEngine(v.engine,v.effort) || (v.firstMessage !== undefined && !isFirstMessage(v.firstMessage)))) throw new ValidationError('Invalid account agent request');
+            if (v.engine === 'ai-term' && (!v.auth || typeof v.auth !== 'object' || !('kind' in v.auth) || v.auth.kind !== 'key' || v.login !== undefined)) throw new ValidationError('AI Term agent needs an API key');
             if (v.login !== undefined && (v.login !== true || v.model!==null || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined || v.effort !== undefined)) throw new ValidationError('Invalid login session');
             if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
             break;
@@ -211,7 +212,8 @@ export function validateExitCode(value:unknown):number|undefined {
 export function isThemeName(value: unknown): value is import('./protocol.js').ThemeName {
     return typeof value === 'string' && ['graphite', 'slate', 'ink', 'auto', 'light'].includes(value);
 }
-export function isAgentEngine(value: unknown): value is import('./protocol.js').AgentEngine { return value === 'claude-code' || value === 'codex'; }
+export function isAgentEngine(value: unknown): value is import('./protocol.js').AgentEngine { return value === 'claude-code' || value === 'codex' || value === 'ai-term'; }
+export function isCliEngine(value: unknown): value is import('./protocol.js').CliEngine { return value === 'claude-code' || value === 'codex'; }
 export function isModel(value: unknown): value is string | null { return value === null || typeof value === 'string' && isValidModelId(value); }
 export function isPermission(value: unknown): value is import('./protocol.js').Permission { return value === 'ask' || value === 'auto' || value === 'dontAsk'; }
 
@@ -219,6 +221,8 @@ export function isPermission(value: unknown): value is import('./protocol.js').P
 export const EFFORT_LEVELS:Record<import('./protocol.js').AgentEngine,readonly import('./protocol.js').Effort[]>={
  'claude-code':['low','medium','high','xhigh','max'],
  codex:['none','minimal','low','medium','high','xhigh','max','ultra','persistent'],
+ // AI Term's agent takes no effort level in v0.4.1; null (the model's default) only.
+ 'ai-term':[],
 };
 export function isEffort(value:unknown):value is import('./protocol.js').Effort|null{return value===null||typeof value==='string'&&EFFORT_LEVELS.codex.includes(value as import('./protocol.js').Effort);}
 export function isEffortForEngine(engine:unknown,value:unknown):value is import('./protocol.js').Effort|null{return isAgentEngine(engine)&&isEffort(value)&&(value===null||EFFORT_LEVELS[engine].includes(value));}
@@ -228,9 +232,9 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
-        v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isAgentEngine(v.defaultEngine) ||
+        v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
         v.defaultCwd !== undefined && (typeof v.defaultCwd !== 'string' || !isAbsolute(v.defaultCwd) || v.defaultCwd.includes('\0')) || JSON.stringify(v).length > 16384) throw new ValidationError('Invalid settings patch; permission default must be ask');
     if(v.budgets!==undefined)validateBudgets(v.budgets);
@@ -254,7 +258,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid daemon session');
     const s = value as Record<string, unknown>;
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
-    if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
+    if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex', 'ai-term'].includes(s.engine)) || s.engine === 'ai-term' && (!s.auth || typeof s.auth !== 'object' || !('kind' in s.auth) || s.auth.kind !== 'key') ||
         !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
         s.worktree!==undefined&&!isSafeAbsolutePath(s.worktree) || s.branch!==undefined&&!isWorktreeBranch(s.branch) || (s.worktree===undefined)!==(s.branch===undefined) || s.worktreeNote!==undefined&&!isWorktreeNote(s.worktreeNote) || s.login!==undefined&&(s.login!==true||s.engine==='shell') ||
         !isAuthView(s.auth) || !(s.engine==='shell'?s.permission==='ask':isPermissionForEngine(s.engine,s.permission)) || s.effort!==undefined && !isEffortForEngine(s.engine,s.effort) || s.conversationId!==undefined && (s.engine!=='claude-code'||!isUUID(s.conversationId)) ||

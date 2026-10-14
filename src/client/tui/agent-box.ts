@@ -1,7 +1,7 @@
 import { Grid, type Frame } from './grid.js';
 import type { Theme } from './theme.js';
 import type { AgentEngine, Permission, AuthRef, Effort } from '../../shared/protocol.js';
-import type { ModelChoice } from '../../shared/models.js';
+import { engineLabel, type ModelChoice } from '../../shared/models.js';
 import type { MessageField } from './message-field.js';
 export interface AgentBox {kind:'start'|'model'|'folder'|'effort'|'mode';engine:AgentEngine;model:string|null;cwd:string;permission:Permission;message:string;messageField?:MessageField;messageNote?:string;worktreePreview?:import('../../shared/protocol.js').WorktreePreview;error:string;checking:boolean;row:number;filter:string;choices:ModelChoice[];choice:number;path:string;completions:string[];auth?:AuthRef;tabs?:string[];tab?:string;authLabel?:string;effort?:Effort|null;values?:readonly string[]}
 export function drawAgentBox(frame:Frame,box:AgentBox,theme:Theme):Frame{
@@ -13,7 +13,7 @@ export function drawAgentBox(frame:Frame,box:AgentBox,theme:Theme):Frame{
  for(let r=y;r<y+h;r++)for(let c=x;c<x+w;c++)if(r===y||r===y+h-1||c===x||c===x+w-1){const cell=grid.cells[r]?.[c];if(cell)grid.put(c,r,{...cell,fg:t.accent});}
  const line=(offset:number,text:string,color=t['ink-2'])=>grid.text(x+3,y+offset,text,color,t.surface,false,w-6);
  if(box.kind==='start'){
-  line(1,`${box.row===0?'›':' '} model          ${box.model??'CLI default'} · ${box.engine==='codex'?'codex':'claude code'} · ${box.authLabel??'own login'}   m /model`);
+  line(1,`${box.row===0?'›':' '} model          ${box.model??'CLI default'} · ${engineLabel(box.engine)} · ${box.authLabel??'own login'}   m /model`);
   line(2,`${box.row===1?'›':' '} folder         ${box.cwd}   c /cd`);
   line(3,`${box.row===2?'›':' '} mode           ${box.permission==='dontAsk'?"! don't ask":box.permission} · ⇥ toggles`,box.permission==='dontAsk'?t['status-error']:t['ink-2']);
   line(4,`${box.row===3?'›':' '} effort         ${box.effort??'CLI default'}   e /effort`);
@@ -35,10 +35,10 @@ export function drawAgentBox(frame:Frame,box:AgentBox,theme:Theme):Frame{
   let row=3;
   const start=Math.max(0,box.choice-3),visible=box.choices.slice(start,start+6);
   for(const [offset,choice]of visible.entries()){
-   line(row++,`${start+offset===box.choice?'›':' '} ${choice.label} · ${choice.engine==='codex'?'codex':'claude code'} · ${choice.authLabel??'own login'}`,start+offset===box.choice?t.accent:t['ink-2']);
+   line(row++,`${start+offset===box.choice?'›':' '} ${choice.label} · ${engineLabel(choice.engine)} · ${choice.authLabel??'own login'}`,start+offset===box.choice?t.accent:t['ink-2']);
   }
   line(h-3,box.error?`✗ ${box.error}`:'←→ provider · ↑↓ model · ⏎ select · Esc back',box.error?t['status-error']:t['ink-3']);
-  line(h-2,'own login → official CLI · API key → Claude Code / Codex',t['ink-3']);
+  line(h-2,'own login → official CLI · Foundry key → ai term (or its CLI: /settings r)',t['ink-3']);
  }else{
   line(1,`Path: ${box.path||box.cwd}█`,t.ink);
   box.completions.slice(0,3).forEach((path,i)=>line(2+i,path,t['ink-3']));

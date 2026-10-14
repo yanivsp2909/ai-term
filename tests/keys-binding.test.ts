@@ -89,6 +89,8 @@ it('a Foundry session never spawns with an endpoint that is not the one bound to
   const spawn = vi.spyOn(pty, 'spawn');
   try {
     await manager.load();
+    // The CLI route (D47's fallback); AI Term's agent gets the same binding check (tests/ai-agent-daemon.test.ts).
+    await writeFile(join(s.root, 'settings.json'), JSON.stringify({ theme: 'graphite', keysRunOn: 'cli' }), { mode: 0o600 });
     const key = await addFoundry(s.keys); await s.keys.saveTest(key.id, [{ model: 'gpt-6.1-sol', status: 'ready' }]);
     const request = { engine: 'codex' as const, model: 'gpt-6.1-sol', auth: { kind: 'key' as const, keyId: key.id }, cwd: s.root, permission: 'ask' as const };
     await edit(s.root, k => { k.endpoint = ATTACKER; });

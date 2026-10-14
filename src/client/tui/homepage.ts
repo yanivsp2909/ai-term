@@ -6,8 +6,8 @@ import { type AttachReason } from '../attach.js';
 import { split, type SplitResult } from '../split.js';
 import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
-import { MAX_FIND_CHARS, type FindMatch, type SessionInfo, type SuccessResponse, type AgentEngine, type EnginesStatus, type AuthRef, type KeyView, type SystemStats, type UsageSummary, type Budgets, type Effort, type Permission } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText, validateWorktreePreview } from '../../shared/validate.js';
+import { MAX_FIND_CHARS, type FindMatch, type SessionInfo, type SuccessResponse, type AgentEngine, type EnginesStatus, type AuthRef, type KeyView, type SystemStats, type UsageSummary, type Budgets, type Effort, type Permission, type KeysRunOn } from '../../shared/protocol.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText, validateWorktreePreview, isCliEngine } from '../../shared/validate.js';
 import { getPaths } from '../../shared/paths.js';
 import { Logger, redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
@@ -22,7 +22,7 @@ import { diffFrame, type Frame } from './grid.js';
 import { homepageLayout, renderHomepage, sortSessions, filteredCommands, visibleCards } from './layout.js';
 import { nextCardTick } from './agent-card.js';
 import { CredentialsPanel } from './credentials.js';
-import { modelChoices, ownLoginLabel } from '../../shared/models.js';
+import { modelChoices, ownLoginLabel, engineTitle, keyEngine } from '../../shared/models.js';
 import { drawAgentBox, type AgentBox } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
 import { BudgetForm, PriceForm, drawUsageForm } from './usage-forms.js';
@@ -76,6 +76,7 @@ export class Homepage {
   private note = '';
   private warning = '';
   private engine: AgentEngine = 'claude-code';
+  private keysRunOn: KeysRunOn = 'ai-term';
   private model: string | null = null;
   private folder: string;
   private worktrees:'on'|'off'='on';
@@ -131,7 +132,7 @@ export class Homepage {
     try {
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
-      this.worktrees=settings.worktrees??'on';
+      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';
       this.budgets=validateBudgets(settings.budgets??{});
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
@@ -258,7 +259,7 @@ export class Homepage {
       });}else if(event.key==='n'||event.key==='escape'){this.cleanIds=null;this.showNote('');}return;
     }
     if(this.usageForm){const form=this.usageForm;if(event.key==='escape'){this.usageForm=undefined;this.usageFormError='';}else if(event.key==='enter')this.enqueue(async()=>{try{if(form instanceof BudgetForm){const budgets=form.values();await this.connection.request({kind:'settings.set',patch:{budgets}});this.budgets=budgets;}else{const {model,price}=form.values(),settings=(await this.connection.request({kind:'settings.get'})).settings;await this.connection.request({kind:'settings.set',patch:{priceOverrides:{...settings?.priceOverrides,[model]:price}}});}this.usageForm=undefined;}catch(error){this.usageFormError=error instanceof Error?error.message:'Settings could not save';}this.draw(true);});else form.key(event.key);this.draw(true);return;}
-    if(this.credentials){const panel=this.credentials;if(event.key==='escape'){panel.dispose();this.credentials=undefined;this.enqueue(async()=>{this.worktrees=(await this.connection.request({kind:'settings.get'})).settings?.worktrees??'on';this.draw(true);});}else this.enqueue(()=>panel.key(event.key));return;}
+    if(this.credentials){const panel=this.credentials;if(event.key==='escape'){panel.dispose();this.credentials=undefined;this.enqueue(async()=>{await this.refreshSettings();this.draw(true);});}else this.enqueue(()=>panel.key(event.key));return;}
     if (this.box) { this.boxInput(event.key); return; }
     if (this.confirmId) {
       const id = this.confirmId;
@@ -470,7 +471,7 @@ export class Homepage {
   private async openCredentials(kind:'login'|'settings'):Promise<void>{
     this.box=undefined;
     const panel=new CredentialsPanel(kind,{
-      request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.enqueue(async()=>{this.worktrees=(await this.connection.request({kind:'settings.get'})).settings?.worktrees??'on';this.draw(true);});},
+      request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.enqueue(async()=>{await this.refreshSettings();this.draw(true);});},
       login:async engine=>{const response=await this.connection.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:this.folder,permission:'ask',login:true,title:engine==='codex'?'Codex login':'Claude login'});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.credentials=undefined;await this.openSelected();},
       price:()=>{this.credentials=undefined;this.usageForm=new PriceForm();this.draw(true);},
       defaults:kind=>{this.credentials=undefined;this.openBox(kind);this.savingDefault=true;},
@@ -480,10 +481,17 @@ export class Homepage {
   private openBox(kind: AgentBox['kind'], message = '',messageField?:MessageField): void {
     // The box edits its first message only at the end; a cursor or selection left in the bar would act there unseen.
     const draft=messageField?.copy()??new MessageField();if(!messageField)draft.text=message;else draft.moveToEnd(true);
-    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,messageField:draft,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
+    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,messageField:draft,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines,this.keysRunOn),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
     this.returnToStart = false;if(kind==='effort'||kind==='mode')this.valueChoices();else this.resetModelTabs();this.draw(true);
   }
   private valueChoices():void{const b=this.box;if(!b)return;b.values=b.kind==='effort'?effortValues(b.engine):modeValues(b.engine).map(modeLabel);const value=b.kind==='effort'?b.effort??'CLI default':modeLabel(b.permission);b.choice=Math.max(0,b.values.indexOf(value));}
+  // After /settings closes: worktrees and D47's keys setting may have changed. A key picked for the next agent follows
+  // the keys setting, so the start box always shows the engine the daemon will start.
+  private async refreshSettings():Promise<void>{
+    const settings=(await this.connection.request({kind:'settings.get'})).settings;
+    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';
+    if(this.auth.kind==='key'){const id=this.auth.keyId,provider=this.keys.find(k=>k.id===id)?.provider;if(provider){this.engine=keyEngine(provider,this.keysRunOn);this.compatibleDefaults(this.engine);}}
+  }
   private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission))this.permission='ask';}
   private async checkSelectedEngine(): Promise<void> {
     const box = this.box; if (!box) return;
@@ -491,11 +499,12 @@ export class Homepage {
     try {
       this.engines = (await this.connection.request({kind:'engines.status'})).engines;box.authLabel=this.nextAuthLabel();
       if(box.kind==='start'){
-        try{box.worktreePreview=validateWorktreePreview((await this.connection.request({kind:'worktrees.preview',cwd:box.cwd,title:box.engine==='codex'?'Codex':'Claude Code'})).worktreePreview);}catch{box.worktreePreview=undefined;}
+        try{box.worktreePreview=validateWorktreePreview((await this.connection.request({kind:'worktrees.preview',cwd:box.cwd,title:engineTitle(box.engine)})).worktreePreview);}catch{box.worktreePreview=undefined;}
       }
-      const status = box.engine === 'codex' ? this.engines?.codex : this.engines?.claudeCode;
-      if (!status?.installed) box.error = `${box.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`;
-      else if (box.auth?.kind!=='key' && status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
+      // AI Term's agent is this program: nothing to install or log in to; its key is checked when it starts.
+      const status = box.engine === 'ai-term' ? null : box.engine === 'codex' ? this.engines?.codex : this.engines?.claudeCode;
+      if (status !== null && !status?.installed) box.error = `${box.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`;
+      else if (status !== null && box.auth?.kind!=='key' && status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
     } catch (error) { box.error = error instanceof Error ? error.message : 'Engine check failed'; }
     finally { box.checking = false; this.draw(true); }
   }
@@ -511,7 +520,7 @@ export class Homepage {
     return ownLoginLabel(this.engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod);
   }
   private allModelChoices():import('../../shared/models.js').ModelChoice[]{
-    const b=this.box,choices=modelChoices(this.keys,this.engines);if(!b)return choices;
+    const b=this.box,choices=modelChoices(this.keys,this.engines,this.keysRunOn);if(!b)return choices;
     const matches=choices.filter(c=>c.label.toLowerCase().includes(b.filter.toLowerCase()));
     if(b.filter&&isValidModelId(b.filter)&&!matches.some(c=>c.model===b.filter)){
       const engine=b.tab==='ANTHROPIC'?'claude-code':b.tab==='OPENAI'?'codex':null;
@@ -520,7 +529,7 @@ export class Homepage {
     return matches;
   }
   private resetModelTabs():void {
-    const b=this.box;if(!b)return;const choices=modelChoices(this.keys,this.engines);
+    const b=this.box;if(!b)return;const choices=modelChoices(this.keys,this.engines,this.keysRunOn);
     b.tabs=[...new Set(choices.map(c=>c.group??''))];
     const current=choices.find(c=>c.engine===b.engine&&c.model===b.model&&(c.auth?.kind??'account')===(b.auth?.kind??'account')&&(c.auth?.kind!=='key'||b.auth?.kind==='key'&&c.auth.keyId===b.auth.keyId));
     b.tab=current?.group??(b.engine==='codex'?'OPENAI':'ANTHROPIC');
@@ -570,7 +579,7 @@ export class Homepage {
           const value=b.values?.[b.choice];if(value===undefined)return;
           try{
             if(b.kind==='effort'){const effort=value==='CLI default'?null:value;if(!isEffortForEngine(b.engine,effort))return;
-              if(this.savingDefault)await this.connection.request({kind:'settings.set',patch:{defaultEngine:b.engine,defaultEffort:effort}});
+              if(this.savingDefault)await this.connection.request({kind:'settings.set',patch:{...(isCliEngine(b.engine)?{defaultEngine:b.engine}:{}),defaultEffort:effort}});
               b.effort=effort;this.effort=effort;
             }else{b.permission=modeValues(b.engine)[b.choice]??'ask';this.permission=b.permission;}
             this.savingDefault=false;if(this.returnToStart){b.kind='start';this.returnToStart=false;}else this.box=undefined;
@@ -578,8 +587,10 @@ export class Homepage {
         }
         if (b.kind === 'model') {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
+          // Saved defaults carry no key, so an AI Term model saved as one would start a CLI login instead.
+          if (this.savingDefault && !isCliEngine(choice.engine)) { b.error = "AI Term agent models can't be the saved default yet"; this.draw(true); return; }
           b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine;this.compatibleDefaults(choice.engine);if(!isEffortForEngine(choice.engine,b.effort??null))b.effort=null;if(!isPermissionForEngine(choice.engine,b.permission))b.permission='ask'; this.model = choice.model;b.authLabel=this.nextAuthLabel();
-          if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:choice.engine,defaultModel:choice.model,defaultEffort:this.effort}});this.savingDefault=false;}
+          if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:isCliEngine(choice.engine)?choice.engine:'codex',defaultModel:choice.model,defaultEffort:this.effort}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
           else this.box = undefined;
           this.draw(true); return;
