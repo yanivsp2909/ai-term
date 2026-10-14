@@ -8,6 +8,7 @@ import type { Screen } from './screen.js';
 import type { Agent, AgentIO, AgentPermission, ToolName } from './agent.js';
 import { loadInstructions } from './instructions.js';
 import { killAllBash } from './bash.js';
+import { visible } from './display.js';
 import { MAX_CAP_TURNS, MAX_CAP_USD } from '../shared/agent-facts.js';
 
 export interface AppOptions {
@@ -57,13 +58,15 @@ export class AgentApp implements AgentIO {
   confirmJob(request:{title:string;body:string},signal:AbortSignal):Promise<boolean>{return this.approve(request,signal,true);}
   approve(request: { title: string; body: string }, signal: AbortSignal, job=false,session?:()=>void): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
-    const pages = this.options.screen.approvalPages(request.body);
-    this.options.screen.approvalPage(request.title, pages, 0, job,!!session);
+    // Every title and body is untrusted text (model arguments, task prompts, project .mcp.json), so it is made visible
+    // here, once, for every gate: escapes and invisible characters show as markers and can't hide what runs (S20).
+    const title = visible(request.title), pages = this.options.screen.approvalPages(visible(request.body));
+    this.options.screen.approvalPage(title, pages, 0, job,!!session);
     return new Promise(resolvePromise => {
       const finish = (allowed: boolean) => { if (!this.approval) return; this.approval = null; signal.removeEventListener('abort', onAbort); this.options.screen.answered(allowed); resolvePromise(allowed); };
       const onAbort = () => finish(false);
       signal.addEventListener('abort', onAbort, { once: true });
-      this.approval = { resolve: finish, title: request.title, pages, page: 0, job,...(session?{session}:{}) };
+      this.approval = { resolve: finish, title, pages, page: 0, job,...(session?{session}:{}) };
     });
   }
 
