@@ -45,6 +45,7 @@ async function app(steps: Steps, permission: 'ask' | 'dontAsk' = 'ask', access: 
 }
 // The screen paints with SGR colours (ESC [ … m) and clears its prompt line (CR ESC [ 2 K); anything else that starts with ESC, any C1 control or invisible format
 // character means untrusted text reached the terminal raw.
+// eslint-disable-next-line no-control-regex -- Finding raw controls is the point.
 const raw = (output: string) => output.replace(/\x1b\[[0-9;]*m|\r\x1b\[2K/g, '').match(/[\x1b\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029]/u);
 
 it('a task prompt with escape sequences shows them as markers, so the job confirmation tells the truth', async () => {

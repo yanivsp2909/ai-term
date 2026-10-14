@@ -55,7 +55,7 @@ export class ExtensionReader {
     this.home = realpathSync(home);
     // A project is untrusted (a cloned repo can carry relative symlinks), so its roots are checked against its own real
     // folder, wherever it is, and nothing they resolve to may leave it. Your own roots may share files across the home.
-    let projectRoot: string | null = null;
+    let projectRoot: string | null;
     try { projectRoot = realpathSync(resolve(project)); } catch { projectRoot = null; }
     this.projectNote = projectRoot === null ? 'project folder unreadable' : privateProject(this.home, projectRoot) ? 'project is inside a private home folder' : null;
     this.project = this.projectNote === null ? projectRoot : null;
