@@ -82,3 +82,13 @@ it('saves per-item toggles only in AI Term settings and removes disabled items f
   await expect(validateRequest({id:'00000000-0000-4000-8000-000000000001',kind:'extensions.read',cwd:project,extensionId:'../../auth.json'})).rejects.toThrow();
   expect(()=>validateSettingsPatch({extensions:{'../../auth.json':true}},true)).toThrow();
 });
+
+it('loads auth-related skill directories while still denying actual credential filenames', async()=>{
+  const {home,project,file}=await setup();
+  await file('.agents/skills/adding-auth/SKILL.md',skill('adding-auth'));
+  await file('.agents/skills/oauth/SKILL.md',skill('oauth'));
+  await file('.claude/agents/auth.json','private');
+  const c=new ExtensionReader(home,project).scan();
+  expect(c.items.map(i=>i.name)).toEqual(['adding-auth','oauth']);
+  expect(deniedExtensionPath(home,join(home,'auth.json'))).toBe(true);
+});
