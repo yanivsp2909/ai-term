@@ -692,6 +692,9 @@ export class SessionManager extends EventEmitter {
         const ids=[...this.sessions.keys()];
         const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
         for(const [index,result]of stopped.entries())if(result.status==='rejected')this.log.error(`Session stop failed: ${ids[index]}`);
+        // Each exit records itself in its session's output chain; the last state write must come after all of them, or
+        // it can land after the caller already removed the folder (seen as ENOTEMPTY in tests/agent-retry).
+        await Promise.allSettled([...this.sessions.values()].map(live=>live.output));
         for(const timer of this.taskTimers.values())clearTimeout(timer);this.taskTimers.clear();
         await this.persist();
         await this.ledger?.close();
