@@ -122,3 +122,18 @@ it('LOW: an unreadable reservation file is moved aside, never overwritten', asyn
   expect(names.some(name => name.startsWith('budget-reservations.json.corrupt-'))).toBe(true);
   expect(errors).toEqual(['Budget reservations unreadable; moved aside']);
 });
+it('MEDIUM: a reservation held while its agent waits on you or runs a tool doesn\'t expire into a phantom worst case', async () => {
+  vi.useFakeTimers();
+  let busy = true;
+  const root = await mkdtemp(join(tmpdir(), 'ai-ledger-')); roots.push(root);
+  const booked: Reservation[] = [], l = new BudgetLedger({ book: async r => { booked.push(r); }, log: { error() {} }, ttlMs: 1000, busy: () => busy });
+  const a = randomUUID(), answer = l.reserve(request(a, 2), daily(5), spent(0));
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(booked).toEqual([]); expect(l.reserved()).toBe(2);
+  if (!('grant' in answer)) throw new Error('no grant');
+  expect(await l.settle(a, answer.grant.id, false)).toBe(true); expect(booked).toEqual([]);
+  // Not busy any more: an unsettled one expires as before.
+  busy = false; l.reserve(request(a, 1), daily(5), spent(0));
+  await vi.advanceTimersByTimeAsync(1000); expect(booked.map(r => r.amountUsd)).toEqual([1]);
+  await l.close();
+});
