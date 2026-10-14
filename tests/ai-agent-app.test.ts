@@ -94,3 +94,9 @@ it('a message sent during a turn waits for it; /model and /cd work inside the ag
   a.instance.input('/cd sub\r'); await vi.waitFor(() => expect(a.output()).toContain(`folder: ${join(a.root, 'sub')} · read AGENTS.md`));
   a.instance.input('/cd /definitely/not/here\r'); await vi.waitFor(() => expect(a.output()).toContain("isn't a folder you can open"));
 });
+
+it('the banner never prints escape sequences from a folder or model name', () => {
+  let out = '';
+  new Screen({ write: t => { out += t; }, columns: 100 }, createTheme('graphite')).banner('m1', '/tmp/evil\x1b]52;c;cHdu\x07\x1b[2Jname', 'ask', ['AGENTS.md']);
+  expect(out).not.toContain('\x1b]52'); expect(out).not.toContain('\x1b[2J'); expect(out).toContain('/tmp/evilname');
+});
