@@ -58,6 +58,16 @@ it('a disabled skill is absent and cannot load; changing toggles clears previous
   expect(a.recorder.notes.some(n=>n.includes('conversation cleared'))).toBe(true);
 });
 
+it('refuses model work when a refresh fails after a previously loaded skill was disabled',async()=>{
+  const a=await setup([call('skill',{name:'careful'}),text('first'),text('must not run')]);
+  await a.agent.turn('first',signal());await a.catalog.toggle(a.root,'0000000000000000',false);
+  const original=a.catalog.list.bind(a.catalog);a.catalog.list=async()=>{throw new Error('unavailable');};
+  expect(await a.agent.turn('second',signal())).toBe('failed');expect(a.model.doStreamCalls).toHaveLength(2);
+  expect(a.recorder.notes.some(n=>n.includes('refresh failed'))).toBe(true);
+  a.catalog.list=original;expect(await a.agent.turn('retry',signal())).toBe('done');
+  expect(prompt(a.model,2)).not.toContain('PRIVATE SKILL BODY');expect(prompt(a.model,2)).not.toContain('skill careful:');
+});
+
 it('runs a subagent as its own conversation, asks in the parent, counts cost/caps, and returns only its final answer',async()=>{
   const a=await setup([call('task',{name:'reviewer',prompt:'Review the tiny file'}),call('write',{path:'tiny.txt',content:'one line'}),text('FINAL REVIEW'),text('Parent done')]);
   expect(await a.agent.turn('review',signal())).toBe('done');expect(await readFile(join(a.root,'tiny.txt'),'utf8')).toBe('one line');
