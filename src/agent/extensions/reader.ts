@@ -13,9 +13,17 @@ export function deniedExtensionPath(home: string, path: string, directory = fals
   // These stores use filenames that don't say "auth" (SSH keys, netrc, package registry tokens).
   if (['.ssh','.gnupg','.aws','.azure','.docker','.kube'].includes(first) || first === '.config' && ['gh','gcloud'].includes(second)) return true;
   return parts.some((part, index) =>
-    /^(?:history|sessions|logs|projects)(?:[._-].*)?$/.test(part) ||
-    !directory && index === parts.length - 1 && (/(?:credentials?|auth|tokens?|passwords?|secrets?)(?:[._-]|$)/.test(part) || ['.netrc','.npmrc','.pypirc','.dockercfg','.authinfo','.authinfo.gpg','.yarnrc','.yarnrc.yml'].includes(part) || /\.(?:key|pem|p12|pfx)$/.test(part)) || /^settings.*\.json$/.test(part) ||
+    // CLI and shell history, sessions and logs, under any prefix: .zsh_history, fish_history, file-history, .zsh_sessions, log.
+    /^(?:.*[._-])?(?:history|sessions|logs?|projects)(?:[._-].*)?$/.test(part) ||
+    !directory && index === parts.length - 1 && (/(?:credentials?|auth|tokens?|passwords?|secrets?)(?:[._-]|$)/.test(part) || ['.netrc','.npmrc','.pypirc','.dockercfg','.authinfo','.authinfo.gpg','.yarnrc','.yarnrc.yml','.pgpass','.s3cfg','.boto','.my.cnf'].includes(part) || /\.(?:key|pem|p12|pfx)$/.test(part) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?$/.test(part)) || /^settings.*\.json$/.test(part) ||
     part.endsWith('.env') || part === '.env' || part.startsWith('.env.') || part === '.claude.json' || part === 'config.toml');
+}
+// A project inside the home's private folders (CLI state, credential stores) is never a source of extensions or MCP servers.
+const PRIVATE_FIRST = ['.claude','.codex','.agents','.ssh','.gnupg','.aws','.azure','.docker','.kube'];
+function privateProject(home: string, root: string): boolean {
+  if (!under(home, root) || root === home) return false;
+  const [first = '', second = ''] = relative(home, root).normalize('NFKC').toLowerCase().split(sep);
+  return PRIVATE_FIRST.includes(first) || first === '.config' && ['gh', 'gcloud'].includes(second);
 }
 // Darwin O_NOFOLLOW_ANY rejects symlinks in every component of an already-resolved path. Node doesn't expose the
 // constant (Darwin fcntl.h: 0x20000000). This closes parent-symlink swaps as well as O_NOFOLLOW's last-component race.
@@ -40,13 +48,20 @@ function secureOpen(path: string, directory: boolean): number {
 export class ExtensionReader {
   private readonly home: string;
   private readonly roots: { path: string; kind: ExtensionKind; source: ExtensionSource }[];
+  private readonly project: string | null;
+  private readonly projectNote: string | null;
   private files = new Map<string, ExtensionFile>();
   constructor(home: string, project: string) {
     this.home = realpathSync(home);
-    const projectRoot = resolve(project);
-    this.roots = [
+    // A project is untrusted (a cloned repo can carry relative symlinks), so its roots are checked against its own real
+    // folder, wherever it is, and nothing they resolve to may leave it. Your own roots may share files across the home.
+    let projectRoot: string | null = null;
+    try { projectRoot = realpathSync(resolve(project)); } catch { projectRoot = null; }
+    this.projectNote = projectRoot === null ? 'project folder unreadable' : privateProject(this.home, projectRoot) ? 'project is inside a private home folder' : null;
+    this.project = this.projectNote === null ? projectRoot : null;
+    this.roots = this.project === null ? [] : [
       ['.claude/skills', 'skill', 'this project'], ['.claude/agents', 'agent', 'this project'], ['.claude/commands', 'command', 'this project'], ['.agents/skills', 'skill', 'this project'],
-    ].map(([path, kind, source]) => ({ path: join(projectRoot, path ?? ''), kind: kind as ExtensionKind, source: source as ExtensionSource }));
+    ].map(([path, kind, source]) => ({ path: join(this.project ?? '/', path ?? ''), kind: kind as ExtensionKind, source: source as ExtensionSource }));
     for (const [path, kind, source] of [
       ['.claude/skills', 'skill', 'Claude'], ['.claude/agents', 'agent', 'Claude'], ['.claude/commands', 'command', 'Claude'], ['.codex/prompts', 'command', 'Codex'], ['.codex/skills', 'skill', 'Codex'], ['.codex/agents', 'agent', 'Codex'], ['.agents/skills', 'skill', 'shared'],
     ] as const) this.roots.push({ path: join(this.home, path), kind, source });
@@ -55,20 +70,25 @@ export class ExtensionReader {
     this.files.clear(); const notes: string[] = [], visited = new Set<string>(), names = new Set<string>();
     let bytes = 0, entries = 0;
     const note = (logical: string, reason: string) => { if (notes.length < 100) notes.push(`skipped ${relative(this.home, logical).replace(/[\p{C}]/gu, '?')}: ${reason}`); };
+    if (this.projectNote) notes.push(`skipped this project's extensions: ${this.projectNote}`);
     const visit = (logical: string, kind: ExtensionKind, source: ExtensionSource, depth: number) => {
       if (++entries > 4000 || depth > 8 || this.files.size >= EXTENSION_MAX_ITEMS) { note(logical, 'catalog limit'); return; }
       // Deny both spellings, including a denied logical alias to an otherwise allowed file.
-      if (deniedExtensionPath(this.home, logical, true)) { note(logical, 'denied path'); return; }
+      const base = source === 'this project' ? this.project : this.home;
+      if (base === null) return;
+      const denied = (path: string, directory: boolean) => deniedExtensionPath(base, path, directory);
+      if (denied(logical, true)) { note(logical, 'denied path'); return; }
       let real: string;
       try { real = realpathSync(logical); }
       catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) note(logical, 'unreadable'); return; }
-      if (deniedExtensionPath(this.home, real, true)) { note(logical, 'denied target'); return; }
+      if (base !== this.home && !under(base, real)) { note(logical, 'links outside the project'); return; }
+      if (denied(real, true)) { note(logical, 'denied target'); return; }
       const identity = kind + ':' + real;
       if (visited.has(identity)) return;
       let fd: number | undefined;
       try {
         const before = statSync(real), directory = before.isDirectory();
-        if (deniedExtensionPath(this.home,logical,directory) || deniedExtensionPath(this.home,real,directory)) {note(logical,'denied target');return;}
+        if (denied(logical,directory) || denied(real,directory)) {note(logical,'denied target');return;}
         if (before.isFile() && before.nlink !== 1) { note(logical,'hard links are not allowed'); return; }
         fd = secureOpen(real, directory); const info = fstatSync(fd);
         if (info.isFile() && info.nlink !== 1) { note(logical,'hard links are not allowed'); return; }
@@ -113,8 +133,7 @@ export class ExtensionReader {
   }
   projectMcp(project: string): string | null {
     const root=realpathSync(project),logical=join(root,'.mcp.json');
-    if(under(this.home,root)&&deniedExtensionPath(this.home,root,true))throw new Error('MCP project is outside its allowed folder');
-    if(under(this.home,root)&&['.claude','.codex','.agents','.ssh','.gnupg','.aws','.azure','.docker','.kube'].includes(relative(this.home,root).split(sep)[0]?.normalize('NFKC').toLowerCase()??''))throw new Error('MCP project is outside its allowed folder');
+    if(privateProject(this.home,root))throw new Error('MCP project is outside its allowed folder');
     let real:string;try{real=realpathSync(logical);}catch(error){if(error instanceof Error&&'code'in error&&error.code==='ENOENT')return null;throw new Error('MCP project file unavailable',{cause:error});}
     if(!under(root,real)||deniedExtensionPath(root,real))throw new Error('MCP project file denied');
     const before=statSync(real);if(!before.isFile()||before.nlink!==1||before.size>EXTENSION_FILE_BYTES)throw new Error('MCP project file unsafe');
