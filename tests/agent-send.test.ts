@@ -12,7 +12,7 @@ import { cleanSendText, isSendText, validateRequest } from '../src/shared/valida
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 // A Claude agent on a stub PTY: `output` feeds its mirror, `writes` is what reached the PTY, `status` posts a hook body.
-async function agent() {
+async function agent(engine: 'claude-code' | 'codex' = 'claude-code') {
   const root = await mkdtemp('/tmp/ai-send-'), paths = getPaths(root); await preparePaths(paths);
   const log = new Logger(paths.log), usage = new UsageService(root, log), m = new SessionManager(paths, log, undefined, undefined, undefined, undefined, usage, resolve('src/cli/index.ts'));
   const writes: string[] = [], exits: ((e: { exitCode: number }) => void)[] = []; let env: NodeJS.ProcessEnv = {}, output: (text: string) => void = () => {};
@@ -21,10 +21,10 @@ async function agent() {
   vi.spyOn(process, 'kill').mockImplementation(() => { for (const exit of exits) exit({ exitCode: 0 }); return true; });
   cleanups.push(async () => { await m.shutdown(); await usage.close(); await rm(root, { recursive: true, force: true }); });
   await usage.start(); await m.load();
-  const session = await m.create({ engine: 'claude-code', model: 'sonnet', auth: { kind: 'account' }, cwd: root, permission: 'ask', title: 'alpha' });
+  const session = await m.create({ engine, model: engine === 'codex' ? 'gpt-test' : 'sonnet', auth: { kind: 'account' }, cwd: root, permission: 'ask', title: 'alpha' });
   const feed = async (text: string) => { output(text); await m.snapshot(session.id); };
   const status = async (body: unknown) => { await fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/status/claude`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': env.AITERM_STATUS_TOKEN ?? '' }, body: JSON.stringify(body) }); };
-  return { m, session, writes, feed, status, exit: () => { for (const e of exits) e({ exitCode: 0 }); } };
+  return { m, session, writes, feed, status, output: (text: string) => output(text), exit: () => { for (const e of exits) e({ exitCode: 0 }); } };
 }
 
 it('multi-line /send arrives as one bracketed paste, then Enter as its own write', async () => {
@@ -90,4 +90,23 @@ it('text is capped at 16 KB and stripped of controls except newlines; the daemon
   await expect(validateRequest({ id: crypto.randomUUID(), kind: 'sessions.send', sessionId: crypto.randomUUID(), text: 'x\x1b' })).rejects.toThrow('Invalid send request');
   await expect(validateRequest({ id: crypto.randomUUID(), kind: 'sessions.send', sessionId: crypto.randomUUID(), text: 'ok', extra: 1 })).rejects.toThrow('Unexpected request field');
   expect(await validateRequest({ id: crypto.randomUUID(), kind: 'sessions.send', sessionId: '0b0f43a2-8f5e-4d2c-9a7b-1c2d3e4f5a6b', text: 'two\nlines' })).toMatchObject({ kind: 'sessions.send' });
+});
+
+it('review M1: an approval prompt still queued in the mirror is seen before anything is pasted', async () => {
+  const { m, session, writes, feed, output } = await agent('codex');
+  await feed('\x1b[?2004h\x1b]0;Working | Context 90% left\x07');
+  await expect.poll(() => m.get(session.id).status).toBe('running');
+  // The approval prompt has reached the PTY but the mirror hasn't parsed it yet.
+  output('\x1b]9;Approval requested: rm -rf build\x07');
+  await expect(m.send(session.id, '1')).rejects.toThrow('Agent is asking for permission');
+  expect(writes).toEqual([]);
+});
+
+it('review L1: a status-line context report alone does not count as having reported status', async () => {
+  const { m, session, writes, feed, status } = await agent();
+  await feed('\x1b[?2004hready'); await status({ hook_event_name: 'AITermContext', used_percentage: 3 });
+  await expect(m.send(session.id, 'hello')).rejects.toThrow('Agent has not reported its status yet');
+  await status({ hook_event_name: 'Stop' });
+  await m.send(session.id, 'hello');
+  expect(writes).toEqual(['\x1b[200~hello\x1b[201~', '\r']);
 });

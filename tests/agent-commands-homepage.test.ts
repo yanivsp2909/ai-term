@@ -184,3 +184,22 @@ it("B24's daemon.notice is an ordinary note: shown once, and the next note repla
     type(tty, '/send nobody hi'); enter(tty); await shows(tty, 'no agent is named nobody');
   } finally { await home.stop(); }
 });
+
+it('review L3: an app bundle folder is revealed in Finder, never launched', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ai-open-app-')), app = join(dir, 'Tool.app');
+  try {
+    await import('node:fs/promises').then(fs => fs.mkdir(app));
+    const runs: [string, readonly string[]][] = [];
+    await openFolder(app, 'finder', async (f, a) => { runs.push([f, a]); });
+    expect(runs).toEqual([['/usr/bin/open', ['-R', '--', app]]]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+it('review L4: a directory named code earlier on PATH does not shadow the real executable', async () => {
+  const { findExecutable } = await import('../src/shared/executable.js'), { mkdir, chmod } = await import('node:fs/promises');
+  const dir = await mkdtemp(join(tmpdir(), 'ai-path-')), first = join(dir, 'first'), second = join(dir, 'second');
+  try {
+    await mkdir(join(first, 'code'), { recursive: true }); await mkdir(second); await writeFile(join(second, 'code'), '#!/bin/sh\n'); await chmod(join(second, 'code'), 0o755);
+    expect(await findExecutable('code', `${first}:${second}`)).toBe(join(second, 'code'));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

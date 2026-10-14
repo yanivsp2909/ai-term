@@ -21,6 +21,7 @@ it.each([
   ['sessions of the wrong type', 'validate', JSON.stringify({ sessions: 'canary-title-B24' })],
   ['a record with wrong field types', 'validate', JSON.stringify({ sessions: [{ ...record, exitCode: 'zero', createdAt: 5 }] })],
   ['a record that fails the session check', 'validate', JSON.stringify({ sessions: [{ ...record, status: 'bogus' }] })],
+  ['worktrees that are not a list (review L6)', 'validate', JSON.stringify({ sessions: [], worktrees: { path: '/x' } })],
 ])('%s: moved aside untouched (0600), daemon starts empty with one note, log names only the %s stage', async (_name, stage, text) => {
   const paths = await home();
   await writeFile(paths.state, text, { mode: 0o644 });
