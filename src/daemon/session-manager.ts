@@ -83,6 +83,7 @@ export class SessionManager extends EventEmitter {
     // B25 (v0.6.1): every AI Term agent's in-flight worst cases, checked against the budgets before any request is sent.
     private readonly ledger?:BudgetLedger;
     private readonly taskTimers=new Map<string,ReturnType<typeof setTimeout>>();
+    private taskDirty=false;
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
@@ -464,7 +465,9 @@ export class SessionManager extends EventEmitter {
         const before=live.info.taskUsage,next:TaskUsage={tokens:Math.min(Number.MAX_SAFE_INTEGER,(before?.tokens??0)+tokens),costUsd:cost===undefined?before?.costUsd??null:(before?.costUsd??0)+(cost??0)};
         if(before?.unknownPrice||cost===null)next.unknownPrice=true;
         live.info.taskUsage=next;
-        // A CLI can report 120 records a minute: the card and state.json follow at most once a second.
+        // A CLI can report 120 records a minute: the card and state.json follow at most once a second. While stopping,
+        // no timer: shutdown's last write saves it.
+        if(this.closing){this.taskDirty=true;return;}
         if(this.taskTimers.has(id))return;
         this.taskTimers.set(id,setTimeout(()=>{this.taskTimers.delete(id);const current=this.sessions.get(id);if(!current)return;this.event({kind:'session.updated',session:{...current.info}});void this.persist();},TASK_UPDATE_MS));
     }
@@ -600,7 +603,7 @@ export class SessionManager extends EventEmitter {
     }
     async stop(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
-    async remove(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
+    async remove(id: string): Promise<void> { if (this.closing) throw new Error('Background service is stopping'); const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
         throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; await removeSessionFiles(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
     // A worktree shared by resumed agents belongs to whichever is still live, else the newest record.
@@ -638,7 +641,7 @@ export class SessionManager extends EventEmitter {
             throw error;
         }finally{this.busyWorktrees.delete(path);await this.persist();}
     }
-    async rename(id: string, title: string): Promise<SessionInfo> { const live = this.sessions.get(id); if (!live || !isTitle(title))
+    async rename(id: string, title: string): Promise<SessionInfo> { if (this.closing) throw new Error('Background service is stopping'); const live = this.sessions.get(id); if (!live || !isTitle(title))
         throw new Error('Invalid session or title'); live.info.title = title; await this.persist(); this.event({ kind: 'session.updated', session: { ...live.info } }); return { ...live.info }; }
     async previewSize(cols: number, rows: number): Promise<void> { if (!isSize(cols, rows))
         throw new Error('Invalid preview size'); this.size = { cols, rows }; for (const live of this.sessions.values()) {
@@ -699,7 +702,7 @@ export class SessionManager extends EventEmitter {
         // it can land after the caller already removed the folder (seen as ENOTEMPTY in tests/agent-retry).
         await Promise.allSettled([...this.sessions.values()].map(live=>live.output));
         // A task total still waiting for its coalesced write is saved now; otherwise only the queue is awaited.
-        const pending=this.taskTimers.size>0;for(const timer of this.taskTimers.values())clearTimeout(timer);this.taskTimers.clear();
+        const pending=this.taskTimers.size>0||this.taskDirty;for(const timer of this.taskTimers.values())clearTimeout(timer);this.taskTimers.clear();
         await (pending?this.persist():this.saving);
         this.shutDown = true;
         await this.ledger?.close();
