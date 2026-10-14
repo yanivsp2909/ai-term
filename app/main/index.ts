@@ -62,7 +62,11 @@ function registerIpc(): void {
   });
   ipcMain.handle(channels.paste, async (event, ...args: unknown[]) => {
     try { trusted(event); validateEmpty(args); return validatePaste(await clipboard.readText()); }
-    catch (error) { log.error('Clipboard paste refused or failed'); throw new Error(error instanceof PasteRefusal ? error.message : pasteErrors.unavailable); }
+    catch (error) {
+      log.error('Clipboard paste refused or failed');
+      // eslint-disable-next-line preserve-caught-error -- IPC must expose only fixed reasons, never native clipboard errors.
+      throw new Error(error instanceof PasteRefusal ? error.message : pasteErrors.unavailable);
+    }
   });
 }
 void app.whenReady().then(async () => {
