@@ -102,3 +102,10 @@ it('charges invalid UTF-8 reads against the total cap before decoding', async()=
   try{const catalog=new ExtensionReader(home,project).scan();expect(catalog.items).toEqual([]);expect(readBytes).toBeLessThanOrEqual(EXTENSION_TOTAL_BYTES);expect(catalog.notes.some(n=>n.includes('size limit'))).toBe(true);}
   finally{spy.mockImplementation(original);}
 });
+
+it('skips an oversized model field without invalidating other catalog items',async()=>{
+  const {home,project,file}=await setup();await file('.agents/skills/good/SKILL.md',skill('good'));
+  await file('.claude/agents/bad.md',`---\nmodel: ${'x'.repeat(241)}\n---\nReview this`);
+  const c=new ExtensionReader(home,project).scan();
+  expect(()=>validateExtensionCatalog(c)).not.toThrow();expect(c.items.map(i=>i.name)).toEqual(['good']);expect(c.notes.some(n=>n.includes('bad.md'))).toBe(true);
+});
