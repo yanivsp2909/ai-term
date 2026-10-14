@@ -31,6 +31,8 @@ export class CredentialsPanel {
   try{const result=await this.actions.request({kind:'settings.get',refreshNotifications:true});this.settings=result.settings;this.notificationPermission=result.notificationPermission??'unknown';}catch(error){failures.push(reason(error,'Settings unavailable'));}
   this.message=failures.join(' · ');this.busy=false;this.actions.changed();}
  private capsText():string{const caps=this.settings?.agentCaps??DEFAULT_AGENT_CAPS;return `${caps.turns===null?'no turn cap':`${caps.turns} turns`} · ${caps.spendUsd===null?'no spend cap':`$${caps.spendUsd.toFixed(2)}`}`;}
+ // With a filter typed, the first match is selected, so ⏎ right after typing picks it rather than clearing the mapping.
+ private filteredChoice():number{return this.mapping?.filter&&this.catalogRows().length>1?1:0;}
  private catalogRows():string[]{const filter=this.mapping?.filter.toLowerCase()??'';return ['(not set)',...catalogIds().filter(id=>id.toLowerCase().includes(filter))];}
  private async saveMapping(choice:string|undefined):Promise<void>{
   const mapping=this.mapping;if(!mapping||!choice)return;
@@ -58,10 +60,10 @@ export class CredentialsPanel {
   if(this.screen==='method'&&key==='enter'){if(this.choice===0){this.busy=true;this.actions.changed();try{await this.actions.login(this.provider==='anthropic'?'claude-code':'codex');this.actions.close();}catch(error){this.message=reason(error,'Login could not start');}finally{this.busy=false;this.actions.changed();}}else this.form(this.provider);this.actions.changed();return;}
   if(this.screen==='deployments'&&key==='enter'&&this.mapping){this.mapping={...this.mapping,deployment:this.mapping.key.deployments?.[this.choice]??''};this.screen='catalog';this.choice=0;this.actions.changed();return;}
   if(this.screen==='catalog'&&this.mapping){
-   if(key==='backspace'){this.mapping={...this.mapping,filter:[...this.mapping.filter].slice(0,-1).join('')};this.choice=0;this.actions.changed();return;}
+   if(key==='backspace'){this.mapping={...this.mapping,filter:[...this.mapping.filter].slice(0,-1).join('')};this.choice=this.filteredChoice();this.actions.changed();return;}
    if(key==='enter'){await this.saveMapping(this.catalogRows()[this.choice]);return;}
    // Typing narrows the list; the saved value is always a catalog entry, never the typed text.
-   if([...key].length===1&&/[A-Za-z0-9._:-]/.test(key)){this.mapping={...this.mapping,filter:(this.mapping.filter+key).slice(0,40)};this.choice=0;this.actions.changed();return;}
+   if([...key].length===1&&/[A-Za-z0-9._:-]/.test(key)){this.mapping={...this.mapping,filter:(this.mapping.filter+key).slice(0,40)};this.choice=this.filteredChoice();this.actions.changed();return;}
    return;
   }
   if(this.screen==='form'&&key==='enter'){if(this.row<this.fieldNames().length-1){this.row++;this.actions.changed();return;}await this.save();return;}

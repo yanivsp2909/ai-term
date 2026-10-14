@@ -7,7 +7,7 @@ import { parseAgentFacts, type AgentFacts } from '../shared/agent-facts.js';
 export type AgentStatus =
   | { event: 'turn-start' } | { event: 'tool-start'; tool: string } | { event: 'tool-finish'; tool: string }
   | { event: 'permission' } | { event: 'paused' } | { event: 'answered' } | { event: 'done'; reply: string }
-  | { event: 'turn-failed'; error: string } | { event: 'context'; percent: number } | { event: 'model'; model: string };
+  | { event: 'turn-failed'; error: string } | { event: 'context'; percent: number | null } | { event: 'model'; model: string };
 export interface TokenUsage { input: number; cached: number; output: number; reasoning?: number }
 export interface ReporterEnv { port: number; status: string; usage?: string }
 const REQUEST_TIMEOUT_MS = 1000, FACTS_MAX_BYTES = 16 * 1024;

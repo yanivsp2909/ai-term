@@ -11,6 +11,7 @@ import { redactor } from './display.js';
 import { loadInstructions } from './instructions.js';
 import { makeModel as makeProviderModel } from './provider.js';
 import type { FoundryWire } from './providers/foundry.js';
+import type { AgentFacts } from '../shared/agent-facts.js';
 import { HttpReporter, reporterEnv } from './report.js';
 import { Screen } from './screen.js';
 import { findRipgrep } from './tools.js';
@@ -48,6 +49,13 @@ export function takeSecrets(env: NodeJS.ProcessEnv): { key: string | null; endpo
   return { key: isSecret(key) ? key : null, endpoint: isEndpoint(endpoint) ? endpoint : null, reporter };
 }
 
+// Never guessed: a Chat Completions deployment sent down the Responses API fails every request, so a wire the daemon can't
+// confirm (it didn't answer, three tries) refuses the model instead.
+export class WireError extends Error {}
+export async function foundryWireFor(facts: (model: string) => Promise<AgentFacts | null>, model: string): Promise<FoundryWire> {
+  for (let attempt = 0; attempt < 3; attempt++) { const wire = (await facts(model))?.wire; if (wire) return wire; }
+  throw new WireError(`couldn't learn how to reach ${model} from AI Term; try again`);
+}
 export interface AgentTerminal {
   stdin: NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?(raw: boolean): unknown };
   stdout: NodeJS.WritableStream & { columns?: number; on(event: 'resize', listener: () => void): unknown };
@@ -67,12 +75,13 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   const transcript = new Transcript(parsed.transcript, redact, () => screen.note("the transcript couldn't be saved; the conversation goes on", 'error'));
   const instructions = await loadInstructions(root);
   // A Foundry deployment's wire (Responses or Chat Completions) comes from its test, through the daemon's facts.
-  const makeModel = async (id: string) => { const wire: FoundryWire | null = parsed.provider === 'foundry' ? (await reporter.facts(id))?.wire ?? null : null; return makeProviderModel({ provider: parsed.provider, model: id, key, endpoint, ...(wire ? { wire } : {}) }); };
-  const firstModel = await makeModel(parsed.model);
+  const makeModel = async (id: string) => { const wire = parsed.provider === 'foundry' ? await foundryWireFor(id => reporter.facts(id), id) : undefined; return makeProviderModel({ provider: parsed.provider, model: id, key, endpoint, ...(wire ? { wire } : {}) }); };
+  let firstModel;
+  try { firstModel = await makeModel(parsed.model); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof WireError ? error.message : 'the model could not be set up'}\n`); return 1; }
   return new Promise<number>(resolveExit => {
     const restore = () => { terminal.stdout.write('\x1b[?2004l'); terminal.stdin.setRawMode?.(false); terminal.stdin.pause(); };
     // A crash prints fixed words, never a stack or an error message, which could carry anything a provider sent.
-    const crash = () => { restore(); terminal.stderr.write('\nai agent stopped after an internal error\n'); resolveExit(1); };
+    const crash = () => { killAllBash(); restore(); terminal.stderr.write('\nai agent stopped after an internal error\n'); resolveExit(1); };
     process.once('uncaughtException', crash); process.once('unhandledRejection', crash);
     // Stopped from the homepage (s), by the daemon or by a closed terminal: every running command's process group goes
     // with it (they run in their own groups, so the PTY's signal alone would leave them behind), then the agent exits.

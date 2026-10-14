@@ -22,7 +22,8 @@ export function parseAgentStatus(raw: unknown, seq: number, at: string): AgentUp
     case 'answered': return only(value, ['event']) ? { event: { ...base, kind: 'running' } } : null;
     case 'done': return only(value, ['event', 'reply']) && typeof value.reply === 'string' ? { event: { ...base, kind: 'done' }, reply: capReply(value.reply) } : null;
     case 'turn-failed': return only(value, ['event', 'error']) && typeof value.error === 'string' ? { event: { ...base, kind: 'waiting', reason: 'turn failed', error: FAILURES.has(value.error) ? value.error : 'unknown' } } : null;
-    case 'context': return only(value, ['event', 'percent']) && typeof value.percent === 'number' && Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 100 ? { event: { ...base, kind: 'context', percent: value.percent } } : null;
+    // null: unknown again (a model switch); the card drops its old percentage.
+    case 'context': return only(value, ['event', 'percent']) && (value.percent === null || typeof value.percent === 'number' && Number.isFinite(value.percent) && value.percent >= 0 && value.percent <= 100) ? { event: { ...base, kind: 'context', percent: value.percent } } : null;
     case 'model': return only(value, ['event', 'model']) && typeof value.model === 'string' && isValidModelId(value.model) ? { model: value.model } : null;
     default: return null;
   }

@@ -8,5 +8,7 @@ const table = (prices as { providers: Record<CatalogProvider, Record<string, unk
 export function catalogModels(provider: CatalogProvider): string[] {
   return Object.keys(table[provider] ?? {}).filter(id => isValidModelId(id) && !NOT_CHAT.test(id) && !SNAPSHOT.test(id)).sort();
 }
-// Every chat model in the catalog once, for the "this deployment is model X" picker.
-export function catalogIds(): string[] { return [...new Set([...catalogModels('azure'), ...catalogModels('openai'), ...catalogModels('anthropic')])].sort(); }
+// Every model the catalog prices except embeddings, images and audio, for the "this deployment is model X" picker: a
+// Foundry deployment may well be an instruct or dated model.
+const NOT_TEXT = /embed|image|realtime|tts|whisper|dall-e|moderation|audio|transcribe/i;
+export function catalogIds(): string[] { return [...new Set((['azure', 'openai', 'anthropic'] as const).flatMap(provider => Object.keys(table[provider] ?? {})).filter(id => isValidModelId(id) && !NOT_TEXT.test(id)))].sort(); }

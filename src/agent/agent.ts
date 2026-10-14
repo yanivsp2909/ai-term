@@ -70,7 +70,8 @@ export class Agent {
   constructor(private options: AgentOptions) {}
   get root(): string { return this.options.root; }
   get modelId(): string { return this.options.modelId; }
-  setModel(model: LanguageModel, modelId: string): void { this.options = { ...this.options, model, modelId }; void this.options.transcript.append({ kind: 'model', model: modelId }); void this.options.reporter.status({ event: 'model', model: modelId }); }
+  // The new model's context window applies from its first request; until then the card shows no stale percentage.
+  setModel(model: LanguageModel, modelId: string): void { this.options = { ...this.options, model, modelId }; void this.options.reporter.status({ event: 'context', percent: null }); void this.options.transcript.append({ kind: 'model', model: modelId }); void this.options.reporter.status({ event: 'model', model: modelId }); }
   setRoot(root: string, instructions: Instructions): void { this.options = { ...this.options, root, instructions }; }
 
   // Tool calls run one at a time, so approvals never overlap even when the model asks for several at once.
@@ -133,10 +134,12 @@ export class Agent {
     // The turn's own signal: the user's Esc or kill, or a stop chosen at a limit pause.
     const controller = new AbortController(), stop = () => controller.abort();
     signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop();
-    let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId);
+    let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId), open = 0;
     const totals = { input: 0, cached: 0, output: 0, reasoning: 0, cost: 0 as number | null, requests: 0 };
     const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' });
     const finishInterrupted = async (): Promise<TurnResult> => {
+      // A request cut off after it was sent may still be billed; its worst case counts against this run and the budgets.
+      if (open) { this.limits.chargeUnfinished(open); open = 0; }
       // The partial reply stays in the conversation, marked, so the next turn knows what was cut off.
       this.history.push(user, { role: 'assistant', content: `${lastText || stepText}\n(The user interrupted this reply.)`.trim() });
       void transcript.append({ kind: 'note', text: 'interrupted' });
@@ -147,10 +150,12 @@ export class Agent {
     try {
       const result = streamText({
         model: this.options.model, system, messages: [...this.history, user], tools: this.tools(), stopWhen: isStepCount(this.options.maxSteps ?? DEFAULT_MAX_STEPS),
-        abortSignal: controller.signal, toolCallConcurrency: 1, maxRetries: 2, maxOutputTokens: maxOutputTokens(facts),
+        // Only a known output limit is sent: a guessed one would make models with smaller limits refuse every request.
+        abortSignal: controller.signal, toolCallConcurrency: 1, maxRetries: 2, ...(facts?.output ? { maxOutputTokens: maxOutputTokens(facts) } : {}),
         // Before every request: caps, budgets and a known price, with a pause that asks when one says no (D49, D53).
         prepareStep: async ({ messages }) => {
           facts = await this.clearance(system.length + JSON.stringify(messages).length, controller);
+          open = this.limits.lastWorst;
           return undefined;
         },
         // The SDK's default handler prints the error, whose text can carry anything the provider sent, to stderr, which
@@ -162,6 +167,7 @@ export class Agent {
         else if (part.type === 'text-delta') { const text = redact(part.text); stepText += text; io.text(text); }
         else if (part.type === 'finish-step') {
           if (stepText) lastText = stepText;
+          open = 0;
           const input = part.usage.inputTokens ?? 0, output = part.usage.outputTokens ?? 0, cached = Math.min(input, part.usage.inputTokenDetails.cacheReadTokens ?? 0), reasoning = part.usage.outputTokenDetails?.reasoningTokens ?? 0;
           const cost = requestCost(facts?.price ?? null, input, cached, output);
           this.limits.record(cost);
@@ -222,5 +228,5 @@ export class Agent {
     const k = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
     this.options.io.note(`turn · ${k(t.input)} in${t.cached ? ` · ${k(t.cached)} cached` : ''} · ${k(t.output)} out${t.reasoning ? ` · ${k(t.reasoning)} reasoning` : ''} · ${t.cost === null ? 'price ?' : `$${t.cost.toFixed(4)}`} · run ${this.limits.describe().replace(/^caps: /, '')}`);
   }
-  clear(): void { this.history = []; this.warned = false; }
+  clear(): void { this.history = []; this.warned = false; void this.options.reporter.status({ event: 'context', percent: 0 }); }
 }

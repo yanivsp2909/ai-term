@@ -12,9 +12,11 @@ export function trimPrices(raw:unknown,fetchedAt:string):PriceSnapshot{
   const limit=object(object(rawModel).limit),context=count(limit.context),out=count(limit.output);if(providers[provider][id]&&(context||out)){const table=limits[provider]??{};table[id]={...(context?{context}:{}),...(out?{output:out}:{})};limits[provider]=table;}}}
  return {fetchedAt,providers,limits};
 }
+// A price with no cache-read rate charges cached input at the input rate: an upper bound, so budgets and caps (D49) count
+// every token instead of losing cache hits to an unknown price (v0.4.2 review).
 export function estimateCost(price:ModelPrice|undefined,input:number,output:number,cached=0):number|null{
- if(!price||cached>0&&price.cacheRead===undefined)return null;
- return ((input-cached)*price.input+output*price.output+cached*(price.cacheRead??0))/1e6;
+ if(!price)return null;
+ return ((input-cached)*price.input+output*price.output+cached*(price.cacheRead??price.input))/1e6;
 }
 // alias: the catalog model a Foundry deployment was marked as in /settings ("this is model X"); a price override for the
 // deployment itself still wins.

@@ -20,7 +20,7 @@ export function isAgentCaps(v: unknown): v is AgentCaps {
 }
 export function parseAgentFacts(v: unknown): AgentFacts | null {
   const f = object(v), spent = object(f?.spent), budgets = object(f?.budgets), price = f?.price === null ? null : object(f?.price);
-  if (!f || !spent || !budgets || price === undefined || !exact(f, ['model', 'wire', 'context', 'output', 'price', 'spent', 'budgets', 'caps', 'contextWarning'])) return null;
+  if (!f || !spent || !budgets || f.price !== null && price === null || !exact(f, ['model', 'wire', 'context', 'output', 'price', 'spent', 'budgets', 'caps', 'contextWarning'])) return null;
   if (typeof f.model !== 'string' || ![null, 'responses', 'chat'].includes(f.wire as string | null) || !nullable(f.context) || !nullable(f.output) || typeof f.contextWarning !== 'boolean' || !isAgentCaps(f.caps)) return null;
   if (!exact(spent, ['day', 'week', 'month']) || ![spent.day, spent.week, spent.month].every(n => amount(n)) || !exact(budgets, ['daily', 'weekly', 'monthly']) || ![budgets.daily, budgets.weekly, budgets.monthly].every(n => nullable(n))) return null;
   if (price && (!amount(price.input) || !amount(price.output) || price.cacheRead !== undefined && !amount(price.cacheRead) || Object.keys(price).some(k => !['input', 'output', 'cacheRead'].includes(k)))) return null;

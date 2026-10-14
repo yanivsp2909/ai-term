@@ -61,7 +61,11 @@ export class AgentApp implements AgentIO {
     });
   }
 
-  get running(): boolean { return this.turn !== null; }
+  // A command (/model, /cd) in progress counts as running too: what you type meanwhile waits for it.
+  private commandBusy = false;
+  get running(): boolean { return this.turn !== null || this.commandBusy; }
+  // Runs the next queued message or command, or shows the prompt when there's none.
+  private next(): void { if (this.closed) return; const queued = this.queued.shift(); if (queued !== undefined) this.submit(queued); else this.options.screen.prompt(this.buffer); }
   start(firstMessage?: string): void { if (firstMessage?.trim()) this.submit(firstMessage); else this.options.screen.prompt(this.buffer); }
   input(data: string): void { for (const event of this.reader.push(data)) this.key(event); }
 
@@ -115,14 +119,11 @@ export class AgentApp implements AgentIO {
 
   private submit(message: string): void {
     const command = message.trim().match(/^\/(help|exit|model|cd|caps|clear)(?:\s+(.*))?$/s);
-    if (command) { void this.command(command[1] ?? '', (command[2] ?? '').trim()); return; }
+    if (command) { this.commandBusy = true; void this.command(command[1] ?? '', (command[2] ?? '').trim()).finally(() => { this.commandBusy = false; this.next(); }); return; }
     this.options.screen.user(message); this.options.screen.working();
     const turn = new AbortController(); this.turn = turn;
-    void this.agent.turn(message, turn.signal).then(result => {
-      this.turn = null; this.options.screen.turnEnd(result);
-      const next = this.queued.shift();
-      if (next !== undefined && !this.closed) this.submit(next); else if (!this.closed) this.options.screen.prompt(this.buffer);
-    }, () => { this.turn = null; this.options.screen.note('the turn stopped unexpectedly', 'error'); if (!this.closed) this.options.screen.prompt(this.buffer); });
+    void this.agent.turn(message, turn.signal).then(result => { this.turn = null; this.options.screen.turnEnd(result); this.next(); },
+      () => { this.turn = null; this.options.screen.note('the turn stopped unexpectedly', 'error'); this.next(); });
   }
   private async command(name: string, argument: string): Promise<void> {
     const screen = this.options.screen;
@@ -140,7 +141,6 @@ export class AgentApp implements AgentIO {
     else if (name === 'cd') {
       try { await this.changeFolder(argument); } catch { screen.note(`couldn't switch to ${argument}`, 'error'); }
     }
-    screen.prompt(this.buffer);
   }
   // /caps, /caps turns 50, /caps spend 2.5, /caps turns off spend off: this run only; /settings holds the defaults.
   private caps(argument: string): string {

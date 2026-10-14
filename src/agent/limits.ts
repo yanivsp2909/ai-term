@@ -25,30 +25,40 @@ export class RunLimits {
   private caps: AgentCaps | null = null;
   private base: AgentCaps | null = null;
   private unpriced = new Set<string>();
+  // /caps typed before the first request: applied over the daemon's defaults when they arrive.
+  private pending: Partial<AgentCaps> = {};
+  // Requests sent but never finished (Esc, kill): their worst case, which the daemon never hears about.
+  unreported = 0;
+  // The worst case of the request the last check let through.
+  lastWorst = 0;
   get current(): AgentCaps | null { return this.caps; }
-  setCaps(caps: AgentCaps): void { this.caps = { ...caps }; this.base = { ...caps }; }
+  setCaps(caps: AgentCaps): void { const merged = { ...caps, ...this.pending }; this.pending = {}; this.caps = merged; this.base = { ...merged }; }
+  chargeUnfinished(worst: number): void { this.spent += worst; this.unreported += worst; }
   record(cost: number | null): void { if (cost !== null) this.spent += cost; }
   // The first pause that applies before the next request, or null when it may go.
   check(facts: AgentFacts | null, inputChars: number): Pause | null {
     if (!facts) return { text: "AI Term isn't answering, so budgets and caps can't be checked · ⏎ asks again · Esc stops" };
     if (!this.caps) this.setCaps(facts.caps);
     const caps = this.caps ?? facts.caps, base = this.base ?? facts.caps;
+    this.lastWorst = 0;
     if (caps.turns !== null && this.turns >= caps.turns) return { text: `cap reached: ${caps.turns} turns this run · ⏎ allows ${base.turns ?? caps.turns} more · /caps changes it · Esc stops`, onContinue: () => { caps.turns = (caps.turns ?? 0) + (base.turns ?? caps.turns ?? 0); } };
     const limited = caps.spendUsd !== null || facts.budgets.daily !== null || facts.budgets.weekly !== null || facts.budgets.monthly !== null;
     if (!facts.price) {
       if (!limited || this.unpriced.has(facts.model)) return null;
       return { text: `no price known for ${facts.model}, so spend limits can't be checked · mark the deployment's model in /settings, or ⏎ goes on without them for this model this run · Esc stops`, onContinue: () => { this.unpriced.add(facts.model); } };
     }
-    const next = worstCase(facts.price, inputChars, maxOutputTokens(facts));
+    const next = worstCase(facts.price, inputChars, maxOutputTokens(facts)), extra = this.unreported;
     if (caps.spendUsd !== null && this.spent + next > caps.spendUsd) return { text: `cap reached: ${usd(caps.spendUsd)} this run · spent ${usd(this.spent)} · the next request could cost up to ${usd(next)} · ⏎ allows ${usd(base.spendUsd ?? caps.spendUsd)} more · Esc stops`, onContinue: () => { caps.spendUsd = (caps.spendUsd ?? 0) + (base.spendUsd ?? caps.spendUsd ?? 0); } };
     for (const [limit, spent, label] of [[facts.budgets.daily, facts.spent.day, 'today'], [facts.budgets.weekly, facts.spent.week, 'this week'], [facts.budgets.monthly, facts.spent.month, 'this month']] as const)
-      if (limit !== null && spent + next > limit) return { text: `budget: ${label} ${usd(spent)} of ${usd(limit)} · the next request could cost up to ${usd(next)} · raise it on the homepage (b), then ⏎ checks again · Esc stops` };
+      if (limit !== null && spent + extra + next > limit) return { text: `budget: ${label} ${usd(spent)} of ${usd(limit)} · the next request could cost up to ${usd(next)} · raise it on the homepage (b), then ⏎ checks again · Esc stops` };
+    this.lastWorst = next;
     return null;
   }
   // /caps: change this run's caps; null turns a cap off.
-  change(next: Partial<AgentCaps>): AgentCaps { const caps = { ...(this.caps ?? { turns: null, spendUsd: null }), ...next }; this.caps = caps; this.base = { ...caps }; return caps; }
+  change(next: Partial<AgentCaps>): void { if (!this.caps) { this.pending = { ...this.pending, ...next }; return; } const caps = { ...this.caps, ...next }; this.caps = caps; this.base = { ...caps }; }
   describe(): string {
     const caps = this.caps;
+    if (!caps) return `caps: set at the first request${Object.keys(this.pending).length ? ` (yours: ${this.pending.turns === undefined ? '' : this.pending.turns === null ? 'no turn cap ' : `${this.pending.turns} turns `}${this.pending.spendUsd === undefined ? '' : this.pending.spendUsd === null ? 'no spend cap' : usd(this.pending.spendUsd)})`.replace(' )', ')') : ''}`;
     return caps ? `caps: ${this.turns}${caps.turns === null ? ' turns (no cap)' : `/${caps.turns} turns`} · ${usd(this.spent)}${caps.spendUsd === null ? ' (no spend cap)' : ` of ${usd(caps.spendUsd)}`} this run` : 'caps: set at the first request';
   }
 }
