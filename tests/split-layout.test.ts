@@ -18,9 +18,14 @@ it('every pane is at least 40 columns and 10 rows, header included', () => {
   expect(pane.w).toBeGreaterThanOrEqual(MIN_PANE_COLS); expect(pane.h).toBeGreaterThanOrEqual(MIN_PANE_ROWS); expect(pane.x + pane.w).toBeLessThanOrEqual(cols); expect(pane.y + pane.h).toBeLessThanOrEqual(rows - 1);
  }
 });
+it('3 panes too wide to sit side by side fall back to two on top and one full width below', () => {
+ expect(splitLayout(100, 40, 3)).toEqual({ panes: [{ x:0, y:0, w:50, h:20 }, { x:51, y:0, w:49, h:20 }, { x:0, y:20, w:100, h:19 }], dividers: [{ x:50, y:0, w:1, h:20 }] });
+ expect(splitLayout(130, 40, 3)?.panes.map(p => p.y)).toEqual([0, 0, 0]);
+ expect(splitLayout(81, 20, 3)).toBeNull();
+});
 it('a too-small terminal opens as many panes as fit, never more than 4', () => {
  expect(fitPanes(130, 45, 4)).toBe(4); expect(fitPanes(130, 45, 5)).toBe(4);
- expect(fitPanes(130, 15, 4)).toBe(3); expect(fitPanes(100, 15, 4)).toBe(2); expect(fitPanes(100, 30, 3)).toBe(2);
+ expect(fitPanes(130, 15, 4)).toBe(3); expect(fitPanes(100, 15, 4)).toBe(2); expect(fitPanes(100, 30, 3)).toBe(3); expect(fitPanes(100, 20, 3)).toBe(2);
  expect(fitPanes(100, 30, 4)).toBe(4); expect(fitPanes(79, 30, 4)).toBe(1); expect(fitPanes(130, 10, 2)).toBe(1);
 });
 it('finds the pane under a cell: body cells are pane-relative, the header is row -1, dividers and the bottom row are nobody', () => {

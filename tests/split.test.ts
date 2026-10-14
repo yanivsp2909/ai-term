@@ -11,15 +11,16 @@ const now = new Date().toISOString();
 const session = (title: string, extra: Partial<SessionInfo> = {}): SessionInfo => ({ id:randomUUID(), title, engine:'claude-code', model:'opus', auth:{ kind:'account' }, cwd:'/tmp', worktree:`/tmp/trees/${title}`, branch:`ai/${title}`, permission:'ask', status:'running', statusDetail:'', statusSince:now, createdAt:now, lastOutputAt:null, exitCode:null, ctxPercent:null, ...extra });
 const modes = (extra: Partial<TerminalModes> = {}): TerminalModes => ({ applicationCursorKeys:false, applicationKeypad:false, bracketedPaste:true, mouseTracking:'none', mouseEncoding:'default', focusEvents:false, cursorVisible:true, ...extra });
 class TTY extends EventEmitter {
- isTTY = true; isRaw = false; columns = 130; rows = 45; output = ''; probe = true;
+ isTTY = true; isRaw = false; columns = 130; rows = 45; output = ''; probe = true; full = false;
  setRawMode(raw: boolean) { this.isRaw = raw; } resume() {} pause() {}
- write(data: string | Buffer) { this.output += data.toString(); if (this.probe && data.toString().includes('\x1b[c')) queueMicrotask(() => this.emit('data', Buffer.from('\x1b[?1;2c'))); return true; }
+ write(data: string | Buffer) { this.output += data.toString(); if (this.probe && data.toString().includes('\x1b[c')) queueMicrotask(() => this.emit('data', Buffer.from('\x1b[?1;2c'))); return !this.full; }
 }
 class Conn extends EventEmitter implements SplitConnection {
  requests: RequestBody[] = []; sent: Buffer[] = []; closed = false; paused = 0; resumed = 0;
- constructor(private readonly sessions: Map<string, { info: SessionInfo; modes: TerminalModes; snapshot: string }>) { super(); }
+ constructor(private readonly sessions: Map<string, { info: SessionInfo; modes: TerminalModes; snapshot: string }>, private readonly attachDelay = 0) { super(); }
  async request(body: RequestBody): Promise<SuccessResponse> {
   this.requests.push(body);
+  if (body.kind === 'sessions.attach' && this.attachDelay) await new Promise(r => setTimeout(r, this.attachDelay));
   if (body.kind === 'sessions.attach') { const s = this.sessions.get(body.sessionId); if (!s) throw new Error('Session unavailable'); return { id:randomUUID(), ok:true, snapshot:s.snapshot, cols:body.cols, rows:body.rows, modes:s.modes, session:s.info }; }
   return { id:randomUUID(), ok:true };
  }
@@ -34,13 +35,13 @@ async function screen(tty: TTY): Promise<string> {
  finally { terminal.dispose(); }
 }
 const shows = (tty: TTY, text: string) => vi.waitFor(async () => expect(await screen(tty)).toContain(text));
-function setup(count = 2, options: { modes?: Partial<TerminalModes>[]; infos?: Partial<SessionInfo>[]; cols?: number; rows?: number } = {}) {
+function setup(count = 2, options: { modes?: Partial<TerminalModes>[]; infos?: Partial<SessionInfo>[]; cols?: number; rows?: number; attachDelay?: number; failConnect?: number } = {}) {
  const infos = Array.from({ length:count }, (_, i) => session(`agent${i + 1}`, options.infos?.[i]));
  const sessions = new Map(infos.map((info, i) => [info.id, { info, modes:modes(options.modes?.[i]), snapshot:`hello from ${info.title}` }]));
  const tty = new TTY(), signals = new EventEmitter(), connections: Conn[] = [];
  tty.columns = options.cols ?? 130; tty.rows = options.rows ?? 45;
  let clock = 1000;
- const run = split(infos.map(i => i.id), { stdin:tty, stdout:tty, signals, theme:createTheme('graphite'), now:() => clock, connect:async () => { const c = new Conn(sessions); connections.push(c); return c; } });
+ const run = split(infos.map(i => i.id), { stdin:tty, stdout:tty, signals, theme:createTheme('graphite'), now:() => clock, connect:async () => { if (connections.length === options.failConnect) { connections.push(new Conn(sessions)); throw new Error('connect failed'); } const c = new Conn(sessions, options.attachDelay); connections.push(c); return c; } });
  const conn = (i: number) => { const info = infos[i]; const c = connections.find(x => x.attachedTo() === info?.id); if (!c) throw new Error('no connection'); return c; };
  return { infos, tty, signals, run, conn, connections, tick:(ms: number) => { clock += ms; } };
 }
@@ -194,4 +195,60 @@ it('another client taking a pane over marks it attached elsewhere; the daemon go
  conn(0).emit('disconnected');
  await expect(run).rejects.toThrow('Daemon connection closed');
  expect(tty.isRaw).toBe(false);
+});
+
+// Review findings (typescript-reviewer, v0.3 splits).
+it('a synchronized-output block that ends in a later chunk is drawn when it ends, not after the 150 ms hold', async () => {
+ const { tty, run, conn, infos } = setup();
+ await ready(tty);
+ conn(0).emit('output', infos[0]?.id, Buffer.from('\x1b[?2026h\x1b[5;1HECHO-X'));
+ await new Promise(r => setTimeout(r, 30));
+ conn(0).emit('output', infos[0]?.id, Buffer.from('\x1b[?2026l'));
+ await new Promise(r => setTimeout(r, 40));
+ expect(await screen(tty)).toContain('ECHO-X');
+ press(tty, [5]); await run;
+});
+it('leaving while panes are still attaching detaches and closes every connection', async () => {
+ const { tty, run, connections } = setup(2, { attachDelay:80 });
+ await new Promise(r => setTimeout(r, 20));
+ press(tty, [3]);
+ await expect(run).resolves.toMatchObject({ reason:'client interrupted' });
+ await vi.waitFor(() => { expect(connections).toHaveLength(2); for (const c of connections) { expect(c.closed).toBe(true); expect(c.requests.at(-1)).toMatchObject({ kind:'sessions.detach' }); } });
+});
+it('a connection that fails to open does not leak the panes that did attach', async () => {
+ const { run, connections } = setup(3, { failConnect:1 });
+ await run.catch(() => undefined);
+ await vi.waitFor(() => { for (const c of connections.filter(c => c.requests.length)) expect(c.closed).toBe(true); });
+});
+it('closing one of four panes on a terminal too narrow for three side by side keeps the agents on screen', async () => {
+ const { tty, run, conn, infos } = setup(4, { cols:100, rows:40 });
+ await ready(tty);
+ conn(1).emit('event', { kind:'session.removed', sessionId:infos[1]?.id });
+ await vi.waitFor(() => expect(conn(3).requests).toContainEqual({ kind:'sessions.resize', sessionId:infos[3]?.id, cols:100, rows:18 }));
+ expect(await screen(tty)).not.toContain('make the window bigger');
+ press(tty, 'still'); expect(conn(0).typed()).toBe('still');
+ press(tty, [5]); await run;
+});
+it('a press after a lost release goes to the pane under the pointer and focuses it', async () => {
+ const { tty, run, conn } = setup(2, { modes:[{ mouseTracking:'vt200', mouseEncoding:'sgr' }, { mouseTracking:'vt200', mouseEncoding:'sgr' }] });
+ await ready(tty);
+ press(tty, '\x1b[<0;10;10M'); press(tty, '\x1b[<0;71;6M\x1b[<0;71;6m'); press(tty, 'k');
+ expect(conn(1).typed()).toBe('\x1b[<0;5;5M\x1b[<0;5;5mk'); expect(conn(0).typed()).toBe('\x1b[<0;10;9M');
+ press(tty, [5]); await run;
+});
+it('typing sends no empty input frames', async () => {
+ const { tty, run, conn } = setup();
+ await ready(tty);
+ press(tty, 'a'); press(tty, 'b');
+ expect(conn(0).sent.map(b => b.length)).toEqual([1, 1]);
+ press(tty, [5]); await run;
+});
+it('a full redraw asked for while the terminal is blocked happens when it drains', async () => {
+ const { tty, run, signals } = setup();
+ await ready(tty);
+ tty.full = true; tty.write('');
+ tty.columns = 100; tty.rows = 30; signals.emit('SIGWINCH');
+ tty.full = false; tty.output = ''; tty.emit('drain');
+ expect(tty.output).toContain('\x1b[2J');
+ press(tty, [5]); await run;
 });
