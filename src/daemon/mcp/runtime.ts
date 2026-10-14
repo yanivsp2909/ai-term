@@ -8,6 +8,12 @@ import { extensionTokens } from '../../shared/extensions.js';
 
 export const mcpEnv=(cwd:string,values:Record<string,string>):Record<string,string>=>({PATH:'/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin',HOME:cwd,TMPDIR:tmpdir(),LANG:'C.UTF-8',TERM:'dumb',...values});
 const scrub=(text:string,values:Record<string,string>)=>Object.values(values).reduce((out,value)=>out.split(value).join('[redacted]'),text);
+function scrubObject(value:unknown,values:Record<string,string>):unknown {
+ if(typeof value==='string')return scrub(value,values);
+ if(Array.isArray(value))return value.map(v=>scrubObject(v,values));
+ if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([key,v])=>[scrub(key,values),scrubObject(v,values)]));
+ return value;
+}
 export type McpConnect=(server:McpServer,cwd:string,signal:AbortSignal)=>Promise<{client:MCPClient;transport?:MCPTransport;needsLogin?:()=>boolean}>;
 class McpLoginError extends Error {}
 export function mcpConnector(keys:KeyStore,fetchFn:typeof fetch=fetch):McpConnect{return async(server,cwd,signal)=>{
@@ -51,7 +57,7 @@ export class McpRuntime {
    const result:ListToolsResult=await c.client.listTools({options:{signal,timeout:5000}});if(result.tools.length>MCP_MAX_TOOLS||result.nextCursor)throw new Error('MCP catalog too large');
    c.schema.clear();const tools:McpTool[]=[];for(const raw of result.tools){const name=scrub(raw.name,values);if(!isMcpTool(name)||name!==raw.name||c.schema.has(name))continue;
     const description=scrub(raw.description??'',values).replace(/[\p{C}]/gu,' ').replace(/\s+/g,' ').slice(0,240);
-    const schema=validateMcpObject(JSON.parse(scrub(JSON.stringify(raw.inputSchema),values)) as unknown);c.schema.set(name,schema);tools.push({name,description,enabled:true,tokens:extensionTokens(`mcp ${server.config.name}/${name}: ${description}\n`)});
+    const schema=validateMcpObject(scrubObject(raw.inputSchema,values));c.schema.set(name,schema);tools.push({name,description,enabled:true,tokens:extensionTokens(`mcp ${server.config.name}/${name}: ${description}\n`)});
    }this.metadata.set(server.hash,tools);
   });}finally{if(c.needsLogin?.())this.logins.add(server.hash);}
  }
@@ -61,7 +67,7 @@ export class McpRuntime {
   const names=server.config.type==='stdio'?server.config.env:server.config.headers;
   return this.keys.withMcp(server.id,names,server.hash,async values=>{
    const abort=()=>{c.controller.abort();void c.transport?.close();};signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
-   try{const result=await c.client.callTool({name:tool,arguments:args,options:{signal,timeout:120_000}});if(result.isError)throw new Error('MCP tool failed');const output=scrub(JSON.stringify(result),values);return Buffer.byteLength(output)<=64*1024?output:'MCP result exceeded the size limit';}
+   try{const result=await c.client.callTool({name:tool,arguments:args,options:{signal,timeout:120_000}});if(result.isError)throw new Error('MCP tool failed');const output=JSON.stringify(scrubObject(result,values));return Buffer.byteLength(output)<=64*1024?output:'MCP result exceeded the size limit';}
    finally{signal.removeEventListener('abort',abort);if(c.needsLogin?.())this.logins.add(server.hash);}
   });
  }
