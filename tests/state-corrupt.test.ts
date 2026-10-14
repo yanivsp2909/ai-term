@@ -32,7 +32,7 @@ it.each([
   expect((await lstat(moved)).mode & 0o777).toBe(0o600);
   // The new state.json is a fresh empty list; the user's copy was never written over.
   expect(JSON.parse(await readFile(paths.state, 'utf8'))).toEqual({ sessions: [], worktrees: [] });
-  expect(m.warningText()).toBe(`couldn't read your agent list; saved it as ${moved}`);
+  expect(m.notice).toBe(`couldn't read your agent list; saved it as ${moved}`); expect(m.warningText()).toBeNull();
   const log = await readFile(paths.log, 'utf8');
   expect(log).toContain(`Agent list could not be loaded (${stage}); moving it aside and starting empty`);
   expect(log).not.toContain('canary-title-B24'); expect(log).not.toMatch(/SyntaxError|JSON|position/);
@@ -47,7 +47,7 @@ it('an unreadable file is moved aside, not overwritten, and logged as the read s
   expect((await lstat(moved)).mode & 0o777).toBe(0o600);
   expect(await readFile(moved, 'utf8')).toBe(text);
   expect(await readFile(paths.log, 'utf8')).toContain('Agent list could not be loaded (read)');
-  expect(m.warningText()).toContain(`saved it as ${moved}`);
+  expect(m.notice).toContain(`saved it as ${moved}`);
 });
 
 it('a directory in place of state.json is moved aside as well', async () => {
@@ -74,7 +74,7 @@ it('a valid list still loads and is not moved', async () => {
   await writeFile(paths.state, JSON.stringify({ sessions: [record] }), { mode: 0o600 });
   const m = await load(paths);
   expect(m.list().map(s => s.id)).toEqual([record.id]);
-  expect(await aside(paths)).toEqual([]); expect(m.warningText()).toBeNull();
+  expect(await aside(paths)).toEqual([]); expect(m.notice).toBeNull();
 });
 
 it('worktree records lost with the list leave their worktree undeletable (v0.3.2: never without a record)', async () => {
@@ -95,4 +95,18 @@ it('moveAside never replaces an existing moved-aside file with the same timestam
   await writeFile(paths.state, 'second'); const second = await moveAside(paths.state, at);
   expect(second.path).toBe(`${first.path}-1`);
   expect(await readFile(first.path, 'utf8')).toBe('first'); expect(await readFile(second.path, 'utf8')).toBe('second');
+});
+
+it('the note reaches a homepage after sessions.list as a daemon.notice, never as a warning', async () => {
+  const { DaemonServer } = await import('../src/daemon/server.js'), { Connection } = await import('../src/client/connection.js');
+  const paths = await home(); await writeFile(paths.state, '{"sessions":[', { mode: 0o600 });
+  const log = new Logger(paths.log), m = new SessionManager(paths, log), server = new DaemonServer(paths, m, log); managers.push(m);
+  await m.load(); await server.listen();
+  const client = await Connection.connect(paths, { entry: '/unused', autoStart: false }), events: unknown[] = [];
+  try {
+    client.on('event', event => events.push(event));
+    await client.request({ kind: 'sessions.list' });
+    await expect.poll(() => events).toContainEqual({ kind: 'daemon.notice', text: m.notice });
+    expect(events.some(e => (e as { kind?: string }).kind === 'daemon.warning')).toBe(false);
+  } finally { client.close(); await server.close(); }
 });

@@ -174,3 +174,13 @@ it('/doctor shows the ai doctor report in a popup; /usage and u show usage by pe
     type(tty, '/budget'); enter(tty); await shows(tty, 'daily');
   } finally { await home.stop(); }
 });
+
+it("B24's daemon.notice is an ordinary note: shown once, and the next note replaces it", async () => {
+  const { tty, home, client, start } = open([session('alpha')]);
+  await start();
+  try {
+    client.emit('event', { kind: 'daemon.notice', text: "couldn't read your agent list; saved it as /h/.ai-term/state.json.corrupt-x" });
+    await shows(tty, "couldn't read your agent list; saved it as /h/.ai-term/state.json.corrupt-x");
+    type(tty, '/send nobody hi'); enter(tty); await shows(tty, 'no agent is named nobody');
+  } finally { await home.stop(); }
+});

@@ -201,6 +201,10 @@ export interface TerminalModes {
 export type SessionEvent = {
     kind: 'daemon.warning'; text: string;
 } | {
+    // A one-line homepage note for this daemon's lifetime (B24: the agent list was moved aside); unlike a warning it
+    // never hides other notes.
+    kind: 'daemon.notice'; text: string;
+} | {
     kind: 'daemon.warningCleared';
 } | {
     kind: 'session.previewResized'; sessionId: string; cols: number; rows: number;

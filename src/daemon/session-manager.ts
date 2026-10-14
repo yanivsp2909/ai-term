@@ -51,6 +51,8 @@ export class SessionManager extends EventEmitter {
     private saving: Promise<void> = Promise.resolve();
     private closing = false;
     private warnings = new Map<string, string>();
+    // B24's one homepage note, sent after each sessions.list for this daemon's lifetime.
+    notice: string | null = null;
     private resuming=new Set<string>();
     private retrying=new Set<string>();
     private sending=new Set<string>();
@@ -88,7 +90,7 @@ export class SessionManager extends EventEmitter {
             }
             if (!aside.private) this.log.error('Moved-aside agent list could not be made private');
             loaded = { sessions: [], worktrees: new Map() };
-            this.warning('state-file', `couldn't read your agent list; saved it as ${aside.path}`);
+            this.notice = `couldn't read your agent list; saved it as ${aside.path}`;
         }
         for (const info of loaded.sessions)
             this.sessions.set(info.id, { info, mirror: new Mirror(this.size.cols, this.size.rows, () => { }), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() });

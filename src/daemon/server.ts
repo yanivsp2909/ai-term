@@ -211,6 +211,7 @@ export class DaemonServer {
                 case 'sessions.list':
                     this.control(peer, { id: request.id, ok: true, sessions: this.manager.list() });
                     if (this.manager.warningText()) this.control(peer, { kind: 'daemon.warning', text: this.manager.warningText() });
+                    if (this.manager.notice) this.control(peer, { kind: 'daemon.notice', text: this.manager.notice });
                     break;
                 case 'sessions.resume':
                     this.control(peer,{id:request.id,ok:true,session:await this.manager.resume(request.sessionId)});

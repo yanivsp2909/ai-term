@@ -37,7 +37,7 @@ describe('load', () => {
     // B24: the user's records stay recoverable in the moved-aside copy, byte for byte.
     const moved = (await readdir(paths.root)).find(name => name.startsWith('state.json.corrupt-')) ?? '';
     expect(await readFile(join(paths.root, moved), 'utf8')).toBe(text);
-    expect(m.warningText()).toContain('couldn\'t read your agent list');
+    expect(m.notice).toContain('couldn\'t read your agent list');
   });
 });
 

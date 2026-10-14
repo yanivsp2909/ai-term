@@ -672,6 +672,7 @@ export class Homepage {
     if (value && typeof value === 'object' && 'kind' in value) {
       if (value.kind === 'daemon.warning' && 'text' in value && typeof value.text === 'string') { this.warning = warningText(redact(warningText(value.text))); this.draw(true); return; }
       if (value.kind === 'daemon.warningCleared') { this.warning = ''; this.draw(true); return; }
+      if (value.kind === 'daemon.notice' && 'text' in value && typeof value.text === 'string') { this.showNote(warningText(redact(warningText(value.text)))); return; }
     }
     if (this.ended) return;
     try {
