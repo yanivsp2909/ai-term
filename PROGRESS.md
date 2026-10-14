@@ -1,6 +1,119 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 40424dd fix: /send trusts Codex's approval title; split input and output stay per pane
+Roadmap step: v0.3 release gate done — **v0.3 is closed** (only Yaniv's real-terminal checks below remain, as for v0.2)
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 649dd75 after `git pull --ff-only` (already up to date). Baseline 147 files / 937 passed / 2 opt-in Keychain skips. Final 150 files / 959 passed / same 2 skips, twice in a row. Session: Claude Code, Opus 5.5.
+Prompt vs code:
+- `git diff c4e34df..HEAD` was empty for git.ts, worktrees.ts and worktree-removal.ts before this gate, so removal regressions could only come from session-manager.ts, store.ts and validate.ts; none made a worktree wrongly deletable. The real git holes were older (submodules, below).
+- The prompt lists security-bounty-hunter as an agent; it isn't an agent type here, and its skill lives under ~/.claude, which the limits forbid reading. It ran as a fresh general-purpose agent briefed as an adversarial bounty hunter.
+- **Late-hook fix, as proposed for Claude, not for Codex.** Claude: /send is refused while any tool call is in flight (PreToolUse is a blocking HTTP hook, so it reaches the daemon before a permission prompt can be drawn; `toolsInFlight` in status-reducer.ts, reset by a new turn, done, a failed turn and exit). Codex exposes no tool events, and its approvals arrive in its own output (OSC 9, the Action Required title, a bell), ordered with the prompt; gating its whole turn would refuse /send almost always. Instead /send waits until the mirror and the status queue have caught up, and refuses while the mirror's last Codex title is Action Required (which also closed the bounty hunter's F2). Residual: if a Claude PreToolUse hook is lost too, that one call is unguarded.
+- **Spec conflict decided, the safer way:** §12.4 said mouse events go to "the pane under the pointer"; the gate says input never reaches a non-focused pane. Mouse input now reaches only the focused pane; a press focuses first; wheel or motion over another pane does nothing (README, design.md, §12.4 updated).
+
+## Gate findings (every one: failing test commit, then fix commit)
+Reviewers ran fresh (high): security-reviewer (git, removal regressions, /open, /retry), a bounty hunter (/send, splits), silent-failure-hunter (git, spawning, deletion, /send, store). No CRITICAL.
+- **HIGH-1 (security):** a filter command an agent writes into a submodule's own config inside its worktree ran when AI Term checked that worktree (`git status` recursed into the populated submodule), outside any agent sandbox. → status runs with `--ignore-submodules=all`. Tests fee93e1, fix 113bd27.
+- **HIGH-2 (security):** files in an unpopulated submodule folder were invisible to the loss check, so the worktree deleted with one keypress (S14). → AI Term scans gitlink folders itself; any holding something counts as changed and enters the fingerprint. fee93e1 → 113bd27.
+- **MEDIUM (security):** a clean worktree with a populated submodule could never be deleted (plain remove refuses). → the gitlink scan puts it on the typed-name/forced path. fee93e1 → 113bd27.
+- **MEDIUM (bounty F2):** a late Codex turn-complete notify over an open approval marked the card done, and /send then pressed Enter on the approval. → Action Required title gate. 72e7aeb → 40424dd.
+- **MEDIUM (silent M1):** a failed worktree start left stray `ai/` branches and folders (up to five per start) and was read as a collision. → stop at once, roll back with plain remove, `branch -d` and rmdir, log what's left. 1e92ecc → 05721aa.
+- **MEDIUM (silent M2):** unreadable settings.json turned isolation off with the note "git check failed". → worktrees stay on, error logged. 1e92ecc → 05721aa.
+- **MEDIUM (silent M3):** a worktree missing only its `.git` file read "nothing would be lost · folder already deleted" (git refused the delete, but the verdict was false). → "missing" comes from the folder alone; such a folder is refused. 1e92ecc → 05721aa.
+- **MEDIUM (silent M4, also flagged LOW in v0.3.4):** an invalid worktree record was erased by the next save. → a 0600 copy of the whole file first (`keepCopy`) and the B24 note. 1e92ecc → 05721aa.
+- **MEDIUM (silent M5):** any git failure on a real repo read as "not a git repo". → only git's own answer means no repo; the rest is "git check failed", logged as an error. 1e92ecc → 05721aa.
+- **The late-hook window** (known open item): d7fa222 → 3d1db1d.
+- **LOW:** F1 caught-up check ignored the status queue; F1b the Enter's running update could hide a waiting; S1 a pane's background backlog ran live after it took focus; S2 wheel/motion reached unfocused panes; S3 a pane's theme query reply could reach another pane (now answered from the probed background) → 72e7aeb → 40424dd. L3 `git show` could run `gpg.program` → `log.showSignature=false` (fee93e1 → 113bd27). L2 doctor printed an unrun Codex check as "logged in no"; L3 /open called unreadable folders gone and logged nothing; L6 lost-isolation notes logged at info → 1e92ecc → 05721aa.
+
+### Not fixed, with reasons
+- **/retry replaces the old record even when the new start then fails** (silent L1): by design (v0.3.4: "restart the selected agent"); the new card shows the failure and can be retried again; resume is the way back to a conversation.
+- **/retry keeps Don't ask / auto** (security L5): the v0.3.4 prompt required the same permission mode; resume behaves the same. Yaniv can reopen.
+- **A repo-local LFS filter with `required=true` and a command off `/usr/bin:/bin` makes starts fall back in place** (security L1): fail-safe, now logged as an error with the card note; global git config (LFS from ~/.gitconfig) is deliberately ignored, so worktrees hold LFS pointer files. Documented.
+- **B24 moves aside on any read error, not just a parse error** (security L4): fail-safe, nothing lost, matches the B24 prompt ("can't be read or parsed").
+- **The longest agent name wins in /send** (v0.3.4 L5): documented; the note names the recipient.
+- **engines.ts resolve error shown as "not found in PATH", store close/unlink masking, the /worktrees panel's empty-list text after a load error, the 500-entry listing cap** (silent L4/L5): pre-v0.3 or cosmetic, outside the gate's safety scope.
+- **Claude's Bash children inherit `AITERM_STATUS_TOKEN`** and could forge hooks (bounty, not filed): same-user processes can already attach and type (D35).
+- **A Claude `Stop` while a background subagent's prompt is open** (bounty, dropped): couldn't confirm without the real CLI.
+
+## Exit check (headless, ran)
+`tests/v03-exit-check.test.ts` (e95b823): a temp repo, a temp home, the real daemon, sockets and split client; two agents (a stub engine that writes `<line>.txt` per typed line and lists its folder) side by side. Keys typed in the left pane reach only the left agent, Ctrl+\ moves to the right one. Each worktree holds only its own file (`.git README alpha.txt` / `.git README beta.txt`), each agent's own listing never shows the other's, and the original checkout keeps its files, HEAD, branch (`main`) and status; `git worktree list` shows three, and neither `ai/` branch has a commit main lacks. **Pass.**
+
+## Check output
+```
+npm run build            ESM ⚡️ Build success in 23ms
+npm run typecheck        > tsc --noEmit            (exit 0)
+npm run lint             > eslint .                (exit 0)
+npm run build:notifier   Notifier built and ad-hoc signed: /Users/yanivsp/ai-term/build/notifier/AI Term.app
+npm test (1)             Test Files  150 passed (150) · Tests  959 passed | 2 skipped (961) · 15.19s
+npm test (2)             Test Files  150 passed (150) · Tests  959 passed | 2 skipped (961) · 14.95s
+grep exec(/execSync(/shell: true            none (only RegExp.exec)
+grep git argv                               every ref and path follows --; rev-parse calls take none; -bai/<slug> validated
+grep --force / -D                           only forceRemoveWorktree / forceDeleteBranch, called only when there is loss, the typed branch name matches and the fingerprint is unchanged
+grep sk-                                    only redaction (log.ts) and refusal guards; no key literal
+grep permission flags outside env.ts        none
+git diff --check 649dd75..HEAD              clean
+```
+verification-loop: build, types, lint, tests (twice), security greps, diff review (21 files, gate scope only) all pass; the built app was driven again in a temp home (B24, /send, /find, /doctor, /usage, u, /budget, /retry) — all ok, no daemon left running.
+
+## What's next
+- v0.4 (AI Term's own agent for API keys), per the roadmap. Nothing blocks v0.3 except Yaniv's real-terminal checks below.
+
+## Manual checks (everything still open from v0.2 and v0.3, in one sitting)
+Restart first (stops running agents): `cd ~/ai-term && npm run build && npm run build:notifier && node dist/cli/index.js daemon stop && node dist/cli/index.js`
+- Notifications, permission: `cd ~/ai-term && node dist/cli/index.js` — start a Codex agent and make it ask permission; first time the Allow prompt for "AI Term", then a banner `<name> · waiting: permission` with sound.
+- Notifications, done: `cd ~/ai-term && node dist/cli/index.js` — an agent finishing while you're inside it gives no banner; one finishing while you're on the homepage gives `<name> · done`.
+- Notifications off: `cd ~/ai-term && node dist/cli/index.js` — /settings, n → `notifications: off`; trigger waiting → no banner; n again.
+- Click with ai open: `cd ~/ai-term && node dist/cli/index.js` — two agents, select one; click the other's banner → it's selected, Enter attaches.
+- Click with ai closed: `cd ~/ai-term && node dist/cli/index.js` — start an agent with a task, /exit, click its done banner → a new Terminal opens ai inside it; Ctrl+E goes home.
+- Click without a banner: `cd ~/ai-term && node dist/cli/index.js debug ls` (copy an id, /exit ai), then `cd ~/ai-term && "build/notifier/AI Term.app/Contents/MacOS/AITermNotifier" --click <id>`.
+- Click for a removed agent: `cd ~/ai-term && "build/notifier/AI Term.app/Contents/MacOS/AITermNotifier" --click "$(uuidgen | tr A-Z a-z)" && tail -1 ~/.ai-term/logs/daemon.log` → nothing opens; log says `Notification click for unknown agent dropped`.
+- Terminal.app raise: `cd ~/ai-term && node dist/cli/index.js` — with another app in front, click a live agent's banner; Terminal activates, the right ai window rises, the agent is selected.
+- Raise probe: `cd ~/ai-term && printf '\e[5t'` — does this Terminal.app window come forward?
+- Unknown terminal: `cd ~/ai-term && TERM_PROGRAM=unknown node dist/cli/index.js` — a click selects only and notes `selected <name> from a notification`.
+- Foundry key after B12: `cd ~/ai-term && node dist/cli/index.js` — /settings, t on the Foundry key refuses `Foundry key must be added again to bind its endpoint`; x, a, t → deployments test as before.
+- Bar trace: `cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace` — hands off; reply with the BAR_DIAGNOSTIC line.
+- Bar feel: `cd ~/ai-term && node dist/cli/index.js` — /settings h → bar on, /shell, `/usr/bin/vim -Nu NONE -i NONE -n` (type, Esc, :q), `/usr/bin/top` (q), a multi-line paste with Ctrl+E inside stays text, vim `:set mouse=a` click/wheel, resize (agent gets rows−1), Ctrl+E home and back; then h → bar off and the next attach is raw full height.
+- Bar with the CLIs: `cd ~/ai-term && node dist/cli/index.js` — bar on, type into Claude Code and Codex and go through one permission prompt each (Ctrl+C skips a Codex update notice; never approve an update here).
+- Two worktree starts: `cd ~/ai-term && node dist/cli/index.js` — /cd ~/ai-term, Codex, start two agents → `ai/codex` and `ai/codex-2` with distinct folders; then `cd ~/ai-term && git worktree list --porcelain && git status --short && git branch --show-current` (main stays checked out, no agent files) and `cd ~/ai-term && node dist/cli/index.js debug ls` (both branches).
+- Non-repo start: `cd ~/ai-term && node dist/cli/index.js` — /cd a plain temp folder, start an agent → it runs there, card says `worktree off: not a git repo`.
+- Worktrees toggle: `cd ~/ai-term && node dist/cli/index.js` — /settings w → off/on; /shell stays in /cd; x or /clean on a finished worktree agent keeps the tree (`worktree kept: <path>`).
+- Removal, clean: `cd ~/ai-term && node dist/cli/index.js` — let a worktree agent exit, x → `remove worktree and branch ai/<slug>? k keep · d delete`; Esc keeps; again with d → `✓ deleted worktree and branch …`.
+- Removal, loss: `cd ~/ai-term && node dist/cli/index.js` — in an exited agent's worktree add a file and a commit, x → `1 untracked · 1 commit not in main`; d only types; the branch name + ⏎ deletes.
+- /worktrees and /clean: `cd ~/ai-term && node dist/cli/index.js` — /worktrees lists v0.3.1 leftovers as `✗ Not in AI Term's record` and never offers to delete them; /clean says `kept N worktrees · /worktrees reviews them`.
+- Split, open and type: `cd ~/ai-term && node dist/cli/index.js` — Space, ↓, Space, v → two panes, marks gone; type in each; Ctrl+\ moves focus; Ctrl+\ twice sends one Ctrl+\.
+- Split, mouse: `cd ~/ai-term && node dist/cli/index.js` — in a split, click the other pane (it takes focus and gets the click); wheel over an unfocused pane does nothing.
+- Split, home and reopen: `cd ~/ai-term && node dist/cli/index.js` — Ctrl+E home with both running; v with nothing marked reopens the split.
+- Split, vim: `cd ~/ai-term && node dist/cli/index.js` — /shell twice, mark both, v, `/usr/bin/vim -Nu NONE` in one pane; insert, move, :q; the other pane is untouched.
+- Split, resize and exit: `cd ~/ai-term && node dist/cli/index.js` — drag the window narrower/wider (below 81 cols: `make the window bigger · ^E home`); /exit one pane's agent → `■ exited · exit 0 · ^\ closes`, Ctrl+\ turns the other into a normal attach.
+- /send, idle: `cd ~/ai-term && node dist/cli/index.js` — after an agent shows ✓ done, `/send <name> ` + Tab, paste two lines, ⏎ → `✓ sent to <name> · 2 lines`, one message.
+- /send, permission: `cd ~/ai-term && node dist/cli/index.js` — while an Ask-mode agent shows `waiting · permission`, `/send <name> 1` → `<name> is asking for permission, go inside to answer`.
+- /send, tool running (gate fix): `cd ~/ai-term && node dist/cli/index.js` — while a Claude agent runs a long Bash command, `/send <name> hi` → `<name> is running a tool and may ask permission · try again when it finishes`.
+- /send, trust prompt: `cd ~/ai-term && node dist/cli/index.js` — start an agent with no first message, `/send <name> hi` → `<name> may be asking to trust its folder · go inside first`.
+- /retry: `cd ~/ai-term && node dist/cli/index.js` — select a failed agent, /retry → same `ai/<slug>`, old card gone.
+- /find: `cd ~/ai-term && node dist/cli/index.js` — `/find error`, ↑↓, ⏎ → that agent selected, preview at the line with `↑ N lines back`.
+- /open: `cd ~/ai-term && node dist/cli/index.js` — /open → Finder at the worktree; /open code → VS Code, or the note when `code` isn't on PATH.
+- /doctor: `cd ~/ai-term && node dist/cli/index.js` — /doctor → the same lines as `ai doctor`; Esc closes.
+- B24 (optional, a throwaway home): `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js` once and quit, then `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js daemon stop && printf '{"sessions":[' > /tmp/ai-b24/state.json && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js` → the note names `state.json.corrupt-…`; finish with `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js daemon stop`.
+
+## Gotchas
+- AI Term never runs git inside a worktree's submodules; anything in a submodule folder counts as work that a delete would lose, so deleting a worktree with an initialised submodule always asks for the branch name.
+- /send to a Claude agent is refused for the whole of a long tool run; to a Codex agent while its title says Action Required, whatever the card says.
+- In a split, wheel and motion only reach the focused pane; click a pane first.
+- Gate tests that make `.git` read-only restore it in afterEach; a crashed run can leave a temp repo unremovable until chmod.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- **Gitlinks (`git.ts gitlinks`):** a submodule is recorded in the parent repo as a "gitlink", an index entry with mode 160000 pointing at a commit. Git treats the folder as another repository: status either recurses into it (running that repo's own config) or ignores what's inside. AI Term skips the recursion and inspects the folder itself, so nothing inside can run and nothing inside is overlooked.
+- **Tools in flight (`status-reducer.ts`):** a counter of Claude tool calls between PreToolUse and their finish. Because PreToolUse is a blocking hook, the counter is up before any permission prompt can be drawn, so it covers a PermissionRequest hook that arrives late.
+- **Focus by byte offset (`split-pane.ts`):** a pane remembers how many bytes had arrived when it took focus; only output after that point may reach the terminal live, so the backlog it printed in the background stays cells only, and its modes are replayed once that backlog is parsed.
+
+---
+
+## Previous checkpoint (v0.3.4 commands + B24, retained)
+
+## Checkpoint
 Last commit: 77ee7d8 test: capture the paste-then-prompt outcome at once; document the login flag
 Roadmap step: remaining homepage commands + B24 (tasks 1–8) done
 Branch: main. This handover is the last commit; its own hash is in git log.
