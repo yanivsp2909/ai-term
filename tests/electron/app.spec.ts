@@ -109,6 +109,7 @@ test('clipboard paste refuses a paste-end escape before it can become an approva
 test('native Command shortcuts open palette, start, search, settings and select the first homepage agent', async () => {
   const page = await application.firstWindow(), screen = page.locator('.xterm-accessibility-tree');
   await expect(screen).toContainText('What do you want to build?');
+  await expect(page.locator('.chrome')).toHaveText('Closing or quitting keeps your agents running.');
   await commandKey('E'); await expect(screen).not.toContainText('Connect a provider');
   await commandKey('K'); await expect(screen).toContainText('/settings');
   await commandKey('T'); await expect(screen).toContainText('Start a new agent');
@@ -133,6 +134,7 @@ test('native Command shortcuts open palette, start, search, settings and select 
     expect((await client.request({kind:'sessions.list'})).sessions).toHaveLength(2);
     await application.evaluate(({app})=>{app.emit('activate');});
     const reopened = await application.firstWindow();
+    await expect(reopened.locator('.chrome')).toHaveText('AI Term');
     await expect(reopened.locator('.xterm-accessibility-tree')).toContainText('latest smoke');
   } finally {client.close();}
 });

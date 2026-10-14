@@ -44,14 +44,14 @@ The macOS desktop terminal lives in `app/`. After `npm install`, run `npm exec -
 | ⌘1–⌘9 | Select the corresponding agent in the homepage's displayed order |
 | ⌘D | Open the marked agents in a split, like `v`; with none marked, reopen the last split |
 | ⌘, | Open `/settings` |
-| ⌘+ / ⌘− / ⌘0 | Increase / decrease / reset font size (8–32 px; token default 13 px) |
+| ⌘+ (or ⌘=) / ⌘− / ⌘0 | Increase / decrease / reset font size (8–32 px; token default 13 px) |
 | ⌘W | Close the window; the daemon and agents keep running. Activate the app in the Dock to reopen |
 | ⌘Q | Quit the app; the daemon and agents keep running |
 | ⌘M | Minimize (Window menu); Zoom is also available there |
 | ⌘H / ⌥⌘H | Hide AI Term / hide other apps (App menu) |
 | Option+← / Option+→ | Meta word movement, enabled in the app |
 
-Other terminal keys go straight to `ai`. Web links open only http/https in your default browser. The hidden title bar keeps inset traffic lights above the terminal; solid colors follow macOS live, including the TUI's palette after a new OSC 11 probe. View → Light / Dark / Use System Appearance changes the app's appearance. App launches use an automatic palette without changing the saved Terminal.app theme. The installed JetBrains Mono font is preferred, then SF Mono/Menlo/system monospace; no font is bundled. Ligatures and vibrancy are omitted. Nothing animates. The first launch shows “Closing the window keeps your agents running.”
+Other terminal keys go straight to `ai`. Web links open only http/https in your default browser. The hidden title bar keeps inset traffic lights above the terminal; solid colors follow macOS live, including the TUI's palette after a new OSC 11 probe. View → Light / Dark / Use System Appearance changes the app's appearance. App launches use an automatic palette without changing the saved Terminal.app theme. The installed JetBrains Mono font is preferred, then SF Mono/Menlo/system monospace; no font is bundled. Ligatures and vibrancy are omitted. Nothing animates. The first launch shows “Closing or quitting keeps your agents running.”
 
 The app inherits its launcher environment, matching current CLI startup; it does not read login files, fetch keys or reconstruct a login-shell environment. Desktop controls are authenticated with a per-launch token consumed before child-environment inheritance. They cannot carry agent text or approve a prompt; pasted and agent-printed controls are inert. Plain `ai` ignores these sequences.
 

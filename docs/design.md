@@ -271,7 +271,7 @@ Letter keys act as shortcuts only while the command field is empty; otherwise th
 
 ## macOS desktop window
 
-The app uses a hidden native title bar with traffic lights inset 16 px from the left and 14 px from the top. A 40 px draggable chrome strip sits above the terminal, which starts at 48 px including its 8 px top padding. Chrome uses the system sans font from the tokens; the terminal uses the approved installed JetBrains Mono → SF Mono → Menlo → system monospace chain. No font is distributed. The first launch shows one quiet line: “Closing the window keeps your agents running.” Later launches show AI Term. No animation or vibrancy.
+The app uses a hidden native title bar with traffic lights inset 16 px from the left and 14 px from the top. A 40 px draggable chrome strip sits above the terminal, which starts at 48 px including its 8 px top padding. Chrome uses the system sans font from the tokens; the terminal uses the approved installed JetBrains Mono → SF Mono → Menlo → system monospace chain. No font is distributed. The first launch shows one quiet line: “Closing or quitting keeps your agents running.” Later launches show AI Term. No animation or vibrancy.
 
 Light/dark/system is in View. Native appearance updates the window/xterm colors first; `ai` then probes OSC 11 again and redraws its automatic palette. An app launch does not change the persisted theme used in Terminal.app. Attached AI Term bars and split chrome share the live theme; the agents' own colors remain their own output.
 

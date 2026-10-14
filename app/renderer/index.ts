@@ -76,7 +76,7 @@ function App(): unknown {
   }, []);
   useEffect(() => { if (searching) searchInput.current?.focus(); }, [searching]);
   return h('div', null,
-    h('div', {className:'chrome'}, closeNote ? 'Closing the window keeps your agents running.' : 'AI Term'),
+    h('div', {className:'chrome'}, closeNote ? 'Closing or quitting keeps your agents running.' : 'AI Term'),
     h('div', { className: 'terminal', ref: host, 'aria-label': 'AI Term terminal' }),
     searching ? h('div', { className: 'search', role: 'search' },
       h('input', { ref: searchInput, 'aria-label': 'Search scrollback', placeholder: 'Search scrollback',
