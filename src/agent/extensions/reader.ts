@@ -13,8 +13,9 @@ export function deniedExtensionPath(home: string, path: string, directory = fals
   // These stores use filenames that don't say "auth" (SSH keys, netrc, package registry tokens).
   if (['.ssh','.gnupg','.aws','.azure','.docker','.kube'].includes(first) || first === '.config' && ['gh','gcloud'].includes(second)) return true;
   return parts.some((part, index) =>
-    // CLI and shell history, sessions and logs, under any prefix: .zsh_history, fish_history, file-history, .zsh_sessions, log.
-    /^(?:.*[._-])?(?:history|sessions|logs?|projects)(?:[._-].*)?$/.test(part) ||
+    // CLI state (history.jsonl, projects, sessions, logs, Codex's log folder, Claude's file-history) and shell state files
+    // (.zsh_history, fish_history, .python_history, .zsh_sessions). An extension merely named git-log or analyze-logs is fine.
+    /^(?:history|sessions|logs|projects)(?:[._-].*)?$/.test(part) || part === 'log' || part === 'file-history' || /^\.?[a-z0-9]+_(?:history|sessions)$/.test(part) ||
     !directory && index === parts.length - 1 && (/(?:credentials?|auth|tokens?|passwords?|secrets?)(?:[._-]|$)/.test(part) || ['.netrc','.npmrc','.pypirc','.dockercfg','.authinfo','.authinfo.gpg','.yarnrc','.yarnrc.yml','.pgpass','.s3cfg','.boto','.my.cnf'].includes(part) || /\.(?:key|pem|p12|pfx)$/.test(part) || /^id_(?:rsa|dsa|ecdsa|ed25519)(?:_sk)?$/.test(part)) || /^settings.*\.json$/.test(part) ||
     part.endsWith('.env') || part === '.env' || part.startsWith('.env.') || part === '.claude.json' || part === 'config.toml');
 }

@@ -278,6 +278,7 @@ export class Agent {
       return 'done';
     } catch (thrown) {
       if (controller.signal.aborted) return await finishInterrupted();
+      release();
       // A request that failed after the provider started answering may still be billed, like one cut off by Esc.
       if (open && started) this.limits.chargeUnfinished(open);
       open = 0;
