@@ -22,3 +22,9 @@ export function denyPermissions(session: PermissionTarget): void {
   session.setPermissionRequestHandler((_contents, _permission, callback) => { callback(false); });
   session.setPermissionCheckHandler(() => false);
 }
+// The packaged app is never remotely debuggable: a CDP or inspector port would drive the page and read the app-control token
+// (S23/S24). The Node inspector fuse is off too (scripts/package-app.mjs); Chromium's switches are refused here.
+const DEBUG_SWITCHES = ['remote-debugging-port', 'remote-debugging-pipe', 'inspect', 'inspect-brk', 'inspect-port'] as const;
+export function debugSwitch(hasSwitch: (name: string) => boolean, packaged: boolean): string | null {
+  return packaged ? DEBUG_SWITCHES.find(name => hasSwitch(name)) ?? null : null;
+}
