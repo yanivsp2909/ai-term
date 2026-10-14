@@ -184,7 +184,7 @@ If a step fails, it stops and says which step (`Worktree remove failed; branch k
 Pick a tested Foundry deployment in `/model` (it shows `· ai term`), type a task, keep Ask, ⏎. The card, preview, bar, splits, notifications, `c` and Usage work as for the CLIs. One provider in this step: Foundry through the Responses API, with the endpoint and deployments bound to the key in the Keychain; the key is only in the agent's own environment, never in argv, a file, a log or the protocol.
 
 - **Tools:** read, write, edit, bash, search (ripgrep when installed, else plain text). File tools stay inside the agent's folder (its worktree): `..`, absolute paths elsewhere and symlinks that lead out are refused. bash runs `/bin/sh -c <command>` in the folder with a 2-minute default limit (10 at most), 64 KB of output per stream, no stdin, and a minimal environment with no API keys and nothing of AI Term's. bash is not sandboxed: it runs as you, like Claude Code's.
-- **Ask (default):** every write, edit and bash shows exactly what will run (the command, or the path and the changed lines; escape sequences and invisible characters show as `␛` and `<U+…>`) and waits for `y` or `n`. Reads and searches never ask. Don't ask is per session only (red `!`), never a saved default.
+- **Ask (default):** every write, edit and bash shows exactly what will run (the command, or the path and the changed lines; escape sequences and invisible characters show as `␛` and `<U+…>`) and waits for `y` or `n`. An approval taller than the screen pages: Space shows the next page, and `y` works only on the last one. Commands over 16 KB are refused. Reads and searches never ask. Don't ask is per session only (red `!`), never a saved default.
 - **Instructions:** the folder's `AGENTS.md`, then `CLAUDE.md` with its `@file` import lines, go into the system prompt (inside the folder only, 64 KB per file).
 - **Cost:** token usage is reported per step and priced from the Foundry override, then Azure, then OpenAI list prices, like Codex. ctx % stays empty until model context windows arrive (v0.4.2). `/resume` isn't available yet; `/retry` starts it fresh.
 
@@ -192,6 +192,7 @@ Pick a tested Foundry deployment in `/model` (it shows `· ai term`), type a tas
 |---|---|
 | Type, ⏎ | Send a message; a message sent during a turn waits for it to end. Paste arrives whole |
 | `y` / `n` | Allow / deny the write, edit or command shown. A paste never answers |
+| Space | Next page of a long approval (`y` counts on the last page) |
 | Esc | Interrupt the turn (a pending approval is denied); on an idle prompt, clear it |
 | Ctrl+C twice | Quit the agent (within 3 s); Ctrl+D on an empty prompt counts too |
 | `/model [id]` | List or switch to another tested deployment of the same key |

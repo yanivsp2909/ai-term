@@ -25,7 +25,7 @@ export class AgentApp implements AgentIO {
   private buffer = '';
   private queued: string[] = [];
   private turn: AbortController | null = null;
-  private approval: { resolve(allowed: boolean): void } | null = null;
+  private approval: { resolve(allowed: boolean): void; title: string; pages: string[][]; page: number } | null = null;
   private quitArmedAt = 0;
   private closed = false;
   constructor(private readonly options: AppOptions) { this.agent = options.agent(this); }
@@ -37,12 +37,13 @@ export class AgentApp implements AgentIO {
   note(text: string, tone: 'info' | 'error' = 'info'): void { this.options.screen.note(text, tone); }
   approve(request: { title: string; body: string }, signal: AbortSignal): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
-    this.options.screen.approval(request.title, request.body);
+    const pages = this.options.screen.approvalPages(request.body);
+    this.options.screen.approvalPage(request.title, pages, 0);
     return new Promise(resolvePromise => {
       const finish = (allowed: boolean) => { if (!this.approval) return; this.approval = null; signal.removeEventListener('abort', onAbort); this.options.screen.answered(allowed); resolvePromise(allowed); };
       const onAbort = () => finish(false);
       signal.addEventListener('abort', onAbort, { once: true });
-      this.approval = { resolve: finish };
+      this.approval = { resolve: finish, title: request.title, pages, page: 0 };
     });
   }
 
@@ -55,8 +56,10 @@ export class AgentApp implements AgentIO {
     if (event.kind === 'ctrl-c' || event.kind === 'ctrl-d' && !this.running && !this.buffer) { this.quitKey(); return; }
     this.quitArmedAt = 0;
     if (this.approval) {
-      // Only a typed key answers; a paste never does.
-      if (event.kind === 'text' && /^[yY]$/.test(event.text)) this.approval.resolve(true);
+      // Only a typed key answers; a paste never does. y counts once every page of what runs has been on screen.
+      const approval = this.approval, last = approval.page === approval.pages.length - 1;
+      if (event.kind === 'text' && event.text === ' ' && !last) { approval.page++; this.options.screen.approvalPage(approval.title, approval.pages, approval.page); }
+      else if (event.kind === 'text' && /^[yY]$/.test(event.text) && last) approval.resolve(true);
       else if (event.kind === 'text' && /^[nN]$/.test(event.text)) this.approval.resolve(false);
       else if (event.kind === 'escape') { this.approval.resolve(false); this.turn?.abort(); }
       return;
@@ -100,7 +103,9 @@ export class AgentApp implements AgentIO {
       if (!argument) for (const id of this.options.models) screen.note(`${id === this.agent.modelId ? '›' : ' '} ${id}`);
       else if (!this.options.models.includes(argument)) screen.note(`${argument} isn't a tested deployment of this key; /model lists them`, 'error');
       else { this.agent.setModel(this.options.makeModel(argument), argument); screen.note(`model: ${argument}`); }
-    } else if (name === 'cd') await this.changeFolder(argument);
+    } else if (name === 'cd') {
+      try { await this.changeFolder(argument); } catch { screen.note(`couldn't switch to ${argument}`, 'error'); }
+    }
     screen.prompt(this.buffer);
   }
   private async changeFolder(argument: string): Promise<void> {

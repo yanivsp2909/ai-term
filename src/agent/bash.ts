@@ -1,7 +1,10 @@
 import { spawn } from 'node:child_process';
 import { visible } from './display.js';
 import { isFsError } from '../shared/paths.js';
+import { ToolError } from './tools.js';
 
+// A command line longer than this is refused before any approval: a person can still read it whole.
+export const BASH_MAX_COMMAND_BYTES = 16 * 1024;
 export const BASH_DEFAULT_TIMEOUT_MS = 120_000, BASH_MAX_TIMEOUT_MS = 600_000, BASH_OUTPUT_MAX_BYTES = 64 * 1024;
 const KILL_GRACE_MS = 1000;
 export interface BashResult { exitCode: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean; interrupted: boolean; cut: boolean; stopFailed: boolean }
@@ -53,6 +56,10 @@ export function bashReport(result: BashResult, timeoutMs: number): string {
   return parts.join('\n');
 }
 
+export function checkCommand(command: unknown): string {
+  if (typeof command !== 'string' || !command.trim() || Buffer.byteLength(command) > BASH_MAX_COMMAND_BYTES) throw new ToolError(`command must be text up to ${BASH_MAX_COMMAND_BYTES} bytes`);
+  return command;
+}
 export function bashPreview(command: string, timeoutMs: number): { title: string; body: string } {
   return { title: `bash · ${Math.round(timeoutMs / 1000)}s limit`, body: visible(command) };
 }

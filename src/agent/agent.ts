@@ -1,6 +1,6 @@
-import { streamText, tool, jsonSchema, isStepCount, APICallError, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
+import { streamText, tool, jsonSchema, isStepCount, APICallError, RetryError, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { readTool, writeTool, editTool, searchTool, ToolError, type GatedTool } from './tools.js';
-import { runBash, bashReport, bashPreview, BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS } from './bash.js';
+import { runBash, bashReport, bashPreview, checkCommand, BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS } from './bash.js';
 import { JailError } from './jail.js';
 import { ProviderError } from './provider.js';
 import { systemPrompt, type Instructions } from './instructions.js';
@@ -107,8 +107,8 @@ export class Agent {
     const timeout = (seconds?: number) => Math.min(BASH_MAX_TIMEOUT_MS, Math.max(1000, (seconds ?? BASH_DEFAULT_TIMEOUT_MS / 1000) * 1000));
     const bash = this.run<{ command: string; timeoutSeconds?: number }>('bash', i => i.command.split('\n')[0] ?? '', async (i, signal) => {
       const ms = timeout(i.timeoutSeconds);
-      return bashReport(await runBash(i.command, { cwd: this.options.root, env: this.options.bashEnv, timeoutMs: ms, signal }), ms);
-    }, async i => bashPreview(i.command, timeout(i.timeoutSeconds)));
+      return bashReport(await runBash(checkCommand(i.command), { cwd: this.options.root, env: this.options.bashEnv, timeoutMs: ms, signal }), ms);
+    }, async i => bashPreview(checkCommand(i.command), timeout(i.timeoutSeconds)));
     return {
       read: tool({ description: 'Read a text file in the folder, with line numbers. Use offset and limit for long files.', inputSchema: schema<{ path: string; offset?: number; limit?: number }>({ path: 'string' }, { offset: 'number', limit: 'number' }, { path: 'File path, relative to the folder', offset: 'First line (1-based)', limit: 'Number of lines' }), execute: (input, { abortSignal }) => read(input, abortSignal ?? new AbortController().signal) }),
       write: tool({ description: 'Create or overwrite a whole file in the folder.', inputSchema: schema<{ path: string; content: string }>({ path: 'string', content: 'string' }, {}, { path: 'File path, relative to the folder', content: 'The complete new file content' }), execute: (input, { abortSignal }) => write(input, abortSignal ?? new AbortController().signal) }),
@@ -156,8 +156,10 @@ export class Agent {
       void transcript.append({ kind: 'assistant', text: lastText });
       await reporter.status({ event: 'done', reply: lastText });
       return 'done';
-    } catch (error) {
+    } catch (thrown) {
       if (signal.aborted) return await finishInterrupted();
+      // A retryable failure (429, 5xx) that used up its retries arrives wrapped; its last attempt says what happened.
+      const error = RetryError.isInstance(thrown) ? thrown.lastError : thrown;
       const kind = error instanceof ProviderError ? 'unknown' : failureKind(error);
       const status = APICallError.isInstance(error) && error.statusCode ? ` (HTTP ${error.statusCode})` : '';
       io.note(`turn failed: ${FAILURE_TEXT[kind]}${status}`, 'error');

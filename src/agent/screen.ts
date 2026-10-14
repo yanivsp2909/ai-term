@@ -3,7 +3,7 @@ import { textWidth } from '../shared/unicode-width.js';
 import { plain } from './display.js';
 import type { ToolName } from './agent.js';
 
-export interface Output { write(text: string): unknown; columns?: number }
+export interface Output { write(text: string): unknown; columns?: number; rows?: number }
 
 // The agent's terminal is a scrolling transcript in the normal screen, so the daemon's mirror, the homepage preview and
 // /find read it as plain text. Colors come from the design tokens (theme.ts); body text keeps the terminal's own color so
@@ -38,11 +38,24 @@ export class Screen {
     const shown = this.fit(plain(summary).split('\n')[0] ?? '', 4);
     this.line(outcome === 'ok' ? this.paint('ink-3', `  ✓ ${shown}`) : this.paint(outcome === 'denied' ? 'status-waiting' : 'status-error', `  ✗ ${outcome === 'denied' ? 'denied' : shown}`));
   }
+  // An approval must never ask for y while part of what runs has scrolled off the screen, so its body is cut into
+  // screen rows (long lines wrap here, by cell width) and then into pages that fit with the question and the key line.
   // The body was made visible (display.ts visible()) by the tool: escapes and invisible characters show as markers.
-  approval(title: string, body: string): void {
-    this.line(this.paint('status-waiting', `● allow ${title}?`, true));
-    for (const row of body.split('\n')) this.line(this.paint(row.startsWith('- ') ? 'status-error' : row.startsWith('+ ') ? 'status-done' : 'ink-2', `  ${row}`));
-    this.line(this.paint('ink-3', '  y allow · n deny · Esc deny and stop'));
+  approvalPages(body: string): string[][] {
+    const room = this.width - 3, rows: string[] = [];
+    for (const line of body.split('\n')) {
+      let rest = [...line];
+      do { let take = 0, used = 0; while (take < rest.length && used + textWidth(rest[take] ?? '') <= room) used += textWidth(rest[take++] ?? ''); if (take === 0) take = 1; rows.push(rest.slice(0, take).join('')); rest = rest.slice(take); } while (rest.length);
+    }
+    const size = Math.max(3, (this.out.rows ?? 24) - 4), pages: string[][] = [];
+    for (let i = 0; i < rows.length; i += size) pages.push(rows.slice(i, i + size));
+    return pages.length ? pages : [[]];
+  }
+  approvalPage(title: string, pages: string[][], index: number): void {
+    const last = index === pages.length - 1, page = pages.length > 1 ? ` · page ${index + 1} of ${pages.length}` : '';
+    this.line(this.paint('status-waiting', `● allow ${title}?${page}`, true));
+    for (const row of pages[index] ?? []) this.line(this.paint(row.startsWith('- ') ? 'status-error' : row.startsWith('+ ') ? 'status-done' : 'ink-2', `  ${row}`));
+    this.line(this.paint('ink-3', last ? '  y allow · n deny · Esc deny and stop' : '  space shows more · n deny · Esc deny and stop · y works on the last page'));
   }
   answered(allowed: boolean): void { this.line(allowed ? this.paint('ink-3', '  ✓ allowed') : this.paint('status-waiting', '  ✗ denied')); }
   note(text: string, tone: 'info' | 'error' = 'info'): void { this.line(tone === 'error' ? this.paint('status-error', `✗ ${plain(text)}`) : this.paint('ink-3', `· ${plain(text)}`)); }

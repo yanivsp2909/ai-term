@@ -16,7 +16,8 @@ export async function loadInstructions(root: string): Promise<Instructions> {
   let total = 0;
   const read = async (path: string, depth: number): Promise<string | null> => {
     let real: string;
-    try { real = await resolveInside(root, path); } catch (error) { if (error instanceof JailError) { notes.push(`skipped ${path}: outside the folder`); return null; } throw error; }
+    // An import the file system can't even look up (a name too long, an unreadable folder) is skipped like one outside.
+    try { real = await resolveInside(root, path); } catch (error) { notes.push(`skipped ${relative(root, path) || path}: ${error instanceof JailError ? 'outside the folder' : "can't read"}`); return null; }
     if (seen.has(real)) return null;
     let text: string;
     try {
