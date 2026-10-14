@@ -99,3 +99,14 @@ it('a project inside a private home folder still gets nothing', async () => {
     expect(() => reader.projectMcp(project)).toThrow();
   }
 });
+
+it('extensions named like git-log, show-history, analyze-logs or web-sessions still load; only state files are denied', async () => {
+  const h = await home(), project = join(h.home, 'code', 'app');
+  const names = ['git-log', 'show-history', 'log-analyzer', 'web-sessions'];
+  for (const name of names) await h.file(`code/app/.claude/commands/${name}.md`, command);
+  for (const name of ['commit-history', 'analyze-logs']) await h.file(`.claude/skills/${name}/SKILL.md`, `---\nname: ${name}\ndescription: d\n---\nbody\n`);
+  const found = new ExtensionReader(h.home, project).scan().items.map(i => i.name).sort();
+  expect(found).toEqual([...names, 'commit-history', 'analyze-logs'].sort());
+  for (const path of ['.claude/history.jsonl', '.claude/projects/x/a.md', '.codex/sessions/a.md', '.codex/log/a.md', '.zsh_history', '.python_history', 'fish_history', '.claude/file-history/a.md'])
+    expect(deniedExtensionPath(h.home, join(h.home, path))).toBe(true);
+});
