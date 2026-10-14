@@ -216,6 +216,11 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - Nothing animates; `checking what would be lost` and `deleting` are static lines.
 - `/help` lists registry commands and the key table in a calm surface overlay. ↑↓ scrolls, PgUp/PgDn pages, Esc closes; long lines wrap at narrow widths. Homepage keys remain isolated from agents.
 
+### /account and limits (v0.6.4, 2026-10-15)
+- `/account` notes list accounts (`work · claude · default · …`); `/account add …` notes `✓ account <name> added · log in below` and opens that CLI's login session; `default`, `use` and `rm` answer in one note.
+- Start box: `a` steps own login → each account of the engine; an ink-3 line `account        <name> · a` appears once one is picked. Card line 3 adds ` · <account>` after the login label.
+- A limit: card line 3 `⏸ limit · resets 15:00` in status-waiting (it replaces the activity, like a question); the homepage note once: `<agent> hit its limit · resets 15:00 · wait, or /handoff <agent> claude:<account>`. Calm: no popup, no sound beyond the usual notifications.
+
 ### /handoff (v0.6.3, 2026-10-15)
 - Off by default (D55: it spends tokens); `/settings` → `handoff: off · /handoff spends tokens (g)`.
 - `/handoff <agent> claude|codex` opens a surface popup titled `Handoff` (the D49 ask): `Hand off <agent> → <engine>` (ink), then who writes the note (`summary by <model> · key ····last4 · it reads the end of <agent>'s screen`, or `summary written by <agent> itself, as its next reply`), then `estimated 1.0K–3.0K in · 200–2.0K out · $0.0004–$0.0022` (or `uses your plan's limits` / `price ?`), then what follows in ink-3, then `⏎ hands off · Esc cancels`. A paste never answers it.
