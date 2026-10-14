@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { open, rename, unlink } from 'node:fs/promises';
+import { chmod, lstat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, basename } from 'node:path';
 import { isFsError } from '../shared/paths.js';
@@ -51,4 +51,29 @@ export async function readState(path: string): Promise<unknown> {
     finally {
         await file.close();
     }
+}
+// B24: the stage an unreadable agent list failed at; the only detail that is ever logged about it.
+export type StateStage = 'read' | 'parse' | 'validate' | 'migrate';
+export class StateLoadError extends Error {
+    constructor(readonly stage: StateStage) { super(`State ${stage} failed`); }
+}
+// Moves an unreadable state file to `<path>.corrupt-<timestamp>` without reading or rewriting it, so the next state
+// write can never overwrite the user's only copy. `private` is false when the moved file's mode couldn't be set.
+export async function moveAside(path: string, now = new Date()): Promise<{ path: string; private: boolean }> {
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    for (let attempt = 0; attempt < 100; attempt++) {
+        const target = `${path}.corrupt-${stamp}${attempt ? `-${attempt}` : ''}`;
+        try { await lstat(target); continue; }
+        catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+        await rename(path, target);
+        // chmod follows symlinks, so only a regular file of ours is tightened; ~/.ai-term is 0700, so nobody else can
+        // swap the name between lstat and chmod.
+        try {
+            const stat = await lstat(target);
+            if (stat.isFile() && stat.uid === process.getuid?.()) await chmod(target, 0o600);
+            return { path: target, private: stat.isFile() && stat.uid === process.getuid?.() };
+        }
+        catch { return { path: target, private: false }; }
+    }
+    throw new Error('No free name for the moved-aside state file');
 }

@@ -13,7 +13,7 @@ import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRec
 import { SettingsStore } from './settings.js';
 import { prepareWorktree, serialize } from './worktrees.js';
 import { checkWorktree, deleteWorktree, unrecordedFolders, WorktreeError } from './worktree-removal.js';
-import { atomicWrite, readState } from './store.js';
+import { atomicWrite, moveAside, readState, StateLoadError } from './store.js';
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror, type MirrorSignal } from './mirror.js';
@@ -65,35 +65,65 @@ export class SessionManager extends EventEmitter {
         const text = this.warningText(); this.event(text ? { kind: 'daemon.warning', text } : { kind: 'daemon.warningCleared' });
     }
     async load(): Promise<void> {
-        const state = await readState(this.paths.state);
+        let loaded: { sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord> };
+        try { loaded = await this.readSaved(); }
+        catch (error) {
+            // B24: an agent list that can't be loaded is never overwritten. It is moved aside and the daemon starts empty.
+            // Only the fixed stage is logged: the raw error and the file can carry prompts, titles and paths.
+            const stage = error instanceof StateLoadError ? error.stage : 'migrate';
+            this.log.error(`Agent list could not be loaded (${stage}); moving it aside and starting empty`);
+            let aside: Awaited<ReturnType<typeof moveAside>>;
+            try { aside = await moveAside(this.paths.state); }
+            catch {
+                this.log.error('Agent list could not be moved aside; left untouched and not overwritten');
+                throw new Error('Agent list unreadable and not moved aside');
+            }
+            if (!aside.private) this.log.error('Moved-aside agent list could not be made private');
+            loaded = { sessions: [], worktrees: new Map() };
+            this.warning('state-file', `couldn't read your agent list; saved it as ${aside.path}`);
+        }
+        for (const info of loaded.sessions)
+            this.sessions.set(info.id, { info, mirror: new Mirror(this.size.cols, this.size.rows, () => { }), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() });
+        for (const [path, record] of loaded.worktrees) this.worktreeRecords.set(path, record);
+        await this.persist();
+    }
+    // Each stage throws StateLoadError with its fixed name and nothing else.
+    private async readSaved(): Promise<{ sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord> }> {
+        let state: unknown;
+        try { state = await readState(this.paths.state); }
+        catch (error) { throw new StateLoadError(error instanceof SyntaxError ? 'parse' : 'read'); }
+        let saved: { sessions: SessionInfo[]; worktrees: unknown[] };
+        try { saved = this.validateState(state); }
+        catch { throw new StateLoadError('validate'); }
+        try { return this.migrateState(saved); }
+        catch { throw new StateLoadError('migrate'); }
+    }
+    private validateState(state: unknown): { sessions: SessionInfo[]; worktrees: unknown[] } {
         if (!state || typeof state !== 'object' || !('sessions' in state) || !Array.isArray(state.sessions))
             throw new Error('Invalid daemon state');
+        const sessions: SessionInfo[] = [];
         for (const raw of state.sessions as unknown[]) {
             if (!raw || typeof raw !== 'object')
                 throw new Error('Invalid session record');
             const r = raw as Record<string, unknown>;
             if (!isUUID(r.id) || !isTitle(r.title) || !['shell','claude-code','codex'].includes(String(r.engine)) || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
-            const now = new Date().toISOString();
             const saved = validateSession(r);
-            const info: SessionInfo = { id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}) };
-            if (!['exited','error'].includes(info.status)) {
-                info.status = 'exited'; info.statusDetail = 'background service restarted';
-                info.statusSince = now; info.exitCode = null;
-            }
-            this.sessions.set(info.id, { info, mirror: new Mirror(this.size.cols, this.size.rows, () => { }), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() });
+            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}) });
         }
-        this.loadWorktreeRecords('worktrees' in state && Array.isArray(state.worktrees) ? state.worktrees as unknown[] : []);
-        await this.persist();
+        return { sessions, worktrees: 'worktrees' in state && Array.isArray(state.worktrees) ? state.worktrees as unknown[] : [] };
     }
-    private loadWorktreeRecords(raw: unknown[]): void {
-        for (const entry of raw) {
-            try { const record = validateWorktreeRecord(entry); this.worktreeRecords.set(record.path, record); }
+    private migrateState(saved: { sessions: SessionInfo[]; worktrees: unknown[] }): { sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord> } {
+        const now = new Date().toISOString(), worktrees = new Map<string, WorktreeRecord>();
+        const sessions = saved.sessions.map(info => ['exited','error'].includes(info.status) ? info : { ...info, status: 'exited' as const, statusDetail: 'background service restarted', statusSince: now, exitCode: null });
+        for (const entry of saved.worktrees) {
+            try { const record = validateWorktreeRecord(entry); worktrees.set(record.path, record); }
             catch { this.log.error('Invalid worktree record skipped; that worktree is kept'); }
         }
         // v0.3.1 kept worktree metadata only on session records; those become records without repo or base.
-        for (const { info } of this.sessions.values())
-            if (info.worktree && info.branch && !this.worktreeRecords.has(info.worktree)) this.worktreeRecords.set(info.worktree, { path: info.worktree, branch: info.branch, createdAt: info.createdAt });
+        for (const info of sessions)
+            if (info.worktree && info.branch && !worktrees.has(info.worktree)) worktrees.set(info.worktree, { path: info.worktree, branch: info.branch, createdAt: info.createdAt });
+        return { sessions, worktrees };
     }
     list(): SessionInfo[] { return [...this.sessions.values()].map(s => ({ ...s.info })); }
     get(id: string): SessionInfo { const live = this.sessions.get(id); if (!live)

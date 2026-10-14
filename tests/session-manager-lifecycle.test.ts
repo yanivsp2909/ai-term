@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, readFile, symlink } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, readdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -28,14 +28,16 @@ describe('load', () => {
     ['a null record', '{"sessions":[null]}', 'Invalid session record'], ['a record without an id', JSON.stringify({ sessions: [{ ...record, id: 'x' }] }), 'Invalid session record'],
     ['an unknown engine', JSON.stringify({ sessions: [{ ...record, engine: 'bash' }] }), 'Invalid session record'],
     ['a record that fails the session check', JSON.stringify({ sessions: [{ ...record, status: 'bogus' }] }), 'Invalid daemon session'],
-  ])('refuses state holding %s and leaves the file as it was', async (_name, text, message) => {
+  ])('moves aside state holding %s, starts empty and never writes over it', async (_name, text) => {
     const paths = await home();
     await writeFile(paths.state, text, { mode: 0o600 });
     const m = new SessionManager(paths, new Logger(paths.log)); managers.push(m);
-    await expect(m.load()).rejects.toThrow(message);
+    await m.load();
     expect(m.list()).toEqual([]);
-    // A bad file is never overwritten with an empty list: the user's records stay recoverable.
-    expect(await readFile(paths.state, 'utf8')).toBe(text);
+    // B24: the user's records stay recoverable in the moved-aside copy, byte for byte.
+    const moved = (await readdir(paths.root)).find(name => name.startsWith('state.json.corrupt-')) ?? '';
+    expect(await readFile(join(paths.root, moved), 'utf8')).toBe(text);
+    expect(m.warningText()).toContain('couldn\'t read your agent list');
   });
 });
 
