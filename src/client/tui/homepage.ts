@@ -588,20 +588,28 @@ export class Homepage {
       if(!(await save({accounts:[...accounts,{name:parsed.name,engine:parsed.engine}]},`✓ account ${parsed.name} added · log in below`)))return;
       // The CLI's own login, in its own folder; AI Term never sees the token.
       try{const response=await this.connection.request({kind:'sessions.create',engine:parsed.engine,model:null,auth:{kind:'account',profile:parsed.name},cwd:this.folder,permission:'ask',login:true,title:`${parsed.engine==='codex'?'Codex':'Claude'} login · ${parsed.name}`});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;await this.openSelected();}
-      catch(error){this.showNote(`login didn't start: ${error instanceof Error?error.message:'request failed'} · /account add again or /login`);}
+      catch(error){
+        // Take the name back, so /account add can simply be run again.
+        const reason=error instanceof Error?error.message:'request failed';
+        try{const next=validateSettings((await this.connection.request({kind:'settings.set',patch:{accounts}})).settings);this.accounts=next.accounts??[];}catch{this.showNote(`login didn't start: ${reason} · /account rm ${parsed.name}, then add it again`);return;}
+        this.showNote(`login didn't start: ${reason} · fix that, then /account add again`);
+      }
       return;
     }
     if(parsed.kind==='use'){
       if(parsed.name!==OWN_ACCOUNT&&!find(parsed.name)){this.showNote(`no account ${parsed.name}`);return;}
       const engine=parsed.name===OWN_ACCOUNT?this.engine:find(parsed.name)?.engine;
       if(engine===undefined||engine==='ai-term'){this.showNote('/account use applies to Claude Code and Codex');return;}
-      this.engine=engine;this.auth={kind:'account',profile:parsed.name};this.showNote(`next agent: ${parsed.name===OWN_ACCOUNT?'own login':parsed.name} · ${engine==='codex'?'codex':'claude code'}`);return;
+      // The model belongs to the engine: switching engines goes back to the CLI default, as /model does.
+      if(engine!==this.engine)this.model=null;
+      this.engine=engine;this.auth={kind:'account',profile:parsed.name};this.compatibleDefaults(engine);this.showNote(`next agent: ${parsed.name===OWN_ACCOUNT?'own login':parsed.name} · ${engine==='codex'?'codex':'claude code'}`);return;
     }
     const account=find(parsed.name);
     if(!account){this.showNote(`no account ${parsed.name}`);return;}
     if(parsed.kind==='default'){await save({defaultAccounts:{...defaults,[account.engine]:account.name}},`✓ ${account.name} is the default ${account.engine==='codex'?'codex':'claude'} account`);return;}
     const rest:Partial<Record<'claude-code'|'codex',string>>=Object.fromEntries(Object.entries(defaults).filter(([,name])=>name!==account.name));
     // Only the name goes: the CLI's folder keeps its login until you log out there (AI Term never deletes it).
+    if(this.auth.kind==='account'&&this.auth.profile===account.name)this.auth={kind:'account'};
     await save({accounts:accounts.filter(a=>a.name!==account.name),defaultAccounts:rest},`✓ account ${account.name} removed · its folder stays: ~/.ai-term/profiles/${account.name} (log out there first if you delete it)`);
   }
   // v0.6.3 /handoff <agent> <claude|codex>: the D49 ask first (who writes the note, tokens, price), ⏎ then hands off.
@@ -716,7 +724,7 @@ export class Homepage {
   private openBox(kind: AgentBox['kind'], message = '',messageField?:MessageField): void {
     // The box edits its first message only at the end; a cursor or selection left in the bar would act there unseen.
     const draft=messageField?.copy()??new MessageField();if(!messageField)draft.text=message;else draft.moveToEnd(true);
-    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,messageField:draft,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines,this.keysRunOn),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel()};
+    this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,messageField:draft,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines,this.keysRunOn),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel(),...(this.auth.kind==='account'&&this.auth.profile?{accountLabel:this.auth.profile===OWN_ACCOUNT?'own login':this.auth.profile}:{})};
     this.returnToStart = false;if(kind==='effort'||kind==='mode')this.valueChoices();else this.resetModelTabs();this.draw(true);
   }
   private valueChoices():void{const b=this.box;if(!b)return;b.values=b.kind==='effort'?effortValues(b.engine):modeValues(b.engine).map(modeLabel);const value=b.kind==='effort'?b.effort??'CLI default':modeLabel(b.permission);b.choice=Math.max(0,b.values.indexOf(value));}
@@ -752,7 +760,8 @@ export class Homepage {
   }
   private nextAuthLabel():string {
     if(this.auth.kind==='key'){const id=this.auth.keyId;return `key ····${this.keys.find(k=>k.id===id)?.last4??''}`;}
-    return ownLoginLabel(this.engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod);
+    const label=ownLoginLabel(this.engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod);
+    return this.auth.profile&&this.auth.profile!==OWN_ACCOUNT?`account ${this.auth.profile}`:label;
   }
   private allModelChoices():import('../../shared/models.js').ModelChoice[]{
     const b=this.box,choices=modelChoices(this.keys,this.engines,this.keysRunOn);if(!b)return choices;
@@ -826,7 +835,9 @@ export class Homepage {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
           // Saved defaults carry no key, so an AI Term model saved as one would start a CLI login instead.
           if (this.savingDefault && !isCliEngine(choice.engine)) { b.error = "AI Term agent models can't be the saved default yet"; this.draw(true); return; }
-          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??{kind:'account'};this.auth=b.auth;this.engine = choice.engine;this.compatibleDefaults(choice.engine);if(!isEffortForEngine(choice.engine,b.effort??null))b.effort=null;if(!isPermissionForEngine(choice.engine,b.permission))b.permission='ask'; this.model = choice.model;b.authLabel=this.nextAuthLabel();
+          // An account picked for this engine stays with a model of the same engine; another engine or a key drops it.
+          const keep=!choice.auth&&choice.engine===b.engine&&b.auth?.kind==='account'&&b.auth.profile?b.auth:undefined;
+          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??keep??{kind:'account'};this.auth=b.auth;if(!keep)delete b.accountLabel;this.engine = choice.engine;this.compatibleDefaults(choice.engine);if(!isEffortForEngine(choice.engine,b.effort??null))b.effort=null;if(!isPermissionForEngine(choice.engine,b.permission))b.permission='ask'; this.model = choice.model;b.authLabel=this.nextAuthLabel();
           if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:isCliEngine(choice.engine)?choice.engine:'codex',defaultModel:choice.model,defaultEffort:this.effort}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
           else this.box = undefined;

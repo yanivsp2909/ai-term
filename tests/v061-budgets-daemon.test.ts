@@ -38,7 +38,8 @@ async function daemon(settings: Record<string, unknown> = {}) {
 async function agent(d: Awaited<ReturnType<typeof daemon>>) {
   const session = await d.manager.create({ engine: 'ai-term', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId: d.foundry.id }, cwd: d.root, permission: 'ask' });
   const reporter = new HttpReporter(reporterEnv(d.spawned.at(-1)?.env ?? {}), () => { throw new Error('report failed'); });
-  await expect.poll(() => d.manager.get(session.id).status).toBe('running');
+  // Spawn and first output can take over a second under full-suite load.
+  await expect.poll(() => d.manager.get(session.id).status, { timeout: 5000 }).toBe('running');
   return { session, reporter };
 }
 

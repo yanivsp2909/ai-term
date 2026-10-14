@@ -33,7 +33,7 @@ it('an account reference names a profile only; a session record says which one i
   await expect(validateRequest({ id: randomUUID(), kind: 'sessions.create', engine: 'claude-code', model: null, auth: { kind: 'account', profile: '../x' }, cwd, permission: 'ask' })).rejects.toThrow();
   const now = new Date().toISOString(), s: SessionInfo = { id: randomUUID(), title: 'x', engine: 'claude-code', model: null, auth: { kind: 'account', profile: 'work' }, authMethod: 'subscription', cwd, permission: 'ask', status: 'running', statusDetail: 'running', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null };
   expect(validateSession(s).auth).toEqual({ kind: 'account', profile: 'work' });
-  expect(cardText(s, Date.now(), 60).auth).toBe('own login · sub · work');
+  expect(cardText(s, Date.now(), 60).auth).toBe('account work · sub');
 });
 
 it('env.ts alone points a CLI at its profile folder; nothing else changes', () => {
@@ -160,6 +160,8 @@ it('a handoff can continue on another account of the same engine, same folder, t
 it('MEDIUM review: unreadable settings never start an account agent on a guessed account', async () => {
   const d = await daemon({ accounts: [{ name: 'work', engine: 'codex' }], defaultAccounts: { codex: 'work' } });
   try {
+    // The account was used once, so its profile folder exists (an /account add makes it).
+    await mkdir(join(d.root, 'profiles', 'work'), { recursive: true, mode: 0o700 });
     await writeFile(join(d.root, 'settings.json'), '{not json', { mode: 0o600 });
     const before = d.spawned.length;
     await expect(d.manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: d.root, permission: 'ask' })).rejects.toThrow("Settings unreadable; can't tell which account to use");

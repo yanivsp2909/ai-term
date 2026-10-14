@@ -20,7 +20,7 @@ import {parseCodexStatus,codexTitle,isCodexApproval,type CodexRun} from './codex
 import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import type { Paths } from '../shared/paths.js';
+import { isFsError, type Paths } from '../shared/paths.js';
 import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord, type CliEngine } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
@@ -41,6 +41,7 @@ import { prepareProfile } from './accounts.js';
 import { parseLimit } from './limit-detect.js';
 import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
+import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { MAX_RECORD_COST_USD } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
@@ -69,6 +70,8 @@ interface Live {
     // AI Term's agent: the deployments its /model may switch to (bound to the key and tested).
     agentModels?:string[];
 }
+// Any account profile folder means accounts were made, so the default account matters (v0.6.4).
+async function profilesExist(root:string):Promise<boolean>{try{await lstat(join(root,'profiles'));return true;}catch(error){if(isFsError(error,'ENOENT'))return false;throw error;}}
 const TASK_UPDATE_MS=1000;
 // v0.6.4: limit checks wait for output to settle, and read only the visible screen (up to 60 rows), never the scrollback.
 const LIMIT_CHECK_MS=1000,LIMIT_ROWS=60;
@@ -76,7 +79,7 @@ const LIMIT_CHECK_MS=1000,LIMIT_ROWS=60;
 export const HANDOFF_NOT_STARTED="The new agent didn't start; the old one keeps running";
 export const HANDOFF_NOT_STARTED_PAID="The new agent didn't start; the old one keeps running · the note's tokens were spent";
 // Every handoff refusal is one of these fixed texts, so the socket can return it as written.
-export const HANDOFF_ERRORS=['Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done','Agent is being handed off'];
+export const HANDOFF_ERRORS=['Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done',"Agent hit its limit and can't write the note · add an API key for the summary",'Agent is being handed off'];
 const HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
 function sameWriter(approved:HandoffWriter,writer:import('./handoff.js').KeyedWriter|null):boolean{return approved.kind==='agent'?writer===null:writer!==null&&approved.provider===writer.key.provider&&approved.model===writer.model&&approved.last4===writer.key.last4;}
 export class SessionManager extends EventEmitter {
@@ -273,11 +276,14 @@ export class SessionManager extends EventEmitter {
         // Read once per start: AI Term's agent takes the theme, and worktrees decide isolation below. Unreadable settings
         // keep the defaults (ask, worktrees on, keys on AI Term's agent).
         let settings: Settings | null = null;
-        if (agent) { try { settings = await new SettingsStore(this.paths.root).get(); } catch { this.log.error('Settings unreadable; new agents keep their worktrees'); } }
+        let settingsFailed = false;
+        if (agent) { try { settings = await new SettingsStore(this.paths.root).get(); } catch { settingsFailed = true; this.log.error('Settings unreadable; new agents keep their worktrees'); } }
         // v0.6.4 (D53): an account agent runs on the profile it names, else the engine's default account, else your normal
         // login (`own`). A profile must exist for that engine; its folder is made private before the CLI sees it.
         let profile:string|undefined,profilePath:string|undefined;
         if(agent&&agent.engine!=='ai-term'&&agent.auth.kind==='account'){
+            // Without settings the default account is unknown: guessing your normal login could bill the wrong account.
+            if(settingsFailed&&agent.auth.profile!==OWN_ACCOUNT&&await profilesExist(this.paths.root))throw new Error("Settings unreadable; can't tell which account to use");
             const choice=agent.auth.profile??settings?.defaultAccounts?.[agent.engine];
             if(choice&&choice!==OWN_ACCOUNT){
                 if(!(settings?.accounts??[]).some(a=>a.name===choice&&a.engine===agent.engine))throw new Error('Account not found for this engine');
@@ -502,7 +508,7 @@ export class SessionManager extends EventEmitter {
     // v0.6.4 (D53): a second after output settles, the agent's visible screen is read for an account limit. It is only
     // shown (card, homepage note); AI Term never switches accounts by itself.
     private scheduleLimitCheck(live:Live):void{
-        if(live.limitTimer||!['claude-code','codex'].includes(live.info.engine))return;
+        if(live.limitTimer||!['claude-code','codex'].includes(live.info.engine)||['exited','error'].includes(live.info.status))return;
         live.limitTimer=setTimeout(()=>{live.limitTimer=undefined;this.checkLimit(live);},LIMIT_CHECK_MS);live.limitTimer.unref();
     }
     private checkLimit(live:Live):void{
@@ -519,7 +525,7 @@ export class SessionManager extends EventEmitter {
     setHandoffWriter(writer:{prices:PriceSnapshot;summarize:Summarize}):void{this.handoffWriter=writer;}
     // v0.6.3 (D55, off by default): only an AI agent that isn't waiting on you or running a tool, to a CLI that is installed
     // and logged in. Account logins only: a key never moves between engines.
-    private async handoffSource(id:string,engine:CliEngine,account?:string):Promise<{live:Live;settings:Settings}>{
+    private async handoffSource(id:string,engine:CliEngine,account?:string):Promise<{live:Live;settings:Settings;account:string}>{
         const settings=await new SettingsStore(this.paths.root).get();
         if(settings.handoff!==true)throw new Error('Handoff is off · /settings g turns it on (it spends tokens)');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
@@ -527,15 +533,17 @@ export class SessionManager extends EventEmitter {
         await this.caughtUp(live);
         this.handoffBusy(live);
         // v0.6.4: onto another account of yours (D53); its login is checked in its own folder.
+        // The account named, else the engine's default: resolved once, so the login checked is the one that starts.
+        const choice=account??settings.defaultAccounts?.[engine]??OWN_ACCOUNT;
         let profilePath:string|undefined;
-        if(account&&account!==OWN_ACCOUNT){
-            if(!(settings.accounts??[]).some(a=>a.name===account&&a.engine===engine))throw new Error('Account not found for this engine');
-            profilePath=await prepareProfile(this.paths.root,engine,account,homedir());
+        if(choice!==OWN_ACCOUNT){
+            if(!(settings.accounts??[]).some(a=>a.name===choice&&a.engine===engine))throw new Error('Account not found for this engine');
+            profilePath=await prepareProfile(this.paths.root,engine,choice,homedir());
         }
         const target=await checkEngine(engine,process.env,undefined,profilePath);
         if(!target.installed||!target.path)throw new Error(`${engine==='codex'?'codex':'claude'} not found in PATH`);
         if(target.loggedIn!==true)throw new Error(target.loggedIn===false?'Engine is not logged in':'Engine login status unavailable');
-        return {live,settings};
+        return {live,settings,account:choice};
     }
     // The states a handoff refuses, checked before anything runs and again before the old agent is stopped.
     private handoffBusy(live:Live):void{
@@ -546,9 +554,9 @@ export class SessionManager extends EventEmitter {
         if((live.statusState?.toolsInFlight??0)>0)throw new Error('Agent is running a tool');
     }
     async handoffPlan(id:string,engine:CliEngine,account?:string):Promise<HandoffPlan>{
-        const {live,settings}=await this.handoffSource(id,engine,account),screen=(await this.text(id)).text;
-        const plan=handoffPlan(live.info.title,engine,screen,cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices),live.info.authMethod==='subscription');
-        return account?{...plan,account}:plan;
+        const source=await this.handoffSource(id,engine,account),screen=(await this.text(id)).text;
+        const plan=handoffPlan(source.live.info.title,engine,screen,cheapestWriter(await this.keys.list(),source.settings,this.handoffWriter.prices),source.live.info.authMethod==='subscription');
+        return source.account===OWN_ACCOUNT?plan:{...plan,account:source.account};
     }
     // The note is written first, then the new agent starts in the same folder or worktree with it as its first message;
     // the old agent is stopped only once the new one is running. `approved` is the writer the user saw in the ask (D49).
@@ -557,7 +565,7 @@ export class SessionManager extends EventEmitter {
         if(this.handingOff.has(id))throw new Error('Handoff already running');
         this.handingOff.add(id);
         try{
-            const {live,settings}=await this.handoffSource(id,engine,account);
+            const {live,settings,account:target}=await this.handoffSource(id,engine,account);
             const screen=(await this.text(id)).text,writer=cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices);
             if(approved&&!sameWriter(approved,writer))throw new Error('The summary writer changed; run /handoff again');
             const written=writer?await this.keyedSummary(id,live,engine,screen,writer,settings):{text:await this.agentSummary(live,engine),summary:null};
@@ -565,7 +573,7 @@ export class SessionManager extends EventEmitter {
             if(['exited','error'].includes(live.info.status))throw new Error('Agent exited before the handoff finished');
             const title=[...`${live.info.title} · ${engineLabel(engine)}`].slice(0,60).join('');
             const continuation=live.info.worktree?{worktree:live.info.worktree,...(live.info.branch?{branch:live.info.branch}:{})}:{};
-            const next=await this.create({engine,model:null,auth:{kind:'account',...(account?{profile:account}:{})},cwd:live.info.cwd,permission:'ask',title,firstMessage:handoffMessage(live.info.title,written.text)},continuation);
+            const next=await this.create({engine,model:null,auth:{kind:'account',profile:target},cwd:live.info.cwd,permission:'ask',title,firstMessage:handoffMessage(live.info.title,written.text)},continuation);
             for(let waited=0;;waited+=100){
                 const status=this.get(next.id).status;
                 if(['running','waiting','done'].includes(status))break;
@@ -618,6 +626,8 @@ export class SessionManager extends EventEmitter {
     // No key: the agent writes its own note as its next reply (sent like /send), read from its last reply when that turn
     // ends. Only an agent that has finished its turn: a reply still pending would otherwise become the note.
     private async agentSummary(live:Live,engine:CliEngine):Promise<string>{
+        // An agent at its account limit can't write anything; only a keyed summary can hand it off.
+        if(live.info.limit)throw new Error('Agent hit its limit and can\'t write the note · add an API key for the summary');
         if(live.info.status!=='done')throw new Error('Agent is still working · hand off when it is done');
         const before=live.lastReply;
         await this.sendText(live,`${handoffInstructions(engine)} Reply with the note only.`);

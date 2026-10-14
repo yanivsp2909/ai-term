@@ -218,7 +218,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 
 ### /account and limits (v0.6.4, 2026-10-15)
 - `/account` notes list accounts (`work · claude · default · …`); `/account add …` notes `✓ account <name> added · log in below` and opens that CLI's login session; `default`, `use` and `rm` answer in one note.
-- Start box: `a` steps own login → each account of the engine; an ink-3 line `account        <name> · a` appears once one is picked. Card line 3 adds ` · <account>` after the login label.
+- Start box: `a` steps own login → each account of the engine; an ink-3 line `account        <name> · a` appears once one is picked. Card line 3 reads `account <name> · sub` in place of `own login · sub`; the start box model row says `account <name>` too. A question that needs you stays above a limit line.
 - A limit: card line 3 `⏸ limit · resets 15:00` in status-waiting (it replaces the activity, like a question); the homepage note once: `<agent> hit its limit · resets 15:00 · wait, or /handoff <agent> claude:<account>`. Calm: no popup, no sound beyond the usual notifications.
 
 ### /handoff (v0.6.3, 2026-10-15)

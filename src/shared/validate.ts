@@ -273,6 +273,8 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.taskCost!==undefined&&typeof v.taskCost!=='boolean')throw new ValidationError('Invalid task cost setting');
     if(v.handoff!==undefined&&typeof v.handoff!=='boolean')throw new ValidationError('Invalid handoff setting');
     try{if(v.accounts!==undefined)validateAccounts(v.accounts);if(v.defaultAccounts!==undefined)validateDefaultAccounts(v.defaultAccounts);}catch{throw new ValidationError('Invalid accounts');}
+    // Whole settings (not a patch): each default names an account of that engine.
+    if(!patchOnly&&v.defaultAccounts!==undefined&&Object.entries(v.defaultAccounts as Record<string,string>).some(([engine,name])=>!(v.accounts as {name:string;engine:string}[]|undefined)?.some(a=>a.name===name&&a.engine===engine)))throw new ValidationError('Invalid accounts');
     if(v.presetsEnabled!==undefined&&typeof v.presetsEnabled!=='boolean')throw new ValidationError('Invalid presets setting');
     if(v.presets!==undefined)validatePresets(v.presets);
     if(v.budgets!==undefined)validateBudgets(v.budgets);

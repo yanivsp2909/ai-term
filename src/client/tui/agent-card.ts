@@ -33,8 +33,8 @@ export function nextCardTick(sessions: readonly SessionInfo[], now: number): num
 }
 function activity(session: SessionInfo, now: number): Styled | null {
   if (session.handoffTo) return { text: `handed off → ${session.handoffTo}`, color: 'ink-3' };
-  // D53: an account limit outranks the usual activity while the agent is alive; it never switches accounts by itself.
-  if (session.limit && !['exited', 'error'].includes(session.status)) return { text: `⏸ limit${session.limit.resets ? ` · resets ${session.limit.resets}` : ''}`, color: 'status-waiting' };
+  // A question that needs you comes first; then an account limit (D53), over the usual activity. Nothing switches by itself.
+  if (session.status !== 'waiting' && session.limit && !['exited', 'error'].includes(session.status)) return { text: `⏸ limit${session.limit.resets ? ` · resets ${session.limit.resets}` : ''}`, color: 'status-waiting' };
   if (session.status === 'waiting') return { text: session.statusDetail === 'permission' || session.statusDetail === 'question' ? `asks: ${session.statusDetail}` : session.statusDetail, color: 'status-waiting' };
   if (session.status === 'done') return { text: 'ready to review', color: 'ink-3' };
   if (session.status === 'error') return { text: session.exitCode !== null && !session.statusDetail.startsWith('exit ') ? `exit ${session.exitCode} · ${session.statusDetail}` : session.statusDetail, color: 'status-error' };
@@ -70,7 +70,7 @@ export function cardText(session: SessionInfo, now: number, width: number, optio
   const percent = session.ctxPercent === null || shell || narrow ? null : `${Math.round(session.ctxPercent)}%`;
   const ctxText = percent === null ? null : [`ctx ${percent}`, percent].find(text => textWidth(model) + CTX_GAP + text.length <= width) ?? null;
   const ctx = ctxText ? { text: ctxText, color: (session.ctxPercent ?? 0) >= CTX_WARN ? 'status-waiting' as const : 'ink-3' as const } : null;
-  const login = session.auth.kind === 'key' ? `API key ····${session.auth.last4}` : shell ? '' : ownLoginLabel(session.authMethod) + (session.auth.profile ? ` · ${session.auth.profile}` : ''), cost = options.taskCost === false ? null : taskCostText(session.taskUsage);
+  const login = session.auth.kind === 'key' ? `API key ····${session.auth.last4}` : shell ? '' : session.auth.profile ? ownLoginLabel(session.authMethod).replace(/^own login/, `account ${session.auth.profile}`) : ownLoginLabel(session.authMethod), cost = options.taskCost === false ? null : taskCostText(session.taskUsage);
   const auth = cost && login ? `${login} · ${cost}` : login;
   if (shell) return { status, model, ctx, activity: null, auth, line3: session.statusDetail === word ? word : `${word} · ${session.statusDetail}` };
   if(session.worktreeNote)return {status,model,ctx,activity:null,auth,line3:session.worktreeNote};

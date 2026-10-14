@@ -1,11 +1,14 @@
 // v0.6.4 (D53): a CLI that hit its account's usage limit says so on its screen. Only these whole phrases count, so a reply
 // that merely mentions limits never does. Claude Code: "5-hour limit reached ∙ resets 3pm", "Claude usage limit reached.
 // Your limit will reset at 7:30 pm"; Codex: "You've hit your usage limit. … try again at 3:45 PM" (or "in 2 hours").
-const PHRASES = [/\b(?:usage|5-hour|weekly|opus|session) limit reached\b/i, /\byou(?:'|’)ve hit your usage limit\b/i];
+const PHRASES = [/^(?:claude )?(?:usage|5-hour|weekly|opus|session) limit reached\b/i, /^you(?:'|\u2019)ve hit your usage limit\b/i];
 const TIME = /\b(?:resets?(?: at)?|reset at|try again at) (\d{1,2}(?::\d{2})?\s?(?:am|pm)?)/i;
 export function parseLimit(screen: string): { resets: string | null } | null {
   for (const line of screen.split('\n')) {
-    if (!PHRASES.some(phrase => phrase.test(line))) continue;
+    // A banner line: the phrase opens the line after any box-drawing, glyphs or spaces, so code or prose that
+    // mentions a limit (a quote, a test, a log) never counts.
+    const banner = line.replace(/^[^\p{L}\p{N}]*/u, '');
+    if (!PHRASES.some(phrase => phrase.test(banner))) continue;
     return { resets: clock(line.match(TIME)?.[1]) };
   }
   return null;
