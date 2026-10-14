@@ -145,7 +145,13 @@ export class Agent {
   // One message from the user: model requests and tool rounds until the model answers, the user interrupts, or a limit
   // pause ends in a stop. Every request is checked first (limits.ts); every request's own usage is priced and counted.
   async turn(prompt: string, signal: AbortSignal): Promise<TurnResult> {
-    await this.refreshExtensions();
+    try { await this.refreshExtensions(); }
+    catch {
+      if (signal.aborted) return 'interrupted';
+      void this.options.transcript.append({ kind: 'note', text: 'extension refresh failed; turn stopped before a model request' });
+      await this.options.reporter.status({ event: 'turn-failed', error: 'unknown' });
+      return 'failed';
+    }
     const { io, reporter, transcript, redact } = this.options, user: ModelMessage = { role: 'user', content: prompt };
     void transcript.append({ kind: 'user', text: prompt });
     await reporter.status({ event: 'turn-start' });
@@ -226,7 +232,12 @@ export class Agent {
       const signature = JSON.stringify(catalog.items.filter(i=>i.enabled).map(i=>[i.id,i.name,i.description]));
       if(this.loadedSignature!==null&&signature!==this.loadedSignature){this.clear();this.options.io.note('extension selection changed; conversation cleared so disabled instructions stop loading');}
       this.loadedSignature=signature; this.catalog=catalog;
-    } catch { this.catalog={items:[],notes:["extensions couldn't load; none are in this prompt"],tokens:0}; this.options.io.note(this.catalog.notes[0]??'extensions unavailable','warn'); }
+    } catch {
+      this.catalog={items:[],notes:['extension refresh failed; turn stopped before a model request'],tokens:0};
+      this.options.io.note(this.catalog.notes[0]??'extensions unavailable','error');
+      // A stale tool result may still contain a now-disabled body. Never send history until selection is known.
+      throw new ToolError('Extension refresh failed');
+    }
     return this.catalog;
   }
   private async extension(name: string, kind: 'skill'|'agent'|'command'): Promise<ExtensionFile> {
