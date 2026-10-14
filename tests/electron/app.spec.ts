@@ -8,6 +8,7 @@ import { Connection } from '../../src/client/connection.js';
 import { getPaths } from '../../src/shared/paths.js';
 import { tokenColors } from '../../src/shared/theme-tokens.js';
 import { createTheme } from '../../src/client/tui/theme.js';
+import {electronLaunch} from '../../scripts/electron-launch.js';
 
 let home: string;
 let application: ElectronApplication;
@@ -16,7 +17,8 @@ test.beforeEach(async () => {
   const state = join(home, '.ai-term');
   await mkdir(state, { mode: 0o700 });
   await writeFile(join(state, 'settings.json'), JSON.stringify({ theme: 'graphite', notifications: false }));
-  application = await electron.launch({ ...(process.env.AI_TERM_TEST_APP?{executablePath:process.env.AI_TERM_TEST_APP}:{}),args: [...(process.env.AI_TERM_TEST_APP?[]:[resolve('app/out/main/index.js')]), '--disable-background-networking', '--disable-component-update'], env: {
+  const launch=electronLaunch(resolve('app/out/main/index.js'),process.env.AI_TERM_TEST_APP);
+  application = await electron.launch({ ...launch,args: [...launch.args, '--disable-background-networking', '--disable-component-update'], env: {
     HOME: home, AI_TERM_HOME: state, AI_TERM_APP_DATA: join(home, 'electron'), PATH: '/usr/bin:/bin', SHELL: '/bin/sh', LANG: 'en_US.UTF-8',
   } });
   await application.evaluate(async({app})=>{await app.whenReady();});

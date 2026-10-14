@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { useUnicode11, textWidth } from '../src/shared/unicode-width.js';
 import type { TerminalApi } from '../app/shared/api.js';
 import {fileURLToPath} from 'node:url';
+import {electronLaunch} from './electron-launch.js';
 interface RecordItem { time: number; kind: 'output' | 'key'; data: string }
 interface Capture { records: RecordItem[]; stop: () => void }
 declare global { interface Window { terminal: TerminalApi; latencyCapture?: Capture } }
@@ -71,7 +72,8 @@ export async function measure(records: RecordItem[], cols: number, rows: number)
 }
 export async function appCapture(options:{main?:string;executablePath?:string}={}): Promise<{ records: RecordItem[]; cols: number; rows: number; webgl: boolean }> {
   const home = await setup();
-  const application = await electron.launch({...(options.executablePath?{executablePath:options.executablePath}:{}),args: [...(options.executablePath?[]:[options.main??resolve('app/out/main/index.js')]), '--disable-background-networking', '--disable-component-update'], env: env(home) });
+  const launch=electronLaunch(options.main??resolve('app/out/main/index.js'),options.executablePath);
+  const application = await electron.launch({...launch,args:[...launch.args,'--disable-background-networking','--disable-component-update'],env:env(home)});
   try {
     const page = await application.firstWindow();
     await page.locator('.xterm-accessibility-tree').filter({ hasText: 'Connect a provider' }).waitFor();

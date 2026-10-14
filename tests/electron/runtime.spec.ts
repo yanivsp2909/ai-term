@@ -3,6 +3,7 @@ import {execFile,spawn} from 'node:child_process';import {promisify} from 'node:
 import {mkdtemp,mkdir,rm,writeFile,readFile,realpath} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join,resolve,dirname} from 'node:path';
 import {Connection} from '../../src/client/connection.js';import {getPaths} from '../../src/shared/paths.js';
 import {commandPlan,installCommand} from '../../app/main/command-install.js';
+import {electronLaunch} from '../../scripts/electron-launch.js';
 const run=promisify(execFile),packaged=process.env.AI_TERM_TEST_APP;
 test('runtime loads N-API bindings without a system Node and command symlinks preserve argv',async()=>{
  const home=await mkdtemp(join(tmpdir(),'ai-bundle-runtime-'));
@@ -28,7 +29,7 @@ test('window uses an existing protocol-compatible dev daemon without stopping it
   const deadline=Date.now()+5000;
   while(!client){try{client=await Connection.connect(paths,{entry:resolve('dist/cli/index.js'),autoStart:false});}catch(error){if(Date.now()>deadline||daemon.exitCode!==null){const log=await readFile(paths.log,'utf8').catch((e:unknown)=>{if(e instanceof Error&&'code'in e&&e.code==='ENOENT')return '';throw e;});throw new Error('Disposable dev daemon failed: '+startup+log,{cause:error});}await new Promise(r=>setTimeout(r,30));}}
   const original=(await client.request({kind:'sessions.create',engine:'shell',cwd:home,title:'agent before app'})).session;
-  application=await electron.launch({...(packaged?{executablePath:packaged}:{}),args:packaged?[]:[resolve('app/out/main/index.js')],env});
+  application=await electron.launch({...electronLaunch(resolve('app/out/main/index.js'),packaged),env});
   await application.evaluate(async({app})=>{await app.whenReady();});
   const page=await application.firstWindow();await expect(page.locator('.xterm-accessibility-tree')).toContainText('agent before app');
   expect((await client.request({kind:'hello',protocol:1,version:'test'})).daemonPid).toBe(daemon.pid);
