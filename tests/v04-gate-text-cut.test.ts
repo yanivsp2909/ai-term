@@ -10,14 +10,14 @@ import { Logger } from '../src/daemon/log.js';
 import { McpService } from '../src/daemon/mcp/service.js';
 import { mcpConnector } from '../src/daemon/mcp/runtime.js';
 import { validateExtensionCatalog } from '../src/shared/validate.js';
-import { extensionTokens } from '../src/shared/extensions.js';
+import { catalogTokens, extensionTokens } from '../src/shared/extensions.js';
 
 // v0.4 gate: a cut at 240 characters or a last-four suffix must never split an emoji. Half a surrogate pair is a
 // control character to the validators, which then refused the whole catalog and failed every agent turn.
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const description = 'a'.repeat(239) + '😀 and more';
-const catalogOf = (parsed: { name: string; description: string }) => ({ items: [{ id: '0'.repeat(16), kind: 'agent' as const, name: parsed.name, description: parsed.description, source: 'shared' as const, enabled: true, tokens: extensionTokens(parsed.description) }], notes: [], tokens: extensionTokens(parsed.description) });
+const catalogOf = (parsed: { name: string; description: string }) => { const items = [{ id: '0'.repeat(16), kind: 'agent' as const, name: parsed.name, description: parsed.description, source: 'shared' as const, enabled: true, tokens: extensionTokens(`agent ${parsed.name}: ${parsed.description}\n`) }]; return { items, notes: [], tokens: catalogTokens(items) }; };
 
 it('a skill, agent or Codex agent description cut at 240 keeps the catalog valid', () => {
   for (const parsed of [parseExtension(`---\nname: s\ndescription: ${description}\n---\nbody`, 'skill', 's'), parseCodexAgent(`name = "c"\ndescription = "${description}"\ninstructions = "body"\n`, 'c')]) {

@@ -1,4 +1,5 @@
 import { EXTENSION_DESCRIPTION_CHARS } from '../../shared/extensions.js';
+import { cutText } from '../../shared/text-cut.js';
 
 // Codex agent definitions are data, never executable settings. Only the three text fields are interpreted.
 export function parseCodexAgent(text: string, fallback: string): { name: string; description: string; body: string; model?: string } {
@@ -23,5 +24,5 @@ export function parseCodexAgent(text: string, fallback: string): { name: string;
   }
   const name = fields.name || fallback, body = fields.instructions ?? fields.developer_instructions ?? '';
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(name) || !body.trim()) throw new Error('invalid agent');
-  return { name, description: (fields.description ?? '').replace(/[\p{C}]/gu, ' ').replace(/\s+/g, ' ').slice(0, EXTENSION_DESCRIPTION_CHARS), body };
+  return { name, description: cutText((fields.description ?? '').replace(/[\p{C}]/gu, ' ').replace(/\s+/g, ' '), EXTENSION_DESCRIPTION_CHARS), body };
 }

@@ -6,6 +6,7 @@ import type { Theme } from './theme.js';
 import { overlay } from './worktree-question.js';
 import { wrapHelpLines } from './help.js';
 import { TextPanel } from './text-panel.js';
+import { lastFour } from '../../shared/text-cut.js';
 
 type Row={server:McpView;tool?:string;name:string;description:string;enabled:boolean;tokens:number};
 export class McpPanel {
@@ -51,7 +52,7 @@ export class McpPanel {
      f.config=validateMcpConfig(type==='stdio'?{name:f.fields[0],type,command:f.fields[2],args:JSON.parse(f.fields[3]||'[]') as unknown,env:names}:{name:f.fields[0],type,url:f.fields[2],headers:names});f.names=names;
     }
     if(f.phase===4+f.names.length&&f.config){const config=f.config,values=Object.fromEntries(f.names.map((name,n)=>[name,f.fields[n+5]??'']));validateMcpValues(config,values);
-     const body=mcpPreview({id:'0'.repeat(16),hash:'0'.repeat(64),config,values:f.names.map(name=>({name,last4:(values[name]?.length??0)>=16?values[name]?.slice(-4)??'':''})),tools:{},enabled:true,source:'AI Term',approved:false,available:[]});
+     const body=mcpPreview({id:'0'.repeat(16),hash:'0'.repeat(64),config,values:f.names.map(name=>({name,last4:lastFour(values[name]??'')})),tools:{},enabled:true,source:'AI Term',approved:false,available:[]});
      this.confirmation={body,page:0,pages:[],save:async()=>{try{await this.access.add(config,values);this.note='MCP server saved; starts only on use';this.form=undefined;await this.load();}finally{f.fields.fill('');for(const name of Object.keys(values))delete values[name];}}};
     }else{f.phase++;if(f.phase===3&&f.fields[1]==='http')f.phase++;}
     this.note='';

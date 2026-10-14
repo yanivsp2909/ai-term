@@ -5,6 +5,7 @@ import type { KeyStore } from '../keys.js';
 import { MCP_MESSAGE_BYTES, MCP_MAX_TOOLS, mcpSecretForms, type McpServer, type McpTool } from '../../shared/mcp.js';
 import { isMcpTool, validateMcpObject } from '../../shared/validate.js';
 import { extensionTokens } from '../../shared/extensions.js';
+import { cutText } from '../../shared/text-cut.js';
 
 export const mcpEnv=(cwd:string,values:Record<string,string>):Record<string,string>=>({PATH:'/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin',HOME:cwd,TMPDIR:tmpdir(),LANG:'C.UTF-8',TERM:'dumb',...values});
 const scrub=(text:string,values:Record<string,string>)=>Object.values(values).flatMap(mcpSecretForms).sort((a,b)=>b.length-a.length).reduce((out,value)=>out.split(value).join('[redacted]'),text);
@@ -56,7 +57,7 @@ export class McpRuntime {
   try{await this.keys.withMcp(server.id,names,server.hash,async values=>{
    const result:ListToolsResult=await c.client.listTools({options:{signal,timeout:5000}});if(result.tools.length>MCP_MAX_TOOLS||result.nextCursor)throw new Error('MCP catalog too large');
    c.schema.clear();const tools:McpTool[]=[];for(const raw of result.tools){const name=scrub(raw.name,values);if(!isMcpTool(name)||name!==raw.name||c.schema.has(name))continue;
-    const description=scrub(raw.description??'',values).replace(/[\p{C}]/gu,' ').replace(/\s+/g,' ').slice(0,240);
+    const text=scrub(raw.description??'',values).replace(/[\p{C}]/gu,' ').replace(/\s+/g,' ');const description=cutText(text,240);
     const schema=validateMcpObject(scrubObject(raw.inputSchema,values));c.schema.set(name,schema);tools.push({name,description,enabled:true,tokens:extensionTokens(`mcp ${server.config.name}/${name}: ${description}\n`)});
    }this.metadata.set(server.hash,tools);
   });}finally{if(c.needsLogin?.())this.logins.add(server.hash);}

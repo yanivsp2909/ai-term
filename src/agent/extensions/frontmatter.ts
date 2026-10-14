@@ -1,4 +1,5 @@
 import { EXTENSION_DESCRIPTION_CHARS, type ExtensionKind } from '../../shared/extensions.js';
+import { cutText } from '../../shared/text-cut.js';
 
 const clean = (s: string) => s.replace(/[\p{C}]/gu, ' ').replace(/\s+/g, ' ').trim();
 // The shared CLI format needs scalar name/description/model fields and YAML block descriptions. Other metadata is
@@ -39,5 +40,5 @@ export function parseExtension(text: string, kind: ExtensionKind, fallback: stri
   const name = values.name || fallback;
   if (values.model && values.model.length > 240) throw new Error('model metadata too long');
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(name) || !body.trim() || kind === 'skill' && (!values.name || !values.description)) throw new Error('invalid extension');
-  return { name, description: (values.description ?? '').slice(0, EXTENSION_DESCRIPTION_CHARS), body, ...(values.model ? { model: values.model } : {}) };
+  return { name, description: cutText(values.description ?? '', EXTENSION_DESCRIPTION_CHARS), body, ...(values.model ? { model: values.model } : {}) };
 }

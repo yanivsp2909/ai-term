@@ -9,6 +9,7 @@ import { ENV_KEY_NAMES, isEndpoint, isSecret, isUUID, isValidModelId, validateKe
 import { SettingsStore } from './settings.js';
 import { isExtensionId } from '../shared/extensions.js';
 import { isMcpHash, isMcpEnv, isMcpHeader } from '../shared/validate.js';
+import { lastFour } from '../shared/text-cut.js';
 export class KeyError extends Error {}
 // B12: settings.json is writable by anything running as the user, so a Foundry key's endpoint and deployments are
 // stored with the secret in its Keychain entry, and only those bound values ever decide where the secret goes.
@@ -23,8 +24,6 @@ function parseFoundryEntry(raw:string):{secret:string;binding:FoundryBinding}|nu
  if(Object.keys(v).length!==4||v.v!==1||!isSecret(v.secret)||!isEndpoint(v.endpoint)||!Array.isArray(v.deployments)||!v.deployments.length||v.deployments.length>40||!v.deployments.every(isValidModelId))return null;
  return {secret:v.secret,binding:{endpoint:v.endpoint,deployments:[...v.deployments]}};
 }
-// Real provider keys are far longer; below this, four characters would give away too much of the secret.
-const MIN_SUFFIX_SECRET=16;
 export interface KeyVault { read(account:string):Promise<string|null>; write(account:string,secret:string):Promise<void>; remove(account:string):Promise<void> }
 function nativeVault(service:string):KeyVault {
  const entry=async(account:string)=>{const {AsyncEntry}=await import('@napi-rs/keyring');return new AsyncEntry(service,account,{linux:{store:'secret-service'}});};
@@ -48,7 +47,7 @@ export class KeyStore extends EventEmitter {
  private mcpAccount(server:string,name:string):string{if(!isExtensionId(server)||!isMcpEnv(name)&&!isMcpHeader(name))throw new KeyError('Invalid MCP secret reference');return `mcp:${server}:${name}`;}
  async saveMcp(server:string,name:string,secret:string,hash:string):Promise<string>{
   const account=this.mcpAccount(server,name);if(!isMcpHash(hash)||!secret||Buffer.byteLength(secret)>2048||/[\p{C}]/u.test(secret))throw new KeyError('Invalid MCP secret');
-  try{await this.vault.write(account,JSON.stringify({v:1,secret,hash}));}catch{throw new KeyError('MCP keychain write failed');}return secret.length>=MIN_SUFFIX_SECRET?secret.slice(-4):'';
+  try{await this.vault.write(account,JSON.stringify({v:1,secret,hash}));}catch{throw new KeyError('MCP keychain write failed');}return lastFour(secret);
  }
  async removeMcp(server:string,names:string[]):Promise<void>{for(const name of names){try{await this.vault.remove(this.mcpAccount(server,name));}catch{throw new KeyError('MCP keychain remove failed');}}}
  async withMcp<T>(server:string,names:string[],hash:string,use:(values:Record<string,string>)=>Promise<T>):Promise<T>{
@@ -63,7 +62,7 @@ export class KeyStore extends EventEmitter {
  async add(request:{provider:KeyProvider;label:string;secret:string;endpoint?:string;deployments?:string[]}):Promise<KeyView>{
   if(!isSecret(request.secret))throw new KeyError('Invalid key details');
   if([request.label,request.endpoint,...request.deployments??[]].some(value=>typeof value==='string'&&value.includes(request.secret)))throw new KeyError('Key details must not contain the secret');
-  const key=validateKeyView({id:randomUUID(),provider:request.provider,label:request.label,last4:request.secret.length>=MIN_SUFFIX_SECRET?request.secret.slice(-4):'',...(request.endpoint!==undefined?{endpoint:request.endpoint}:{}),...(request.deployments!==undefined?{deployments:request.deployments}: {})});
+  const key=validateKeyView({id:randomUUID(),provider:request.provider,label:request.label,last4:lastFour(request.secret),...(request.endpoint!==undefined?{endpoint:request.endpoint}:{}),...(request.deployments!==undefined?{deployments:request.deployments}: {})});
   if(key.provider==='foundry'&&(!isEndpoint(key.endpoint)||!key.deployments?.length))throw new KeyError('Foundry needs an endpoint and deployments');
   const account=`${key.provider}:${key.id}`;
   return this.serial(async()=>{
