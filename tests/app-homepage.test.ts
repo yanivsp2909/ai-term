@@ -22,9 +22,11 @@ class TTY extends EventEmitter {
 }
 class Client extends EventEmitter {
   requests: RequestBody[] = []; input = vi.fn();
+  settingsGate?: Promise<void>;
   sessions: SessionInfo[] = [1,2].map(n => ({ id: randomUUID(), title: 'agent ' + n, engine: 'shell', model: null, auth: {kind:'account'}, cwd:'/tmp', permission:'ask', status:'running', statusDetail:'running', statusSince:'2026-10-14T12:00:00Z', createdAt:`2026-10-14T12:00:0${n}Z`, lastOutputAt:null, exitCode:null, ctxPercent:null }));
   async request(body: RequestBody): Promise<SuccessResponse> {
     this.requests.push(body); const result: SuccessResponse = { id:randomUUID(), ok:true };
+    if (body.kind === 'settings.get' && this.settingsGate) { const gate=this.settingsGate; this.settingsGate=undefined; await gate; }
     if (body.kind === 'settings.get') result.settings = {theme:'graphite'};
     if (body.kind === 'sessions.list') result.sessions = this.sessions;
     if (body.kind === 'keys.list') result.keys = [];
@@ -99,6 +101,18 @@ it('theme-changed reprobes OSC11 and redraws auto despite the saved graphite the
     expect(f.home.currentTheme().colors.ink).toBe(tokenColors('light').ink);
     expect(f.tty.output.split(BACKGROUND_QUERY)).toHaveLength(3);
   } finally {await f.dispose();}
+});
+it('Home during a settings refresh cannot resurrect the dismissed start box', async () => {
+  const f=await fixture();let release=()=>{};
+  try {
+    f.command('settings');await expect.poll(f.screen).toContain('Settings');
+    f.client.settingsGate=new Promise<void>(resolve=>{release=resolve;});
+    f.command('new-agent');await expect.poll(()=>f.client.settingsGate).toBeUndefined();
+    f.command('home');release();
+    await new Promise(resolve=>setTimeout(resolve,50));
+    expect(await f.screen()).not.toContain('Start a new agent');
+    expect(await f.screen()).toContain('What do you want to build?');
+  }finally{release();await f.dispose();}
 });
 it('pasted and agent-printed controls never dispatch or reach an attached agent', async () => {
   const f = await fixture(), commands = vi.fn(), data = vi.fn();
