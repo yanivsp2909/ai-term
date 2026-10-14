@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, realpath, readFile, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, realpath, readFile, symlink, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readTool, writeTool, editTool, searchTool, findRipgrep, diffPreview } from '../src/agent/tools.js';
@@ -57,6 +57,13 @@ it('search uses ripgrep when it is installed', async () => {
   const root = await folder();
   await writeFile(join(root, 'a.txt'), 'alpha\nbeta 42\n');
   expect(await searchTool(root, { pattern: 'beta \\d+' }, rg)).toBe('a.txt:2:beta 42');
+});
+
+it('normalizes ripgrep relative prefixes without changing a match that contains ./', async () => {
+  const root = await folder(), rg = join(root, 'fake-rg');
+  await writeFile(rg, '#!/usr/bin/env node\nprocess.stdout.write("./a.txt:2:beta ./path\\nsub/b.txt:1:beta\\n");\n');
+  await chmod(rg, 0o700);
+  expect(await searchTool(root, { pattern: 'beta' }, rg)).toBe('a.txt:2:beta ./path\nsub/b.txt:1:beta');
 });
 
 it('bash runs in the folder with no key, no credential and nothing of AI Term\'s in its env', async () => {
