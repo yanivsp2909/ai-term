@@ -262,9 +262,12 @@ export class Homepage {
     if (command === 'new-agent' && ready) this.openBox('start');
     const preparedBox = this.box;
     const preparedSettings = command === 'settings' && ready ? this.createCredentials('settings') : undefined;
+    const epoch = this.navigationEpoch;
     this.draw(true);
     this.enqueue(async () => {
       if (refresh) await this.refreshSettings();
+      // The request may finish after another native navigation dismissed this UI.
+      if (epoch !== this.navigationEpoch) return;
       if (command === 'new-agent') {
         if (preparedBox) this.box = preparedBox; else this.openBox('start');
         await this.checkSelectedEngine();
