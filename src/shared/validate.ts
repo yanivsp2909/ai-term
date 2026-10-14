@@ -388,6 +388,9 @@ export function availableWorktreeSlug(name:string,occupied:ReadonlySet<string>):
  return slug;
 }
 export function isWorktreeBranch(value:unknown):value is string{return typeof value==='string'&&value.startsWith('ai/')&&isWorktreeSlug(value.slice(3));}
+// The agent's folder in its extension and MCP queries: whatever validCwd let it start in, minus what could break a path
+// or a screen line. Format characters (the joiner inside 👨‍💻, a soft hyphen) are ordinary in folder names.
+export function isAgentFolder(value:unknown):value is string{return typeof value==='string'&&isAbsolute(value)&&value.length<=4096&&!/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
 export function isSafeAbsolutePath(value:unknown):value is string{return typeof value==='string'&&isAbsolute(value)&&value.length<=4096&&!/[\p{C}\p{Zl}\p{Zp}]/u.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
 const WORKTREE_NOTES=['worktree off: not a git repo','worktree off: repo has no commits','worktree off: git check failed','worktree off: creation failed'];
 export function isWorktreeNote(value:unknown):value is import('./protocol.js').WorktreeNote{return typeof value==='string'&&WORKTREE_NOTES.includes(value);}
@@ -425,7 +428,7 @@ export function validateWorktreeView(value:unknown):import('./protocol.js').Work
 // Both socket and engine-bound HTTP extension requests use these exact fields. No request supplies a file path.
 export function validateExtensionRequest(v: Record<string, unknown>): void {
     const fields = v.kind === 'extensions.list' ? ['kind','cwd'] : v.kind === 'extensions.read' ? ['kind','cwd','extensionId'] : v.kind === 'extensions.toggle' ? ['kind','cwd','extensionId','enabled'] : [];
-    if (!fields.length || Object.keys(v).some(k => k !== 'id' && !fields.includes(k)) || typeof v.cwd !== 'string' || !isAbsolute(v.cwd) || v.cwd.length > 3000 || /[\p{C}]/u.test(v.cwd) || v.kind !== 'extensions.list' && !isExtensionId(v.extensionId) || v.kind === 'extensions.toggle' && typeof v.enabled !== 'boolean') throw new ValidationError('Invalid extension request');
+    if (!fields.length || Object.keys(v).some(k => k !== 'id' && !fields.includes(k)) || !isAgentFolder(v.cwd) || v.kind !== 'extensions.list' && !isExtensionId(v.extensionId) || v.kind === 'extensions.toggle' && typeof v.enabled !== 'boolean') throw new ValidationError('Invalid extension request');
 }
 export function validateExtensionCatalog(value: unknown): ExtensionCatalog {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid extensions');
@@ -493,7 +496,7 @@ export function validateMcpRequest(value:unknown):string[]{
  else if(v.kind==='mcp.remove'){fields=['name'];if(!isMcpName(v.name))throw new ValidationError('Invalid MCP name');}
  else if(v.kind==='mcp.cancel'||v.kind==='mcp.stop')fields=[];
  else{
-  fields=['cwd'];if(!isSafeAbsolutePath(v.cwd))throw new ValidationError('Invalid MCP folder');
+  fields=['cwd'];if(!isAgentFolder(v.cwd))throw new ValidationError('Invalid MCP folder');
   if(v.kind!=='mcp.list'){
    fields.push('serverId');if(!isExtensionId(v.serverId))throw new ValidationError('Invalid MCP server id');
    if(v.kind==='mcp.toggle'){fields.push('tool','enabled');if(typeof v.enabled!=='boolean'||v.tool!==undefined&&!isMcpTool(v.tool))throw new ValidationError('Invalid MCP switch');}
