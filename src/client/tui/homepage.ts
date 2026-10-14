@@ -836,8 +836,8 @@ export class Homepage {
           // Saved defaults carry no key, so an AI Term model saved as one would start a CLI login instead.
           if (this.savingDefault && !isCliEngine(choice.engine)) { b.error = "AI Term agent models can't be the saved default yet"; this.draw(true); return; }
           // An account picked for this engine stays with a model of the same engine; another engine or a key drops it.
-          const keep=!choice.auth&&choice.engine===b.engine&&b.auth?.kind==='account'&&b.auth.profile?b.auth:undefined;
-          b.engine = choice.engine; b.model = choice.model; b.auth=choice.auth??keep??{kind:'account'};this.auth=b.auth;if(!keep)delete b.accountLabel;this.engine = choice.engine;this.compatibleDefaults(choice.engine);if(!isEffortForEngine(choice.engine,b.effort??null))b.effort=null;if(!isPermissionForEngine(choice.engine,b.permission))b.permission='ask'; this.model = choice.model;b.authLabel=this.nextAuthLabel();
+          const keep=(!choice.auth||choice.auth.kind==='account')&&choice.engine===b.engine&&b.auth?.kind==='account'&&b.auth.profile?b.auth:undefined;
+          b.engine = choice.engine; b.model = choice.model; b.auth=keep??choice.auth??{kind:'account'};this.auth=b.auth;if(!keep)delete b.accountLabel;this.engine = choice.engine;this.compatibleDefaults(choice.engine);if(!isEffortForEngine(choice.engine,b.effort??null))b.effort=null;if(!isPermissionForEngine(choice.engine,b.permission))b.permission='ask'; this.model = choice.model;b.authLabel=this.nextAuthLabel();
           if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultEngine:isCliEngine(choice.engine)?choice.engine:'codex',defaultModel:choice.model,defaultEffort:this.effort}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); }
           else this.box = undefined;

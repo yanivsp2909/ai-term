@@ -554,8 +554,10 @@ export class SessionManager extends EventEmitter {
         if((live.statusState?.toolsInFlight??0)>0)throw new Error('Agent is running a tool');
     }
     async handoffPlan(id:string,engine:CliEngine,account?:string):Promise<HandoffPlan>{
-        const source=await this.handoffSource(id,engine,account),screen=(await this.text(id)).text;
-        const plan=handoffPlan(source.live.info.title,engine,screen,cheapestWriter(await this.keys.list(),source.settings,this.handoffWriter.prices),source.live.info.authMethod==='subscription');
+        const source=await this.handoffSource(id,engine,account),screen=(await this.text(id)).text,writer=cheapestWriter(await this.keys.list(),source.settings,this.handoffWriter.prices);
+        // Said before the ask, not after ⏎: a limited agent can't write its own note.
+        if(!writer&&source.live.info.limit)throw new Error("Agent hit its limit and can't write the note · add an API key for the summary");
+        const plan=handoffPlan(source.live.info.title,engine,screen,writer,source.live.info.authMethod==='subscription');
         return source.account===OWN_ACCOUNT?plan:{...plan,account:source.account};
     }
     // The note is written first, then the new agent starts in the same folder or worktree with it as its first message;
