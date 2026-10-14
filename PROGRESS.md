@@ -2,7 +2,7 @@
 
 ## Checkpoint
 Last commit: (this handover; see git log)
-Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Part B v0.5 release gate done: **v0.5 is closed**. Part C v0.6.1 done. Part D v0.6.2 done. Parts E–F follow below as they finish.
+Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Part B v0.5 release gate done: **v0.5 is closed**. Part C v0.6.1 done. Part D v0.6.2 done. Part E v0.6.3 done. Part F follows below.
 Branch: main. Started clean at c03e02d after `git pull --ff-only` (already up to date). No other agent was working in this repo (the running Codex sessions' cwd is ~/NARVIS).
 
 Prompt vs code (overnight):
@@ -22,6 +22,48 @@ Prompt vs code (overnight):
 - Full suite: the first runs failed 1 test every time: `tests/gate-silent-failures.test.ts` M4 used `/Users/test/My Projects/...` as an "unsafe" status-line path, but b2e203f deliberately allowed ASCII spaces (AI Term.app). Stale fixture, not a product bug: 29600d3 uses an apostrophe instead. Then two consecutive full runs, dot reporter: **194 files, 1197 passed, 2 skipped** (opt-in Keychain), 18.91 s and 18.66 s.
 - Smoke after the rebuild: dev `npm run app:test` 9 passed (37.7 s); packaged `AI_TERM_TEST_APP=<.app exe> npm run app:test` 9 passed (39.1 s). No new leaked processes.
 - The test output prints one `Unhandled pty write error [Error: EIO...]` line from a test that writes after its PTY exits; it fails nothing (handed to Part B's silent-failure review).
+
+## Part E: v0.6.3 engine handoff — done (off by default)
+Commits: see `git log 56d292d..HEAD` (RED test commits precede each fix); GREEN ffdf270; review fixes a71ee01, the ZWJ and fix-review commits after it.
+
+What works:
+- `/handoff <agent> claude|codex` (D55: `/settings` g, **off by default** because it spends tokens; the daemon refuses when off). First the D49 ask in a `Handoff` popup: who writes the note (the cheapest priced model among your keys, `it reads the end of <agent>'s screen`, or the agent itself as its next reply when you have no priced key), estimated input/output token ranges and a price range (or "uses your plan's limits" / `price ?`); ⏎ runs (a typed key, never a paste), Esc cancels. Afterwards the note shows the real summary tokens and cost.
+- The note (Goal, Done, Left, Files touched, Open questions) from the agent's screen-mirror text (last 48,000 characters). The keyed request is the daemon's own one-shot (like a key test): Keychain-bound endpoint for Foundry (B12), guarded fetch, no retry, 2,000 output tokens, 120 s; held against the budgets in the B25 ledger and recorded as usage on the source (Usage, budgets, cost per task).
+- A new agent of the chosen engine starts on that engine's **own login** (keys never move between engines), Ask, CLI default model, in the **same folder or worktree** (a continuation, like /retry), with the cleaned note (no escapes/controls/bidi overrides; ≤ 12,000 bytes) as its first message after `--`. The old agent stops only after the new one runs (30 s); its card then reads `handed off → <name>`.
+- Refused while the source asks for permission or a question, runs a tool, hasn't started, has exited, is being handed off; a target CLI not installed or logged in is refused before anything is spent; the agent-written path needs a finished turn; `/send` is refused during a handoff.
+
+Prompt vs code:
+- "the old agent stops only after the new one is running": if the old agent got busy (a tool or a prompt) while the note was written, it is **not** stopped; the answer says it keeps running (stop it with `s`). Calmer than killing it mid-tool.
+- An `ai-term` (own agent) target isn't offered: it would need a key, and "never moves keys between engines". Targets are Claude Code and Codex on their own logins.
+
+Findings (failing test commit, then fix commit; four fresh reviewers: TypeScript, security, silent-failure, then a fix review):
+- **HIGH:** the client gave up on `sessions.handoff` after 5 s and said "handoff stopped" while the daemon finished it → `requestTimeout`: 7 min handoff, 30 s plan.
+- **HIGH:** two handoffs of one agent could both run (check and mark across awaits) → marked before the first await.
+- **HIGH:** the agent-written path could take a still-pending reply as the note → needs a finished turn; `/send` refused meanwhile.
+- **MEDIUM:** the note reached argv with raw escapes/OSC 52/bidi → cleaned (later narrowed so ZWJ, ZWNJ, emoji tags and RLM survive).
+- **MEDIUM:** a new agent that didn't start in 30 s was left alive to work beside the old one → stopped again; the message says when the note's tokens were spent.
+- **MEDIUM:** a source exiting during the summary was charged twice (booked hold + real usage) → charged once, nothing starts from it; a failed usage record is logged and the hold settled; ledger bookings never reject (an unhandled rejection would stop the daemon); shutdown waits for exit bookings.
+- **MEDIUM:** a client problem after a completed handoff read as "handoff stopped"; a stop failure after success read the same → reported as done, with "keeps running" when it does.
+- **MEDIUM/LOW:** duplicate agent names were guessed → refused like /send; the writer could change between ask and ⏎ → the request carries the approved writer (required on the socket) and the daemon refuses a different one; the agent was marked handed off even when it kept running → only when stopped; a note of only escapes passed the empty check → checked after cleaning; the summary request retried (two bills, one hold) → no retry.
+- Not fixed, with reasons: if the source exits in the moment between the summary's usage record and its settle, the worst case is booked on top (narrow window; over, never under); a Keychain prompt that never answers keeps that agent's handoff lock until the daemon restarts (the CLI can't be cancelled from outside); a ledger booking that fails on disk is logged and dropped (the alternative stopped the daemon); a running agent without a tool in flight can be stopped mid-turn once the new one runs (as designed: the ask says it stops).
+
+Checks (at the last Part E commit):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0
+npm run build       ESM Build success in 30ms
+npm run app:build   built in 60ms
+npm run app:test    9 passed (37.6s)
+npm test (1)        Test Files 204 passed · Tests 1274 passed | 2 skipped · 20.43s
+npm test (2)        Test Files 204 passed · Tests 1274 passed | 2 skipped · 20.14s
+```
+
+Concepts introduced:
+- **Bound consent:** the "⏎ to run" answers one exact plan; the daemon re-checks that what it is about to run (here, who writes the note) is still that plan and refuses otherwise (`sameWriter` in `src/daemon/session-manager.ts`).
+- **Mark before you await:** a guard such as "one handoff at a time" must be set in the same synchronous step as its check; any `await` in between lets a second request through (`handingOff` in `handoff()`).
+- **Request timeouts per kind:** the client waits as long as the slowest honest answer can take, per request kind (`requestTimeout` in `src/client/connection.ts`).
+
+New dependencies: none.
 
 ## Part D: v0.6.2 presets — done
 Commits d574282 (RED) → f79a2a7 (GREEN) → review fixes through 0c167d1.
