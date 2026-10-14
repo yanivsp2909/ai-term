@@ -95,7 +95,7 @@ export class AgentApp implements AgentIO {
       else if (event.kind === 'escape') { this.approval.resolve(false); this.turn?.abort(); }
       return;
     }
-    if (event.kind === 'escape') { if (this.running) this.turn?.abort(); else { this.buffer = ''; this.options.screen.prompt(''); } return; }
+    if (event.kind === 'escape') { if (this.running) { this.generation++; this.turn?.abort(); } else { this.buffer = ''; this.options.screen.prompt(''); } return; }
     if (event.kind === 'text' || event.kind === 'paste') this.buffer = (this.buffer + event.text).slice(0, 64 * 1024);
     else if (event.kind === 'newline') this.buffer += '\n';
     else if (event.kind === 'backspace') this.buffer = [...this.buffer].slice(0, -1).join('');
