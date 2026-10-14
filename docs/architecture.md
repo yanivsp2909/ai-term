@@ -504,6 +504,7 @@ How to verify each: **Unit** = vitest. **Grep** = must find nothing in `src/` (o
 | S17 | Homepage text reaches an agent only through /send (D50) | Structural: the homepage's connection type has no `input()`, so its keys can't become input frames; /send is a validated `sessions.send` request. Unit (`tests/agent-send`, `agent-commands-homepage`, `agent-commands-server`): /send is refused while waiting for permission or a question, while attached, after exit and before first status; text keeps only newlines from C0/C1, so it can't close its bracketed paste early; Enter is withheld if a prompt appears after the paste. `/open` runs only `/usr/bin/open -- <path>` or `code -- <path>` through execFile (`tests/agent-commands-homepage`). |
 
 ---
+| S23 | Desktop renderer is sandboxed and only the seven typed preload operations are allowed | Unit + Electron smoke: contextIsolation true, sandbox true, nodeIntegration false, strict local CSP without eval or connections; prevent navigation/frame navigation/redirects/webviews; deny new windows and all permission requests/checks; main validates sender, exact argument count, size/text limits and http/https URL before PTY/clipboard/browser use. No raw IPC object in renderer. See §12.4. |
 
 Fixed failure details (B16/B17): socket operations return exact allowlisted manager/key texts; unknown errors return a generic fixed reason. Keyring errors retain only a fixed operation cause. Foundry tests return fixed timeout, connection, reply-size or request failure reasons and only known fixed provider error codes. Engine checks retain a fixed executable/version/login failure reason. Disk key metadata is validated per entry for KeyStore and daemon settings reads: malformed entries warn and are excluded from client views, while subsequent writes preserve them on disk so credential cleanup information is not lost. Client/protocol validators remain strict. `/clean` shows removed/failed totals with the first failure (B18); `debug stats` handles stdout EPIPE with exit 0 without installing that handler in interactive flows (B20).
 
@@ -604,6 +605,30 @@ Fixed failure details (B16/B17): socket operations return exact allowlisted mana
 
 - **v0.4 AI Term's agent (our own harness).** Vercel AI SDK + Models.dev; tools read, write, edit, bash, search; Ask / Don't ask; reads `AGENTS.md`; `/model` (keyed models only); exact cost; hard budget. Every API key runs here (D47). Loads your skills (`SKILL.md`, lazily), subagents, slash commands and MCP servers (AI SDK MCP client); MCP secrets in the keychain; MCP OAuth is deferred beyond v0.4.4. Reading those files needs D48.
 - **v0.5 The app.** An Electron terminal that opens straight into `ai`. Renderer sandboxed (`contextIsolation`, no `nodeIntegration`, `sandbox`), narrow typed preload, CSP, no navigation, links http/https only.
+
+### 12.4 v0.5 desktop terminal (release gate open)
+
+`app/` is an electron-vite project within the existing package. Main (`app/main/index.ts`) owns one BrowserWindow and one node-pty PTY. The renderer fits its xterm grid, installs its output listener, then sends its first validated size; main starts the built `dist/cli/index.js` with Electron's executable in `ELECTRON_RUN_AS_NODE=1` mode. This N-API node-pty release works in both Node and Electron without rebuilding the native module. The built CLI keeps its usual startup and detached-daemon behavior; closing the window kills only that outer client. No daemon, agent, key store or provider-env code changes are needed.
+
+The renderer (`app/renderer/index.ts`) is React plus xterm, WebGL, fit, Unicode 11 (the mirrors' table), web-links and search. xterm input invokes preload directly; output invokes xterm directly, without React state or render scheduling. React owns search/error chrome only. ResizeObserver fits the grid and sends bounded sizes. WebGL construction/context loss falls back to the default DOM renderer with one fixed console line. The renderer uses a screen-reader tree as well as the visual terminal. `src/shared/theme-tokens.ts` is the single token reader for the TUI and app; the TUI's documented alternate palettes remain in its existing theme module. The app follows nativeTheme; the TUI's persisted theme remains its own setting, and its auto palette currently samples the terminal only at startup. Automatic live TUI palette changes remain open.
+
+The preload (`app/preload/index.ts`, bundled as CommonJS for Electron's sandbox) exposes exactly these seven methods. It wraps fixed channels and passes only strings or the theme enum to listeners; no IPC event, channel choice, Node object or generic invoke/send crosses the bridge.
+
+| API | Direction and bounds |
+|---|---|
+| `write(data)` | Renderer → main → PTY; string, at most 64 KiB UTF-8 |
+| `resize({cols, rows})` | Renderer → main → PTY; exact keys, integers, cols 2–500 / rows 2–300 |
+| `onOutput(callback)` | Main → renderer; PTY text; returns unsubscribe |
+| `openUrl(url)` | Renderer → main → `shell.openExternal`; explicit http/https, no credentials/controls, at most 8192 characters |
+| `copy(text)` | Renderer → main → clipboard; string, at most 5 MiB UTF-8; waits for Electron's async write |
+| `paste()` | Renderer → main → renderer; zero arguments, awaits clipboard read, leaves 12 bytes under the 64 KiB limit for bracketed paste wrappers; xterm handles the paste mode |
+| `onTheme(callback)` | Main → renderer; only light/dark; registration requests current nativeTheme, then updates; returns unsubscribe |
+
+Main rejects unknown types, unexpected argument counts, extra size keys, and senders other than this window's main frame before acting. It logs fixed failures through the existing Logger and shows input/resize failures in the terminal, clipboard/link failures in visible error chrome. App logs are in Electron userData (`AI_TERM_APP_DATA` redirects it for tests), never contain raw input/output, URLs or environments. PTY env is inherited from the launcher, matching current CLI inheritance, plus terminal identification and Electron Node mode. No login file or Keychain read occurs in the wrapper. Finder/Dock login-environment reconstruction and an installable app bundle are not part of the delivered build.
+
+Both dev and build use bundled local files; `envDir: false` prevents build-time env-file reads. CSP permits local scripts and fonts, inline styles required by xterm, and data images; denies connections, remote content, frames, objects, forms, base URLs and eval. Both navigation and frame navigation/redirect/webview attachment are prevented, new windows are denied, and session permission checks and requests always deny. A terminal link can only reach the narrow main-process URL validator. Command clipboard/search/font keys are intercepted before xterm input, and Option is Meta. No provider logos (D51), network feature, updater or telemetry is added.
+
+Validation: `tests/app-validation`, `app-security`, `app-preload` cover the contract and security wiring. `tests/electron/app.spec.ts` opens the real built CLI under a disposable HOME with no provider executables on PATH, dismisses its first-login popup, types into its command bar, checks multiline paste/search/resize and asserts runtime sandbox/preload exposure. `scripts/measure-app-latency.ts` records the keydown/PTY-output arrival that establishes the expected command-bar cell and following cursor, parsed offline with Unicode 11. It compares a direct CLI PTY, excluding Terminal.app's input and physical paint; it cannot close the app/Terminal.app latency gate.
 
 ---
 
