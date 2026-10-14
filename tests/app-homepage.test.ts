@@ -71,6 +71,25 @@ it('home returns from an attached session through cancellation, without synthesi
     expect(f.client.input).not.toHaveBeenCalled();
   } finally {await f.dispose();}
 });
+it('immediate Enter then native Home cancels an attach that has not started yet', async () => {
+  const f = await fixture();
+  try {
+    f.send('\r'); f.command('home');
+    await expect.poll(f.screen).toContain('What do you want to build?');
+    await new Promise(resolve=>setTimeout(resolve,50));
+    expect(f.attached).not.toHaveBeenCalled();
+  } finally {await f.dispose();}
+});
+it('Palette before y dismisses a stop confirmation synchronously, preserving the following typed input', async () => {
+  const f = await fixture();
+  try {
+    f.send('s'); await expect.poll(f.screen).toContain('stop');
+    f.send(encodeAppControl(token,'palette')+'y');
+    await new Promise(resolve=>setTimeout(resolve,50));
+    expect(f.client.requests.some(request=>request.kind==='sessions.stop')).toBe(false);
+    expect(await f.screen()).toContain('/y');
+  } finally {await f.dispose();}
+});
 it('theme-changed reprobes OSC11 and redraws auto despite the saved graphite theme', async () => {
   const f = await fixture();
   try {
