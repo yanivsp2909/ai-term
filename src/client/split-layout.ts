@@ -11,15 +11,22 @@ function columns(cols: number, count: number): { x: number; w: number }[] {
   let x = 0;
   return share(cols - (count - 1), count).map(w => { const column = { x, w }; x += w + 1; return column; });
 }
-// 2 and 3 panes side by side, 4 as 2×2; null when any pane would be smaller than the minimum.
+const fits = (across: { w: number }[], heights: number[]) => across.every(c => c.w >= MIN_PANE_COLS) && heights.every(h => h >= MIN_PANE_ROWS);
+// 2 and 3 panes side by side, 4 as 2×2; null when any pane would be smaller than the minimum. Three panes too wide
+// to sit side by side take two on top and one full width below, so closing one of four never hides the rest.
 export function splitLayout(cols: number, rows: number, count: number): SplitLayout | null {
   if (count < 2 || count > MAX_PANES) return null;
-  const height = rows - 1, across = columns(cols, count === 4 ? 2 : count), heights = count === 4 ? share(height, 2) : [height];
-  if (across.some(c => c.w < MIN_PANE_COLS) || heights.some(h => h < MIN_PANE_ROWS)) return null;
-  const panes: Rect[] = [];
-  let y = 0;
-  for (const h of heights) { for (const c of across) panes.push({ x: c.x, y, w: c.w, h }); y += h; }
-  return { panes, dividers: across.slice(0, -1).map(c => ({ x: c.x + c.w, y: 0, w: 1, h: height })) };
+  const height = rows - 1;
+  if (count < 4) {
+    const across = columns(cols, count);
+    if (fits(across, [height])) return { panes: across.map(c => ({ x: c.x, y: 0, w: c.w, h: height })), dividers: across.slice(0, -1).map(c => ({ x: c.x + c.w, y: 0, w: 1, h: height })) };
+    if (count === 2) return null;
+  }
+  const across = columns(cols, 2), [top = 0, bottom = 0] = share(height, 2);
+  if (!fits(across, [top, bottom])) return null;
+  const panes: Rect[] = across.map(c => ({ x: c.x, y: 0, w: c.w, h: top }));
+  if (count === 3) panes.push({ x: 0, y: top, w: cols, h: bottom }); else panes.push(...across.map(c => ({ x: c.x, y: top, w: c.w, h: bottom })));
+  return { panes, dividers: across.slice(0, -1).map(c => ({ x: c.x + c.w, y: 0, w: 1, h: count === 3 ? top : height })) };
 }
 // How many of `wanted` agents get a pane: the most that fit, or 1 (a normal attach) when not even two do.
 export function fitPanes(cols: number, rows: number, wanted: number): number {
