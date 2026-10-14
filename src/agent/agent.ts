@@ -83,6 +83,7 @@ export class Agent {
   private confirmedTask: {file:ExtensionFile;modelId:string;name:string;prompt:string} | null = null;
   private warned = false;
   private usageWarned = false;
+  private lastReply = '';
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private options: AgentOptions) { this.limits = options.limits ?? new RunLimits();this.mcpSession=options.mcpSession??{allowed:new Set(),schemas:new Set()}; }
   get extensionAccess(): ExtensionAccess | undefined { return this.options.extensions; }
@@ -215,7 +216,7 @@ export class Agent {
       this.history.push(user, { role: 'assistant', content: `${lastText || stepText}\n(The user interrupted this reply.)`.trim() });
       void transcript.append({ kind: 'note', text: 'interrupted' });
       this.turnCost(totals);
-      await reporter.status({ event: 'done', reply: lastText || stepText });
+      this.lastReply = lastText || stepText; await reporter.status({ event: 'done', reply: this.lastReply });
       return 'interrupted';
     };
     try {
@@ -265,7 +266,7 @@ export class Agent {
       this.history.push(user, ...(await result.responseMessages));
       void transcript.append({ kind: 'assistant', text: lastText });
       this.turnCost(totals);
-      await reporter.status({ event: 'done', reply: lastText });
+      this.lastReply = lastText; await reporter.status({ event: 'done', reply: lastText });
       return 'done';
     } catch (thrown) {
       if (controller.signal.aborted) return await finishInterrupted();
@@ -386,6 +387,9 @@ export class Agent {
     const k = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
     this.options.io.note(`turn · ${k(t.input)} in${t.cached ? ` · ${k(t.cached)} cached` : ''} · ${k(t.output)} out${t.reasoning ? ` · ${k(t.reasoning)} reasoning` : ''} · ${t.cost === null ? 'price ?' : `$${t.cost.toFixed(4)}`} · run ${this.limits.describe().replace(/^caps: /, '')}`);
   }
+  // A popup takes typed keys (a form's Enter saves and authorizes an MCP server), so while it is open the daemon must
+  // refuse /send (D50): it reports a question, and done with the last reply again once it closes.
+  popupOpen(open: boolean): Promise<void> { return this.options.reporter.status(open ? { event: 'paused' } : { event: 'done', reply: this.lastReply }); }
   // AI Term didn't take a request's usage: Usage and the daemon's budget totals miss it, so this run keeps counting it.
   private usageLost(cost: number | null): void {
     if (cost) this.limits.unconfirmed(cost);

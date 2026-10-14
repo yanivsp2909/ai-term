@@ -164,7 +164,9 @@ export class AgentApp implements AgentIO {
   }
   private async openExtensions(tab:'skills'|'agents'|'mcp',add=false):Promise<void>{
     const access=this.agent.extensionAccess;if(!access){this.options.screen.note('Extensions unavailable','error');return;}
-    const panel=new ExtensionsPanel(access,this.agent.root,tab,()=>{if(!this.closed&&this.popup===panel)this.options.screen.popup(panel);},()=>{this.popup=undefined;this.options.screen.closePopup();this.next();},()=>{this.agent.clear();},this.agent.mcpAccess,add);
+    // Reported before the popup draws, so a /send can't reach its fields (D50).
+    await this.agent.popupOpen(true);
+    const panel=new ExtensionsPanel(access,this.agent.root,tab,()=>{if(!this.closed&&this.popup===panel)this.options.screen.popup(panel);},()=>{this.popup=undefined;this.options.screen.closePopup();void this.agent.popupOpen(false);this.next();},()=>{this.agent.clear();},this.agent.mcpAccess,add);
     this.popup=panel;this.options.screen.popup(panel);await panel.load();
   }
   // /caps, /caps turns 50, /caps spend 2.5, /caps turns off spend off: this run only; /settings holds the defaults.
