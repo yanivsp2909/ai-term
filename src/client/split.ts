@@ -29,7 +29,7 @@ const SPLIT_MOUSE = '\x1b[?1003h\x1b[?1006h';
 export const DOUBLE_PRESS_MS = 400;
 // Frame spacing: the focused pane as the bar (8 ms; a typing echo draws at once), the others at the preview's 30 fps.
 const FOCUSED_FRAME_MS = 8, BACKGROUND_FRAME_MS = 1000 / 30, ESCAPE_MS = 30, STARTUP_LIMIT = 4 * 1024 * 1024;
-interface Slot { pane: Pane; connection: SplitConnection }
+interface Slot { pane: Pane; connection: SplitConnection; released?: boolean }
 type Outcome = { reason: SplitReason; signal?: ClientSignal } | { error: SplitError };
 
 export async function split(ids: readonly string[], options: SplitOptions): Promise<SplitResult> {
@@ -47,7 +47,7 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
   if (!probed.success) options.log?.('Split startup probe failed; terminal color and kitty queries go unanswered');
 
   let slots: Slot[] = [], focusedId = '', layout: SplitLayout | null = null, chrome: Frame | null = null, lastCursor = '';
-  let active = false, blocked = false, outcome: Outcome | null = null, lastPane: { at: number; from: string } | null = null;
+  let active = false, blocked = false, needFull = false, outcome: Outcome | null = null, lastPane: { at: number; from: string } | null = null;
   let captured: string | null = null, escapeTimer: ReturnType<typeof setTimeout> | undefined, resolveDone: () => void = () => {};
   const done = new Promise<void>(resolve => { resolveDone = resolve; });
   // Read through a function: TypeScript would otherwise keep `outcome` narrowed to its initial null.
@@ -70,7 +70,9 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
     return layout ? splitChrome(cols, rows, layout, slots.map(({ pane }) => ({ info: pane.info, state: pane.state, focused: pane.focused })), dropped, options.theme) : tooSmall(cols, rows, options.theme);
   };
   const draw = (full = false) => {
+    if (full) needFull = true;
     if (blocked || !active) return;
+    full = needFull; needFull = false;
     const next = chromeFrame(), bytes = diffFrame(next, full ? null : chrome, options.theme, options.truecolor ?? true);
     chrome = next;
     // diffFrame wraps its output in synchronized-output marks; finishFrame adds them around the whole frame instead.
@@ -79,15 +81,17 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
     finishFrame(body);
   };
   const drawPane = (pane: Pane) => {
-    pane.timer = undefined;
+    pane.timer = undefined; pane.holding = false;
     if (blocked || !active || !layout) return;
     const hold = pane.syncWait(now());
-    if (hold > 0) { pane.timer = setTimeout(() => drawPane(pane), hold); return; }
+    if (hold > 0) { pane.holding = true; pane.timer = setTimeout(() => drawPane(pane), hold); return; }
     pane.lastFrame = now();
     finishFrame(pane.paint());
   };
   // A pane's frames are spaced on their own clock, so a flooding pane never holds back the focused pane's echo.
   const changed = (pane: Pane) => {
+    // The agent's synchronized block just ended: draw now instead of waiting out the hold.
+    if (pane.timer && pane.holding && !pane.terminal.modes.synchronizedOutputMode) { clearTimeout(pane.timer); pane.timer = undefined; pane.holding = false; }
     if (!active || pane.timer) return;
     const wait = (pane.focused ? FOCUSED_FRAME_MS : BACKGROUND_FRAME_MS) - (now() - pane.lastFrame);
     if (wait > 0) pane.timer = setTimeout(() => drawPane(pane), wait); else drawPane(pane);
@@ -117,7 +121,11 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
     if (slot) write(slot.pane.passthrough.restore());
     draw();
   };
+  // Every attached pane is detached and its connection closed exactly once, whether it closed, the split ended, or
+  // it finished attaching after the split had already ended.
   const detach = async (slot: Slot) => {
+    if (slot.released) return;
+    slot.released = true; slot.pane.dispose();
     try { await slot.connection.request({ kind: 'sessions.detach', sessionId: slot.pane.id }); }
     catch (error) { options.log?.(`Split pane detach failed: ${error instanceof Error ? error.message : 'unknown error'}`); }
     finally { slot.connection.close(); }
@@ -126,7 +134,7 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
   const close = (gone: readonly Slot[]) => {
     const order = slots.map(s => s.pane.id), index = Math.max(0, order.indexOf(focusedId));
     slots = slots.filter(s => !gone.includes(s));
-    for (const slot of gone) { slot.pane.dispose(); void detach(slot); }
+    for (const slot of gone) void detach(slot);
     if (slots.length === 1) { end('one left'); return; }
     if (!slots.length) { end('all closed'); return; }
     if (!focused()) {
@@ -155,6 +163,8 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
   const mouse = (event: Extract<SplitInputEvent, { kind: 'mouse' }>) => {
     if (!layout) return;
     const motion = (event.button & 32) !== 0, wheel = (event.button & 64) !== 0, press = !event.release && !motion && !wheel;
+    // A new press starts over: a drag whose release was lost must not capture the next click.
+    if (press) captured = null;
     const hit = paneAt(layout, event.x, event.y), held = captured ? slots.find(s => s.pane.id === captured) : undefined;
     const slot = held ?? (hit ? slots[hit.index] : undefined);
     if (event.release) captured = null;
@@ -214,7 +224,10 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
   };
   // Attach one agent on its own connection. Output that arrives before the snapshot waits, then follows it in order.
   const open = async (id: string, rect: Rect): Promise<Slot | null> => {
-    const connection = await options.connect(), early: Buffer[] = [];
+    let connection: SplitConnection;
+    try { connection = await options.connect(); }
+    catch (error) { options.log?.(`Split pane could not connect: ${error instanceof Error ? error.message : 'unknown error'}`); return null; }
+    const early: Buffer[] = [];
     let slot: Slot | undefined, earlyBytes = 0;
     connection.on('output', (sessionId: string, data: Buffer) => {
       if (sessionId !== id || ended()) return;
@@ -243,10 +256,11 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
   };
 
   listen(true);
-  let entered = false;
+  let entered = false, openings: Promise<Slot | null>[] = [];
   try {
     entered = true; write('\x1b[?1049h\x1b[?25l' + SPLIT_MOUSE); stdin.setRawMode(true); stdin.resume();
-    const opened = await Promise.race([Promise.all(ids.slice(0, count).map((id, i) => first.panes[i] ? open(id, first.panes[i]) : Promise.resolve(null))), done.then(() => null)]);
+    openings = ids.slice(0, count).map((id, i) => first.panes[i] ? open(id, first.panes[i]) : Promise.resolve(null));
+    const opened = await Promise.race([Promise.all(openings), done.then(() => null)]);
     slots = (opened ?? []).filter((slot): slot is Slot => slot !== null);
     if (!ended()) {
       active = true;
@@ -261,11 +275,12 @@ export async function split(ids: readonly string[], options: SplitOptions): Prom
   finally {
     active = false; if (escapeTimer) clearTimeout(escapeTimer);
     listen(false);
-    for (const { pane } of slots) pane.dispose();
     try { if (entered) stdout.write(RESET_MODES + '\x1b[?1049l'); } catch (error) { fail(error); }
     try { stdin.setRawMode(originalRaw); stdin.pause(); } catch (error) { fail(error); }
-    // Detach every pane before a remaining one becomes a normal attach, so sizes follow the existing attach rules.
-    await Promise.all(slots.map(detach));
+    // Detach every pane before a remaining one becomes a normal attach, so sizes follow the existing attach rules;
+    // panes still attaching when the split ended are detached as soon as they finish.
+    const late = (await Promise.allSettled(openings)).flatMap(result => result.status === 'fulfilled' && result.value ? [result.value] : []);
+    await Promise.all([...new Set([...slots, ...late])].map(detach));
   }
   const remaining = slots.length === 1 ? slots[0]?.pane.id : undefined, result: Outcome = current() ?? { error: new SplitError('error', new Error('Split ended unexpectedly')) };
   if ('error' in result) throw result.error;

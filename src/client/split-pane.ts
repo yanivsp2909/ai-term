@@ -23,6 +23,8 @@ export class Pane {
   focused = false;
   lastFrame = -Infinity;
   timer: ReturnType<typeof setTimeout> | undefined;
+  // The pending timer waits out the agent's synchronized-output block rather than frame spacing.
+  holding = false;
   private queue: Buffer[] = [];
   private queued = 0;
   private parsing = false;
@@ -37,7 +39,8 @@ export class Pane {
     this.terminal.onData(data => this.reply(data));
     this.renderer = new BodyRenderer(this.terminal, rect.y + 1, rect.x);
   }
-  private reply(data: string): void { if (this.state === 'live') this.send(Buffer.from(data)); }
+  // terminal.input('', true) fires onData(''); an empty frame is no reply.
+  private reply(data: string): void { if (data && this.state === 'live') this.send(Buffer.from(data)); }
   get live(): boolean { return this.state === 'live'; }
   write(data: string | Buffer): void {
     if (this.disposed) return;

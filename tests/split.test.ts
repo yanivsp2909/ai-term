@@ -145,7 +145,7 @@ it('resizing re-lays the panes and resizes each agent; too small a window shows 
  press(tty, [5]); await run;
 });
 it('a terminal too small for every agent opens as many panes as fit and says how many did not', async () => {
- const small = setup(3, { cols:100, rows:30 });
+ const small = setup(3, { cols:100, rows:20 });
  await shows(small.tty, "1 agent didn't fit");
  expect(small.connections).toHaveLength(2);
  press(small.tty, [5]); await expect(small.run).resolves.toMatchObject({ reason:'home key', dropped:1 });
@@ -215,10 +215,13 @@ it('leaving while panes are still attaching detaches and closes every connection
  await expect(run).resolves.toMatchObject({ reason:'client interrupted' });
  await vi.waitFor(() => { expect(connections).toHaveLength(2); for (const c of connections) { expect(c.closed).toBe(true); expect(c.requests.at(-1)).toMatchObject({ kind:'sessions.detach' }); } });
 });
-it('a connection that fails to open does not leak the panes that did attach', async () => {
- const { run, connections } = setup(3, { failConnect:1 });
- await run.catch(() => undefined);
- await vi.waitFor(() => { for (const c of connections.filter(c => c.requests.length)) expect(c.closed).toBe(true); });
+it('a connection that fails to open leaves its pane out; the panes that did attach work and are released on the way home', async () => {
+ const { tty, run, connections } = setup(3, { failConnect:1 });
+ await ready(tty);
+ press(tty, [5]); await expect(run).resolves.toMatchObject({ reason:'home key' });
+ const attached = connections.filter(c => c.requests.length);
+ expect(attached).toHaveLength(2);
+ for (const c of attached) { expect(c.closed).toBe(true); expect(c.requests.at(-1)).toMatchObject({ kind:'sessions.detach' }); }
 });
 it('closing one of four panes on a terminal too narrow for three side by side keeps the agents on screen', async () => {
  const { tty, run, conn, infos } = setup(4, { cols:100, rows:40 });
@@ -246,8 +249,9 @@ it('typing sends no empty input frames', async () => {
 it('a full redraw asked for while the terminal is blocked happens when it drains', async () => {
  const { tty, run, signals } = setup();
  await ready(tty);
- tty.full = true; tty.write('');
+ tty.full = true;
  tty.columns = 100; tty.rows = 30; signals.emit('SIGWINCH');
+ tty.columns = 110; signals.emit('SIGWINCH');
  tty.full = false; tty.output = ''; tty.emit('drain');
  expect(tty.output).toContain('\x1b[2J');
  press(tty, [5]); await run;
