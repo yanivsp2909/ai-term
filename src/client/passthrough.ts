@@ -7,6 +7,8 @@ export interface Passthrough {
   mouse: () => { tracking: boolean; encoding: Encoding };
   dropped: Record<string, number>;
   modeLog: string[];
+  // Split panes only: the sequence that gives the real terminal this pane's keyboard modes, cursor shape and title.
+  restore: () => string;
 }
 
 // DECSET/DECRST modes that describe the real terminal's input or look, not the mirror's screen.
@@ -16,9 +18,14 @@ export interface Passthrough {
 const FORWARD_MODES = new Set([1, 9, 1000, 1002, 1003, 1005, 1006, 1015, 1004, 1007, 2004, 12, 66, 2031]);
 const OSC_FORWARD = new Set([0, 1, 2, 7, 9, 777, 104, 110, 111, 112]);
 const OSC52_LIMIT = 1024 * 1024;
+// In a split the real terminal always reports the mouse in SGR any-motion mode, so a click can focus any pane; the
+// split re-encodes each event for its pane. The panes' own mouse modes therefore stay in their mirrors.
+const SPLIT_KEPT = new Set([9, 1000, 1002, 1003, 1005, 1006, 1015, 1007]);
+const RESTORED_MODES = [1, 1004, 2004, 12, 66, 2031];
 
-export function installPassthrough(term: headless.Terminal, facts: OuterFacts, out: (data: string) => void, reply: (data: string) => void): Passthrough {
-  let cursorVisible = true, encoding: Encoding = 'default';
+export function installPassthrough(term: headless.Terminal, facts: OuterFacts, out: (data: string) => void, reply: (data: string) => void, split = false): Passthrough {
+  let cursorVisible = true, encoding: Encoding = 'default', keypad = false, shape = '0', otherKeys = '0', title = '';
+  const modes = new Map<number, boolean>();
   const kittyStack: number[] = [0];
   const dropped: Record<string, number> = {}, modeLog: string[] = [];
   const drop = (what: string): boolean => { dropped[what] = (dropped[what] ?? 0) + 1; return true; };
@@ -32,7 +39,7 @@ export function installPassthrough(term: headless.Terminal, facts: OuterFacts, o
       if (param === 25) cursorVisible = on;
       const enc: Encoding | null = param === 1005 ? 'utf8' : param === 1006 ? 'sgr' : param === 1015 ? 'urxvt' : null;
       if (enc && (on || encoding === enc)) encoding = on ? enc : 'default';
-      if (FORWARD_MODES.has(param)) forward.push(param);
+      if (FORWARD_MODES.has(param) && !(split && SPLIT_KEPT.has(param))) { forward.push(param); modes.set(param, on); }
       // SGR-pixel coordinates can't be shifted by one row without the cell height; refuse it.
       if (param === 1016 && on) drop('mode 1016 sgr-pixels');
     }
@@ -43,38 +50,39 @@ export function installPassthrough(term: headless.Terminal, facts: OuterFacts, o
   // Other DSR queries (cursor position) stay with the mirror, which knows the agent's coordinates.
   p.registerCsiHandler({ prefix: '?', final: 'n' }, params => { if (params[0] !== 996) return false; out('\x1b[?996n'); return true; });
   // Keypad application/normal mode.
-  p.registerEscHandler({ final: '=' }, () => { out('\x1b='); return false; });
-  p.registerEscHandler({ final: '>' }, () => { out('\x1b>'); return false; });
+  p.registerEscHandler({ final: '=' }, () => { keypad = true; out('\x1b='); return false; });
+  p.registerEscHandler({ final: '>' }, () => { keypad = false; out('\x1b>'); return false; });
   // Full reset: the real terminal must forget the forwarded modes too.
   p.registerEscHandler({ final: 'c' }, () => {
-    cursorVisible = true; encoding = 'default'; kittyStack.splice(0, kittyStack.length, 0);
-    out('\x1b[?1;9;1000;1002;1003;1005;1006;1015;1004;1007;2004;12;66;2031l\x1b>\x1b[0 q' + (facts.kitty ? '\x1b[=0u' : ''));
+    cursorVisible = true; encoding = 'default'; kittyStack.splice(0, kittyStack.length, 0); modes.clear(); keypad = false; shape = '0';
+    out(`\x1b[?${split ? '1;1004;2004;12;66;2031' : '1;9;1000;1002;1003;1005;1006;1015;1004;1007;2004;12;66;2031'}l\x1b>\x1b[0 q` + (facts.kitty ? '\x1b[=0u' : ''));
     return false;
   });
   // Cursor shape (DECSCUSR).
-  p.registerCsiHandler({ intermediates: ' ', final: 'q' }, params => { out(`\x1b[${params.map(String).join(';')} q`); return false; });
+  p.registerCsiHandler({ intermediates: ' ', final: 'q' }, params => { shape = params.map(String).join(';'); out(`\x1b[${shape} q`); return false; });
   // xterm modifyOtherKeys (`CSI > 4 ; n m`) changes how the real keyboard encodes keys.
-  p.registerCsiHandler({ prefix: '>', final: 'm' }, params => { out(`\x1b[>${params.map(String).join(';')}m`); return true; });
+  p.registerCsiHandler({ prefix: '>', final: 'm' }, params => { if (params[0] === 4) otherKeys = String(params[1] ?? 0); out(`\x1b[>${params.map(String).join(';')}m`); return true; });
   // Kitty keyboard protocol. The mirror doesn't speak it, so answer queries from what the real
   // terminal said at startup, in order with the mirror's own DA1 answer.
   p.registerCsiHandler({ prefix: '?', final: 'u' }, () => { if (facts.kitty) reply(`\x1b[?${kittyStack.at(-1) ?? 0}u`); return true; });
   p.registerCsiHandler({ prefix: '>', final: 'u' }, params => {
     if (!facts.kitty) return drop('kitty push (outer terminal lacks it)');
     if(kittyStack.length>=64)return drop('kitty stack limit');
-    const flags = typeof params[0] === 'number' ? params[0] : 0; kittyStack.push(flags); out(`\x1b[>${flags}u`); return true;
+    const flags = typeof params[0] === 'number' ? params[0] : 0; kittyStack.push(flags); out(split ? `\x1b[=${flags};1u` : `\x1b[>${flags}u`); return true;
   });
   p.registerCsiHandler({ prefix: '<', final: 'u' }, params => {
     if (!facts.kitty) return true;
     const n = typeof params[0] === 'number' && params[0] > 0 ? params[0] : 1;
     for (let i = 0; i < n && kittyStack.length > 1; i++) kittyStack.pop();
-    out(`\x1b[<${n}u`); return true;
+    // A split's panes share one real stack, so a pane sets its top instead of pushing and popping it.
+    out(split ? `\x1b[=${kittyStack.at(-1) ?? 0};1u` : `\x1b[<${n}u`); return true;
   });
   p.registerCsiHandler({ prefix: '=', final: 'u' }, params => {
     if (!facts.kitty) return true;
     const flags = typeof params[0] === 'number' ? params[0] : 0, how = typeof params[1] === 'number' ? params[1] : 1;
     const current = kittyStack.at(-1) ?? 0;
     kittyStack[kittyStack.length - 1] = how === 1 ? flags : how === 2 ? current | flags : current & ~flags;
-    out(`\x1b[=${flags};${how}u`); return true;
+    out(split ? `\x1b[=${kittyStack.at(-1) ?? 0};1u` : `\x1b[=${flags};${how}u`); return true;
   });
   // XTWINOPS: title stack goes out; a text-area size report is answered with the agent's size
   // (the real terminal would answer one row too many). Pixel reports are dropped.
@@ -86,7 +94,7 @@ export function installPassthrough(term: headless.Terminal, facts: OuterFacts, o
   });
 
   // OSC: titles, cwd, notifications and palette changes are position-free and go out unchanged.
-  for (const ident of OSC_FORWARD) p.registerOscHandler(ident, data => { out(`\x1b]${ident}${data || ident < 100 ? ';' + data : ''}\x1b\\`); return false; });
+  for (const ident of OSC_FORWARD) p.registerOscHandler(ident, data => { if (ident === 0 || ident === 2) title = data; out(`\x1b]${ident}${data || ident < 100 ? ';' + data : ''}\x1b\\`); return false; });
   // Palette entry set goes out; a palette query can't be answered faithfully, so it's dropped.
   p.registerOscHandler(4, data => { if (data.includes('?')) return drop('OSC 4 query'); out(`\x1b]4;${data}\x1b\\`); return false; });
   // Default colors: sets go out; queries are answered from the real terminal's startup reply.
@@ -109,7 +117,9 @@ export function installPassthrough(term: headless.Terminal, facts: OuterFacts, o
   p.registerOscHandler(8, () => { drop('OSC 8 hyperlink'); return false; });
   term.onBell(() => out('\x07'));
 
-  return { cursorVisible: () => cursorVisible, mouse: () => ({ tracking: term.modes.mouseTrackingMode !== 'none', encoding }), dropped, modeLog };
+  const restore = () => RESTORED_MODES.map(mode => `\x1b[?${mode}${modes.get(mode) ? 'h' : 'l'}`).join('') + (keypad ? '\x1b=' : '\x1b>') + `\x1b[${shape} q\x1b[>4;${otherKeys}m`
+    + (facts.kitty ? `\x1b[=${kittyStack.at(-1) ?? 0};1u` : '') + `\x1b]2;${title}\x1b\\`;
+  return { cursorVisible: () => cursorVisible, mouse: () => ({ tracking: term.modes.mouseTrackingMode !== 'none', encoding }), dropped, modeLog, restore };
 }
 
 // Ask the real terminal once, before the agent starts: default colors, kitty keyboard support,

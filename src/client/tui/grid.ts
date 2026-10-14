@@ -1,7 +1,7 @@
 import type { Theme } from './theme.js';
 import { styleEscape } from './theme.js';
 import { textCells } from '../../shared/unicode-width.js';
-export interface Cell { char: string; fg: string; bg: string; bold: boolean; width: number; italic?: boolean; underline?: boolean; dim?: boolean }
+export interface Cell { char: string; fg: string; bg: string; bold: boolean; width: number; italic?: boolean; underline?: boolean; underlineColor?: string; dim?: boolean }
 export type Frame = Cell[][];
 const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
 const textCache = new Map<string, readonly string[]>();
@@ -55,7 +55,7 @@ export function diffFrame(next: Frame, previous: Frame | null, theme: Theme, tru
     for (let x = 0; x < row.length; x++) {
       const cell = row[x], before = previous?.[y]?.[x];
       if (!cell || cell.width === 0) continue;
-      if (before && cell.char === before.char && cell.fg === before.fg && cell.bg === before.bg && cell.bold === before.bold && cell.width === before.width && cell.italic === before.italic && cell.underline === before.underline && cell.dim === before.dim) { positioned = false; continue; }
+      if (before && cell.char === before.char && cell.fg === before.fg && cell.bg === before.bg && cell.bold === before.bold && cell.width === before.width && cell.italic === before.italic && cell.underline === before.underline && cell.underlineColor === before.underlineColor && cell.dim === before.dim) { positioned = false; continue; }
       if (!positioned) output += `\x1b[${y + 1};${x + 1}H`;
       const style = styleEscape(cell, theme, truecolor); if (lastStyle !== style) { output += style; lastStyle = style; }
       output += safeText(cell.char); positioned = true;

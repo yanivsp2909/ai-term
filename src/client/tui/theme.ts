@@ -78,10 +78,13 @@ function colorEscape(color: string, foreground: boolean, truecolor: boolean): st
 const styleCache = new Map<string, string>();
 export function styleEscape(cell: Cell, theme: Theme, truecolor = true): string {
   const defaultBg = theme.defaultBackground && cell.bg === theme.colors.bg;
-  const key = `${cell.fg}/${cell.bg}/${cell.bold}/${cell.italic}/${cell.underline}/${cell.dim}/${defaultBg}/${truecolor}`;
+  const key = `${cell.fg}/${cell.bg}/${cell.bold}/${cell.italic}/${cell.underline}/${cell.underlineColor}/${cell.dim}/${defaultBg}/${truecolor}`;
   let style = styleCache.get(key);
   if (!style) {
     style = `\x1b[0${cell.bold ? ';1' : ''}${cell.dim ? ';2' : ''}${cell.italic ? ';3' : ''}${cell.underline ? ';4' : ''};${colorEscape(cell.fg, true, truecolor)};${defaultBg ? '49' : colorEscape(cell.bg, false, truecolor)}m`;
+    // Underline color in the colon form only: a terminal that doesn't know it skips the whole sequence (the underline
+    // then takes the text color) instead of misreading `58;2;r;g;b` as dim plus colors.
+    if (truecolor && cell.underline && cell.underlineColor) style += `\x1b[58:2::${channels(cell.underlineColor).join(':')}m`;
     if (styleCache.size > 4096) styleCache.clear();
     styleCache.set(key, style);
   }

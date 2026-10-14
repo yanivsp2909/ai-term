@@ -40,7 +40,7 @@ export class BodyRenderer {
   private cursor = '';
   private readonly scratch: IBufferCell;
   cursorVisible = true;
-  constructor(private readonly term: headless.Terminal, private readonly top: number) {
+  constructor(private readonly term: headless.Terminal, private readonly top: number, private readonly left = 0) {
     this.scratch = term.buffer.active.getNullCell();
     this.invalidate();
   }
@@ -52,6 +52,20 @@ export class BodyRenderer {
   }
   // Returns the escape string for every changed cell plus the cursor, or '' when nothing changed.
   frame(forceCursor=false): string {
+    const out = this.paint(), cursor = this.cursorAt();
+    if (!out && cursor === this.cursor && !forceCursor) return '';
+    this.cursor = cursor;
+    // Hide the cursor while painting: terminals without synchronized output (Terminal.app) would
+    // otherwise show it jumping across the changed cells.
+    return '\x1b[?25l' + out + '\x1b[0m' + cursor;
+  }
+  // Where the real cursor belongs for this mirror, with its visibility.
+  cursorAt(): string {
+    const buffer = this.term.buffer.active;
+    return `\x1b[${buffer.cursorY + 1 + this.top};${Math.min(buffer.cursorX, this.term.cols - 1) + 1 + this.left}H${this.cursorVisible ? '\x1b[?25h' : ''}`;
+  }
+  // The escape string for every changed cell only, without touching the cursor's final place.
+  paint(): string {
     const buffer = this.term.buffer.active, cols = this.term.cols, rows = this.term.rows;
     let out = '', lastStyle = '';
     for (let y = 0; y < rows; y++) {
@@ -67,7 +81,7 @@ export class BodyRenderer {
           positioned = false; if (w === 2) x++; continue;
         }
         this.chars[i] = ch; this.fg[i] = fg; this.bg[i] = bg; this.attr[i] = at; this.width[i] = w;
-        if (!positioned) out += `\x1b[${y + 1 + this.top};${x + 1}H`;
+        if (!positioned) out += `\x1b[${y + 1 + this.top};${x + 1 + this.left}H`;
         const s = style(fg, bg, at); if (s !== lastStyle) { out += s; lastStyle = s; }
         out += ch;
         // After anything but plain ASCII, address the next cell absolutely. If the real terminal
@@ -77,11 +91,6 @@ export class BodyRenderer {
       }
     }
     this.valid = true;
-    const cursor = `\x1b[${buffer.cursorY + 1 + this.top};${Math.min(buffer.cursorX, cols - 1) + 1}H${this.cursorVisible ? '\x1b[?25h' : ''}`;
-    if (!out && cursor === this.cursor && !forceCursor) return '';
-    this.cursor = cursor;
-    // Hide the cursor while painting: terminals without synchronized output (Terminal.app) would
-    // otherwise show it jumping across the changed cells.
-    return '\x1b[?25l' + out + '\x1b[0m' + cursor;
+    return out;
   }
 }
