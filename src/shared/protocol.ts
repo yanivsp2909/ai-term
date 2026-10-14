@@ -32,8 +32,9 @@ export type KeyProvider = 'anthropic' | 'foundry' | 'openai';
 // which AI Term's agent can use and Codex can't (D30).
 export interface DeploymentTest { model: string; status: 'ready' | 'chat' | 'not a chat model' | 'error'; httpStatus?: number; errorCode?: string; reason?: ProviderFailureReason }
 export interface KeyView { id: string; provider: KeyProvider; label: string; last4: string; endpoint?: string; deployments?: string[]; lastTest?: DeploymentTest[] }
-export type AuthRef = {kind:'account'} | {kind:'key';keyId:string};
-export type AuthView = {kind:'account'} | {kind:'key';keyId:string;provider:KeyProvider;keyLabel:string;last4:string};
+// v0.6.4: an account reference may name a profile (or `own` for your normal login); absent means the engine's default.
+export type AuthRef = {kind:'account';profile?:string} | {kind:'key';keyId:string};
+export type AuthView = {kind:'account';profile?:string} | {kind:'key';keyId:string;provider:KeyProvider;keyLabel:string;last4:string};
 export interface Budgets {daily:number|null;weekly:number|null;monthly:number|null}
 export interface ModelPrice {input:number;output:number;cacheRead?:number}
 // cachedTokens is the cache-read share already inside tokens; optional only for summaries from older daemons.
@@ -43,7 +44,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
-export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<CliEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -84,6 +85,7 @@ export interface SessionInfo {
     ctxPercent: number|null;
     lastActivity?:{tool:string;at:string}|null; // Missing on legacy records; new records use null.
     taskUsage?:TaskUsage; // v0.6.1: this agent's own total since it started (absent until its first usage).
+    limit?:{resets:string|null}; // v0.6.4: its account hit a usage limit (read from its screen); resets HH:MM when it says.
     handoffTo?:string; // v0.6.3: the agent this one handed its work to (`handed off → <name>` on the card).
 }
 // v0.6.1 cost per task (D55): tokens always; dollars for API-key sessions only (null on a subscription, which bills
@@ -134,10 +136,10 @@ export type Request = {
     kind:'sessions.send'; sessionId:string; text:string;
 } | {
     // v0.6.3 engine handoff (D55, off by default): what it would run and cost (D49), then the handoff itself.
-    kind:'sessions.handoffPlan'; sessionId:string; engine:CliEngine;
+    kind:'sessions.handoffPlan'; sessionId:string; engine:CliEngine; account?:string;
 } | {
     // writer: the one the user approved in the ask; a different one now refuses.
-    kind:'sessions.handoff'; sessionId:string; engine:CliEngine; writer: import('./handoff.js').HandoffWriter;
+    kind:'sessions.handoff'; sessionId:string; engine:CliEngine; writer: import('./handoff.js').HandoffWriter; account?:string; // v0.6.4: continue on that account (D53)
 } | {
     kind:'sessions.find'; text:string;
 } | {

@@ -43,6 +43,8 @@ import { TextPanel } from './text-panel.js';
 import { usageDetailLines } from './usage-details.js';
 import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
 import { HandoffAsk, handoffDone } from './handoff-ask.js';
+import { parseAccountCommand, parseHandoffTarget } from './accounts.js';
+import { OWN_ACCOUNT, type AccountProfile } from '../../shared/accounts.js';
 import { validateHandoffPlan, validateHandoffSummary } from '../../shared/handoff.js';
 import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.js';
 import { openFolder, OpenError, type FolderApp } from './open-folder.js';
@@ -93,6 +95,8 @@ export class Homepage {
   private taskCost = true;
   // v0.6.2 presets (D55, on by default): cached from settings for the start box's p key.
   private presetsEnabled = true;
+  // v0.6.4 account profiles (D53), from settings: names and engines only.
+  private accounts: AccountProfile[] = [];
   private presets: Record<string, Preset> = {};
   private model: string | null = null;
   private folder: string;
@@ -153,7 +157,7 @@ export class Homepage {
       this.options.controls?.on('command', this.onAppCommand);
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
-      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;this.taskCost=settings.taskCost!==false;this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};
+      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;this.taskCost=settings.taskCost!==false;this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};this.accounts=settings.accounts??[];
       this.budgets=validateBudgets(settings.budgets??{});
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
@@ -553,24 +557,68 @@ export class Homepage {
     if (text==='/settings'||text==='/login') { await this.openCredentials(text==='/settings'?'settings':'login'); return; }
     if (command==='/preset') { await this.presetCommand(text); return; }
     if (command==='/handoff') { await this.handoffCommand(argument); return; }
+    if (command==='/account') { await this.accountCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
   }
+  // Start box a (v0.6.4, D53): own login, then each account of this engine, for this one agent.
+  private nextAccount(b:AgentBox):void{
+    const names=[OWN_ACCOUNT,...this.accounts.filter(a=>a.engine===b.engine).map(a=>a.name)];
+    if(names.length<2){b.error='no other account for this engine · /account add';return;}
+    const current=b.auth?.kind==='account'?b.auth.profile??OWN_ACCOUNT:OWN_ACCOUNT,next=names[(names.indexOf(current)+1)%names.length]??OWN_ACCOUNT;
+    b.auth={kind:'account',profile:next};b.accountLabel=next===OWN_ACCOUNT?'own login':next;b.error='';
+  }
+  private limitNote(session:SessionInfo):string{
+    const engine=session.engine==='codex'?'codex':'claude',current=session.auth.kind==='account'?session.auth.profile:undefined;
+    const other=this.accounts.find(a=>a.engine===session.engine&&a.name!==current)?.name??(current?OWN_ACCOUNT:undefined);
+    return `${session.title} hit its limit${session.limit?.resets?` · resets ${session.limit.resets}`:''} · wait, or ${other?`/handoff ${session.title} ${engine}:${other}`:`/account add ${engine} <name> for another account you own`}`;
+  }
+  // v0.6.4 /account (D53): profiles are the CLI's own config folders; AI Term keeps only names and runs the CLI's own login.
+  private async accountCommand(text:string):Promise<void>{
+    const parsed=parseAccountCommand(text);
+    if(parsed.kind==='error'){this.showNote(parsed.text);return;}
+    let settings:import('../../shared/protocol.js').Settings;
+    try{settings=validateSettings((await this.connection.request({kind:'settings.get'})).settings);}catch{this.showNote('accounts unavailable: settings could not be read');return;}
+    const accounts=settings.accounts??[],defaults=settings.defaultAccounts??{},find=(name:string)=>accounts.find(a=>a.name===name);
+    const save=async(patch:import('../../shared/protocol.js').SettingsPatch,done:string)=>{try{const next=validateSettings((await this.connection.request({kind:'settings.set',patch})).settings);this.accounts=next.accounts??[];this.showNote(done);return true;}catch(error){this.showNote(`account not saved: ${error instanceof Error?error.message:'settings could not be saved'}`);return false;}};
+    this.accounts=accounts;
+    if(parsed.kind==='list'){this.showNote(accounts.length?accounts.map(a=>`${a.name} · ${a.engine==='codex'?'codex':'claude'}${defaults[a.engine]===a.name?' · default':''}`).join(' · ')+' · /account add claude|codex <name>':'no accounts yet · /account add claude|codex <name> logs a second account in through the CLI');return;}
+    if(parsed.kind==='add'){
+      if(find(parsed.name)){this.showNote(`account ${parsed.name} exists · /account rm ${parsed.name} first`);return;}
+      if(!(await save({accounts:[...accounts,{name:parsed.name,engine:parsed.engine}]},`✓ account ${parsed.name} added · log in below`)))return;
+      // The CLI's own login, in its own folder; AI Term never sees the token.
+      try{const response=await this.connection.request({kind:'sessions.create',engine:parsed.engine,model:null,auth:{kind:'account',profile:parsed.name},cwd:this.folder,permission:'ask',login:true,title:`${parsed.engine==='codex'?'Codex':'Claude'} login · ${parsed.name}`});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;await this.openSelected();}
+      catch(error){this.showNote(`login didn't start: ${error instanceof Error?error.message:'request failed'} · /account add again or /login`);}
+      return;
+    }
+    if(parsed.kind==='use'){
+      if(parsed.name!==OWN_ACCOUNT&&!find(parsed.name)){this.showNote(`no account ${parsed.name}`);return;}
+      const engine=parsed.name===OWN_ACCOUNT?this.engine:find(parsed.name)?.engine;
+      if(engine===undefined||engine==='ai-term'){this.showNote('/account use applies to Claude Code and Codex');return;}
+      this.engine=engine;this.auth={kind:'account',profile:parsed.name};this.showNote(`next agent: ${parsed.name===OWN_ACCOUNT?'own login':parsed.name} · ${engine==='codex'?'codex':'claude code'}`);return;
+    }
+    const account=find(parsed.name);
+    if(!account){this.showNote(`no account ${parsed.name}`);return;}
+    if(parsed.kind==='default'){await save({defaultAccounts:{...defaults,[account.engine]:account.name}},`✓ ${account.name} is the default ${account.engine==='codex'?'codex':'claude'} account`);return;}
+    const rest:Partial<Record<'claude-code'|'codex',string>>=Object.fromEntries(Object.entries(defaults).filter(([,name])=>name!==account.name));
+    // Only the name goes: the CLI's folder keeps its login until you log out there (AI Term never deletes it).
+    await save({accounts:accounts.filter(a=>a.name!==account.name),defaultAccounts:rest},`✓ account ${account.name} removed · its folder stays: ~/.ai-term/profiles/${account.name} (log out there first if you delete it)`);
+  }
   // v0.6.3 /handoff <agent> <claude|codex>: the D49 ask first (who writes the note, tokens, price), ⏎ then hands off.
   private async handoffCommand(argument:string):Promise<void>{
-    const words=argument.split(' '),last=words.pop()??'',engine=last==='claude'||last==='claude-code'?'claude-code':last==='codex'?'codex':null,name=words.join(' ');
-    if(!engine||!name){this.showNote('/handoff <agent> claude|codex');return;}
+    const words=argument.split(' '),target=parseHandoffTarget(words.pop()??''),engine=target?.engine??null,account=target?.account,name=words.join(' ');
+    if(!engine||!name){this.showNote('/handoff <agent> claude|codex[:account]');return;}
     // Like /send: a name two agents share is refused, never guessed.
     const named=this.sessions.filter(s=>s.title===name&&!['exited','error'].includes(s.status)),source=named[0];
     if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}
     if(!source){this.showNote(`no running agent named ${name}`);return;}
     let plan:import('../../shared/handoff.js').HandoffPlan;
-    try{plan=validateHandoffPlan((await this.connection.request({kind:'sessions.handoffPlan',sessionId:source.id,engine})).handoffPlan);}
+    try{plan=validateHandoffPlan((await this.connection.request({kind:'sessions.handoffPlan',sessionId:source.id,engine,...(account?{account}:{})})).handoffPlan);}
     catch(error){this.showNote(error instanceof Error?error.message:'Handoff unavailable');return;}
     const ask:HandoffAsk=new HandoffAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
       this.showNote(`◐ handing off ${source.title} → ${engine==='codex'?'codex':'claude code'}`);
       let result:SuccessResponse;
-      try{result=await this.connection.request({kind:'sessions.handoff',sessionId:source.id,engine,writer:plan.writer});}
+      try{result=await this.connection.request({kind:'sessions.handoff',sessionId:source.id,engine,writer:plan.writer,...(account?{account}:{})});}
       catch(error){this.showNote(`handoff stopped: ${error instanceof Error?error.message:'request failed'}`);return;}
       // From here the handoff happened; a problem showing it must not read as if it didn't.
       let session:SessionInfo|undefined,summary:import('../../shared/handoff.js').HandoffSummary|null=null;
@@ -676,7 +724,7 @@ export class Homepage {
   // the keys setting, so the start box always shows the engine the daemon will start.
   private async refreshSettings():Promise<void>{
     const settings=(await this.connection.request({kind:'settings.get'})).settings;
-    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;this.taskCost=settings?.taskCost!==false;this.presetsEnabled=settings?.presetsEnabled!==false;this.presets=settings?.presets??{};
+    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;this.taskCost=settings?.taskCost!==false;this.presetsEnabled=settings?.presetsEnabled!==false;this.presets=settings?.presets??{};this.accounts=settings?.accounts??[];
     if(this.auth.kind==='key'){const id=this.auth.keyId,provider=this.keys.find(k=>k.id===id)?.provider;if(provider){this.engine=keyEngine(provider,this.keysRunOn);this.compatibleDefaults(this.engine);}}
   }
   private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission))this.permission='ask';}
@@ -759,6 +807,7 @@ export class Homepage {
       else this.enqueue(async () => { b.completions = await completeFolder(b.path || b.cwd, b.cwd); if (b.completions.length === 1) b.path = b.completions[0] ?? b.path; this.draw(true); });
       this.draw(true); return;
     }
+    if (b.kind === 'start' && b.row !== 4 && key === 'a' && b.engine !== 'ai-term' && b.auth?.kind !== 'key') { this.nextAccount(b); this.draw(true); return; }
     if (b.kind === 'start' && b.row !== 4 && key === 'p' && this.presetsEnabled) { this.enqueue(async () => { await this.nextPreset(b); this.draw(true); }); return; }
     if (b.kind === 'start' && b.row !== 4 && (key === 'm' || key === 'c' || key==='e')) { b.kind = key === 'm' ? 'model' : key==='e'?'effort':'folder'; this.returnToStart = true;if(b.kind==='model')this.resetModelTabs();else if(b.kind==='effort')this.valueChoices();this.draw(true);return; }
     if (key === 'enter') {
@@ -883,6 +932,8 @@ export class Homepage {
       if(v.kind==='usage.updated'){this.usage=validateUsageSummary(v.usage);this.draw(true);return;}
       if (v.kind === 'session.updated') {
         const session = validateSession(v.session), index = this.sessions.findIndex(s => s.id === session.id);
+        // D53: a limit is said once, when it appears, with the choice; AI Term never switches accounts by itself.
+        if (session.limit && !this.sessions[index]?.limit) this.showNote(this.limitNote(session));
         if (index >= 0) this.sessions[index] = session; else this.sessions.push(session);
         if (!this.selectedId) { this.selectedId = session.id; this.enqueue(() => this.updatePreview(false)); }
       } else if (v.kind === 'session.previewResized') {

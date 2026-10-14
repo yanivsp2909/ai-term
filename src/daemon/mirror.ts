@@ -59,6 +59,12 @@ export class Mirror {
     }
     setAttached(attached: boolean): void { this.attached = attached; }
     write(data: string): Promise<void> { return new Promise(resolve => this.terminal.write(data, resolve)); }
+    // The visible screen's last rows as plain text (v0.6.4 limit detection): cheap, and only what the agent shows now.
+    tail(rows:number):string{
+        const buffer=this.terminal.buffer.active,lines:string[]=[],bottom=buffer.baseY+this.terminal.rows;
+        for(let row=Math.max(buffer.baseY,bottom-rows);row<bottom;row++)lines.push(buffer.getLine(row)?.translateToString(true)??'');
+        return lines.join('\n');
+    }
     plainText():{text:string;truncated:boolean} {
         const buffer=this.terminal.buffer.active,lines:string[]=[];let logical='';
         for(let row=0;row<buffer.length;row++){

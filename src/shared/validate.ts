@@ -1,4 +1,5 @@
 import { validatePresets } from './presets.js';
+import { isAccountChoice, validateAccounts, validateDefaultAccounts } from './accounts.js';
 import { isHandoffWriter } from './handoff.js';
 import { MCP_MAX_SERVERS, MCP_MAX_TOOLS, mcpTokens, type McpConfig, type McpServer, type McpCatalog, type McpRequest } from './mcp.js';
 import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DESCRIPTION_CHARS, catalogTokens, type ExtensionCatalog, type ExtensionFile } from './extensions.js';
@@ -143,8 +144,8 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['sessionId','text'];if(!isUUID(v.sessionId)||!isSendText(v.text))throw new ValidationError('Invalid send request');break;
         case 'sessions.handoffPlan':
         case 'sessions.handoff':
-            fields=v.kind==='sessions.handoff'?['sessionId','engine','writer']:['sessionId','engine'];
-            if(!isUUID(v.sessionId)||!isCliEngine(v.engine)||v.kind==='sessions.handoff'&&!isHandoffWriter(v.writer))throw new ValidationError('Invalid handoff request');break;
+            fields=v.kind==='sessions.handoff'?['sessionId','engine','writer','account']:['sessionId','engine','account'];
+            if(!isUUID(v.sessionId)||!isCliEngine(v.engine)||v.kind==='sessions.handoff'&&!isHandoffWriter(v.writer)||v.account!==undefined&&!isAccountChoice(v.account))throw new ValidationError('Invalid handoff request');break;
         case 'sessions.find':
             fields=['text'];if(!isFindQuery(v.text))throw new ValidationError('Invalid find request');break;
         case 'sessions.detach':
@@ -248,12 +249,12 @@ export const EFFORT_LEVELS:Record<import('./protocol.js').AgentEngine,readonly i
 export function isEffort(value:unknown):value is import('./protocol.js').Effort|null{return value===null||typeof value==='string'&&EFFORT_LEVELS.codex.includes(value as import('./protocol.js').Effort);}
 export function isEffortForEngine(engine:unknown,value:unknown):value is import('./protocol.js').Effort|null{return isAgentEngine(engine)&&isEffort(value)&&(value===null||EFFORT_LEVELS[engine].includes(value));}
 export function isPermissionForEngine(engine:unknown,value:unknown):value is import('./protocol.js').Permission{return isAgentEngine(engine)&&isPermission(value)&&(value!=='auto'||engine==='claude-code');}
-function isAccount(value: unknown): boolean { return !!value && typeof value === 'object' && Object.keys(value).length === 1 && 'kind' in value && value.kind === 'account'; }
+function isAccount(value: unknown): boolean { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const a = value as Record<string, unknown>; return a.kind === 'account' && (Object.keys(a).length === 1 || Object.keys(a).length === 2 && isAccountChoice(a.profile)); }
 export function sanitizeTitle(value: string): string { return [...stripVTControlCharacters(value).replace(/[\p{C}]/gu, '').trim()].slice(0,60).join(''); }
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -271,6 +272,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.contextWarning!==undefined&&typeof v.contextWarning!=='boolean')throw new ValidationError('Invalid context warning');
     if(v.taskCost!==undefined&&typeof v.taskCost!=='boolean')throw new ValidationError('Invalid task cost setting');
     if(v.handoff!==undefined&&typeof v.handoff!=='boolean')throw new ValidationError('Invalid handoff setting');
+    try{if(v.accounts!==undefined)validateAccounts(v.accounts);if(v.defaultAccounts!==undefined)validateDefaultAccounts(v.defaultAccounts);}catch{throw new ValidationError('Invalid accounts');}
     if(v.presetsEnabled!==undefined&&typeof v.presetsEnabled!=='boolean')throw new ValidationError('Invalid presets setting');
     if(v.presets!==undefined)validatePresets(v.presets);
     if(v.budgets!==undefined)validateBudgets(v.budgets);
@@ -301,9 +303,10 @@ export function validateSession(value: unknown): import('./protocol.js').Session
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || !(s.ctxPercent===null||isShare(s.ctxPercent)) || s.lastActivity!==undefined&&s.lastActivity!==null&&!isActivity(s.lastActivity) ||
-        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.handoffTo!==undefined&&!isTitle(s.handoffTo)) throw new ValidationError('Invalid daemon session');
+        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit)) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }
+function isLimit(value: unknown): boolean { return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 && 'resets' in value && (value.resets === null || typeof value.resets === 'string' && /^\d{2}:\d{2}$/.test(value.resets)); }
 function isTaskUsage(value: unknown): boolean {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const t = value as Record<string, unknown>, keys = Object.keys(t);

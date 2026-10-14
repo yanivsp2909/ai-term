@@ -37,6 +37,10 @@ import { checkEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
 import { BudgetLedger } from './budget-ledger.js';
+import { prepareProfile } from './accounts.js';
+import { parseLimit } from './limit-detect.js';
+import { OWN_ACCOUNT } from '../shared/accounts.js';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_RECORD_COST_USD } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
@@ -52,6 +56,7 @@ interface Live {
     mirrorFailed?:boolean;
     statusState?:StatusState;
     lastReply?:string;
+    limitTimer?:ReturnType<typeof setTimeout>;
     codexRun?:CodexRun;
     pasting?:boolean;
     outputClock?:OutputClock;
@@ -65,6 +70,8 @@ interface Live {
     agentModels?:string[];
 }
 const TASK_UPDATE_MS=1000;
+// v0.6.4: limit checks wait for output to settle, and read only the visible screen (up to 60 rows), never the scrollback.
+const LIMIT_CHECK_MS=1000,LIMIT_ROWS=60;
 // v0.6.3: a new engine has this long to start; a keyed summary this long to answer; an agent this long to write its note.
 export const HANDOFF_NOT_STARTED="The new agent didn't start; the old one keeps running";
 export const HANDOFF_NOT_STARTED_PAID="The new agent didn't start; the old one keeps running · the note's tokens were spent";
@@ -227,7 +234,8 @@ export class SessionManager extends EventEmitter {
         if(saved.engine==='claude-code'&&!saved.conversationId)throw new Error('This older Claude agent has no conversation ID');
         if(saved.conversationId&&this.list().some(s=>s.conversationId===saved.conversationId&&!['exited','error'].includes(s.status)))throw new Error('Conversation already running');
         const identity=saved.conversationId??saved.id;if(this.resuming.has(identity))throw new Error('Conversation already starting');
-        const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const};
+        // A finished agent restarts on the account it ran on, not on whatever is the default now.
+            const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const,profile:saved.auth.profile??OWN_ACCOUNT};
         // A resume and a delete of one worktree exclude each other until the other has finished.
         if(saved.worktree&&this.busyWorktrees.has(saved.worktree))throw new Error('Worktree is busy');
         this.resuming.add(identity);if(saved.worktree)this.busyWorktrees.add(saved.worktree);
@@ -249,9 +257,10 @@ export class SessionManager extends EventEmitter {
                 if(this.list().some(s=>s.worktree===saved.worktree&&!['exited','error'].includes(s.status)))throw new Error('Worktree in use by a running agent');
                 if(!this.worktreeRecords.has(saved.worktree)||!(await validCwd(saved.cwd)))throw new Error('Its worktree is gone');
             }else if(!(await validCwd(saved.cwd)))throw new Error('Its folder is gone');
-            const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const};
+            // A finished agent restarts on the account it ran on, not on whatever is the default now.
+            const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const,profile:saved.auth.profile??OWN_ACCOUNT};
             // A login session retries as the same login; an empty continuation keeps an agent that ran in place there.
-            next=await this.create(saved.engine==='shell'?{cwd:saved.cwd,title:saved.title}:saved.login?{engine:saved.engine,model:null,auth:{kind:'account'},cwd:saved.cwd,permission:'ask',login:true,title:saved.title}:{engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{});
+            next=await this.create(saved.engine==='shell'?{cwd:saved.cwd,title:saved.title}:saved.login?{engine:saved.engine,model:null,auth:{kind:'account',profile:saved.auth.kind==='account'?saved.auth.profile??OWN_ACCOUNT:OWN_ACCOUNT},cwd:saved.cwd,permission:'ask',login:true,title:saved.title}:{engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{});
         }finally{this.retrying.delete(id);if(saved.worktree)this.busyWorktrees.delete(saved.worktree);}
         try{await this.remove(id);}catch{this.log.error('Retried agent: old record could not be removed');}
         return next;
@@ -264,7 +273,17 @@ export class SessionManager extends EventEmitter {
         // Read once per start: AI Term's agent takes the theme, and worktrees decide isolation below. Unreadable settings
         // keep the defaults (ask, worktrees on, keys on AI Term's agent).
         let settings: Settings | null = null;
-        if (agent && !agent.login) { try { settings = await new SettingsStore(this.paths.root).get(); } catch { this.log.error('Settings unreadable; new agents keep their worktrees'); } }
+        if (agent) { try { settings = await new SettingsStore(this.paths.root).get(); } catch { this.log.error('Settings unreadable; new agents keep their worktrees'); } }
+        // v0.6.4 (D53): an account agent runs on the profile it names, else the engine's default account, else your normal
+        // login (`own`). A profile must exist for that engine; its folder is made private before the CLI sees it.
+        let profile:string|undefined,profilePath:string|undefined;
+        if(agent&&agent.engine!=='ai-term'&&agent.auth.kind==='account'){
+            const choice=agent.auth.profile??settings?.defaultAccounts?.[agent.engine];
+            if(choice&&choice!==OWN_ACCOUNT){
+                if(!(settings?.accounts??[]).some(a=>a.name===choice&&a.engine===agent.engine))throw new Error('Account not found for this engine');
+                profile=choice;profilePath=await prepareProfile(this.paths.root,agent.engine,choice,homedir());
+            }
+        }
         const conversationId=agent?.engine==='claude-code'&&!agent.login?(continuation?.conversationId??randomUUID()):undefined;
         // Status is not billing: subscription and key sessions both report it. Login sessions only sign in.
         const withStatus=Boolean(agent&&!agent.login&&this.usage);
@@ -286,7 +305,7 @@ export class SessionManager extends EventEmitter {
             recipe={executable:process.execPath,args:[],env:{}};
         } else if (agent) {
             const engine=agent.engine;
-            const status = await checkEngine(engine);
+            const status = await checkEngine(engine,process.env,undefined,profilePath);
             if (!status.installed || !status.path) throw new Error(`${agent.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`);
             if (agent.auth.kind==='account' && !agent.login && status.loggedIn !== true) throw new Error(status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable');
             authMethod = status.authMethod;
@@ -296,11 +315,11 @@ export class SessionManager extends EventEmitter {
                 if(key.provider==='foundry'&&(!agent.model||!key.deployments?.includes(agent.model)||!key.lastTest?.some(r=>r.model===agent.model&&r.status==='ready')))throw new KeyError('Foundry deployment must pass its test first');
                 authMethod='api-key';
                 recipe={executable:status.path,args:buildArgs({...agent,...argvRequest,engine,...(key.provider==='foundry'?{foundryEndpoint:key.endpoint}:{}),...(key.provider==='openai'?{openaiKey:true}:{})}),env:{}};
-            }else recipe = { executable: status.path, args: agent.login ? (engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false','login']:['auth','login']) : buildArgs({...agent,...argvRequest,engine}), env: buildSpawnEnv(engine, {kind:'account'}, process.env, {keepElectronNode:electronNodeNeeded(process.execPath,process.versions.electron)}) };
+            }else recipe = { executable: status.path, args: agent.login ? (engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false','login']:['auth','login']) : buildArgs({...agent,...argvRequest,engine}), env: buildSpawnEnv(engine, {kind:'account'}, process.env, {keepElectronNode:electronNodeNeeded(process.execPath,process.versions.electron),...(profilePath?{profileDir:profilePath}:{})}) };
         } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
-        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
+        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account',...(profile?{profile}:{}) }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
             // Isolation is the default: settings that can't be read keep it on rather than quietly turning it off.
@@ -373,6 +392,7 @@ export class SessionManager extends EventEmitter {
                 live.output = live.output.then(async () => {
                     if(live.mirrorFailed)return;
                     await live.mirror.write(data);
+                    this.scheduleLimitCheck(live);
                     info.lastOutputAt = new Date().toISOString();
                     if (info.status === 'starting'&&(!live.statusState||live.statusState.status==='starting')) {
                         // PTY output is not an ingress event: preserve its sequence while making the same startup transition in both records.
@@ -399,7 +419,7 @@ export class SessionManager extends EventEmitter {
                 });
             });
             host.pty.onExit(event => {
-                this.usage?.revoke(info.id);this.trackRelease(info.id);live.outputClock?.dispose();void this.mcp.stop(info.id).catch(()=>this.log.error('MCP session stop failed'));
+                this.usage?.revoke(info.id);this.trackRelease(info.id);if(live.limitTimer){clearTimeout(live.limitTimer);live.limitTimer=undefined;}live.outputClock?.dispose();void this.mcp.stop(info.id).catch(()=>this.log.error('MCP session stop failed'));
                 // Set terminal precedence synchronously: queued hook bodies must not win a process-exit race.
                 if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:live.statusState.seq+1,at:new Date().toISOString(),kind:'exit',status:'exited',detail:'exited',exitCode:event.exitCode});
                 live.output = live.output.then(async () => {
@@ -479,6 +499,19 @@ export class SessionManager extends EventEmitter {
         const usage=this.usage?.summary(),budgets={daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null};
         return ledger.reserve({sessionId:id,provider:key.provider,model:raw.model,amountUsd:amount},budgets,{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
     }
+    // v0.6.4 (D53): a second after output settles, the agent's visible screen is read for an account limit. It is only
+    // shown (card, homepage note); AI Term never switches accounts by itself.
+    private scheduleLimitCheck(live:Live):void{
+        if(live.limitTimer||!['claude-code','codex'].includes(live.info.engine))return;
+        live.limitTimer=setTimeout(()=>{live.limitTimer=undefined;this.checkLimit(live);},LIMIT_CHECK_MS);live.limitTimer.unref();
+    }
+    private checkLimit(live:Live):void{
+        if(live.mirrorFailed||this.shutDown||!this.sessions.has(live.info.id))return;
+        const found=parseLimit(live.mirror.tail(LIMIT_ROWS)),before=live.info.limit;
+        if(found?.resets===before?.resets&&!!found===!!before)return;
+        if(found)live.info.limit=found;else delete live.info.limit;
+        this.event({kind:'session.updated',session:{...live.info}});void this.persist();
+    }
     private trackRelease(id:string):void{
         const release=this.ledger?.releaseSession(id);if(!release)return;
         this.releases.add(release);void release.finally(()=>this.releases.delete(release));
@@ -486,14 +519,20 @@ export class SessionManager extends EventEmitter {
     setHandoffWriter(writer:{prices:PriceSnapshot;summarize:Summarize}):void{this.handoffWriter=writer;}
     // v0.6.3 (D55, off by default): only an AI agent that isn't waiting on you or running a tool, to a CLI that is installed
     // and logged in. Account logins only: a key never moves between engines.
-    private async handoffSource(id:string,engine:CliEngine):Promise<{live:Live;settings:Settings}>{
+    private async handoffSource(id:string,engine:CliEngine,account?:string):Promise<{live:Live;settings:Settings}>{
         const settings=await new SettingsStore(this.paths.root).get();
         if(settings.handoff!==true)throw new Error('Handoff is off · /settings g turns it on (it spends tokens)');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         if(live.info.engine==='shell'||live.info.login)throw new Error('Only an AI agent can hand off');
         await this.caughtUp(live);
         this.handoffBusy(live);
-        const target=await checkEngine(engine);
+        // v0.6.4: onto another account of yours (D53); its login is checked in its own folder.
+        let profilePath:string|undefined;
+        if(account&&account!==OWN_ACCOUNT){
+            if(!(settings.accounts??[]).some(a=>a.name===account&&a.engine===engine))throw new Error('Account not found for this engine');
+            profilePath=await prepareProfile(this.paths.root,engine,account,homedir());
+        }
+        const target=await checkEngine(engine,process.env,undefined,profilePath);
         if(!target.installed||!target.path)throw new Error(`${engine==='codex'?'codex':'claude'} not found in PATH`);
         if(target.loggedIn!==true)throw new Error(target.loggedIn===false?'Engine is not logged in':'Engine login status unavailable');
         return {live,settings};
@@ -506,18 +545,19 @@ export class SessionManager extends EventEmitter {
         if(live.info.status==='waiting'&&live.info.statusDetail==='question')throw new Error('Agent is asking a question');
         if((live.statusState?.toolsInFlight??0)>0)throw new Error('Agent is running a tool');
     }
-    async handoffPlan(id:string,engine:CliEngine):Promise<HandoffPlan>{
-        const {live,settings}=await this.handoffSource(id,engine),screen=(await this.text(id)).text;
-        return handoffPlan(live.info.title,engine,screen,cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices),live.info.authMethod==='subscription');
+    async handoffPlan(id:string,engine:CliEngine,account?:string):Promise<HandoffPlan>{
+        const {live,settings}=await this.handoffSource(id,engine,account),screen=(await this.text(id)).text;
+        const plan=handoffPlan(live.info.title,engine,screen,cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices),live.info.authMethod==='subscription');
+        return account?{...plan,account}:plan;
     }
     // The note is written first, then the new agent starts in the same folder or worktree with it as its first message;
     // the old agent is stopped only once the new one is running. `approved` is the writer the user saw in the ask (D49).
-    async handoff(id:string,engine:CliEngine,approved?:HandoffWriter):Promise<{session:SessionInfo;summary:HandoffSummary|null;oldKeptRunning:boolean}>{
+    async handoff(id:string,engine:CliEngine,approved?:HandoffWriter,account?:string):Promise<{session:SessionInfo;summary:HandoffSummary|null;oldKeptRunning:boolean}>{
         // Taken before the first await, so a second request (another client, a double ⏎) is refused rather than run twice.
         if(this.handingOff.has(id))throw new Error('Handoff already running');
         this.handingOff.add(id);
         try{
-            const {live,settings}=await this.handoffSource(id,engine);
+            const {live,settings}=await this.handoffSource(id,engine,account);
             const screen=(await this.text(id)).text,writer=cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices);
             if(approved&&!sameWriter(approved,writer))throw new Error('The summary writer changed; run /handoff again');
             const written=writer?await this.keyedSummary(id,live,engine,screen,writer,settings):{text:await this.agentSummary(live,engine),summary:null};
@@ -525,7 +565,7 @@ export class SessionManager extends EventEmitter {
             if(['exited','error'].includes(live.info.status))throw new Error('Agent exited before the handoff finished');
             const title=[...`${live.info.title} · ${engineLabel(engine)}`].slice(0,60).join('');
             const continuation=live.info.worktree?{worktree:live.info.worktree,...(live.info.branch?{branch:live.info.branch}:{})}:{};
-            const next=await this.create({engine,model:null,auth:{kind:'account'},cwd:live.info.cwd,permission:'ask',title,firstMessage:handoffMessage(live.info.title,written.text)},continuation);
+            const next=await this.create({engine,model:null,auth:{kind:'account',...(account?{profile:account}:{})},cwd:live.info.cwd,permission:'ask',title,firstMessage:handoffMessage(live.info.title,written.text)},continuation);
             for(let waited=0;;waited+=100){
                 const status=this.get(next.id).status;
                 if(['running','waiting','done'].includes(status))break;

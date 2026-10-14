@@ -25,10 +25,13 @@ export const CODEX_AUTH_VARS = ['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_UR
 // D41: a Codex account config may route Azure through AZURE_OPENAI_API_KEY, so account sessions keep it. A key session still gets only its own key (D16).
 const CODEX_KEY_EXTRA_VARS = ['AZURE_OPENAI_API_KEY'] as const;
 // Key rows are pure/tested only. No v0.1.6 handler accepts a key or invokes these rows.
-export function buildSpawnEnv(engine: CliEngine, auth: {kind:'account'} | {kind:'key';secret:string;provider?:'openai'}, base: NodeJS.ProcessEnv, options: {keepElectronNode?: boolean} = {}): Record<string,string> {
+// profileDir (v0.6.4, D53): an account profile's own config folder; the CLI keeps that account's login there (Claude Code
+// also keys its Keychain entry to it). Set only here, and AI Term never reads what the CLI writes into it.
+export function buildSpawnEnv(engine: CliEngine, auth: {kind:'account'} | {kind:'key';secret:string;provider?:'openai'}, base: NodeJS.ProcessEnv, options: {keepElectronNode?: boolean; profileDir?: string} = {}): Record<string,string> {
     const result=buildShellEnv(base,options), vars:readonly string[]=engine==='claude-code'?CLAUDE_AUTH_VARS:auth.kind==='key'?[...CODEX_AUTH_VARS,...CODEX_KEY_EXTRA_VARS]:CODEX_AUTH_VARS;
     for(const key of Object.keys(result))if(vars.some(pattern=>pattern.endsWith('*')?key.startsWith(pattern.slice(0,-1)):key===pattern))delete result[key];
     if(auth.kind==='key')result[engine==='claude-code'?'ANTHROPIC_API_KEY':auth.provider==='openai'?'OPENAI_API_KEY':'AITERM_FOUNDRY_KEY']=auth.secret;
+    if(auth.kind==='account'&&options.profileDir)result[engine==='claude-code'?'CLAUDE_CONFIG_DIR':'CODEX_HOME']=options.profileDir;
     return result;
 }
 // D40: Ask passes explicit ask flags, or the user's own CLI config (e.g. Codex YOLO) silently turns Ask into Don't ask. Claude 2.1.296 help lists this mode as 'manual'; the CLI maps 'manual' to its canonical 'default'.

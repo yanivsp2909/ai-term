@@ -18,8 +18,9 @@ export async function resolveExecutable(name:string,path:string):Promise<string|
 export interface EngineRunResult {code:number|null;stdout:string;stderr:string}
 export type EngineRunner=(file:string,args:string[],options:{env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number})=>Promise<EngineRunResult>;
 const run:EngineRunner=(file,args,options)=>new Promise(resolve=>execFile(file,args,options,(error,stdout,stderr)=>resolve({code:error?typeof error.code==='number'?error.code:null:0,stdout,stderr})));
-export async function checkEngine(engine:CliEngine,base:NodeJS.ProcessEnv=process.env,runner:EngineRunner=run):Promise<EngineStatus>{
-    const env=buildSpawnEnv(engine,{kind:'account'},base), name=engine==='claude-code'?'claude':'codex';
+// profileDir (v0.6.4): check that account profile's login, not your normal one.
+export async function checkEngine(engine:CliEngine,base:NodeJS.ProcessEnv=process.env,runner:EngineRunner=run,profileDir?:string):Promise<EngineStatus>{
+    const env=buildSpawnEnv(engine,{kind:'account'},base,profileDir?{profileDir}:{}), name=engine==='claude-code'?'claude':'codex';
     let path:string|null;
     try{path=await resolveExecutable(name,env.PATH??'');}catch{return {installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown',error:'Engine executable check failed'};}
     if(!path)return {installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown'};

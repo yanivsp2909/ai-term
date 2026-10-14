@@ -14,7 +14,7 @@ export const HANDOFF_ENGINES: readonly CliEngine[] = ['claude-code', 'codex'];
 export type HandoffWriter = { kind: 'key'; provider: KeyProvider; model: string; keyLabel: string; last4: string } | { kind: 'agent' };
 // What /handoff shows before anything runs (D49): who writes the summary, a token range and a price range (null when the
 // writer is the agent itself on a subscription or no price is known; then "uses your plan's limits" or "price ?").
-export interface HandoffPlan { source: string; engine: CliEngine; writer: HandoffWriter; inputTokens: { low: number; high: number }; outputTokens: { low: number; high: number }; priceUsd: { low: number; high: number } | null; subscription: boolean }
+export interface HandoffPlan { source: string; engine: CliEngine; account?: string; writer: HandoffWriter; inputTokens: { low: number; high: number }; outputTokens: { low: number; high: number }; priceUsd: { low: number; high: number } | null; subscription: boolean }
 export function handoffInstructions(target: CliEngine): string {
   return `You are handing this work over to ${target === 'codex' ? 'Codex' : 'Claude Code'}, which starts fresh in the same folder and git worktree and sees nothing of this conversation. Write a handoff note with exactly these sections, short and concrete: ${HANDOFF_SECTIONS.map(s => `## ${s}`).join(', ')}. Name real files and commands. Do not include secrets, keys or tokens.`;
 }
@@ -46,7 +46,7 @@ export function isHandoffWriter(value: unknown): value is HandoffWriter {
 export function validateHandoffPlan(value: unknown): HandoffPlan {
   const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
   const writerOk = isHandoffWriter(p?.writer);
-  if (!p || Object.keys(p).length !== 7 || typeof p.source !== 'string' || p.source.length > 60 || !HANDOFF_ENGINES.includes(p.engine as CliEngine) || !writerOk || !isRange(p.inputTokens) || !isRange(p.outputTokens) || !(p.priceUsd === null || isRange(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid handoff plan');
+  if (!p || Object.keys(p).length !== (p.account === undefined ? 7 : 8) || p.account !== undefined && (typeof p.account !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(p.account)) || typeof p.source !== 'string' || p.source.length > 60 || !HANDOFF_ENGINES.includes(p.engine as CliEngine) || !writerOk || !isRange(p.inputTokens) || !isRange(p.outputTokens) || !(p.priceUsd === null || isRange(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid handoff plan');
   return p as unknown as HandoffPlan;
 }
 export interface HandoffSummary { inputTokens: number; outputTokens: number; costUsd: number | null }

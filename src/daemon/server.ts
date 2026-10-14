@@ -292,10 +292,10 @@ export class DaemonServer {
                     break;
                 }
                 case 'sessions.handoffPlan':
-                    this.control(peer,{id:request.id,ok:true,handoffPlan:await this.manager.handoffPlan(request.sessionId,request.engine)});
+                    this.control(peer,{id:request.id,ok:true,handoffPlan:await this.manager.handoffPlan(request.sessionId,request.engine,request.account)});
                     break;
                 case 'sessions.handoff': {
-                    const handed=await this.manager.handoff(request.sessionId,request.engine,request.writer);
+                    const handed=await this.manager.handoff(request.sessionId,request.engine,request.writer,request.account);
                     this.control(peer,{id:request.id,ok:true,session:handed.session,handoffSummary:handed.summary,handoffOldRunning:handed.oldKeptRunning});
                     break;
                 }
@@ -327,7 +327,7 @@ export class DaemonServer {
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const fixed = new Set([
                 'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
-                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping',
+                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine',
                 'Resume needs a finished agent','A shell has no AI conversation to resume','This older Claude agent has no conversation ID',
                 'Conversation already running','Conversation already starting','Invalid session request','Invalid session or title',
                 'Invalid preview size','Invalid attach','Session unavailable','Invalid resize','Not attached',
