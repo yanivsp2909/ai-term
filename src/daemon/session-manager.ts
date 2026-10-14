@@ -285,7 +285,8 @@ export class SessionManager extends EventEmitter {
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
             // Isolation is the default: settings that can't be read keep it on rather than quietly turning it off.
-            const isolate=settings?.worktrees!=='off';
+            // v0.6.2: a preset's own worktree choice wins for this one agent.
+            const isolate='useWorktree' in request&&request.useWorktree!==undefined?request.useWorktree:settings?.worktrees!=='off';
             if(isolate){
                 try {
                     const {repo,baseBranch,baseCommit,...start}=await prepareWorktree(this.paths.root,request.cwd,info.title,text=>this.log.error(text));Object.assign(info,start);

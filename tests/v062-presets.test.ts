@@ -35,8 +35,8 @@ it('settings store presets by name with the existing validators: names, count an
 
 it('sessions.create takes a worktree on/off for this one agent', async () => {
   const cwd = await folder();
-  expect((await validateRequest({ id: '1', kind: 'sessions.create', engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd, permission: 'ask', worktree: false })).kind).toBe('sessions.create');
-  await expect(validateRequest({ id: '1', kind: 'sessions.create', engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd, permission: 'ask', worktree: 'no' })).rejects.toThrow();
+  expect((await validateRequest({ id: randomUUID(), kind: 'sessions.create', engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd, permission: 'ask', useWorktree: false })).kind).toBe('sessions.create');
+  await expect(validateRequest({ id: randomUUID(), kind: 'sessions.create', engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd, permission: 'ask', useWorktree: 'no' })).rejects.toThrow();
 });
 
 it('/preset parses save, use, list and rm; a gone key or folder is a one-line reason', async () => {
@@ -86,12 +86,36 @@ it('/preset save keeps the next agent\'s setup; /preset <name> opens the start b
     await shows(tty, 'preset         nightly · worktree off');
     await shows(tty, "! don't ask");
     enter(tty);
-    await vi.waitFor(() => expect(client.requests.find(r => r.kind === 'sessions.create')).toMatchObject({ cwd, permission: 'dontAsk', worktree: false, firstMessage: 'fix the flaky test', model: 'sonnet', effort: 'high' }));
+    await vi.waitFor(() => expect(client.requests.find(r => r.kind === 'sessions.create')).toMatchObject({ cwd, permission: 'dontAsk', useWorktree: false, firstMessage: 'fix the flaky test', model: 'sonnet', effort: 'high' }));
     type(tty, '/preset rm nightly'); enter(tty);
     await shows(tty, '✓ preset nightly removed');
     expect(client.settings.presets).toEqual({});
     client.settings = { ...client.settings, presetsEnabled: false };
-    type(tty, '/preset'); enter(tty);
+    // The command menu's Enter first completes `/preset ` (it takes arguments); the second runs it.
+    type(tty, '/preset'); enter(tty); enter(tty);
     await shows(tty, 'presets are off · /settings s turns them on');
   } finally { await home.stop(); }
+});
+
+it('in the start box p steps through saved presets; a preset whose folder is gone says why and is skipped', async () => {
+  const cwd = await folder(), tty = new TTY(), client = new Client(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd, terminalProgram: 'unknown' });
+  client.settings = { theme: 'graphite', presets: { alpha: preset({ cwd, model: 'opus', worktree: false }), beta: preset({ cwd: join(cwd, 'gone') }) } };
+  await home.start();
+  try {
+    type(tty, 'a task'); enter(tty);
+    await shows(tty, 'Start a new agent');
+    type(tty, 'p'); await shows(tty, 'preset         alpha · worktree off'); await shows(tty, 'opus · claude code');
+    type(tty, 'p'); await shows(tty, '✗ preset beta: folder '); await shows(tty, 'preset         alpha · worktree off');
+    type(tty, 'p'); await vi.waitFor(async () => expect(await screen(tty)).not.toContain('✗ preset beta'));
+  } finally { await home.stop(); }
+});
+
+import { CredentialsPanel } from '../src/client/tui/credentials.js';
+it('/settings has its own switch for presets, on by default; s toggles it', async () => {
+  let settings: Settings = { theme: 'graphite' };
+  const panel = new CredentialsPanel('settings', { request: async body => { if (body.kind === 'settings.set') settings = { ...settings, ...body.patch }; return { id: randomUUID(), ok: true, settings, keys: [] }; }, changed() {}, close() {}, login: async () => {}, defaults() {}, theme: async () => {}, caps: vi.fn() });
+  await panel.load();
+  expect(panel.lines().join('\n')).toContain('presets: on · /preset (s)');
+  await panel.key('s'); expect(settings.presetsEnabled).toBe(false);
+  expect(panel.lines().join('\n')).toContain('presets: off · /preset (s)');
 });

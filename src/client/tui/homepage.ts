@@ -41,6 +41,8 @@ import { MAX_PANES } from '../split-layout.js';
 import { FindPanel } from './find-panel.js';
 import { TextPanel } from './text-panel.js';
 import { usageDetailLines } from './usage-details.js';
+import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
+import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.js';
 import { openFolder, OpenError, type FolderApp } from './open-folder.js';
 import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-command.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
@@ -87,6 +89,9 @@ export class Homepage {
   private keysRunOn: KeysRunOn = 'ai-term';
   private contextWarning = true;
   private taskCost = true;
+  // v0.6.2 presets (D55, on by default): cached from settings for the start box's p key.
+  private presetsEnabled = true;
+  private presets: Record<string, Preset> = {};
   private model: string | null = null;
   private folder: string;
   private worktrees:'on'|'off'='on';
@@ -146,7 +151,7 @@ export class Homepage {
       this.options.controls?.on('command', this.onAppCommand);
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
-      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;this.taskCost=settings.taskCost!==false;
+      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;this.taskCost=settings.taskCost!==false;this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};
       this.budgets=validateBudgets(settings.budgets??{});
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
@@ -544,8 +549,67 @@ export class Homepage {
     if (text.startsWith('/theme')) { this.showNote('/theme graphite|slate|ink|auto|light'); return; }
     if (text === '/model' || text === '/cd') { this.engines=(await this.connection.request({kind:'engines.status'})).engines;this.keys=(await this.connection.request({kind:'keys.list'})).keys??[]; this.openBox(text === '/model' ? 'model' : 'folder'); return; }
     if (text==='/settings'||text==='/login') { await this.openCredentials(text==='/settings'?'settings':'login'); return; }
+    if (command==='/preset') { await this.presetCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
+  }
+  // v0.6.2 /preset: save the next agent's setup, open the start box with one, list them, remove one.
+  private async presetCommand(text:string):Promise<void>{
+    const parsed=parsePresetCommand(text);
+    if(parsed.kind==='error'){this.showNote(parsed.text);return;}
+    let settings:import('../../shared/protocol.js').Settings;
+    try{settings=validateSettings((await this.connection.request({kind:'settings.get'})).settings);}catch{this.showNote('presets unavailable: settings could not be read');return;}
+    this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};
+    if(!this.presetsEnabled){this.showNote('presets are off · /settings s turns them on');return;}
+    const presets=this.presets;
+    try{this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];}catch(error){this.showNote(`presets unavailable: ${error instanceof Error?error.message:'key list could not be read'}`);return;}
+    if(parsed.kind==='list'){
+      const lines=presetLines(presets,this.keys);
+      if(!lines.length){this.showNote("no presets yet · /preset save <name> keeps the next agent's setup");return;}
+      const panel:TextPanel=new TextPanel('Presets',()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
+      this.popup=panel;panel.set([...lines.map(line=>({text:line,tone:'ink-2' as const})),{text:'/preset <name> opens the start box · /preset rm <name>',tone:'ink-3'}]);return;
+    }
+    if(parsed.kind==='rm'){
+      if(!presets[parsed.name]){this.showNote(`no preset ${parsed.name}`);return;}
+      const rest=Object.fromEntries(Object.entries(presets).filter(([name])=>name!==parsed.name));
+      try{await this.connection.request({kind:'settings.set',patch:{presets:rest}});this.presets=rest;this.showNote(`✓ preset ${parsed.name} removed`);}catch(error){this.showNote(`preset not removed: ${error instanceof Error?error.message:'settings could not be saved'}`);}
+      return;
+    }
+    if(parsed.kind==='save'){
+      if(!presets[parsed.name]&&Object.keys(presets).length>=MAX_PRESETS){this.showNote(`at most ${MAX_PRESETS} presets · /preset rm one first`);return;}
+      let preset:Preset;
+      try{preset=validatePreset({engine:this.engine,model:this.model,effort:this.effort??null,auth:this.auth,permission:this.permission,cwd:this.folder,worktree:this.worktrees!=='off',...(parsed.firstMessage?{firstMessage:parsed.firstMessage}:{})});}
+      catch{this.showNote('preset not saved: the next agent setup or first message is not valid for a preset');return;}
+      const next={...presets,[parsed.name]:preset};
+      try{await this.connection.request({kind:'settings.set',patch:{presets:next}});this.presets=next;}catch(error){this.showNote(`preset not saved: ${error instanceof Error?error.message:'settings could not be saved'}`);return;}
+      this.showNote(`✓ preset ${parsed.name} saved${preset.permission==='dontAsk'?" · ! don't ask":''}`);return;
+    }
+    const preset=presets[parsed.name];
+    if(!preset){this.showNote(`no preset ${parsed.name} · /preset lists them`);return;}
+    const problem=await presetProblem(parsed.name,preset,this.keys);
+    if(problem){this.showNote(problem);return;}
+    this.applyPreset(parsed.name,preset);
+    await this.checkSelectedEngine();
+  }
+  // Start box p: the next saved preset by name (wrapping). One whose key or folder is gone says why and is skipped over.
+  private async nextPreset(b:AgentBox):Promise<void>{
+    const names=Object.keys(this.presets).sort(),name=names[(names.indexOf(b.presetCursor??b.preset??'')+1)%Math.max(1,names.length)];
+    const preset=name===undefined?undefined:this.presets[name];
+    if(name===undefined||!preset){b.error='no presets yet · /preset save <name>';return;}
+    b.presetCursor=name;
+    const problem=await presetProblem(name,preset,this.keys);
+    if(problem){b.error=problem;return;}
+    b.preset=name;
+    this.engine=preset.engine;this.model=preset.model;this.effort=preset.effort;this.auth=preset.auth;this.permission=preset.permission;this.folder=preset.cwd;
+    Object.assign(b,{engine:preset.engine,model:preset.model,effort:preset.effort,auth:preset.auth,permission:preset.permission,cwd:preset.cwd,useWorktree:preset.worktree,error:'',authLabel:this.nextAuthLabel()});
+    if(preset.firstMessage!==undefined){b.message=preset.firstMessage;if(b.messageField)b.messageField.text=preset.firstMessage;}
+    await this.checkSelectedEngine();
+  }
+  // The start box takes the preset as it was saved; ⏎ starts it, Esc keeps editing. Don't ask shows in red as always.
+  private applyPreset(name:string,preset:Preset):void{
+    this.engine=preset.engine;this.model=preset.model;this.effort=preset.effort;this.auth=preset.auth;this.permission=preset.permission;this.folder=preset.cwd;
+    this.openBox('start',preset.firstMessage??'');
+    if(this.box){this.box.preset=name;this.box.useWorktree=preset.worktree;}
   }
   private async openCredentials(kind:'login'|'settings'):Promise<void>{await this.createCredentials(kind).load();}
   private createCredentials(kind:'login'|'settings'):CredentialsPanel{
@@ -570,7 +634,7 @@ export class Homepage {
   // the keys setting, so the start box always shows the engine the daemon will start.
   private async refreshSettings():Promise<void>{
     const settings=(await this.connection.request({kind:'settings.get'})).settings;
-    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;this.taskCost=settings?.taskCost!==false;
+    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;this.taskCost=settings?.taskCost!==false;this.presetsEnabled=settings?.presetsEnabled!==false;this.presets=settings?.presets??{};
     if(this.auth.kind==='key'){const id=this.auth.keyId,provider=this.keys.find(k=>k.id===id)?.provider;if(provider){this.engine=keyEngine(provider,this.keysRunOn);this.compatibleDefaults(this.engine);}}
   }
   private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission))this.permission='ask';}
@@ -653,6 +717,7 @@ export class Homepage {
       else this.enqueue(async () => { b.completions = await completeFolder(b.path || b.cwd, b.cwd); if (b.completions.length === 1) b.path = b.completions[0] ?? b.path; this.draw(true); });
       this.draw(true); return;
     }
+    if (b.kind === 'start' && b.row !== 4 && key === 'p' && this.presetsEnabled) { this.enqueue(async () => { await this.nextPreset(b); this.draw(true); }); return; }
     if (b.kind === 'start' && b.row !== 4 && (key === 'm' || key === 'c' || key==='e')) { b.kind = key === 'm' ? 'model' : key==='e'?'effort':'folder'; this.returnToStart = true;if(b.kind==='model')this.resetModelTabs();else if(b.kind==='effort')this.valueChoices();this.draw(true);return; }
     if (key === 'enter') {
       this.enqueue(async () => {
@@ -687,7 +752,7 @@ export class Homepage {
         }
         if (b.checking || b.error) return;
         try {
-          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message});
+          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message,...(b.useWorktree!==undefined?{useWorktree:b.useWorktree}:{})});
           const session = validateSession(result.session); this.sessions = [session,...this.sessions.filter(s => s.id !== session.id)]; this.selectedId = session.id;
           this.box = undefined;this.permission='ask'; this.field.text = ''; this.previewCells = undefined; await this.updatePreview(false);
         } catch (error) { b.error = error instanceof Error ? error.message : 'Agent could not start'; }

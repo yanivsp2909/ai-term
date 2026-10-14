@@ -1,3 +1,4 @@
+import { validatePresets } from './presets.js';
 import { MCP_MAX_SERVERS, MCP_MAX_TOOLS, mcpTokens, type McpConfig, type McpServer, type McpCatalog, type McpRequest } from './mcp.js';
 import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DESCRIPTION_CHARS, catalogTokens, type ExtensionCatalog, type ExtensionFile } from './extensions.js';
 import { isAgentCaps } from './agent-facts.js';
@@ -116,10 +117,12 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if(!isSafeAbsolutePath(v.path)||v.kind==='worktrees.delete'&&(!isFingerprint(v.fingerprint)||v.confirm!==undefined&&!isWorktreeBranch(v.confirm)))throw new ValidationError('Invalid worktree request');
             break;
         case 'sessions.create':
-            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login'];
+            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login','useWorktree'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
             if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermissionForEngine(v.engine,v.permission) || v.effort !== undefined && !isEffortForEngine(v.engine,v.effort) || (v.firstMessage !== undefined && !isFirstMessage(v.firstMessage)))) throw new ValidationError('Invalid account agent request');
             if (v.engine === 'ai-term' && (!v.auth || typeof v.auth !== 'object' || !('kind' in v.auth) || v.auth.kind !== 'key' || v.login !== undefined)) throw new ValidationError('AI Term agent needs an API key');
+            // v0.6.2: a preset can turn the worktree on or off for this one agent; absent means the saved setting.
+            if (v.useWorktree !== undefined && (typeof v.useWorktree !== 'boolean' || v.login !== undefined)) throw new ValidationError('Invalid worktree choice');
             if (v.login !== undefined && (v.login !== true || v.model!==null || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined || v.effort !== undefined)) throw new ValidationError('Invalid login session');
             if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
             break;
@@ -245,7 +248,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -260,6 +263,8 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.mcpOverrides!==undefined&&(!isRecord(v.mcpOverrides)||Object.keys(v.mcpOverrides).length>64||Object.entries(v.mcpOverrides).some(([id,value])=>!isExtensionId(id)||!isRecord(value)||Object.keys(value).some(k=>!['enabled','tools'].includes(k))||value.enabled!==undefined&&typeof value.enabled!=='boolean'||!isMcpTools(value.tools))))throw new ValidationError('Invalid MCP switches');
     if(v.contextWarning!==undefined&&typeof v.contextWarning!=='boolean')throw new ValidationError('Invalid context warning');
     if(v.taskCost!==undefined&&typeof v.taskCost!=='boolean')throw new ValidationError('Invalid task cost setting');
+    if(v.presetsEnabled!==undefined&&typeof v.presetsEnabled!=='boolean')throw new ValidationError('Invalid presets setting');
+    if(v.presets!==undefined)validatePresets(v.presets);
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
     return {...v};
