@@ -88,3 +88,37 @@ it('contract: facts carry what every agent holds; reserve answers are exact; wor
   for (const bad of [null, {}, { grant: { id: 'nope' } }, { grant: { id }, extra: 1 }, { refused: { budget: 'yearly', spent: 1, reserved: 0, limit: 2 } }, { refused: { budget: 'daily', spent: -1, reserved: 0, limit: 2 } }]) expect(parseBudgetAnswer(bad)).toBeNull();
   expect(validateUsageRecord({ ts: new Date().toISOString(), sessionId: id, provider: 'openai', model: 'gpt-6.1-sol', inputTokens: 0, outputTokens: 0, costUsd: 0.4, costSource: 'worst-case' }).costSource).toBe('worst-case');
 });
+
+// Part C review (2026-10-15): one session can't flood the ledger or take the room other agents need.
+it('MEDIUM: one session holds at most 16 reservations; other agents still get theirs', async () => {
+  const { ledger: l } = await ledger(), a = randomUUID(), b = randomUUID();
+  const answers = Array.from({ length: 1000 }, () => l.reserve(request(a, 0), daily(5), spent(0)));
+  expect(answers.filter(answer => 'grant' in answer)).toHaveLength(16);
+  expect(answers.at(-1)).toMatchObject({ refused: { budget: 'unavailable' } });
+  expect('grant' in l.reserve(request(b, 0.1), daily(5), spent(0))).toBe(true);
+  await l.close();
+});
+it('MEDIUM: a session that reserves and settles in a tight loop is cut off per minute, so it can\'t bloat Usage', async () => {
+  const { ledger: l, booked } = await ledger(), a = randomUUID();
+  let grants = 0;
+  for (let i = 0; i < 3000; i++) { const answer = l.reserve(request(a, 1e-9), daily(5), spent(0)); if ('grant' in answer) { grants++; await l.settle(a, answer.grant.id, true); } }
+  expect(grants).toBe(600); expect(booked).toHaveLength(600);
+  await l.close();
+});
+it('LOW: a reserve after the session was released is refused, so nothing is left held for 20 minutes', async () => {
+  const { ledger: l } = await ledger(), a = randomUUID();
+  await l.releaseSession(a);
+  expect(l.reserve(request(a, 0.1), daily(5), spent(0))).toMatchObject({ refused: { budget: 'unavailable' } });
+  await l.close();
+});
+it('LOW: an unreadable reservation file is moved aside, never overwritten', async () => {
+  const first = await ledger();
+  await writeFile(first.file, '{not json', { mode: 0o600 });
+  const errors: string[] = [], next = new BudgetLedger({ file: first.file, book: async () => {}, log: { error: text => { errors.push(text); } } });
+  await next.load();
+  next.reserve(request(randomUUID(), 0.1), daily(5), spent(0)); await next.close();
+  const { readdir } = await import('node:fs/promises');
+  const names = await readdir(join(first.file, '..'));
+  expect(names.some(name => name.startsWith('budget-reservations.json.corrupt-'))).toBe(true);
+  expect(errors).toEqual(['Budget reservations unreadable; moved aside']);
+});
