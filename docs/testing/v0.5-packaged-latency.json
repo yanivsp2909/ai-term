@@ -1,8 +1,8 @@
 {
-  "date": "2026-10-14T19:46:33.810Z",
+  "date": "2026-10-14T20:48:11.386Z",
   "baselineCommit": "11362d1",
-  "currentCommit": "b2e203ff87117439b4c161e2acef1a607608f279",
-  "method": "Same capture-phase keydown to expected command-bar cell + cursor output arrival, Unicode 11 offline; 50 warmup + 300 keys, 15/20/25 ms gaps, Ctrl+U every 60; dev first then packaged, serial on same host",
+  "currentCommit": "c03e02ddc8f99654c131ee3d19090c65fdc02b1a",
+  "method": "Normal Electron executable startup for both; same capture-phase keydown to expected command-bar cell + cursor output arrival, Unicode 11 offline; 50 warmup + 300 keys, 15/20/25 ms gaps, Ctrl+U every 60; dev first then packaged, serial on same host",
   "limits": "Output arrival, not physical paint or Terminal.app latency. Gate only on same-session packaged minus checkpoint dev p95.",
   "node": "v26.3.0",
   "platform": "darwin",
@@ -14,20 +14,20 @@
     "packaged": true
   },
   "dev": {
-    "p50": 0.5,
-    "p95": 1.5,
-    "p99": 2,
-    "max": 3.6,
+    "p50": 1.6,
+    "p95": 2.1,
+    "p99": 2.5,
+    "max": 45.9,
     "samples": 300
   },
   "packaged": {
-    "p50": 0.6,
-    "p95": 1.7,
-    "p99": 2.2,
-    "max": 2.3,
+    "p50": 1.7,
+    "p95": 2.2,
+    "p99": 2.4,
+    "max": 2.9,
     "samples": 300
   },
-  "differenceP95": 0.2,
+  "differenceP95": 0.1,
   "allowedDifferenceP95": 0.3,
   "p95Gate": true
 }

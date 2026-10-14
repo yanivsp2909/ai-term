@@ -1,6 +1,31 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: (this handover; see git log)
+Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Parts B–F follow below as they finish.
+Branch: main. Started clean at c03e02d after `git pull --ff-only` (already up to date). No other agent was working in this repo (the running Codex sessions' cwd is ~/NARVIS).
+
+Prompt vs code (overnight):
+- AGENTS.md says one roadmap step per session; this prompt explicitly orders six parts in sequence, each finished and pushed before the next. Followed the prompt, with a full handover per part.
+- PID 83116 (`AI Term ... daemon`, started 23:25, before this run) is a leaked smoke-test daemon: its cwd is a `ai-term-desktop-*` temp HOME from tests/electron/app.spec.ts, not ~/.ai-term. Left running (not created tonight); it holds two test PTYs, so it won't idle-exit. Safe to stop: `HOME=<that temp dir> ai daemon stop`, or kill it.
+
+## Part A: v0.5.3 deferred checks — done
+- Packaged app rebuilt at HEAD c03e02d (`npm run app:dist`, codesign verify valid for app and helper), then `npm exec -- tsx scripts/measure-packaged-latency.ts` ran back to back on this machine: dev 11362d1 first, then the packaged .app. Gate on the p95 difference only.
+
+| 151×37, WebGL both, 300 keys | p50 | p95 | p99 | max |
+|---|---|---|---|---|
+| dev 11362d1 | 1.60 ms | 2.10 ms | 2.50 ms | 45.90 ms |
+| packaged c03e02d | 1.70 ms | 2.20 ms | 2.40 ms | 2.90 ms |
+| difference (p95) | | **+0.10 ms** (limit +0.30) | | |
+
+  Gate **passes**. Artifact: docs/testing/v0.5-packaged-latency.json. Absolute values are higher than the earlier pre-review run (0.50/1.50 dev) on a busier machine tonight; both sides moved together, which is what the difference gate is for. The dev max 45.9 ms is a single outlier (p99 2.5).
+- Full suite: the first runs failed 1 test every time: `tests/gate-silent-failures.test.ts` M4 used `/Users/test/My Projects/...` as an "unsafe" status-line path, but b2e203f deliberately allowed ASCII spaces (AI Term.app). Stale fixture, not a product bug: 29600d3 uses an apostrophe instead. Then two consecutive full runs, dot reporter: **194 files, 1197 passed, 2 skipped** (opt-in Keychain), 18.91 s and 18.66 s.
+- Smoke after the rebuild: dev `npm run app:test` 9 passed (37.7 s); packaged `AI_TERM_TEST_APP=<.app exe> npm run app:test` 9 passed (39.1 s). No new leaked processes.
+- The test output prints one `Unhandled pty write error [Error: EIO...]` line from a test that writes after its PTY exits; it fails nothing (handed to Part B's silent-failure review).
+
+## Previous checkpoint (v0.5 packaging, retained)
+
+### Checkpoint
 Last commit: 6deb3cc fix: test both runtimes through normal Electron startup
 Roadmap step: v0.5 desktop distribution — partial. The self-contained app/zip and functional smoke checks work; **Yaniv requested that the final latency A/B and two consecutive full test runs move to the next prompt** to finish this session faster. This is not a completed release gate.
 Branch: main. This handover is the last commit; its own hash is in git log.
