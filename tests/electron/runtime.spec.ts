@@ -13,7 +13,7 @@ test('runtime loads N-API bindings without a system Node and command symlinks pr
   await installCommand(commandPlan(home,command));
   expect((await run(join(home,'.local/bin/ai'),['--version'],{env,cwd:home})).stdout.trim()).toBe('0.1.1');
   const packageFile=resolve(dirname(packaged),'../Resources/app/package.json');
-  const code="const r=require('node:module').createRequire(process.argv[1]); console.log(typeof r('node-pty').spawn,typeof r('@napi-rs/keyring').Entry)";
+  const code="const r=require('node:module').createRequire(process.argv[1]); const root=require('node:path').dirname(process.argv[1]); for(const name of ['node-pty','@napi-rs/keyring'])if(!require('node:fs').realpathSync(r.resolve(name)).startsWith(root+'/'))throw new Error('Binding resolved outside bundle'); console.log(typeof r('node-pty').spawn,typeof r('@napi-rs/keyring').Entry)";
   expect((await run(node,['-e',code,packageFile],{env,cwd:home})).stdout.trim()).toBe('function function');
  }else expect((await run(process.execPath,[resolve('dist/cli/index.js'),'--version'],{env,cwd:home})).stdout.trim()).toBe('0.1.1');
  }finally{await rm(home,{recursive:true,force:true});}
