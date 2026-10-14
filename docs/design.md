@@ -216,6 +216,12 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - Nothing animates; `checking what would be lost` and `deleting` are static lines.
 - `/help` lists registry commands and the key table in a calm surface overlay. ↑↓ scrolls, PgUp/PgDn pages, Esc closes; long lines wrap at narrow widths. Homepage keys remain isolated from agents.
 
+### /handoff (v0.6.3, 2026-10-15)
+- Off by default (D55: it spends tokens); `/settings` → `handoff: off · /handoff spends tokens (g)`.
+- `/handoff <agent> claude|codex` opens a surface popup titled `Handoff` (the D49 ask): `Hand off <agent> → <engine>` (ink), then who writes the note (`summary by <model> · key ····last4 · it reads the end of <agent>'s screen`, or `summary written by <agent> itself, as its next reply`), then `estimated 1.0K–3.0K in · 200–2.0K out · $0.0004–$0.0022` (or `uses your plan's limits` / `price ?`), then what follows in ink-3, then `⏎ hands off · Esc cancels`. A paste never answers it.
+- While it runs the note line reads `◐ handing off <agent> → <engine>`; after, `✓ handed off <agent> → <new name> · summary 2.4K in · 310 out · $0.0007` (the real numbers) or `handoff stopped: <reason>`.
+- The old card's line 3 reads `handed off → <new name>` in ink-3. The new agent's name is `<agent> · <engine>`.
+
 ### /preset (v0.6.2, 2026-10-15)
 - A preset is a saved start setup for one new agent; it never starts anything by itself. `/preset <name>` opens the start box filled with it (the usual accent border; ⏎ starts, Esc returns to editing); the box adds a line in ink-3 under its key hints: `preset         <name> · worktree on|off`, and the worktree line reads `worktree off · this preset` when it is off. In the start box `p` (on any row but the message row) steps to the next saved preset by name; one whose key or folder is gone shows `✗ preset <name>: …` in the error line and the box keeps what it had.
 - `/preset save <name> [first message]` keeps the next agent's setup as it is now; the note says `✓ preset <name> saved`, plus ` · ! don't ask` in the same note when that was the chosen mode. `/preset` lists them in a surface popup titled `Presets` (one ink-2 row each: name · model · engine · auth · mode · folder · worktree · first message), `/preset rm <name>` notes `✓ preset <name> removed`. Off in `/settings` (`s`): `presets are off · /settings s turns them on`. Design is silent on a separate presets screen; the calmer option, a popup and a note, was chosen.

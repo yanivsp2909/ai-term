@@ -10,7 +10,7 @@ import type { Line } from './worktree-question.js';
 // spent. ⏎ runs it (a typed key, never a paste), Esc cancels.
 const money = (usd: number): string => `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
 export function handoffLines(plan: HandoffPlan): Line[] {
-  const writer = plan.writer.kind === 'key' ? `summary by ${plan.writer.model} · key ····${plan.writer.last4}` : `summary written by ${plan.source} itself, as its next reply`;
+  const writer = plan.writer.kind === 'key' ? `summary by ${plan.writer.model} · key ····${plan.writer.last4} · it reads the end of ${plan.source}'s screen` : `summary written by ${plan.source} itself, as its next reply`;
   const tokens = `${compactTokens(plan.inputTokens.low)}–${compactTokens(plan.inputTokens.high)} in · ${compactTokens(plan.outputTokens.low)}–${compactTokens(plan.outputTokens.high)} out`;
   const price = plan.priceUsd ? `${money(plan.priceUsd.low)}–${money(plan.priceUsd.high)}` : plan.subscription ? "uses your plan's limits" : 'price ?';
   return [
