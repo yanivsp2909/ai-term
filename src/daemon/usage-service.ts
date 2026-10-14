@@ -1,5 +1,5 @@
 import {EventEmitter} from 'node:events';
-import type {UsageSummary,UsageDiagnostics,UsageDiagnostic,Settings} from '../shared/protocol.js';
+import type {UsageSummary,UsageDiagnostics,UsageDiagnostic,Settings,UsageRecord} from '../shared/protocol.js';
 import {UsageReceiver,type StatusEngine} from './usage-receiver.js';
 import {UsageParser,type UsageContext} from './usage-parse.js';
 import {UsageStore} from './usage.js';
@@ -21,9 +21,20 @@ export class UsageService extends EventEmitter {
  constructor(root:string,private readonly log:{error(text:string):void}){super();this.store=new UsageStore(root,log);this.settings=new SettingsStore(root);this.parser=new UsageParser(entry=>{this.observations.push(entry);this.prune();});
   this.receiver=new UsageReceiver(async(route,raw,context)=>{
    const settings=await this.readSettings(),overrides=settings.priceOverrides??{};
-   for(const record of this.parser.parse(route,raw,context)){if(!this.takeRecord(context.sessionId,context.engine==='ai-term'?AGENT_RECORDS_PER_MINUTE:RECORDS_PER_MINUTE))continue;if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides,record.provider==='foundry'?deploymentAlias(settings,record.model):undefined),record.inputTokens,record.outputTokens,record.cachedTokens??0);await this.store.add(record);}
+   for(const record of this.parser.parse(route,raw,context)){
+    if(!this.takeRecord(context.sessionId,context.engine==='ai-term'?AGENT_RECORDS_PER_MINUTE:RECORDS_PER_MINUTE))continue;
+    if(context.taskOnly){const tokens=record.inputTokens+record.outputTokens;if(tokens>0)this.emit('task',context.sessionId,tokens);continue;}
+    if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides,record.provider==='foundry'?deploymentAlias(settings,record.model):undefined),record.inputTokens,record.outputTokens,record.cachedTokens??0);
+    await this.add(record);
+   }
   },log,async(id,body,seq,engine)=>{this.emit(engine==='codex'?'codex-status':engine==='ai-term'?'ai-term-status':'claude-status',id,body,seq);});
   this.store.on('warning',(on:boolean)=>this.emit('warning',on));this.store.on('updated',(usage:UsageSummary)=>this.emit('updated',usage));
+ }
+ // Every counted record also goes to its session's own total (cost per task, v0.6.1).
+ private async add(record:UsageRecord):Promise<void>{const write=this.store.add(record);this.emit('record',{...record});await write;}
+ // B25: a reservation whose usage will never arrive is booked at its worst case, as a usage record of its own.
+ book(reservation:{sessionId:string;provider:UsageRecord['provider'];model:string;amountUsd:number}):Promise<void>{
+  return this.add({ts:new Date().toISOString(),sessionId:reservation.sessionId,provider:reservation.provider,model:reservation.model,inputTokens:0,outputTokens:0,costUsd:reservation.amountUsd,costSource:'worst-case'});
  }
  async start():Promise<void>{await this.readSettings();await this.store.load();await this.receiver.listen();this.scheduleMidnight();}
  private takeRecord(sessionId:string,perMinute:number):boolean{

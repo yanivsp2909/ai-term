@@ -86,6 +86,7 @@ export class Homepage {
   private engine: AgentEngine = 'claude-code';
   private keysRunOn: KeysRunOn = 'ai-term';
   private contextWarning = true;
+  private taskCost = true;
   private model: string | null = null;
   private folder: string;
   private worktrees:'on'|'off'='on';
@@ -145,7 +146,7 @@ export class Homepage {
       this.options.controls?.on('command', this.onAppCommand);
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
-      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;
+      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;this.taskCost=settings.taskCost!==false;
       this.budgets=validateBudgets(settings.budgets??{});
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
@@ -460,7 +461,7 @@ export class Homepage {
   private async openUsage():Promise<void>{
     const panel:TextPanel=new TextPanel('Usage',()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
     this.popup=panel;this.draw(true);
-    try{const usage=validateUsageSummary((await this.connection.request({kind:'usage.summary'})).usage);panel.set(usageDetailLines(usage,this.budgets));}
+    try{const usage=validateUsageSummary((await this.connection.request({kind:'usage.summary'})).usage);panel.set(usageDetailLines(usage,this.budgets,this.sessions,this.taskCost));}
     catch(error){panel.set([{text:`Usage unavailable: ${error instanceof Error?error.message:'request failed'}`,tone:'status-error'}]);}
   }
   private async openDoctor():Promise<void>{
@@ -569,7 +570,7 @@ export class Homepage {
   // the keys setting, so the start box always shows the engine the daemon will start.
   private async refreshSettings():Promise<void>{
     const settings=(await this.connection.request({kind:'settings.get'})).settings;
-    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;
+    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;this.taskCost=settings?.taskCost!==false;
     if(this.auth.kind==='key'){const id=this.auth.keyId,provider=this.keys.find(k=>k.id===id)?.provider;if(provider){this.engine=keyEngine(provider,this.keysRunOn);this.compatibleDefaults(this.engine);}}
   }
   private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission))this.permission='ask';}
@@ -892,7 +893,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), field: this.fieldView(cols), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,worktrees:this.worktrees,usage:this.usage,budgets:this.budgets,marked:this.marked,contextWarning:this.contextWarning }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), field: this.fieldView(cols), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,worktrees:this.worktrees,usage:this.usage,budgets:this.budgets,marked:this.marked,contextWarning:this.contextWarning,taskCost:this.taskCost }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);

@@ -4,7 +4,9 @@ import {isValidModelId,MAX_RECORD_TOKENS,MAX_RECORD_COST_USD} from '../shared/va
 const MAX_DEDUPE_KEYS=100_000;
 // Evict the oldest tenth in one pass: deleting from the front one at a time leaves holes every new iterator rescans.
 function bounded<K>(keys:{size:number;keys():IterableIterator<K>;delete(key:K):boolean}):void{if(keys.size<=MAX_DEDUPE_KEYS)return;let excess=keys.size-MAX_DEDUPE_KEYS*0.9;for(const key of keys.keys()){if(excess--<=0)break;keys.delete(key);}}
-export interface UsageContext {sessionId:string;engine:AgentEngine;provider:KeyProvider;model:string|null}
+// taskOnly (v0.6.1): a subscription or unknown-auth session reports usage only for its own task total (tokens, D55); its
+// records never reach Usage, the budgets or a price, because they bill the plan, not a key (D27).
+export interface UsageContext {sessionId:string;engine:AgentEngine;provider:KeyProvider;model:string|null;taskOnly?:boolean}
 const object=(v:unknown):Record<string,unknown>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{};
 const list=(v:unknown):unknown[]=>Array.isArray(v)?v:[];
 export function numeric(v:unknown):number|null{if(typeof v!=='number'&&!(typeof v==='string'&&/^\d+(?:\.\d+)?$/.test(v)))return null;const n=Number(v);return Number.isFinite(n)&&n>=0&&n<=Number.MAX_SAFE_INTEGER?n:null;}

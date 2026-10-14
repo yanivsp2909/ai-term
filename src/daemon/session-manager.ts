@@ -18,7 +18,7 @@ import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
-import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings } from '../shared/protocol.js';
+import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
 import { prepareWorktree, serialize } from './worktrees.js';
@@ -33,6 +33,9 @@ import { KeyStore, KeyError } from './keys.js';
 import { checkEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
+import { BudgetLedger } from './budget-ledger.js';
+import { join } from 'node:path';
+import { MAX_RECORD_COST_USD } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
 export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry already starting','Worktree in use by a running agent','Its worktree is gone','Its folder is gone',
@@ -75,10 +78,13 @@ export class SessionManager extends EventEmitter {
     private worktreeRecords=new Map<string,WorktreeRecord>();
     private busyWorktrees=new Set<string>();
     readonly mcp:McpService;
+    // B25 (v0.6.1): every AI Term agent's in-flight worst cases, checked against the budgets before any request is sent.
+    private readonly ledger?:BudgetLedger;
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
-        super();this.mcp=new McpService(new SettingsStore(paths.root),keys,log);usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+        super();this.mcp=new McpService(new SettingsStore(paths.root),keys,log);
+        if(usage){this.ledger=new BudgetLedger({file:join(paths.root,'budget-reservations.json'),book:reservation=>usage.book(reservation),log});usage.on('record',(record:UsageRecord)=>this.addTask(record.sessionId,record.inputTokens+record.outputTokens,record.costUsd));usage.on('task',(id:string,tokens:number)=>this.addTask(id,tokens,undefined));}usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -91,6 +97,10 @@ export class SessionManager extends EventEmitter {
         const text = this.warningText(); this.event(text ? { kind: 'daemon.warning', text } : { kind: 'daemon.warningCleared' });
     }
     async load(): Promise<void> {
+        await this.loadSessions();
+        await this.ledger?.load();
+    }
+    private async loadSessions(): Promise<void> {
         let loaded: { sessions: SessionInfo[]; worktrees: Map<string, WorktreeRecord>; rejected?: number };
         try {
             loaded = await this.readSaved();
@@ -143,7 +153,7 @@ export class SessionManager extends EventEmitter {
             if (!isUUID(r.id) || !isTitle(r.title) || !['shell','claude-code','codex','ai-term'].includes(String(r.engine)) || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
             const saved = validateSession(r);
-            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}), ...(saved.login?{login:true as const}:{}) });
+            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}), ...(saved.login?{login:true as const}:{}), ...(saved.taskUsage?{taskUsage:saved.taskUsage}:{}) });
         }
         return { sessions, worktrees: 'worktrees' in state && Array.isArray(state.worktrees) ? state.worktrees as unknown[] : [] };
     }
@@ -280,7 +290,10 @@ export class SessionManager extends EventEmitter {
             if(info.worktreeNote)(['worktree off: not a git repo','worktree off: repo has no commits'].includes(info.worktreeNote)?this.log.info:this.log.error).call(this.log,info.worktreeNote);
         }
         const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
-        const telemetry=agent&&!agent.login&&authMethod==='api-key'&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model}):undefined;
+        // Usage counts API-key sessions (D27). Cost per task (v0.6.1, D55, on by default) also asks a subscription or
+        // unknown-auth CLI for its usage, but only for its own token total: never Usage, a budget or a price.
+        const counted=agent&&!agent.login&&this.usage?(authMethod==='api-key'?'usage':agent.engine!=='ai-term'&&settings?.taskCost!==false?'task':null):null;
+        const telemetry=counted&&agent&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model,...(counted==='task'?{taskOnly:true}:{})}):undefined;
         const cliEngine=agent&&agent.engine!=='ai-term'?agent.engine:null;
         // AI Term's agent gets its usage credential through buildAgentEnv at spawn; the CLIs through their own settings here.
         if(telemetry&&cliEngine){const extra=buildUsageArgs(cliEngine,telemetry),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);Object.assign(recipe.env,buildUsageEnv(cliEngine,telemetry));}
@@ -360,7 +373,7 @@ export class SessionManager extends EventEmitter {
                 });
             });
             host.pty.onExit(event => {
-                this.usage?.revoke(info.id);live.outputClock?.dispose();void this.mcp.stop(info.id).catch(()=>this.log.error('MCP session stop failed'));
+                this.usage?.revoke(info.id);void this.ledger?.releaseSession(info.id);live.outputClock?.dispose();void this.mcp.stop(info.id).catch(()=>this.log.error('MCP session stop failed'));
                 // Set terminal precedence synchronously: queued hook bodies must not win a process-exit race.
                 if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:live.statusState.seq+1,at:new Date().toISOString(),kind:'exit',status:'exited',detail:'exited',exitCode:event.exitCode});
                 live.output = live.output.then(async () => {
@@ -407,6 +420,7 @@ export class SessionManager extends EventEmitter {
         const live=this.sessions.get(id);
         if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status))return null;
         if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind'in raw&&typeof raw.kind==='string'&&raw.kind.startsWith('mcp.'))return this.mcp.query(id,raw);
+        if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind'in raw&&typeof raw.kind==='string'&&raw.kind.startsWith('budget.'))return this.budgetQuery(id,raw as Record<string,unknown>);
         if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind' in raw)return new ExtensionService(new SettingsStore(this.paths.root)).query(raw as Record<string,unknown>);
         return this.agentFacts(id,raw);
     }
@@ -420,7 +434,31 @@ export class SessionManager extends EventEmitter {
         const price=findPrice(PRICES,key.provider,model,overrides,alias)??null,limits=findLimits(PRICES,key.provider,model,alias),usage=this.usage?.summary();
         return {model,wire:key.provider==='foundry'?deploymentWire(key.lastTest?.find(r=>r.model===model)):null,context:limits.context??null,output:limits.output??null,price,
             spent:{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0},budgets:{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},
-            caps:settings.agentCaps??DEFAULT_AGENT_CAPS,contextWarning:settings.contextWarning!==false};
+            caps:settings.agentCaps??DEFAULT_AGENT_CAPS,contextWarning:settings.contextWarning!==false,reserved:this.ledger?.reserved()??0};
+    }
+    // B25: {kind:'budget.reserve', model, amountUsd} → a grant or a refusal; {kind:'budget.settle', id, worstCase} → settled.
+    // Only a live AI Term agent, for a model it may use; anything else gets no answer (204), so its request isn't sent.
+    private async budgetQuery(id:string,raw:Record<string,unknown>):Promise<unknown>{
+        const live=this.sessions.get(id),ledger=this.ledger,keys=Object.keys(raw).sort().join(',');
+        if(!ledger||!live||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status))return null;
+        if(raw.kind==='budget.settle'){
+            if(keys!=='id,kind,worstCase'||!isUUID(raw.id)||typeof raw.worstCase!=='boolean')return null;
+            return {settled:await ledger.settle(id,raw.id,raw.worstCase)};
+        }
+        const amount=raw.amountUsd;
+        if(raw.kind!=='budget.reserve'||keys!=='amountUsd,kind,model'||typeof raw.model!=='string'||!live.agentModels?.includes(raw.model)||typeof amount!=='number'||!Number.isFinite(amount)||amount<0||amount>MAX_RECORD_COST_USD)return null;
+        const key=await this.keys.view(live.info.auth.keyId),settings=await new SettingsStore(this.paths.root).get();
+        // Checked again after the reads: an agent that exited meanwhile must not leave a reservation behind.
+        if(['exited','error'].includes(live.info.status))return null;
+        const usage=this.usage?.summary(),budgets={daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null};
+        return ledger.reserve({sessionId:id,provider:key.provider,model:raw.model,amountUsd:amount},budgets,{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
+    }
+    // Cost per task: one session's own total from its start. cost undefined: a tokens-only (subscription) report.
+    private addTask(id:string,tokens:number,cost:number|null|undefined):void{
+        const live=this.sessions.get(id);if(!live||!Number.isSafeInteger(tokens)||tokens<0)return;
+        const before=live.info.taskUsage,next:TaskUsage={tokens:Math.min(Number.MAX_SAFE_INTEGER,(before?.tokens??0)+tokens),costUsd:cost===undefined?before?.costUsd??null:(before?.costUsd??0)+(cost??0)};
+        if(before?.unknownPrice||cost===null)next.unknownPrice=true;
+        live.info.taskUsage=next;this.event({kind:'session.updated',session:{...live.info}});void this.persist();
     }
     private ingressAgentStatus(id:string,update:import('./agent-status.js').AgentUpdate|null):void{
         const live=this.sessions.get(id);if(!live||!update)return;
@@ -650,6 +688,7 @@ export class SessionManager extends EventEmitter {
         const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
         for(const [index,result]of stopped.entries())if(result.status==='rejected')this.log.error(`Session stop failed: ${ids[index]}`);
         await this.saving;
+        await this.ledger?.close();
         try{await this.mcp.shutdown();}catch{this.log.error('MCP shutdown failed');}
         for(const live of this.sessions.values()){live.outputClock?.dispose();live.mirror.dispose();}
         this.log.off('writeFailed',this.onLogFailure);this.log.off('writeRecovered',this.onLogRecovery);

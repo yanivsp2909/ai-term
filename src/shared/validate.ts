@@ -245,7 +245,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -259,6 +259,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.mcpApprovals!==undefined&&(!isRecord(v.mcpApprovals)||Object.keys(v.mcpApprovals).length>64||Object.entries(v.mcpApprovals).some(([id,hash])=>!isExtensionId(id)||!isMcpHash(hash))))throw new ValidationError('Invalid MCP approvals');
     if(v.mcpOverrides!==undefined&&(!isRecord(v.mcpOverrides)||Object.keys(v.mcpOverrides).length>64||Object.entries(v.mcpOverrides).some(([id,value])=>!isExtensionId(id)||!isRecord(value)||Object.keys(value).some(k=>!['enabled','tools'].includes(k))||value.enabled!==undefined&&typeof value.enabled!=='boolean'||!isMcpTools(value.tools))))throw new ValidationError('Invalid MCP switches');
     if(v.contextWarning!==undefined&&typeof v.contextWarning!=='boolean')throw new ValidationError('Invalid context warning');
+    if(v.taskCost!==undefined&&typeof v.taskCost!=='boolean')throw new ValidationError('Invalid task cost setting');
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
     return {...v};
@@ -287,8 +288,13 @@ export function validateSession(value: unknown): import('./protocol.js').Session
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || !(s.ctxPercent===null||isShare(s.ctxPercent)) || s.lastActivity!==undefined&&s.lastActivity!==null&&!isActivity(s.lastActivity) ||
-        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod))) throw new ValidationError('Invalid daemon session');
+        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage)) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
+}
+function isTaskUsage(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const t = value as Record<string, unknown>, keys = Object.keys(t);
+    return keys.every(k => ['tokens', 'costUsd', 'unknownPrice'].includes(k)) && 'tokens' in t && 'costUsd' in t && Number.isSafeInteger(t.tokens) && isAmount(t.tokens) && (t.costUsd === null || isAmount(t.costUsd)) && (t.unknownPrice === undefined || t.unknownPrice === true);
 }
 // Exact keys only, so nothing but these numbers can ever ride along (no process names or users).
 const MAX_STATS_SESSIONS = 1000;
@@ -352,7 +358,7 @@ export const MAX_RECORD_TOKENS=1_000_000_000,MAX_RECORD_COST_USD=10_000;
 const isRecordTokens=(n:unknown)=>Number.isSafeInteger(n)&&isAmount(n)&&n<=MAX_RECORD_TOKENS;
 export function validateUsageRecord(v:unknown):import('./protocol.js').UsageRecord{
  if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid usage record');const r=v as Record<string,unknown>;
- if(Object.keys(r).some(k=>!['ts','sessionId','provider','model','inputTokens','outputTokens','cachedTokens','costUsd','costSource'].includes(k))||typeof r.ts!=='string'||!Number.isFinite(Date.parse(r.ts))||!isUUID(r.sessionId)||!isKeyProvider(r.provider)||typeof r.model!=='string'||!isValidModelId(r.model)||!isRecordTokens(r.inputTokens)||!isRecordTokens(r.outputTokens)||r.cachedTokens!==undefined&&!isRecordTokens(r.cachedTokens)||r.costUsd!==null&&(!isAmount(r.costUsd)||r.costUsd>MAX_RECORD_COST_USD)||!['cli-estimate','price-table'].includes(String(r.costSource)))throw new ValidationError('Invalid usage record');
+ if(Object.keys(r).some(k=>!['ts','sessionId','provider','model','inputTokens','outputTokens','cachedTokens','costUsd','costSource'].includes(k))||typeof r.ts!=='string'||!Number.isFinite(Date.parse(r.ts))||!isUUID(r.sessionId)||!isKeyProvider(r.provider)||typeof r.model!=='string'||!isValidModelId(r.model)||!isRecordTokens(r.inputTokens)||!isRecordTokens(r.outputTokens)||r.cachedTokens!==undefined&&!isRecordTokens(r.cachedTokens)||r.costUsd!==null&&(!isAmount(r.costUsd)||r.costUsd>MAX_RECORD_COST_USD)||!['cli-estimate','price-table','worst-case'].includes(String(r.costSource)))throw new ValidationError('Invalid usage record');
  return r as unknown as import('./protocol.js').UsageRecord;
 }
 export function validateUsageSummary(v:unknown):import('./protocol.js').UsageSummary{

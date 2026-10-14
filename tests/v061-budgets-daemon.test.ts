@@ -73,9 +73,8 @@ it('cost per task: an agent\'s own usage adds up on its record, priced from the 
   await a.reporter.usage('gpt-6.1-sol', { input: 1200, cached: 200, output: 300 });
   await expect.poll(() => d.manager.get(a.session.id).taskUsage?.tokens).toBe(1500);
   expect(d.manager.get(a.session.id).taskUsage?.costUsd).toBeCloseTo(d.usage.summary().today.costUsd, 10);
-  // It survives a daemon restart with the record.
-  const again = new SessionManager(getPaths(d.root), new Logger(getPaths(d.root).log));
-  await again.load(); expect(again.get(a.session.id).taskUsage?.tokens).toBe(1500); await again.shutdown();
+  // It survives a daemon restart with the record (once the state write of the last report has landed).
+  await expect.poll(async () => { const again = new SessionManager(getPaths(d.root), new Logger(getPaths(d.root).log)); await again.load(); const tokens = again.get(a.session.id).taskUsage?.tokens; await again.shutdown(); return tokens; }).toBe(1500);
 });
 
 it('cost per task on a subscription counts tokens only, never in Usage or dollars; off in /settings sends no telemetry', async () => {
@@ -83,7 +82,7 @@ it('cost per task on a subscription counts tokens only, never in Usage or dollar
   const session = await d.manager.create({ engine: 'claude-code', model: 'sonnet', auth: { kind: 'account' }, cwd: d.root, permission: 'ask' });
   const env = d.spawned.at(-1)?.env ?? {};
   expect(env.CLAUDE_CODE_ENABLE_TELEMETRY).toBe('1');
-  const credential = /x-ai-term-session=([a-f0-9]{64})/.exec(env.OTEL_EXPORTER_OTLP_METRICS_HEADERS ?? '')?.[1] ?? '', url = env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ?? '';
+  const credential = (env.OTEL_EXPORTER_OTLP_METRICS_HEADERS ?? '').match(/x-ai-term-session=([a-f0-9]{64})/)?.[1] ?? '', url = env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ?? '';
   const point = (type: string, value: number) => ({ asInt: String(value), startTimeUnixNano: '1', timeUnixNano: String(Date.now() * 1e6), attributes: [{ key: 'type', value: { stringValue: type } }, { key: 'model', value: { stringValue: 'claude-sonnet-5' } }] });
   const body = { resourceMetrics: [{ scopeMetrics: [{ metrics: [{ name: 'claude_code.token.usage', sum: { aggregationTemporality: 1, dataPoints: [point('input', 900), point('output', 100)] } }, { name: 'claude_code.cost.usage', sum: { aggregationTemporality: 1, dataPoints: [point('cost', 2)] } }] }] }] };
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': credential }, body: JSON.stringify(body) });

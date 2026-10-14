@@ -44,3 +44,15 @@ it('the record and the setting are validated', () => {
   expect(() => validateSettingsPatch({ taskCost: 'yes' }, true)).toThrow();
   expect(validateSettingsPatch({ taskCost: true }, true)).toEqual({ taskCost: true });
 });
+
+import { vi } from 'vitest';
+import { CredentialsPanel } from '../src/client/tui/credentials.js';
+import type { Settings } from '../src/shared/protocol.js';
+it('/settings has its own switch for cost per task, on by default; o toggles it', async () => {
+  let settings: Settings = { theme: 'graphite' };
+  const panel = new CredentialsPanel('settings', { request: async body => { if (body.kind === 'settings.set') settings = { ...settings, ...body.patch }; return { id: randomUUID(), ok: true, settings, keys: [] }; }, changed() {}, close() {}, login: async () => {}, defaults() {}, theme: async () => {}, caps: vi.fn() });
+  await panel.load();
+  expect(panel.lines().join('\n')).toContain('cost per task: on · cards and /usage (o)');
+  await panel.key('o'); expect(settings.taskCost).toBe(false);
+  expect(panel.lines().join('\n')).toContain('cost per task: off · cards and /usage (o)');
+});

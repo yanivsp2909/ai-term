@@ -79,7 +79,7 @@ it('a daemon restart books what the last one still held, from a private file, an
 
 it('contract: facts carry what every agent holds; reserve answers are exact; worst-case bookings are valid usage records', () => {
   expect(parseAgentFacts(stubFacts({ reserved: 0.25 }))?.reserved).toBe(0.25);
-  const { reserved: _reserved, ...old } = stubFacts();
+  const old: Record<string, unknown> = { ...stubFacts() }; delete old.reserved;
   expect(parseAgentFacts(old)).toBeNull();
   expect(parseAgentFacts({ ...stubFacts(), reserved: -1 })).toBeNull();
   const id = randomUUID();

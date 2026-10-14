@@ -21,7 +21,8 @@ it.each([false,true])('subscription Claude earlyContext=%s sessions get private 
   await usage.start();await m.load();await server.listen();client=await Connection.connect(paths,{entry:'/unused',autoStart:false});
   const session=await m.create({engine:'claude-code',model:'sonnet',auth:{kind:'account'},cwd:root,permission:'ask'});
   if(!earlyContext){output?.('ready');await m.snapshot(session.id);}
-  const token=env.AITERM_STATUS_TOKEN;if(!token)throw new Error('Missing status token');expect(token).toMatch(/^[a-f0-9]{64}$/);expect(argv.join('')).not.toContain(token);expect(env.CLAUDE_CODE_ENABLE_TELEMETRY).toBeUndefined();
+  const token=env.AITERM_STATUS_TOKEN;if(!token)throw new Error('Missing status token');expect(token).toMatch(/^[a-f0-9]{64}$/);expect(argv.join('')).not.toContain(token);// v0.6.1: a subscription reports usage for its own task total only (tokens), never to Usage.
+  expect(env.CLAUDE_CODE_ENABLE_TELEMETRY).toBe('1');
   const file=argv.find(a=>a.startsWith('--settings='))?.slice('--settings='.length);if(!file)throw new Error('Missing settings');expect(await readFile(file,'utf8')).not.toContain(token);expect((await stat(file)).mode&0o777).toBe(0o600);expect(await readFile(file,'utf8')).toContain('status-line');
   const send=(body:unknown)=>fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/status/claude`,{method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token},body:JSON.stringify(body)});
   if(earlyContext){await send({hook_event_name:'AITermContext',used_percentage:1});output?.('ready');await m.snapshot(session.id);}

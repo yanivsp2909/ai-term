@@ -3,7 +3,7 @@ import type { ExtensionAccess } from '../shared/extensions.js';
 import { request } from 'node:http';
 import { mcpAccess } from '../client/mcp.js';
 import type { McpAccess, McpRequest } from '../shared/mcp.js';
-import { parseAgentFacts, type AgentFacts } from '../shared/agent-facts.js';
+import { parseAgentFacts, parseBudgetAnswer, type AgentFacts, type BudgetAnswer } from '../shared/agent-facts.js';
 
 // What the agent tells the daemon, through the same local receiver the CLIs use (S12): status on /v1/status/ai-term with
 // the session's status credential, token usage on /v1/metrics with its usage credential. The daemon maps status onto the
@@ -26,7 +26,13 @@ export function reporterEnv(env: NodeJS.ProcessEnv): ReporterEnv | null {
 
 // usage resolves false when AI Term didn't take the record (a failed post, no usage credential): the agent then keeps
 // counting that cost itself, because the budgets the daemon answers with would otherwise forget it.
-export interface Reporter { status(update: AgentStatus): Promise<void>; usage(model: string, tokens: TokenUsage): Promise<boolean | void>; facts(model: string): Promise<AgentFacts | null> }
+export interface Reporter {
+  status(update: AgentStatus): Promise<void>; usage(model: string, tokens: TokenUsage): Promise<boolean | void>; facts(model: string): Promise<AgentFacts | null>;
+  // B25 (v0.6.1): the daemon's grant for one request's worst case (null: no answer, so nothing may be sent), and its
+  // settlement once the request is over. Absent only on test reporters with no daemon behind them.
+  reserve?(model: string, amountUsd: number): Promise<BudgetAnswer | null>;
+  settle?(id: string, worstCase: boolean | Promise<boolean>): Promise<void>;
+}
 
 // Requests go one at a time: the receiver numbers them in arrival order, so overlapping requests could reorder a turn.
 // Awaiting status() therefore means the daemon has applied this update and everything before it.
@@ -68,14 +74,21 @@ export class HttpReporter implements Reporter, ExtensionAccess {
     const value = await this.query({model});
     return parseAgentFacts(value);
   }
+  async reserve(model: string, amountUsd: number): Promise<BudgetAnswer | null> {
+    if (!this.env) return null;
+    return parseBudgetAnswer(await this.query({ kind: 'budget.reserve', model, amountUsd }));
+  }
+  // In the queue right after the request's usage post: worstCase may wait for whether the daemon took that usage.
+  async settle(id: string, worstCase: boolean | Promise<boolean>): Promise<void> {
+    await this.query(Promise.resolve(worstCase).then(worst => ({ kind: 'budget.settle', id, worstCase: worst })));
+  }
   async list(cwd: string) { const v=await this.query({kind:'extensions.list',cwd}); return validateExtensionCatalog(v && typeof v==='object' && 'extensions' in v ? v.extensions : null); }
   async read(cwd: string, extensionId: string) { const v=await this.query({kind:'extensions.read',cwd,extensionId}); return validateExtensionFile(v && typeof v==='object' && 'extension' in v ? v.extension : null); }
   async toggle(cwd: string, extensionId: string, enabled: boolean) { const v=await this.query({kind:'extensions.toggle',cwd,extensionId,enabled}); return validateExtensionCatalog(v && typeof v==='object' && 'extensions' in v ? v.extensions : null); }
   private query(payload: unknown): Promise<unknown> {
     const env=this.env; if(!env)return Promise.resolve(null);
-    const body = JSON.stringify(payload);
     let answer: unknown = null;
-    this.queue = this.queue.then(() => new Promise<void>(resolve => {
+    this.queue = this.queue.then(async () => { const body = JSON.stringify(await payload); return new Promise<void>(resolve => {
       const req = request({ hostname: '127.0.0.1', port: env.port, path: '/v1/agent/ai-term', method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-ai-term-session': env.status } }, res => {
         const chunks: Buffer[] = []; let bytes = 0;
         res.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes <= FACTS_MAX_BYTES) chunks.push(chunk); });
@@ -84,7 +97,7 @@ export class HttpReporter implements Reporter, ExtensionAccess {
       });
       const timer = setTimeout(() => { req.destroy(); }, REQUEST_TIMEOUT_MS);
       req.on('close', () => { clearTimeout(timer); resolve(); }); req.on('error', () => resolve()); req.end(body);
-    }));
+    }); });
     return this.queue.then(() => answer);
   }
   private post(path: string, token: string | undefined, body: string): Promise<boolean> {

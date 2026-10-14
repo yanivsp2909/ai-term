@@ -79,7 +79,7 @@ it('no grant, no request: a refusal re-checks with fresh facts, and a daemon tha
   const r = await agent([textStep('never')], refused);
   expect(await r.agent.turn('go', go())).toBe('interrupted');
   expect(r.model.doStreamCalls).toHaveLength(0);
-  expect(refused.pauses[0]).toBe("budget: today $4.900 of $5.00 · $0.050 held by other agents' requests · raise it on the homepage (b), then ⏎ checks again · Esc stops");
+  expect(refused.pauses[0]).toBe("budget: today $4.90 of $5.00 · $0.050 held by other agents' requests · raise it on the homepage (b), then ⏎ checks again · Esc stops");
 });
 
 it('every grant is settled: released when usage was reported, booked at its worst case when it never will be', async () => {

@@ -42,8 +42,8 @@ export interface UsagePeriod extends UsageTotal {providers:({provider:KeyProvide
 export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePeriod}
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
-export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'}
-export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
+export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -83,7 +83,11 @@ export interface SessionInfo {
     lastOutputAt: string | null;
     ctxPercent: number|null;
     lastActivity?:{tool:string;at:string}|null; // Missing on legacy records; new records use null.
+    taskUsage?:TaskUsage; // v0.6.1: this agent's own total since it started (absent until its first usage).
 }
+// v0.6.1 cost per task (D55): tokens always; dollars for API-key sessions only (null on a subscription, which bills
+// against the plan). unknownPrice: some of it had no price, so the dollars are a lower bound.
+export interface TaskUsage {tokens:number;costUsd:number|null;unknownPrice?:true}
 export type ClaudeStatusEvent = {seq:number;at:string} & (
     {kind:'running';tool?:string;phase?:'turn-start'|'tool-start'|'tool-finish'} | {kind:'waiting';reason:'permission'|'question'|'turn failed';error?:string;backup?:boolean} |
     {kind:'done'} | {kind:'context';percent:number|null} | {kind:'exit';status:'exited'|'error';detail:string;exitCode:number|null}

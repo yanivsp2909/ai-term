@@ -11,7 +11,7 @@ import type { StreamRedactor } from './display.js';
 import { systemPrompt, type Instructions } from './instructions.js';
 import type { Reporter } from './report.js';
 import type { Transcript } from './transcript.js';
-import { RunLimits, maxOutputTokens, requestCost, estimateTokens } from './limits.js';
+import { RunLimits, maxOutputTokens, requestCost, estimateTokens, refusalPause, NOT_ANSWERING } from './limits.js';
 import type { AgentFacts } from '../shared/agent-facts.js';
 
 export type AgentPermission = 'ask' | 'dontAsk';
@@ -40,7 +40,8 @@ export interface AgentOptions {
   mcp?:McpAccess; mcpSession?:{allowed:Set<string>;schemas:Set<string>};
 }
 export type TurnResult = 'done' | 'interrupted' | 'failed';
-const DEFAULT_MAX_STEPS = 50, CONTEXT_WARN = 85;
+// B25: a refused reservation is checked again with fresh facts this many times before the run pauses on it.
+const DEFAULT_MAX_STEPS = 50, CONTEXT_WARN = 85, MAX_REFUSALS = 3;
 // Reasons a failed turn shows and reports; the same fixed words Claude's StopFailure uses, never the provider's text.
 type FailureKind = 'rate_limit' | 'overloaded' | 'authentication_failed' | 'billing_error' | 'invalid_request' | 'server_error' | 'unknown';
 const FAILURE_TEXT: Record<FailureKind, string> = { rate_limit: 'rate limited; try again shortly', overloaded: 'the provider is overloaded', authentication_failed: 'the key was refused; test it in /settings', billing_error: 'billing problem on the provider account', invalid_request: 'the provider refused the request', server_error: 'the provider had an error', unknown: "couldn't reach the provider" };
@@ -88,7 +89,7 @@ export class Agent {
   private usageWarned = false;
   private lastReply = '';
   private queue: Promise<unknown> = Promise.resolve();
-  constructor(private options: AgentOptions) { this.limits = options.limits ?? new RunLimits();this.mcpSession=options.mcpSession??{allowed:new Set(),schemas:new Set()}; }
+  constructor(private options: AgentOptions) { this.limits = options.limits ?? new RunLimits(); this.limits.ledger = !!options.reporter.reserve;this.mcpSession=options.mcpSession??{allowed:new Set(),schemas:new Set()}; }
   get extensionAccess(): ExtensionAccess | undefined { return this.options.extensions; }
   get mcpAccess():McpAccess|undefined{return this.options.mcp;}
   stopMcp():Promise<void>{return this.options.mcp?.stop()??Promise.resolve();}
@@ -208,7 +209,9 @@ export class Agent {
     // The turn's own signal: the user's Esc or kill, or a stop chosen at a limit pause.
     const controller = new AbortController(), stop = () => controller.abort();
     signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop();
-    let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId), open = 0, started = false;
+    let stepText = '', lastText = '', streamError: unknown, facts = await reporter.facts(this.options.modelId), open = 0, started = false, grant: string | null = null;
+    // B25: every grant is settled exactly once: released when its usage was reported, booked at its worst case otherwise.
+    const settle = (worstCase: boolean | Promise<boolean>): void => { const id = grant; grant = null; if (id) void reporter.settle?.(id, worstCase); };
     const totals = { input: 0, cached: 0, output: 0, reasoning: 0, cost: 0 as number | null, requests: 0 };
     const manifest = [extensionManifest(this.catalog.items),mcpManifest(this.mcpCatalog)].filter(Boolean).join('\n');
     const system = systemPrompt(this.options.root, this.options.instructions, { search: this.options.rg ? 'ripgrep regular expressions' : 'plain text' }) + (manifest ? '\n\n# Enabled extensions (skill loads skills; task runs agents; mcp_tools loads MCP metadata/schema then mcp_call calls one tool)\n' + manifest : '');
@@ -219,6 +222,7 @@ export class Agent {
       release();
       // A request cut off after it was sent may still be billed; its worst case counts against this run and the budgets.
       if (open) { this.limits.chargeUnfinished(open); open = 0; }
+      settle(true);
       // The partial reply stays in the conversation, marked, so the next turn knows what was cut off.
       this.history.push(user, { role: 'assistant', content: `${lastText || stepText}\n(The user interrupted this reply.)`.trim() });
       void transcript.append({ kind: 'note', text: 'interrupted' });
@@ -232,7 +236,8 @@ export class Agent {
         abortSignal: controller.signal, toolCallConcurrency: 1, maxRetries: 2,
         // Before every request: caps, budgets and a known price, with a pause that asks when one says no (D49, D53).
         prepareStep: async ({ messages }) => {
-          facts = await this.clearance(estimateTokens(system + JSON.stringify(messages)), controller);
+          const cleared = await this.clearance(estimateTokens(system + JSON.stringify(messages)), controller);
+          facts = cleared.facts; grant = cleared.grant;
           open = this.limits.lastWorst; this.currentWorst = open; started = false;
           // The request carries exactly the output allowance its check priced: sized to what is left of the run cap and the
           // budgets, never above the model's limit (capped at 32k, else 16k). With none, a provider may write up to its own
@@ -254,7 +259,7 @@ export class Agent {
           const worst = open; open = 0; started = false; this.currentWorst = 0;
           if (part.usage.inputTokens === undefined && part.usage.outputTokens === undefined) {
             // A billed request the provider sent no counts for: unknown is not free, so its worst case counts (D53).
-            this.limits.chargeUnfinished(worst);
+            this.limits.chargeUnfinished(worst); settle(true);
             Object.assign(totals, { cost: null, requests: totals.requests + 1 });
             io.note(`the provider sent no usage for a request; this run and your budgets count it at its worst case ($${worst.toFixed(3)})`, 'warn');
             continue;
@@ -263,7 +268,11 @@ export class Agent {
           const cost = requestCost(facts?.price ?? null, input, cached, output);
           this.limits.record(cost);
           Object.assign(totals, { input: totals.input + input, cached: totals.cached + cached, output: totals.output + output, reasoning: totals.reasoning + reasoning, cost: totals.cost === null || cost === null ? null : totals.cost + cost, requests: totals.requests + 1 });
-          if (input || output) void reporter.usage(this.options.modelId, { input, cached, output, reasoning }).then(taken => { if (taken === false) this.usageLost(cost); });
+          if (input || output) {
+            const taken = reporter.usage(this.options.modelId, { input, cached, output, reasoning });
+            void taken.then(result => { if (result === false) this.usageLost(cost); });
+            settle(taken.then(result => result === false));
+          } else settle(false);
           this.context(input, facts);
         }
         else if (part.type === 'error') throw part.error;
@@ -281,6 +290,7 @@ export class Agent {
       release();
       // A request that failed after the provider started answering may still be billed, like one cut off by Esc.
       if (open && started) this.limits.chargeUnfinished(open);
+      settle(open > 0 && started);
       open = 0;
       // A retryable failure (429, 5xx) that used up its retries arrives wrapped; its last attempt says what happened.
       const error = RetryError.isInstance(thrown) ? thrown.lastError : thrown;
@@ -291,7 +301,7 @@ export class Agent {
       this.turnCost(totals);
       await reporter.status({ event: 'turn-failed', error: kind });
       return 'failed';
-    } finally { this.currentWorst = 0; signal.removeEventListener('abort', stop); }
+    } finally { settle(true); this.currentWorst = 0; signal.removeEventListener('abort', stop); }
   }
   // Asks the daemon for fresh facts and checks them until the request may go; a pause the user answers with Esc (or a
   // kill) stops the turn before anything is sent.
@@ -354,7 +364,8 @@ export class Agent {
     // The approved instructions/model are immutable, even if the source file changes while the user decides.
     const model=modelId===this.modelId?this.options.model:await this.options.makeModel?.(modelId)??this.options.model;
     const parent=this.options,io:AgentIO={...parent.io,text:()=>undefined,toolStart:(...args)=>parent.io.toolStart(...args),toolEnd:(...args)=>parent.io.toolEnd(...args),approve:(...args)=>parent.io.approve(...args),...(parent.io.approveMcp?{approveMcp:(request,signal)=>parent.io.approveMcp?.(request,signal)??Promise.resolve('deny' as const)}:{}),pause:(...args)=>parent.io.pause(...args),note:(text,tone)=>parent.io.note(`${name}: ${text}`,tone)};
-    const reporter:Reporter={facts:id=>parent.reporter.facts(id),usage:(id,tokens)=>parent.reporter.usage(id,tokens),status:async update=>{if(['permission','answered','paused','tool-start','tool-finish'].includes(update.event))await parent.reporter.status(update);}};
+    const reserve=parent.reporter.reserve?.bind(parent.reporter),settleGrant=parent.reporter.settle?.bind(parent.reporter);
+    const reporter:Reporter={facts:id=>parent.reporter.facts(id),usage:(id,tokens)=>parent.reporter.usage(id,tokens),...(reserve?{reserve}:{}),...(settleGrant?{settle:settleGrant}:{}),status:async update=>{if(['permission','answered','paused','tool-start','tool-finish'].includes(update.event))await parent.reporter.status(update);}};
     const child=new Agent({...parent,model,modelId,io,reporter,child:true,limits:this.limits,mcpSession:this.mcpSession,instructions:{...parent.instructions,text:parent.instructions.text+'\n\n# Subagent instructions\n'+file.body},transcript:new ChildTranscript(null,parent.redact,()=>parent.io.note('subagent transcript unavailable','error'))});
     // The parent request has been sent but its usage may arrive only after this tool. Reserve its worst case while
     // the child spends, so neither caps nor budgets temporarily forget that in-flight request.
@@ -368,12 +379,23 @@ export class Agent {
       return typeof answer.content==='string'?answer.content:answer.content.filter(p=>p.type==='text').map(p=>p.text).join('')||'Subagent finished without a text answer.';
     } finally { this.limits.reserved-=reserved; }
   }
-  private async clearance(inputTokens: number, controller: AbortController): Promise<AgentFacts | null> {
+  private async clearance(inputTokens: number, controller: AbortController): Promise<{ facts: AgentFacts | null; grant: string | null }> {
     const { io, reporter } = this.options;
+    let refusals = 0;
     for (;;) {
       if (controller.signal.aborted) throw new Error('stopped');
-      const facts = await reporter.facts(this.options.modelId), pause = this.limits.check(facts, inputTokens);
-      if (!pause) { this.limits.turns++; return facts; }
+      const facts = await reporter.facts(this.options.modelId);
+      let pause = this.limits.check(facts, inputTokens);
+      // B25: nothing is sent without the daemon's grant for this request's worst case, which counts every other agent's.
+      if (!pause && reporter.reserve) {
+        const answer = await reporter.reserve(this.options.modelId, this.limits.lastWorst);
+        if (answer && 'grant' in answer) { this.limits.turns++; return { facts, grant: answer.grant.id }; }
+        // Another agent took the room between the facts and the grant: a fresh check sizes the request to what is left.
+        if (answer && ++refusals < MAX_REFUSALS) continue;
+        pause = answer ? refusalPause(answer.refused) : { text: NOT_ANSWERING };
+      }
+      if (!pause) { this.limits.turns++; return { facts, grant: null }; }
+      refusals = 0;
       await reporter.status({ event: 'paused' });
       const go = await io.pause(pause.text, controller.signal);
       await reporter.status({ event: 'answered' });

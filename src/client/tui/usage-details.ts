@@ -1,4 +1,4 @@
-import type { Budgets, UsagePeriod, UsageSummary } from '../../shared/protocol.js';
+import type { Budgets, SessionInfo, UsagePeriod, UsageSummary } from '../../shared/protocol.js';
 import { compactTokens } from './usage-panel.js';
 import type { Line } from './worktree-question.js';
 
@@ -7,9 +7,9 @@ function amounts(total: Pick<UsagePeriod, 'costUsd' | 'tokens' | 'cachedTokens' 
   const cached = total.cachedTokens ? ` (${compactTokens(total.cachedTokens)} cached)` : '';
   return `≈ $${total.costUsd.toFixed(2)} · ${compactTokens(total.tokens)} tokens${cached}${total.unknownPrice ? ' · price ?' : ''}`;
 }
-// /usage and u (design.md: Usage details): each period, then its providers. The daemon's summary is by provider only,
-// so by-model and by-agent breakdowns aren't shown.
-export function usageDetailLines(usage: UsageSummary, budgets: Budgets): Line[] {
+// /usage and u (design.md: Usage details): each period, then its providers, then (v0.6.1, cost per task) each agent's own
+// total since it started: dollars for API-key agents, tokens for subscriptions. By-model breakdowns aren't shown.
+export function usageDetailLines(usage: UsageSummary, budgets: Budgets, sessions: readonly SessionInfo[] = [], taskCost = true): Line[] {
   const lines: Line[] = [];
   for (const [period, budget] of PERIODS) {
     const total = usage[period], limit = budgets[budget], over = limit !== null && total.costUsd > limit;
@@ -18,6 +18,15 @@ export function usageDetailLines(usage: UsageSummary, budgets: Budgets): Line[] 
     for (const provider of total.providers) lines.push({ text: `  ${provider.provider}  ${amounts(provider)}`, tone: 'ink-2' });
     lines.push({ text: '', tone: 'ink-3' });
   }
-  lines.push({ text: "API-key sessions only; subscriptions aren't counted. ≈ marks estimates · b sets budgets", tone: 'ink-3' });
+  const tasks = taskCost ? sessions.filter(s => s.taskUsage && (s.taskUsage.tokens > 0 || (s.taskUsage.costUsd ?? 0) > 0)) : [];
+  if (tasks.length) {
+    lines.push({ text: 'BY AGENT (start to now)', tone: 'ink' });
+    for (const s of tasks) {
+      const t = s.taskUsage, tokens = compactTokens(t?.tokens ?? 0);
+      lines.push({ text: t?.costUsd === null ? `  ${s.title}  ${tokens} tokens · plan limits, not dollars` : `  ${s.title}  ≈ $${(t?.costUsd ?? 0).toFixed(2)} · ${tokens} tokens${t?.unknownPrice ? ' · price ?' : ''}`, tone: 'ink-2' });
+    }
+    lines.push({ text: '', tone: 'ink-3' });
+  }
+  lines.push({ text: "Periods: API-key sessions only; subscriptions aren't counted. ≈ marks estimates · b sets budgets", tone: 'ink-3' });
   return lines;
 }

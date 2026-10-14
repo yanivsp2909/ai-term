@@ -1,4 +1,5 @@
-import type { SessionInfo, Status } from '../../shared/protocol.js';
+import type { SessionInfo, Status, TaskUsage } from '../../shared/protocol.js';
+import { compactTokens } from './usage-panel.js';
 import { ownLoginLabel, engineLabel } from '../../shared/models.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { ColorName } from './theme.js';
@@ -47,7 +48,15 @@ function contextWarning(session: SessionInfo): Styled | null {
   if (session.ctxPercent === null || session.ctxPercent < CONTEXT_WARN_PERCENT || !['running', 'done'].includes(session.status)) return null;
   return { text: `context ${Math.round(session.ctxPercent)}% · ${session.engine === 'ai-term' ? '/clear' : '/compact'} or start fresh`, color: 'status-waiting' };
 }
-export function cardText(session: SessionInfo, now: number, width: number, options: { contextWarning?: boolean } = {}): CardText {
+// Cost per task (v0.6.1, D55): dollars for API-key sessions, tokens on a subscription (it bills the plan, not a key).
+export function taskCostText(usage: TaskUsage | undefined): string | null {
+  if (!usage) return null;
+  if (usage.costUsd === null) return usage.tokens > 0 ? `${compactTokens(usage.tokens)} tok` : null;
+  if (usage.costUsd === 0 && usage.tokens === 0) return null;
+  const dollars = usage.costUsd < 0.005 ? '<$0.01' : `$${usage.costUsd.toFixed(2)}`;
+  return dollars + (usage.unknownPrice ? '+?' : '');
+}
+export function cardText(session: SessionInfo, now: number, width: number, options: { contextWarning?: boolean; taskCost?: boolean } = {}): CardText {
   const [glyph, color, word] = marks[session.status], shell = session.engine === 'shell', narrow = width < NARROW;
   const dontAsk = session.permission === 'dontAsk' ? '! ' : '', withAge = `${dontAsk}${glyph} ${shell ? '' : word + ' '}${age(session, now)}`;
   const status = { text: !shell && textWidth(withAge) + 1 + MIN_NAME > width ? `${dontAsk}${glyph} ${word}` : withAge, color, bold: session.status === 'waiting' };
@@ -58,7 +67,8 @@ export function cardText(session: SessionInfo, now: number, width: number, optio
   const percent = session.ctxPercent === null || shell || narrow ? null : `${Math.round(session.ctxPercent)}%`;
   const ctxText = percent === null ? null : [`ctx ${percent}`, percent].find(text => textWidth(model) + CTX_GAP + text.length <= width) ?? null;
   const ctx = ctxText ? { text: ctxText, color: (session.ctxPercent ?? 0) >= CTX_WARN ? 'status-waiting' as const : 'ink-3' as const } : null;
-  const auth = session.auth.kind === 'key' ? `API key ····${session.auth.last4}` : shell ? '' : ownLoginLabel(session.authMethod);
+  const login = session.auth.kind === 'key' ? `API key ····${session.auth.last4}` : shell ? '' : ownLoginLabel(session.authMethod), cost = options.taskCost === false ? null : taskCostText(session.taskUsage);
+  const auth = cost && login ? `${login} · ${cost}` : login;
   if (shell) return { status, model, ctx, activity: null, auth, line3: session.statusDetail === word ? word : `${word} · ${session.statusDetail}` };
   if(session.worktreeNote)return {status,model,ctx,activity:null,auth,line3:session.worktreeNote};
   const act = narrow ? null : (options.contextWarning !== false ? contextWarning(session) : null) ?? activity(session, now), joined = act && auth ? `${act.text} · ${auth}` : null;

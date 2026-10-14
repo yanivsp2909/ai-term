@@ -38,7 +38,7 @@ export function visibleCards(view: Pick<HomepageView, 'cols' | 'rows' | 'session
 export function visibleStart(selected: number, capacity: number, start: number): number { return selected < start ? selected : selected >= start + capacity ? selected - capacity + 1 : start; }
 export const commands = commandRegistry.map(c=>c.name);
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
-export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; notePriority?: boolean; commandMenu?: boolean; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string; field?: FieldView;usage?:UsageSummary|null;budgets?:Budgets;effort?:Effort|null;permission?:Permission;worktrees?:'on'|'off';themeName?:import('../../shared/protocol.js').ThemeName;marked?:ReadonlySet<string>;contextWarning?:boolean }
+export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; notePriority?: boolean; commandMenu?: boolean; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string; field?: FieldView;usage?:UsageSummary|null;budgets?:Budgets;effort?:Effort|null;permission?:Permission;worktrees?:'on'|'off';themeName?:import('../../shared/protocol.js').ThemeName;marked?:ReadonlySet<string>;contextWarning?:boolean;taskCost?:boolean }
 export const SPLIT_MARK = '◆ marked';
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
@@ -55,7 +55,7 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const panel = layout.agents; grid.box(panel.x, panel.y, panel.w, panel.h, `Agents ${view.sessions.length}`);
   const sessions = sortSessions(view.sessions);
   for (const [i, session] of visibleCards(view).entries()) {
-    const y = 2 + i * 3, selected = session.id === view.selectedId, bg = selected ? t['surface-2'] : t.bg, textW = panel.w - 9, card = cardText(session, view.now, textW, { contextWarning: view.contextWarning !== false }), statusW = textWidth(card.status.text);
+    const y = 2 + i * 3, selected = session.id === view.selectedId, bg = selected ? t['surface-2'] : t.bg, textW = panel.w - 9, card = cardText(session, view.now, textW, { contextWarning: view.contextWarning !== false, taskCost: view.taskCost !== false }), statusW = textWidth(card.status.text);
     grid.fill(1, y, panel.w - 2, 3, bg);
     if (selected) for (let r = 0; r < 3; r++) grid.text(1, y + r, '▎', t.accent, bg);
     grid.text(2, y, ` ${badge(session)} `, t.ink, t['surface-2'], true);

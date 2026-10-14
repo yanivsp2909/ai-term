@@ -1,4 +1,4 @@
-import type { AgentCaps, AgentFacts } from '../shared/agent-facts.js';
+import type { AgentCaps, AgentFacts, BudgetRefusal } from '../shared/agent-facts.js';
 import type { ModelPrice } from '../shared/protocol.js';
 import { estimateCost } from '../daemon/usage-prices.js';
 
@@ -17,6 +17,14 @@ export function estimateTokens(text: string): number {
 }
 export interface Pause { text: string; onContinue?: () => void }
 const usd = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+export const NOT_ANSWERING = "AI Term isn't answering, so budgets and caps can't be checked · ⏎ asks again · Esc stops";
+const BUDGET_LABEL = { daily: 'today', weekly: 'this week', monthly: 'this month' } as const;
+const held = (reserved: number) => reserved > 0 ? ` · ${usd(reserved)} held by other agents' requests` : '';
+// B25: the daemon refused this request's reservation even after a fresh check (another agent took the room).
+export function refusalPause(refused: BudgetRefusal): Pause {
+  if (refused.budget === 'unavailable') return { text: NOT_ANSWERING };
+  return { text: `budget: ${BUDGET_LABEL[refused.budget]} ${usd(refused.spent)} of ${usd(refused.limit)}${held(refused.reserved)} · raise it on the homepage (b), then ⏎ checks again · Esc stops` };
+}
 
 export function maxOutputTokens(facts: AgentFacts | null): number { return facts?.output ? Math.min(facts.output, MAX_OUTPUT_CAP) : DEFAULT_MAX_OUTPUT; }
 export function worstCase(price: ModelPrice, inputTokens: number, maxOutput: number): number {
@@ -42,6 +50,9 @@ export class RunLimits {
   // The worst case of the request the last check let through, and the output allowance it carries (maxOutputTokens).
   lastWorst = 0;
   lastMaxOutput = DEFAULT_MAX_OUTPUT;
+  // B25: the daemon holds every agent's in-flight worst case and books cut-off requests itself (facts.reserved, spent), so
+  // the budgets no longer add this run's own unreported or reserved amounts; the run's spend cap still does.
+  ledger = false;
   get current(): AgentCaps | null { return this.caps; }
   setCaps(caps: AgentCaps): void { const merged = { ...caps, ...this.pending }; this.pending = {}; this.caps = merged; this.base = { ...merged }; }
   chargeUnfinished(worst: number): void { this.spent += worst; this.unreported += worst; }
@@ -53,7 +64,7 @@ export class RunLimits {
   // the run cap and of every budget, never above the model's own limit. Reasoning is output: the Responses API, Anthropic's
   // max_tokens and Chat Completions all bound it by the same allowance and bill it at the output rate.
   check(facts: AgentFacts | null, inputTokens: number): Pause | null {
-    if (!facts) return { text: "AI Term isn't answering, so budgets and caps can't be checked · ⏎ asks again · Esc stops" };
+    if (!facts) return { text: NOT_ANSWERING };
     if (!this.caps) this.setCaps(facts.caps);
     const caps = this.caps ?? facts.caps, base = this.base ?? facts.caps, modelMax = maxOutputTokens(facts);
     this.lastWorst = 0; this.lastMaxOutput = modelMax;
@@ -64,11 +75,11 @@ export class RunLimits {
       if (!limited || this.unpriced.has(facts.model)) return null;
       return { text: `no price known for ${facts.model}, so spend limits can't be checked · mark the deployment's model in /settings, or ⏎ goes on without them for this model this run (at most ${modelMax.toLocaleString('en-US')} output tokens a request) · Esc stops`, onContinue: () => { this.unpriced.add(facts.model); } };
     }
-    const price = facts.price, input = worstCase(price, inputTokens, 0), extra = this.unreported + this.reserved;
+    const price = facts.price, input = worstCase(price, inputTokens, 0), extra = this.ledger ? facts.reserved : this.unreported + this.reserved;
     const rooms: { room: number; pause: () => Pause }[] = [];
     if (caps.spendUsd !== null) rooms.push({ room: caps.spendUsd - this.spent - this.reserved, pause: () => ({ text: `cap reached: ${usd(caps.spendUsd ?? 0)} this run · spent ${usd(this.spent)} · what's left fits under ${MIN_USEFUL_OUTPUT.toLocaleString('en-US')} output tokens · ⏎ allows ${usd(base.spendUsd ?? caps.spendUsd ?? 0)} more · Esc stops`, onContinue: () => { caps.spendUsd = (caps.spendUsd ?? 0) + (base.spendUsd ?? caps.spendUsd ?? 0); } }) });
     for (const [limit, spent, label] of [[facts.budgets.daily, facts.spent.day, 'today'], [facts.budgets.weekly, facts.spent.week, 'this week'], [facts.budgets.monthly, facts.spent.month, 'this month']] as const)
-      if (limit !== null) rooms.push({ room: limit - spent - extra, pause: () => ({ text: `budget: ${label} ${usd(spent)} of ${usd(limit)} · what's left fits under ${MIN_USEFUL_OUTPUT.toLocaleString('en-US')} output tokens · raise it on the homepage (b), then ⏎ checks again · Esc stops` }) });
+      if (limit !== null) rooms.push({ room: limit - spent - extra, pause: () => ({ text: `budget: ${label} ${usd(spent)} of ${usd(limit)}${this.ledger ? held(facts.reserved) : ''} · what's left fits under ${MIN_USEFUL_OUTPUT.toLocaleString('en-US')} output tokens · raise it on the homepage (b), then ⏎ checks again · Esc stops` }) });
     let allowance = modelMax, binding: (typeof rooms)[number] | null = null;
     for (const limit of rooms) {
       const left = limit.room - input;
