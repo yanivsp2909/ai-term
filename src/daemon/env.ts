@@ -1,8 +1,10 @@
 // Only the architecture's always rules apply to the internal shell engine.
-export function buildShellEnv(base: NodeJS.ProcessEnv): Record<string, string> {
+// ELECTRON_RUN_AS_NODE comes from AI Term's own launcher (S25); keepElectronNode is only for a dev daemon running as the
+// plain Electron binary, whose status commands need it (electronNodeNeeded in runtime-paths.ts).
+export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNode?: boolean} = {}): Record<string, string> {
     const result: Record<string, string> = {};
     for (const [key, value] of Object.entries(base)) {
-        if (value !== undefined && !/^npm_/.test(key) && !/^AI_TERM_/.test(key) && !['INIT_CWD', 'NODE_ENV','AITERM_STATUS_TOKEN','AITERM_STATUS_PORT'].includes(key))
+        if (value !== undefined && !/^npm_/.test(key) && !/^AI_TERM_/.test(key) && !['INIT_CWD', 'NODE_ENV','AITERM_STATUS_TOKEN','AITERM_STATUS_PORT'].includes(key) && (key !== 'ELECTRON_RUN_AS_NODE' || options.keepElectronNode))
             result[key] = value;
     }
     Object.assign(result, { TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'AITerm' });
@@ -23,8 +25,8 @@ export const CODEX_AUTH_VARS = ['OPENAI_API_KEY','CODEX_API_KEY','OPENAI_BASE_UR
 // D41: a Codex account config may route Azure through AZURE_OPENAI_API_KEY, so account sessions keep it. A key session still gets only its own key (D16).
 const CODEX_KEY_EXTRA_VARS = ['AZURE_OPENAI_API_KEY'] as const;
 // Key rows are pure/tested only. No v0.1.6 handler accepts a key or invokes these rows.
-export function buildSpawnEnv(engine: CliEngine, auth: {kind:'account'} | {kind:'key';secret:string;provider?:'openai'}, base: NodeJS.ProcessEnv): Record<string,string> {
-    const result=buildShellEnv(base), vars:readonly string[]=engine==='claude-code'?CLAUDE_AUTH_VARS:auth.kind==='key'?[...CODEX_AUTH_VARS,...CODEX_KEY_EXTRA_VARS]:CODEX_AUTH_VARS;
+export function buildSpawnEnv(engine: CliEngine, auth: {kind:'account'} | {kind:'key';secret:string;provider?:'openai'}, base: NodeJS.ProcessEnv, options: {keepElectronNode?: boolean} = {}): Record<string,string> {
+    const result=buildShellEnv(base,options), vars:readonly string[]=engine==='claude-code'?CLAUDE_AUTH_VARS:auth.kind==='key'?[...CODEX_AUTH_VARS,...CODEX_KEY_EXTRA_VARS]:CODEX_AUTH_VARS;
     for(const key of Object.keys(result))if(vars.some(pattern=>pattern.endsWith('*')?key.startsWith(pattern.slice(0,-1)):key===pattern))delete result[key];
     if(auth.kind==='key')result[engine==='claude-code'?'ANTHROPIC_API_KEY':auth.provider==='openai'?'OPENAI_API_KEY':'AITERM_FOUNDRY_KEY']=auth.secret;
     return result;

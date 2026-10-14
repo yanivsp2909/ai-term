@@ -12,6 +12,12 @@ export function configureCliRuntime(entry:string,processLike:{execPath:string}=p
  // Electron Node mode again even when the agent's env allowlist strips it.
  if(entry.endsWith('/Contents/Resources/app/dist/cli/index.js'))processLike.execPath=resolve(dirname(entry),'../../../../MacOS/ai-node');
 }
+// The launcher sets ELECTRON_RUN_AS_NODE for AI Term's own processes only. Children must not inherit it: any Electron app
+// an agent starts (code, a project's electron .) would run as plain Node. Only a daemon that is itself the plain Electron
+// binary (the dev app; the bundle pins ai-node, which sets the flag again) needs it for the status commands its agents run.
+export function electronNodeNeeded(execPath:string,electronVersion:string|undefined):boolean {
+ return electronVersion!==undefined&&!execPath.endsWith('/ai-node');
+}
 export function runtimeEnv(base:NodeJS.ProcessEnv):NodeJS.ProcessEnv {
  const env:NodeJS.ProcessEnv={...base,ELECTRON_RUN_AS_NODE:'1'};delete env.NODE_OPTIONS;delete env.NODE_PATH;delete env.ELECTRON_NO_ASAR;delete env.NAPI_RS_NATIVE_LIBRARY_PATH;return env;
 }

@@ -27,6 +27,7 @@ import { atomicWrite, keepCopy, moveAside, readState, StateLoadError } from './s
 import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror, type MirrorSignal } from './mirror.js';
+import { electronNodeNeeded } from '../shared/runtime-paths.js';
 import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv } from './env.js';
 import { KeyStore, KeyError } from './keys.js';
 import { checkEngine } from './engines.js';
@@ -260,7 +261,7 @@ export class SessionManager extends EventEmitter {
                 if(key.provider==='foundry'&&(!agent.model||!key.deployments?.includes(agent.model)||!key.lastTest?.some(r=>r.model===agent.model&&r.status==='ready')))throw new KeyError('Foundry deployment must pass its test first');
                 authMethod='api-key';
                 recipe={executable:status.path,args:buildArgs({...agent,...argvRequest,engine,...(key.provider==='foundry'?{foundryEndpoint:key.endpoint}:{}),...(key.provider==='openai'?{openaiKey:true}:{})}),env:{}};
-            }else recipe = { executable: status.path, args: agent.login ? (engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false','login']:['auth','login']) : buildArgs({...agent,...argvRequest,engine}), env: buildSpawnEnv(engine, {kind:'account'}, process.env) };
+            }else recipe = { executable: status.path, args: agent.login ? (engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false','login']:['auth','login']) : buildArgs({...agent,...argvRequest,engine}), env: buildSpawnEnv(engine, {kind:'account'}, process.env, {keepElectronNode:electronNodeNeeded(process.execPath,process.versions.electron)}) };
         } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
@@ -319,7 +320,7 @@ export class SessionManager extends EventEmitter {
             else if(agent&&cliEngine&&agent.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
                 // B12: argv was built from settings.json's copy; the secret goes only to the endpoint bound to it in the Keychain.
                 if(keyView?.provider==='foundry'&&(!binding||!recipe.args.includes(`model_providers.aiterm_foundry.base_url="${binding.endpoint}"`)||!agent.model||!binding.deployments.includes(agent.model)))throw new KeyError('Foundry key details changed outside AI Term; add the key again');
-                recipe.env=buildSpawnEnv(cliEngine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env);
+                recipe.env=buildSpawnEnv(cliEngine,{kind:'key',secret,...(keyView?.provider==='openai'?{provider:'openai' as const}:{})},process.env,{keepElectronNode:electronNodeNeeded(process.execPath,process.versions.electron)});
                 if(telemetry)Object.assign(recipe.env,buildUsageEnv(cliEngine,telemetry));
                 if(statusTelemetry)Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
                 try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
