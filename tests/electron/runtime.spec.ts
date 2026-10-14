@@ -1,6 +1,6 @@
 import {_electron as electron,expect,test} from '@playwright/test';
 import {execFile,spawn} from 'node:child_process';import {promisify} from 'node:util';
-import {mkdtemp,mkdir,rm,writeFile,readFile} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join,resolve,dirname} from 'node:path';
+import {mkdtemp,mkdir,rm,writeFile,readFile,realpath} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join,resolve,dirname} from 'node:path';
 import {Connection} from '../../src/client/connection.js';import {getPaths} from '../../src/shared/paths.js';
 import {commandPlan,installCommand} from '../../app/main/command-install.js';
 const run=promisify(execFile),packaged=process.env.AI_TERM_TEST_APP;
@@ -36,7 +36,8 @@ test('window uses an existing protocol-compatible dev daemon without stopping it
    await application.evaluate(({BrowserWindow})=>{const contents=BrowserWindow.getAllWindows()[0]?.webContents;contents?.sendInputEvent({type:'keyDown',keyCode:'e',modifiers:['meta']});contents?.sendInputEvent({type:'keyUp',keyCode:'e',modifiers:['meta']});});
    await expect(page.locator('.xterm-accessibility-tree')).not.toContainText('Connect a provider');
    await page.locator('.xterm-helper-textarea').focus();await page.keyboard.type('/shell');await expect(page.locator('.xterm-accessibility-tree')).toContainText('/shell');await page.keyboard.press('Enter');
-   await expect.poll(async()=>((await connected.request({kind:'sessions.list'})).sessions??[]).find(session=>session.id!==original?.id)?.cwd).toBe(home);
+   // macOS canonicalizes /var to /private/var when it records a session folder.
+   await expect.poll(async()=>((await connected.request({kind:'sessions.list'})).sessions??[]).find(session=>session.id!==original?.id)?.cwd).toBe(await realpath(home));
   }
   await application.close();application=undefined;expect((await client.request({kind:'sessions.list'})).sessions).toHaveLength(packaged?2:1);
  }finally{if(application)await application.close();client?.close();daemon.kill('SIGTERM');await exited;await rm(home,{recursive:true,force:true});}
