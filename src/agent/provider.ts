@@ -1,24 +1,17 @@
-import { createAzure } from '@ai-sdk/azure';
 import type { LanguageModel } from 'ai';
-import { isEndpoint, isSecret, isValidModelId } from '../shared/validate.js';
+import type { KeyProvider } from '../shared/protocol.js';
+import { anthropicModel } from './providers/anthropic.js';
+import { foundryModel, type FoundryWire } from './providers/foundry.js';
+import { openaiModel } from './providers/openai.js';
+import { ProviderError, type Fetch } from './providers/guard.js';
+export { guardedFetch, ProviderError } from './providers/guard.js';
+export { foundryModel } from './providers/foundry.js';
 
-// v0.4.1's one provider: an Azure AI Foundry deployment through the Responses API, the same wire the Foundry key's
-// deployment test already passed. The endpoint is the one bound to the key in the Keychain (B12); the provider sends the
-// key only in its `api-key` header (S16). The fetch below refuses every URL outside that endpoint and never follows a
-// redirect, because a redirect would carry the `api-key` header to whatever host it names.
-export class ProviderError extends Error {}
-type Fetch = typeof globalThis.fetch;
-
-export function guardedFetch(endpoint: string, base: Fetch = globalThis.fetch): Fetch {
-  const allowed = new URL(endpoint.endsWith('/') ? endpoint : endpoint + '/');
-  return (input, init) => {
-    const target = new URL(input instanceof Request ? input.url : String(input));
-    if (target.protocol !== 'https:' || target.origin !== allowed.origin || !(target.pathname + '/').startsWith(allowed.pathname)) return Promise.reject(new ProviderError('Request outside the Foundry endpoint'));
-    return base(input, { ...init, redirect: 'error' });
-  };
-}
-
-export function foundryModel(endpoint: string, deployment: string, key: string, base?: Fetch): LanguageModel {
-  if (!isEndpoint(endpoint) || !isValidModelId(deployment) || !isSecret(key)) throw new ProviderError('Invalid Foundry settings');
-  return createAzure({ baseURL: endpoint.replace(/\/+$/, ''), apiKey: key, fetch: guardedFetch(endpoint, base) }).responses(deployment);
+// The one place that turns a key, its provider and a model id into an AI SDK model. The endpoint is used for Foundry only
+// (the Keychain-bound one); Anthropic and OpenAI have fixed hosts in their own modules.
+export interface ModelSpec { provider: KeyProvider; model: string; key: string; endpoint: string | null; wire?: FoundryWire }
+export function makeModel(spec: ModelSpec, base?: Fetch): LanguageModel {
+  if (spec.provider === 'foundry') { if (!spec.endpoint) throw new ProviderError('Invalid Foundry settings'); return foundryModel(spec.endpoint, spec.model, spec.key, spec.wire ?? 'responses', base); }
+  if (spec.provider === 'anthropic') return anthropicModel(spec.model, spec.key, base);
+  return openaiModel(spec.model, spec.key, base);
 }

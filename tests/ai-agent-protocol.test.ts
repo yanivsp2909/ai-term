@@ -39,16 +39,16 @@ it('keysRunOn is a setting with two values; the saved default engine stays a CLI
 const foundry: KeyView = { id: keyId, provider: 'foundry', label: 'narvis', last4: 'ITid', endpoint: 'https://narvis-resource.openai.azure.com/openai/v1', deployments: ['gpt-6.1-sol', 'kimi-k3'], lastTest: [{ model: 'gpt-6.1-sol', status: 'ready' }, { model: 'kimi-k3', status: 'not a chat model' }] };
 const anthropic: KeyView = { id: randomUUID(), provider: 'anthropic', label: 'a', last4: 'abcd' };
 
-it('D47 routing: a supported key runs on ai term unless the fallback says the CLI; accounts always run the CLIs', () => {
-  expect(keyEngine('foundry', undefined)).toBe('ai-term');
-  expect(keyEngine('foundry', 'ai-term')).toBe('ai-term');
-  expect(keyEngine('foundry', 'cli')).toBe('codex');
-  // v0.4.1 has one provider; Anthropic and OpenAI keys keep their CLIs until v0.4.2.
-  expect(keyEngine('anthropic', 'ai-term')).toBe('claude-code');
-  expect(keyEngine('openai', 'ai-term')).toBe('codex');
+it('D47 routing (v0.4.2): every key runs on ai term unless the fallback says the CLI; accounts always run the CLIs', () => {
+  for (const provider of ['foundry', 'anthropic', 'openai'] as const) { expect(keyEngine(provider, undefined)).toBe('ai-term'); expect(keyEngine(provider, 'ai-term')).toBe('ai-term'); }
+  expect(keyEngine('foundry', 'cli')).toBe('codex'); expect(keyEngine('openai', 'cli')).toBe('codex'); expect(keyEngine('anthropic', 'cli')).toBe('claude-code');
   const rows = modelChoices([foundry, anthropic], undefined, 'ai-term');
-  expect(rows.filter(r => r.auth?.kind === 'key' && r.group?.startsWith('FOUNDRY')).map(r => [r.engine, r.model])).toEqual([['ai-term', 'gpt-6.1-sol']]);
+  // A Chat Completions deployment (tested 'not a chat model' before v0.4.2, 'chat' now) runs on AI Term's agent only.
+  expect(rows.filter(r => r.group?.startsWith('FOUNDRY')).map(r => [r.engine, r.model])).toEqual([['ai-term', 'gpt-6.1-sol'], ['ai-term', 'kimi-k3']]);
   expect(rows.filter(r => r.auth?.kind === 'account').every(r => r.engine !== 'ai-term')).toBe(true);
-  expect(rows.filter(r => r.auth?.kind === 'key' && r.group === 'ANTHROPIC').every(r => r.engine === 'claude-code')).toBe(true);
-  expect(modelChoices([foundry], undefined, 'cli').filter(r => r.auth?.kind === 'key').map(r => r.engine)).toEqual(['codex']);
+  const claude = rows.filter(r => r.auth?.kind === 'key' && r.group === 'ANTHROPIC');
+  expect(claude.length).toBeGreaterThan(3); expect(claude.every(r => r.engine === 'ai-term' && r.model?.startsWith('claude-'))).toBe(true);
+  const cli = modelChoices([foundry, anthropic], undefined, 'cli').filter(r => r.auth?.kind === 'key');
+  expect(cli.filter(r => r.group?.startsWith('FOUNDRY')).map(r => [r.engine, r.model])).toEqual([['codex', 'gpt-6.1-sol']]);
+  expect(cli.filter(r => r.group === 'ANTHROPIC').map(r => [r.engine, r.model])).toEqual([['claude-code', null], ['claude-code', 'opus'], ['claude-code', 'sonnet']]);
 });

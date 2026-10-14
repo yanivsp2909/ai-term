@@ -20,7 +20,7 @@ export async function testFoundry(endpoint:string,deployments:string[],secret:st
  for(const model of deployments){
   const send=(route:string)=>{const url=new URL(endpoint.replace(/\/$/,'')+'/'+route);return transport({url,path:url.pathname,model,headers:{'api-key':secret,'content-type':'application/json'},body:route==='responses'?{model,input:'ping',max_output_tokens:16}:{model,messages:[{role:'user',content:'ping'}],max_tokens:16},timeout:15000});};
   try{let reply=await send('responses');if(reply.status>=200&&reply.status<300){results.push({model,status:'ready'});continue;}
-   if(reply.status===400||reply.status===404){const chat=await send('chat/completions');if(chat.status>=200&&chat.status<300){results.push({model,status:'not a chat model'});continue;}reply=chat;}
+   if(reply.status===400||reply.status===404){const chat=await send('chat/completions');if(chat.status>=200&&chat.status<300){results.push({model,status:'chat'});continue;}reply=chat;}
    const code=reply.errorCode&&['Unauthorized','DeploymentNotFound','InvalidApiKey','RateLimitExceeded'].includes(reply.errorCode)&&!reply.errorCode.includes(secret)?reply.errorCode:null;
    results.push({model,status:'error',httpStatus:reply.status,...(code?{errorCode:code}: {})});
   }catch(error){
