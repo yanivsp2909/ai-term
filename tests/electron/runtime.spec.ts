@@ -27,10 +27,17 @@ test('window uses an existing protocol-compatible dev daemon without stopping it
  try{
   const deadline=Date.now()+5000;
   while(!client){try{client=await Connection.connect(paths,{entry:resolve('dist/cli/index.js'),autoStart:false});}catch(error){if(Date.now()>deadline||daemon.exitCode!==null){const log=await readFile(paths.log,'utf8').catch((e:unknown)=>{if(e instanceof Error&&'code'in e&&e.code==='ENOENT')return '';throw e;});throw new Error('Disposable dev daemon failed: '+startup+log,{cause:error});}await new Promise(r=>setTimeout(r,30));}}
-  await client.request({kind:'sessions.create',engine:'shell',cwd:home,title:'agent before app'});
+  const original=(await client.request({kind:'sessions.create',engine:'shell',cwd:home,title:'agent before app'})).session;
   application=await electron.launch({...(packaged?{executablePath:packaged}:{}),args:packaged?[]:[resolve('app/out/main/index.js')],env});
   const page=await application.firstWindow();await expect(page.locator('.xterm-accessibility-tree')).toContainText('agent before app');
   expect((await client.request({kind:'hello',protocol:1,version:'test'})).daemonPid).toBe(daemon.pid);
-  await application.close();application=undefined;expect((await client.request({kind:'sessions.list'})).sessions).toHaveLength(1);
+  if(packaged){
+   const connected=client;
+   await application.evaluate(({BrowserWindow})=>{const contents=BrowserWindow.getAllWindows()[0]?.webContents;contents?.sendInputEvent({type:'keyDown',keyCode:'e',modifiers:['meta']});contents?.sendInputEvent({type:'keyUp',keyCode:'e',modifiers:['meta']});});
+   await expect(page.locator('.xterm-accessibility-tree')).not.toContainText('Connect a provider');
+   await page.locator('.xterm-helper-textarea').focus();await page.keyboard.type('/shell');await expect(page.locator('.xterm-accessibility-tree')).toContainText('/shell');await page.keyboard.press('Enter');
+   await expect.poll(async()=>((await connected.request({kind:'sessions.list'})).sessions??[]).find(session=>session.id!==original?.id)?.cwd).toBe(home);
+  }
+  await application.close();application=undefined;expect((await client.request({kind:'sessions.list'})).sessions).toHaveLength(packaged?2:1);
  }finally{if(application)await application.close();client?.close();daemon.kill('SIGTERM');await exited;await rm(home,{recursive:true,force:true});}
 });
