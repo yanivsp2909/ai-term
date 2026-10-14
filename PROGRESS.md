@@ -1,6 +1,101 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 109750a docs: refresh desktop latency after reviewer fixes
+Roadmap step: v0.5 desktop terminal — partial. **BLOCKED at the release gate**: required Terminal.app/physical-display comparison is unavailable under this session's no-computer-use limit; live TUI truecolor theme switching is not implemented.
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 42998c1 after `git pull --ff-only` (already up to date). Baseline: 183 files / 1144 passed / 2 existing opt-in Keychain skips. Final: 187 files / 1153 passed / the same 2 skips, twice consecutively. Session: Codex, GPT-6.1 Sol, high; two fresh high reviewers, read-only and sequential. No real daemon stopped, credential folders/keychain/env files inspected, or prohibited folders edited.
+
+Prompt vs code:
+- Checkpoint matches. React and Unicode 11 were already dependencies. Installing browser xterm exposed stricter Unicode addon types; the table capture now uses a real headless terminal (62ff588, existing width tests remain green).
+- CLI startup inherits its caller's env (`src/cli/index.ts`, `src/client/connection.ts`); no login-environment builder exists there. The wrapper follows that behavior, adds terminal identification/Electron Node mode, and adds no keys. It does not reconstruct Finder/Dock login-shell profiles.
+- Electron 44.7.2 requires its explicit binary installer (`npm exec -- install-electron --no`) and clipboard reads/writes return promises. The initial paste bug validated that promise as text; awaiting both operations fixes ordinary two-line paste (972a14a failing smoke → 3bd4dd4).
+- RTK.md is absent. No alternate private instructions were read.
+
+## What works
+- Task 1 (62ff588): separate electron-vite main/preload/React renderer in app/, app:dev/app:build, one shared token reader in src/shared/theme-tokens.ts. app:dev builds local files and opens the desktop window; no HMR/server/eval exception. This is a development window and bundles, not an installable .app package.
+- Task 2 (62ff588, a3f78fd): one node-pty PTY runs built ai in Electron Node mode, at xterm's fitted grid. WebGL active in the measurements; fit, Unicode 11, web-links and search loaded; context loss/init failure has a one-line DOM fallback. Both terminal/PTY dimensions clamp identically to 500×300. Closing the window closes its client, not the daemon or agents.
+- Task 3 (62ff588, 573e7d7, 3bd4dd4, 054e14e): exactly write, resize, onOutput, openUrl, copy, paste, onTheme. Every renderer message is checked in main (sender/main frame, arity, types, sizes/UTF-8 limits, exact size keys, URL scheme/credentials/controls). Events never cross preload; clipboard is awaited. ESC clipboard bytes are refused before bracketed paste; Ctrl+E in paste remains text.
+- Task 4 (51fed82, 62ff588, 972a14a): contextIsolation and sandbox on, nodeIntegration off; local CSP with no eval/remote/connect, no navigation/frame redirects/webviews/new windows; permissions denied; links use validated http/https shell.openExternal only. No daemon, agent, keys.ts or env.ts edits.
+- Task 5 (62ff588, 3bd4dd4): Cmd+C selection, Cmd+V bracketed paste, Cmd+E Ctrl+E, Cmd+K/F search, Cmd+/-/0 font, Option Meta. xterm input/output bypass React; React owns search/errors only. Native Edit/View accelerators are excluded from the minimal menu.
+- Task 6 (62ff588): window/xterm defaults follow macOS light/dark tokens and the approved mono font, with no animation. The running TUI still honors its saved /theme and samples auto at startup; automatic live TUI palette switching remains partial.
+- Task 7 (ff3e5f3, 48fcb6c): README full desktop command/key list; architecture §12.4 process model and S23 preload/security rule. Nothing from the next roadmap step started.
+
+## Reviewer findings (regression commit → fix commit)
+- TypeScript reviewer, fresh high: HIGH, clipboard ESC[201~y ended bracketed paste and became a typed approval y. Real Electron boundary regression failed at d74c0c7; 054e14e refuses ESC, with a fixed visible reason. Ordinary multiline/Ctrl+E paste is still accepted.
+- TypeScript reviewer, fresh high: MEDIUM, fit above 500×300 left xterm larger than its PTY, breaking wrap/cursor/mouse geometry. Behavior extracted without change at 05f2aa1; d871d1f failed for 501×301; a3f78fd resizes both to 500×300.
+- Security reviewer, fresh high on corrected 1272990: no additional findings. Focused tests: 5 files / 11 passed. No new reviewers or concurrent edits during either pass.
+
+## Latency (measured; release comparison blocked)
+- Final docs/testing/v0.5-app-latency.json (109750a): macOS arm64, WebGL active, 151×37 cells; 50 warmup + 300 measured keys, 15/20/25 ms gaps. App p50 0.70 ms / p95 1.00 / p99 1.30 / max 1.30. Direct CLI PTY p50 0.39 / p95 0.55 / p99 0.75 / max 2.43.
+- scripts/measure-app-latency.ts records renderer keydown capture-phase (app) or outer-PTY write (direct CLI), then the arrival of output establishing the expected command-bar character and following block-cursor cell, parsed offline using Unicode 11. It does not measure physical paint. App uses Electron's Node 24; direct CLI uses system Node 26. These numbers do not prove parity with Terminal.app.
+- Initial pre-review measurement: app p95 1.80 ms, direct CLI 0.94 ms. Refreshed after fixes; no claim of a measured optimization. Terminal.app: not measured, no substituted number. Need Yaniv's real Terminal.app replay/comparable physical-input observation to close the typing gate.
+
+## Check output (actual last lines, exit 0)
+```
+npm run typecheck   > tsc --noEmit && tsc --noEmit -p app/tsconfig.json
+npm run lint        > eslint .
+npm run build       ESM ⚡️ Build success in 29ms
+npm run app:build   ✓ built in 64ms
+npm run app:test    3 passed (9.4s)
+npm run app:dev     starting electron app... (disposable CLI/daemon socket observed; stopped only test processes)
+npm test -- --reporter=dot (1)   Test Files 187 passed (187) · Tests 1153 passed | 2 skipped (1155) · Duration 21.09s
+npm test -- --reporter=dot (2)   Test Files 187 passed (187) · Tests 1153 passed | 2 skipped (1155) · Duration 20.45s
+git diff --check    clean
+```
+- Playwright opens the actual built ai, sees the homepage, dismisses its temp home's login popup, types in the command bar, resizes, verifies multiline paste/search/font keys, runtime sandbox/no Node/exact API, and clipboard escape refusal. All ran in temp HOME with no provider CLIs on PATH. Test clipboard cleared afterwards. Full suites ran serially, after the corrected build; only changed test files ran during development.
+
+## What's next
+- v0.5 only: finish the release gate. Need a real Terminal.app/app typing comparison and the manual checks below; do not label output-arrival timing a physical/native-terminal result.
+- Finish live TUI light/dark behavior safely: current ai uses persisted theme and truecolor cells, so changing xterm defaults cannot recolor a running TUI. No synthetic theme command/key injection or new daemon protocol was added. The window/default colors do follow macOS; /theme auto matches at startup.
+- Finder/Dock packaging and login-env reconstruction are not delivered by these app:build bundles. The current launcher is app:dev; README states this explicitly.
+
+## Manual checks
+Automated window/homepage/typing/paste/search/resize/security: ran as described above. Each real-session command below needs Yaniv; run app:dev once and use its window for the sequence.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: open the app and confirm the homepage, with no Terminal.app input required.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: type in the homepage command bar; edit by character/Option-word, Cmd+/-/0 font, Cmd+C selection, Cmd+V paste.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: Enter an existing agent, type, then Cmd+E returns home; no key or login pasted into chat.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: /shell, Enter, run /usr/bin/vim -Nu NONE -i NONE -n; insert, move, Esc, :q, Cmd+E home.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: /shell twice, Space marks each, v split; type in both, Ctrl+\ switches, Cmd+E home.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: paste two ordinary lines; homepage shows a paste token and agents receive one bracketed paste. Actual ESC bytes are refused with a specific error.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: Cmd+K/Cmd+F, search scrollback, Enter/Shift+Enter next/previous, Esc closes.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: change macOS Appearance light/dark; window/default colors follow. TUI auto currently requires restart to resample; this is the open task-6 limitation.
+- `cd ~/ai-term && npm run app:dev` — needs Yaniv: resize in homepage, vim and split; text/cursor/mouse stay aligned and typing remains instant.
+- `cd ~/ai-term && npm exec -- tsx scripts/measure-app-latency.ts` — ran: reproduces the disposable app/direct-CLI arrival numbers; needs Yaniv for the missing real Terminal.app/physical-paint comparison. This command itself is not that comparison.
+
+## Gotchas
+- Electron 44 clipboard APIs are async: await readText/writeText/clear. Refusing ESC in paste protects approvals; write input still accepts terminal key escapes.
+- A fresh temp HOME opens Login. Wait for Esc to close the popup before typing; adjacent ESC+letter within the parser's 30 ms window is Meta, not two unrelated keys.
+- app:dev rebuilds and loads local production files. Restart after edits; no HMR websocket. envDir:false prevents .env reads. First install needs npm exec -- install-electron --no; no packaging dependency added.
+- Temp checks use HOME, AI_TERM_HOME and AI_TERM_APP_DATA explicitly; PATH excludes providers. Never use the real ~/.ai-term for automated tests or stop its daemon. The two native Keychain tests remain opt-in.
+- App/main logs fixed lines through Logger in Electron userData; renderer fallback uses one fixed console warning. Raw PTY/input/URLs/envs are never logged.
+
+## New dependencies
+- electron: Node cannot provide a native desktop window or sandboxed Chromium renderer.
+- electron-vite: builds separate main/preload/renderer bundles with the pinned stack.
+- react: already present; small search/error chrome outside the typing path.
+- react-dom: mounts that React chrome into the renderer.
+- @xterm/xterm: a real terminal display/input engine, rather than reimplementing it.
+- @xterm/addon-webgl: the pinned GPU renderer, with DOM fallback.
+- @xterm/addon-fit: computes the actual grid from the window's terminal area.
+- @xterm/addon-unicode11: already present; same modern width table as the mirrors.
+- @xterm/addon-web-links: detects terminal links for the validated browser opener.
+- @xterm/addon-search: searches terminal scrollback without daemon/agent involvement.
+- @playwright/test: tests the real Electron window and runtime isolation headlessly.
+- node-pty: already present; this N-API version works with Electron without a rebuild package.
+
+## Concepts introduced
+- Electron isolation (app/main/security.ts and app/preload/index.ts): main has Node/process access; the sandbox renderer has only seven explicit bridge functions. TypeScript describes those functions, but main must still check every runtime message and its sender.
+- Desktop PTY lifecycle (app/main/index.ts): Electron's binary can run built ai as Node with ELECTRON_RUN_AS_NODE. The outer PTY belongs to the window; the existing ai daemon remains detached, so window closure preserves its agents.
+- Paste delimiters (app/shared/validation.ts): xterm brackets a paste with terminal escape sequences, separating content from typed approval keys. Clipboard ESC could end that wrapper early, so the main boundary refuses it while accepting ordinary newlines and Ctrl+E as content.
+- Fit geometry (app/renderer/resize.ts): pixels become a columns/rows grid used by both xterm and the child PTY. Clamping only the message would make them wrap and position the cursor differently; both now take the same bounded dimensions.
+- Shared token reader (src/shared/theme-tokens.ts): one pure JSON reader returns the approved colors and fonts to both TUI and browser builds. The TUI retains its existing alternate palette/conversion logic; the app can use the same base values without Node in its renderer.
+
+---
+
+## Previous checkpoint (v0.4 release gate, retained)
+
+## Checkpoint
 Last commit: 027521c fix: deny only CLI and shell state names, not extensions named like git-log or analyze-logs
 Roadmap step: v0.4 release gate — done. **v0.4 is closed** on automated evidence; only Yaniv's real-key and real-terminal checks below remain, as for v0.2 and v0.3.
 Branch: main. This handover is the last commit; its own hash is in git log.
@@ -134,19 +229,8 @@ v0.2 and v0.3, retained:
 - A failed, usage-less or unconfirmed request counts its worst case for the rest of the run, so a run can pause earlier than Usage suggests.
 - Gate tests that need a log file create `<state>/logs` first: the Logger never creates its folder.
 
-## New dependencies (v0.5 app in progress)
-- electron: a native desktop window and isolated Chromium renderer are not provided by Node.
-- electron-vite: builds the separate main, sandbox preload and renderer bundles.
-- react: already present; owns the small search/error UI outside xterm's input path.
-- react-dom: mounts that React UI in Electron's renderer.
-- @xterm/xterm: displays the PTY as a full terminal rather than rebuilding terminal input/rendering.
-- @xterm/addon-webgl: provides the pinned GPU renderer, with DOM fallback.
-- @xterm/addon-fit: computes terminal columns/rows from its actual pixel area.
-- @xterm/addon-unicode11: already present; shares the mirrors' modern width table.
-- @xterm/addon-web-links: detects clickable terminal URLs for the narrow validated browser opener.
-- @xterm/addon-search: searches xterm's scrollback without involving ai or its daemon.
-- @playwright/test: drives the real Electron window and asserts runtime sandbox behavior.
-- node-pty: already present and N-API compatible with Electron; no rebuild dependency added.
+## New dependencies
+- None.
 
 ## Concepts introduced
 - **Sized output allowance (`src/agent/limits.ts` `check`):** a cap only holds if the request can't write past it. So the agent turns "what's left of the money" into "how many output tokens may this request write", subtracts the input it is sending, and passes that number as `maxOutputTokens`. The worst case is then a real upper bound, not a guess.
