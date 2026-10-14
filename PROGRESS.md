@@ -1,6 +1,95 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 6deb3cc fix: test both runtimes through normal Electron startup
+Roadmap step: v0.5 desktop distribution — partial. The self-contained app/zip and functional smoke checks work; **Yaniv requested that the final latency A/B and two consecutive full test runs move to the next prompt** to finish this session faster. This is not a completed release gate.
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 11362d1 after git pull --ff-only (already up to date). Baseline: 191 files / 1181 passed / 2 existing opt-in Keychain skips, 18.99 s. Current full suite has not been rerun. Final dev Electron smoke: 9 passed (37.7 s); packaged smoke: 9 passed (41.3 s), including clean process exit assertions. Only touched test files ran during development. No real daemon stopped, credential folders/keychain/env files inspected, protected repo directories edited, computer use or force-push.
+
+Prompt vs code:
+- Both native bindings use stable N-API, rather than exclusively the system Node ABI. They load under Electron and system Node without rebuilding source node_modules; keyring's package ships platform binaries without rebuild sources. The simpler working option is to package compatible binaries and verify their bundle locations/loading. No @electron/rebuild dependency was added.
+- Package metadata remains 0.1.1; v0.5 is the roadmap label. The previous native handover remains partial at its historical absolute latency gate. This packaging prompt explicitly sets a different gate: same-session packaged minus dev 11362d1 p95 <= 0.30 ms. The older evidence is preserved below.
+- Existing Connection.connect already reports protocol mismatch in one line and leaves the daemon running; it needed regression coverage, not a protocol change.
+- The app and CLI inherit their launcher environment; no login-shell reconstruction exists. Runtime launches remove loader overrides and add Electron Node mode, without reading login files or adding keys. RTK.md is absent; no alternate private instructions were read.
+
+## What works
+- Task 1, runtime (3db7566 tests; adeaf90 implementation; 18f8e82 -> 92c3505 native-loader guard): bundled ai and daemon use Electron Node through native ai-node. CLI startup pins execPath to that wrapper so existing daemon/status/own-agent launches work even when provider env filtering removes ELECTRON_RUN_AS_NODE. Native modules resolve within app resources and load without system Node; no keychain methods were invoked. Plain npm run build and source CLI remain available.
+- Task 2, packaging (adeaf90, 437f37e, e2b0777): npm run app:dist builds AI Term.app and AI-Term-0.1.1-arm64.zip under build/desktop/dist. electron-builder handles electron-vite outputs, production dependencies, launchers and signing in isolated staging. asar:false, npmRebuild:false, explicit ad-hoc identity -, identity discovery/publishing/notarization disabled and caller signing/notarization credentials removed. Hardened runtime is omitted for this local PTY distribution; no hardened-runtime compatibility claim. Build HOME/cache stay in build/desktop. App and nested helper pass codesign verification. This is host-arm64 distribution, not a universal release; generated binaries are ignored rather than committed.
+- Task 3, paths (adeaf90; 0f36cfc failing status-path test -> b2e203f quoting fix; ff7a74a failing new-session test -> 008784b home-folder fix; 556c72e canonical temp-path expectation): runtime assets resolve from module/executable paths, never cwd or PATH. Helpers/AI Term.app keeps local.aiterm.notifier; a relative internal symlink preserves the unchanged helper resolver. Internal status commands quote app-name spaces. Packaged windows start new sessions in the user's home, dev in the repo; the optional Terminal command preserves its caller's cwd. Daemon/agent/protocol/env/key code was not changed except the permitted status-line quoting in daemon/claude-settings.ts; agent, keys.ts and env.ts are untouched.
+- Task 4, optional command (3db7566, adeaf90, b2e203f): native App menu Install ai command shows both folders, exact symlink and target, with Cancel default. It creates only real user-owned home/.local/bin directories, exclusively creates ai, refuses foreign files/directories/links with a description, and uninstalls only the exact current app target. Symlinked parents are refused. No sudo, /usr/local, profile editing or installer IPC; real ~/.local/bin was not touched.
+- Task 5, handoff (adeaf90, 0f36cfc fixture correction; existing connection-errors regression): actual packaged/dev windows reuse a temporary system-Node daemon, keep its PID and agents through close, and never auto-stop a mismatched daemon. The new-shell test confirms the canonical temp home folder and both sessions remain after window close.
+- Task 6, docs (adeaf90, b2e203f, e2b0777, 008784b, e0fc8fa, 6deb3cc): README install/first-open/source/optional command instructions and architecture bundle layout/S25, runtime environment, lifecycle and measurement rules. No next roadmap step started.
+- User-reported quit crash (31c1bd5 tests -> 00f8d49 fix; e0fc8fa docs): a test-owned Electron PID 82632 aborted in node-pty's Napi::ThreadSafeFunction during Node environment cleanup. Only the crash report's reason/stack for this known PID was inspected. Quit now waits for every outer PTY's exit callback, including a just-closed window, then another event-loop turn. After one second, only still-tracked outer clients may receive SIGKILL; the daemon/agents are not tracked. Three lifecycle tests pass, and all smoke processes now assert exit code 0 with no signal. This fixes the unexpected-quit notices Yaniv saw from automated test windows.
+
+## Reviewer findings
+- Fresh high TypeScript and security passes: no actionable correctness/security/requirement findings. They reviewed runtime paths, installer, env, signing configuration, existing IPC/security, and follow-up native-loader/home-folder/PTY-shutdown fixes. Reviews were read-only and sequential; parent paused repo work/tests while each ran.
+- Final TypeScript static continuation also cleared 22f9267..6deb3cc (test-only normal-startup helper/readiness/capture changes); no additional builds/tests ran after Yaniv deferred them. Security's final production/lifecycle review covered through 22f9267. No new production input or IPC was added afterward.
+- Parent-found fixes retain separate failing-test commits and fix commits listed above. Native quit evidence came from SIGABRT diagnostics and source inspection; the first lifecycle contract failed because the module was absent. A new after-close Playwright process accessor initially failed in teardown; the fix captures ChildProcess before close and asserts after temp cleanup. Do not describe those fixture failures as native crash assertions that passed.
+
+## Check output (actual last lines)
+```
+npm run typecheck  > tsc --noEmit && tsc --noEmit -p app/tsconfig.json  (exit 0; also rerun after launch helper)
+npm run lint       > eslint .  (exit 0; also rerun after launch helper)
+npm run build      ESM Build success in 28ms
+npm run app:build  built in 54ms
+npm run app:dist   Packaged app and zip: /Users/yanivsp/ai-term/build/desktop/dist
+codesign --verify --deep --strict --verbose=2 (app:dist afterSign)
+ /Users/yanivsp/ai-term/build/desktop/dist/mac-arm64/AI Term.app: valid on disk
+ /Users/yanivsp/ai-term/build/desktop/dist/mac-arm64/AI Term.app: satisfies its Designated Requirement
+ /Users/yanivsp/ai-term/build/desktop/dist/mac-arm64/AI Term.app/Contents/Helpers/AI Term.app: valid on disk
+ /Users/yanivsp/ai-term/build/desktop/dist/mac-arm64/AI Term.app/Contents/Helpers/AI Term.app: satisfies its Designated Requirement
+npm run app:test                      9 passed (37.7s)
+AI_TERM_TEST_APP=<packaged exe> app:test 9 passed (41.3s)
+app-pty-lifecycle.test.ts              Test Files 1 passed; Tests 3 passed
+final npm test twice / final latency   DEFERRED by Yaniv; no current release-gate claim
+```
+- The app:dist build/sign run followed the final production PTY fix. Later changes only affect tests, capture scripts and docs. Final normal-startup smoke tests ran against that corrected app and assert normal process exits, homepage/typing/paste/resize, native controls/theme, sandbox/preload/URL protections, native binding locations and compatible daemon handoff.
+- Earlier full smoke attempts had no-window timeouts before actions (including teardown timeouts), and one packaged first test saw unexpected command-bar text before its scripted input. Focused retries passed; further dev runs timed out. Installed Playwright's implicit dev loader replaces app.whenReady; scripts/electron-launch.ts now uses the absolute normal Electron executable for both dev and packaged, and tests await native readiness. The final complete suites above passed. No production security flags were relaxed, skipped tests or retry configuration added.
+- A diagnostic run also exposed the real native shutdown SIGABRT that the old close-only assertions missed. The fixed bundle subsequently passed 9 tests (41.1 s) before the final 41.3 s run.
+
+## Latency evidence and remaining gate
+- Pre-review artifact docs/testing/v0.5-packaged-latency.json (3bbe5f1; measured code b2e203f): unchanged dev 11362d1 vs packaged, same host/session, WebGL both, 151x37, 50 warmup + 300 measured keys, 15/20/25 ms gaps, Ctrl+U every 60. Dev p50/p95/p99/max: 0.50/1.50/2.00/3.60 ms; packaged: 0.60/1.70/2.20/2.30 ms; difference +0.20 ms, then passing the +0.30 ms limit.
+- This is **pre-final evidence**, before native-loader/home-folder/quit fixes and normal-startup harness changes. Final current latency is unmeasured because Yaniv deferred it. No earlier passing sample is substituted for the delivered code.
+- scripts/measure-packaged-latency.ts builds a filtered immutable 11362d1 snapshot in temp, then measures dev and packaged serially using the same capture-phase keydown to expected character/cursor output arrival, Unicode 11 offline. Both use normal executable startup. Capture stops/copies records before sending /exit to the measured homepage so the old baseline can drain its native callback without changing baseline source or measured data. No real agents are started and only disposable daemons are cleaned up.
+- Output arrival is not physical paint or Terminal.app latency. Preserve the historical absolute-gate artifacts; this prompt gates only final same-session packaged minus dev p95 <= 0.30 ms.
+
+## What's next
+- Finish this v0.5 distribution gate in the next prompt: final paired A/B, then npm test twice consecutively with dot reporter. If code changes, rerun relevant builds/smokes and review the changes; do not infer final latency from the pre-review artifact.
+- Suggested commands: cd ~/ai-term && npm exec -- tsx scripts/measure-packaged-latency.ts ; then cd ~/ai-term && npm test -- --reporter=dot twice in a row. These are prepared commands, not run after the deferral.
+- Yaniv's real install/notification/Terminal checks below remain. The next recorded roadmap marker is v0.6 extra CLI accounts (D17), not started.
+
+## Manual checks
+Automated checks above: ran in disposable homes, without keys or provider CLIs on PATH. Every real-home/install check below needs Yaniv and was prepared, not executed.
+- `cd ~/ai-term && open build/desktop/dist` — needs Yaniv: drag AI Term.app into Applications.
+- `cd ~/ai-term && open -R '/Applications/AI Term.app'` — needs Yaniv: right-click Open for the first launch; if macOS requires it, Privacy & Security -> Open Anyway.
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — needs Yaniv: prior agents remain with a compatible dev daemon; close/reopen, no unexpected quit dialog from the corrected build.
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — needs Yaniv: App -> Install ai command; inspect exact folders/link/target and confirm. No foreign ai overwritten.
+- `cd ~/ai-term && "$HOME/.local/bin/ai"` — needs Yaniv: run in Terminal.app without Node; use `ai` when ~/.local/bin is in PATH. CLI arguments work normally.
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — needs Yaniv: allow notifications, run a real agent through completion/waiting, confirm notifications still say AI Term and open its session. Helper permission continuity after moving an ad-hoc bundle is not claimed from a headless test.
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — needs Yaniv: App -> Uninstall ai command removes only its own link; check with `cd ~/ai-term && test ! -L "$HOME/.local/bin/ai"`.
+
+## Gotchas
+- Generated app/zip (138 MB zip) are local ignored build artifacts; git push publishes source, not those binaries. Rebuild with app:dist on this arm64 Mac. Xcode Command Line Tools are needed for Swift notifier and native C launchers.
+- Stable N-API solves ABI compatibility, not teardown lifetime. Keep the exit drain before app.quit, and keep process exit assertions; a closed Electron window can otherwise hide SIGABRT.
+- Normal executable startup avoids the implicit Playwright dev readiness shim and makes both A/B sides follow the same launch path. No new renderer/preload operation or runtime test hook exists.
+- A timed-out pre-fix UI launch/teardown can leave disposable temp directories or processes. No unknown PID or real daemon was stopped to clean these; the old checkpoint's known leftovers are retained below. Future measurement should distinguish owned test cleanup from unrelated system activity.
+- Moving the app requires uninstalling its optional command first; a link to another path is foreign and refused. Symlinked ~/.local/bin parents are refused, not traversed.
+- A reused dev daemon keeps its original runtime/helper paths until Yaniv stops it explicitly. Protocol mismatch never grants automatic permission to kill it.
+
+## New dependencies
+- electron-builder: electron-vite builds bundles but cannot assemble/sign a standalone app and zip; builder packages production files through isolated staging without rebuilding source native modules.
+
+## Concepts introduced
+- Runtime pinning (src/shared/runtime-paths.ts, native/desktop/launcher.c): native launchers resolve their own installed executable, call sibling Electron with argv arrays and set Node mode without shell/PATH lookup. Pinning CLI execPath lets existing child launches use the same bundled runtime even after env filtering removes the mode flag.
+- Stable N-API and isolated packaging (scripts/package-app.mjs): native binaries use Node's stable addon API, so the same tested binding can run under system Node and Electron. Separate staging and npmRebuild:false preserve source dependencies; signing checks apply to the actual distributed app/helper.
+- Symlink ownership (app/main/command-install.ts): lstat checks the directories themselves rather than following symlinks. Exclusive creation refuses existing foreign entries, and uninstall compares the exact link target before removing it.
+- PTY lifetime (app/main/pty-lifecycle.ts): a native exit callback can outlive a window and crash if Electron frees its Node environment too early. Tracking client exits and waiting one extra loop turn makes quit finish those callbacks while leaving daemon-owned agents alone.
+
+---
+
+## Previous checkpoint (native Mac integration, retained)
+
+## Checkpoint
 Last commit: 014dc16 docs: retain failed native latency gate and checkpoint comparison
 Roadmap step: v0.5 native Mac integration — partial. **BLOCKED at typing latency**: the final app p95 is 2.30 ms, above the frozen v0.5.1 1.00 + 0.20 ms gate. Functional work, reviews and automated checks are complete; this step is not reported done.
 Branch: main. This handover is the last commit; its own hash is in git log.
