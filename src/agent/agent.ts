@@ -73,6 +73,7 @@ export class Agent {
   private catalog: ExtensionCatalog = {items:[],notes:[],tokens:0};
   private loadedSignature: string | null = null;
   private currentWorst = 0;
+  private confirmedTask: {file:ExtensionFile;modelId:string;name:string;prompt:string} | null = null;
   private warned = false;
   private queue: Promise<unknown> = Promise.resolve();
   constructor(private options: AgentOptions) { this.limits = options.limits ?? new RunLimits(); }
@@ -255,13 +256,19 @@ export class Agent {
   private async taskPreview(name: string, prompt: string): Promise<{title:string;body:string}> {
     if(Buffer.byteLength(prompt)>64*1024)throw new ToolError('Task prompt is too large');
     const file=await this.extension(name,'agent'),modelId=this.taskModel(file),facts=await this.options.reporter.facts(modelId);
+    this.confirmedTask={file:{...file,item:{...file.item}},modelId,name,prompt};
     const low=estimateTokens(file.body+this.options.instructions.text+prompt+extensionManifest(this.catalog.items)),steps=this.options.maxSteps??DEFAULT_MAX_STEPS;
     const high=steps*(low+steps*(maxOutputTokens(facts)+64*1024)+maxOutputTokens(facts));
     const price=facts?.price?`$0–$${((high+steps*1400)*Math.max(facts.price.input,facts.price.output)/1e6).toFixed(2)}`:'price unknown; spend limits will pause before a request';
     return {title:`task ${name}`,body:`AI Term · ${modelId}\nestimated ${low.toLocaleString()}–${high.toLocaleString()} tokens (up to ${steps} requests) · ${price}\nSame folder, Ask permissions, budget and caps as parent.\n${prompt}`};
   }
   private async subagent(name: string, prompt: string, signal: AbortSignal): Promise<string> {
-    const file=await this.extension(name,'agent'),modelId=this.taskModel(file);
+    const confirmed=this.confirmedTask;this.confirmedTask=null;
+    if(!confirmed||confirmed.name!==name||confirmed.prompt!==prompt)throw new ToolError('Task needs confirmation');
+    const {file,modelId}=confirmed;
+    const catalog=await this.options.extensions?.list(this.root);
+    if(!catalog?.items.some(i=>i.id===file.item.id&&i.enabled))throw new ToolError('Extension is disabled or unavailable');
+    // The approved instructions/model are immutable, even if the source file changes while the user decides.
     const model=modelId===this.modelId?this.options.model:await this.options.makeModel?.(modelId)??this.options.model;
     const parent=this.options,io:AgentIO={...parent.io,text:()=>undefined,toolStart:(...args)=>parent.io.toolStart(...args),toolEnd:(...args)=>parent.io.toolEnd(...args),approve:(...args)=>parent.io.approve(...args),pause:(...args)=>parent.io.pause(...args),note:(text,tone)=>parent.io.note(`${name}: ${text}`,tone)};
     const reporter:Reporter={facts:id=>parent.reporter.facts(id),usage:(id,tokens)=>parent.reporter.usage(id,tokens),status:async update=>{if(['permission','answered','paused','tool-start','tool-finish'].includes(update.event))await parent.reporter.status(update);}};
