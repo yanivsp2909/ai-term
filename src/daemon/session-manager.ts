@@ -26,7 +26,7 @@ import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
 export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry already starting','Worktree in use by a running agent','Its worktree is gone','Its folder is gone',
     'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
-    'Agent does not accept pasted lines','Agent is printing too fast to check','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
+    'Agent does not accept pasted lines','Agent is printing too fast to check','Agent is running a tool','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
     info: SessionInfo;
     host?: PtyHost;
@@ -384,6 +384,9 @@ export class SessionManager extends EventEmitter {
         if(live.attached)return 'Agent is open in a session';
         if(live.info.status==='waiting'&&live.info.statusDetail==='permission')return 'Agent is asking for permission';
         if(live.info.status==='waiting'&&live.info.statusDetail==='question')return 'Agent is asking a question';
+        // The late-hook window: Claude's PermissionRequest can arrive seconds after its prompt is drawn, but never outside a
+        // tool call. Codex reports approvals in its own output stream, which caughtUp has already read.
+        if(live.info.engine==='claude-code'&&(live.statusState?.toolsInFlight??0)>0)return 'Agent is running a tool';
         // A status-line context report can come while a dialog is up; only a hook or run-state signal counts.
         if(live.info.engine!=='shell'&&!live.reported)return 'Agent has not reported its status yet';
         // A paused PTY holds unread output, which may be a prompt the status below hasn't seen.
