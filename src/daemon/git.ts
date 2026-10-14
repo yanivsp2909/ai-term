@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
@@ -15,7 +15,8 @@ interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; lit
 function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true, notRepo = false }: RunOptions = {}): Promise<string> {
     if (!isSafeAbsolutePath(cwd)) return Promise.reject(new GitError(failure));
     return new Promise((resolve, reject) => {
-        const child = execFile('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', ...args], {
+        // log.showSignature off: with it a repo's config would make show run gpg.program.
+        const child = execFile('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', '-c', 'log.showSignature=false', ...args], {
             // Optional locks off: a read-only status must not rewrite the agent's index while it is inspected.
             // Literal pathspecs: file names from a repo reach ls-files/check-ignore after --, and ":(...)" magic must stay a name.
             cwd, env: { PATH: '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}) },
@@ -69,7 +70,8 @@ export async function branchNames(cwd: string): Promise<string[]> {
     return (await run(cwd, ['for-each-ref', '--format=%(refname)', '--', 'refs/heads/'])).trim().split('\n').filter(ref=>ref.startsWith('refs/heads/')).map(ref=>ref.slice(11));
 }
 export async function checkoutDirty(cwd: string): Promise<boolean> {
-    return (await run(cwd, ['status', '--porcelain', '--untracked-files=normal', '--'])).length > 0;
+    // Submodules are never entered: a populated one has its own config, whose filters status would run.
+    return (await run(cwd, ['status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=all', '--'])).length > 0;
 }
 // A worktree reports its own top level, admin dir and the repository it belongs to; an agent can rewrite its .git file, so all are compared.
 async function identity(cwd: string): Promise<{ top: string; common: string; gitDir: string }> {
@@ -104,9 +106,25 @@ async function committedIgnores(path: string, ignored: string[]): Promise<number
         for (const name of (await run(path, ['ls-files', '-z', '--', ...candidates.slice(i, i + CHUNK)], 'Git check failed', { maxBuffer: BIG })).split('\0')) if (name) tracked.add(name);
     return ignored.filter(name => tracked.has(sources.get(name) ?? '')).length;
 }
+// Submodule folders (gitlinks). status no longer looks inside them: a populated one runs git with its own config, which
+// the agent can write (filters run outside any sandbox), and files in an unpopulated one are invisible to git anyway and
+// would go with a plain remove. So any gitlink folder holding something, or replaced by anything else, counts as changed:
+// it goes with the worktree, which needs the typed branch name. An empty folder or a missing one loses nothing.
+async function gitlinks(path: string): Promise<{ count: number; raw: string }> {
+    let count = 0, raw = '';
+    for (const entry of (await run(path, ['ls-files', '-s', '-z', '--'], 'Git check failed', { maxBuffer: BIG })).split('\0')) {
+        if (!entry.startsWith('160000 ')) continue;
+        const name = entry.slice(entry.indexOf('\t') + 1), folder = join(path, name);
+        let info;
+        try { info = await lstat(folder); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) continue; throw error; }
+        const inside = info.isDirectory() ? (await readdir(folder)).sort() : null;
+        if (!inside || inside.length) { count++; raw += `\0${name}\0${inside?.join('/') ?? 'not a folder'}`; }
+    }
+    return { count, raw };
+}
 async function changes(path: string): Promise<Changes> {
     // -z keeps names with newlines intact; a rename or copy carries its old name as one extra field.
-    const raw = await run(path, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching', '--'], 'Git check failed', { maxBuffer: BIG });
+    const raw = await run(path, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignored=matching', '--ignore-submodules=all', '--'], 'Git check failed', { maxBuffer: BIG });
     const fields = raw.split('\0'), counts = { changed: 0, untracked: 0, ignored: 0, repos: 0, raw }, ignored: string[] = [];
     for (let i = 0; i < fields.length; i++) {
         const entry = fields[i] ?? '';
@@ -118,8 +136,8 @@ async function changes(path: string): Promise<Changes> {
         else if (code === '!!') ignored.push(entry.slice(3));
         else { counts.changed++; if (/[RC]/.test(code)) i++; }
     }
-    const hidden = await hiddenEntries(path), kept = ignored.length ? await committedIgnores(path, ignored) : 0;
-    counts.changed += hidden.count; counts.ignored = kept; counts.untracked += ignored.length - kept; counts.raw += `\0\0${hidden.raw}`;
+    const hidden = await hiddenEntries(path), links = await gitlinks(path), kept = ignored.length ? await committedIgnores(path, ignored) : 0;
+    counts.changed += hidden.count + links.count; counts.ignored = kept; counts.untracked += ignored.length - kept; counts.raw += `\0\0${hidden.raw}\0\0${links.raw}`;
     return counts;
 }
 // for-each-ref takes the branch as a pattern after --, and its ahead-behind atom counts commits on it that the base lacks.
