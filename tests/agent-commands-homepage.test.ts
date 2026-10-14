@@ -21,6 +21,7 @@ class Client extends EventEmitter {
   requests: RequestBody[] = [];
   failures = new Map<string, string>();
   matches: FindMatch[] = [];
+  previewRows = 80;
   constructor(public sessions: SessionInfo[]) { super(); }
   async request(body: RequestBody): Promise<SuccessResponse> {
     this.requests.push(body);
@@ -28,7 +29,7 @@ class Client extends EventEmitter {
     const response: SuccessResponse = { id: randomUUID(), ok: true };
     if (body.kind === 'settings.get') response.settings = { theme: 'graphite' };
     if (body.kind === 'sessions.list') response.sessions = this.sessions;
-    if (body.kind === 'sessions.preview') { response.snapshot = Array.from({ length: 80 }, (_, i) => `row ${i}`).join('\r\n'); response.cols = 85; response.rows = 30; }
+    if (body.kind === 'sessions.preview') { response.snapshot = Array.from({ length: this.previewRows }, (_, i) => `row ${i}`).join('\r\n'); response.cols = 85; response.rows = 30; }
     if (body.kind === 'sessions.retry') response.session = { ...session('retried'), title: this.sessions.find(s => s.id === body.sessionId)?.title ?? 'x' };
     if (body.kind === 'sessions.find') { response.matches = this.matches; response.moreMatches = false; }
     if (body.kind === 'usage.summary') response.usage = { today: usage, week: usage, month: usage };
@@ -202,4 +203,17 @@ it('review L4: a directory named code earlier on PATH does not shadow the real e
     await mkdir(join(first, 'code'), { recursive: true }); await mkdir(second); await writeFile(join(second, 'code'), '#!/bin/sh\n'); await chmod(join(second, 'code'), 0o755);
     expect(await findExecutable('code', `${first}:${second}`)).toBe(join(second, 'code'));
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+it('review: a /find hit is found again when the agent printed more lines after the search', async () => {
+  const beta = session('beta', 'running', 2), { tty, home, client, start } = open([session('alpha', 'running', 1), beta]);
+  // Searched when the buffer had 80 rows ("row 19" was 60 from the end); 40 more rows arrived before Enter.
+  client.matches = [{ sessionId: beta.id, fromEnd: 60, text: 'row 19', start: 0, length: 6 }];
+  await start();
+  try {
+    client.previewRows = 120;
+    type(tty, '/find row 19'); enter(tty); await shows(tty, 'Find “row 19” · 1'); enter(tty);
+    await vi.waitFor(() => expect(client.requests.filter(r => r.kind === 'sessions.preview').at(-1)).toEqual({ kind: 'sessions.preview', sessionId: beta.id }));
+    await vi.waitFor(async () => expect(await screen(tty)).toMatch(/│ row 19 +│/));
+  } finally { await home.stop(); }
 });

@@ -88,3 +88,23 @@ it('a worktree another live agent already uses is refused', async () => {
   vi.spyOn(process, 'kill').mockImplementation(() => { for (const exit of exits) exit({ exitCode: 0 }); return true; });
   await expect(m.retry(first.id)).rejects.toThrow('Worktree in use by a running agent');
 });
+
+it('review: two retries of one agent at once start exactly one agent', async () => {
+  const { repo, m } = await fixture();
+  const first = await m.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: repo, permission: 'ask', title: 'twice' });
+  await finished(m, first.id);
+  const results = await Promise.allSettled([m.retry(first.id), m.retry(first.id)]);
+  expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+  expect(results.find(r => r.status === 'rejected')).toMatchObject({ reason: new Error('Retry already starting') });
+  expect(m.list().filter(s => s.worktree === first.worktree)).toHaveLength(1);
+});
+
+it('review: a failed login session retries as the same login, not as an agent', async () => {
+  const { repo, m } = await fixture(), spawn = vi.spyOn(pty, 'spawn');
+  const login = await m.create({ engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd: repo, permission: 'ask', login: true, title: 'Claude login' });
+  await finished(m, login.id);
+  expect(spawn.mock.calls.at(-1)?.[1]).toEqual(['auth', 'login']);
+  const retried = await m.retry(login.id);
+  expect(spawn.mock.calls.at(-1)?.[1]).toEqual(['auth', 'login']);
+  expect(retried).toMatchObject({ login: true, title: 'Claude login', model: null }); expect(retried.worktree).toBeUndefined();
+});

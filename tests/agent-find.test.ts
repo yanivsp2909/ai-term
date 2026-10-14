@@ -66,3 +66,8 @@ it('queries are plain text of at most 200 characters without controls', async ()
   await expect(validateRequest({ id: crypto.randomUUID(), kind: 'sessions.find', text: 'a\nb' })).rejects.toThrow('Invalid find request');
   expect(() => validateFindMatches([{ sessionId: '0b0f43a2-8f5e-4d2c-9a7b-1c2d3e4f5a6b', fromEnd: 0, text: 'ab', start: 1, length: 2 }])).toThrow('Invalid find results');
 });
+
+it('review: final sigma in a capital Greek word still matches case-insensitively', async () => {
+  const m = await mirror('ΟΔΟΣ here\r\n');
+  expect(m.find('ΟΔΟΣ', 10)).toHaveLength(1); expect(m.find('οδος', 10)).toHaveLength(1);
+});
