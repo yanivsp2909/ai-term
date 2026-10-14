@@ -127,3 +127,31 @@ it('a limit that shows on an agent\'s screen reaches its record, and goes when t
     await expect.poll(() => d.manager.get(s.id).limit, { timeout: 4000 }).toBeUndefined();
   } finally { await d.close(); }
 });
+
+import { UsageService } from '../src/daemon/usage-service.js';
+import type { PriceSnapshot } from '../src/daemon/usage-prices.js';
+it('a handoff can continue on another account of the same engine, same folder, the CLI\'s own login for that account', async () => {
+  const root = await temp(), paths = getPaths(root); await preparePaths(paths);
+  await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off', handoff: true, accounts: [{ name: 'work', engine: 'claude-code' }] }), { mode: 0o600 });
+  const log = new Logger(paths.log), usage = new UsageService(root, log), manager = new SessionManager(paths, log, undefined, undefined, undefined, undefined, usage);
+  manager.setHandoffWriter({ prices: { fetchedAt: 'x', providers: { anthropic: {}, openai: {}, azure: {} } } as PriceSnapshot, summarize: async () => ({ text: 'unused', inputTokens: 0, outputTokens: 0 }) });
+  await usage.start(); await manager.load();
+  const spawned: Record<string, string>[] = [], real = pty.spawn;
+  vi.spyOn(pty, 'spawn').mockImplementation((_file, _args, options) => { spawned.push({ ...(options?.env as Record<string, string>) }); return real('/bin/sh', ['-c', 'printf ready; read done; sleep 30'], { ...options, env: { PATH: '/usr/bin:/bin' } }); });
+  vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
+  try {
+    const source = await manager.create({ engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd: root, permission: 'ask', title: 'fixer' });
+    await expect.poll(() => manager.get(source.id).status).toBe('running');
+    const m = manager as unknown as { sessions: Map<string, { reported?: boolean }>; ingressStatus(id: string, update: unknown): void };
+    const live = m.sessions.get(source.id); if (live) live.reported = true;
+    m.ingressStatus(source.id, { event: { seq: 50, at: new Date().toISOString(), kind: 'done' }, reply: 'before' });
+    expect((await manager.handoffPlan(source.id, 'claude-code', 'work')).account).toBe('work');
+    const handing = manager.handoff(source.id, 'claude-code', { kind: 'agent' }, 'work');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    m.ingressStatus(source.id, { event: { seq: 99, at: new Date().toISOString(), kind: 'done' }, reply: '## Goal\nship' });
+    const result = await handing;
+    expect(result.session.auth).toEqual({ kind: 'account', profile: 'work' });
+    expect(spawned.at(-1)?.CLAUDE_CONFIG_DIR).toBe(join(root, 'profiles', 'work'));
+    await expect(manager.handoffPlan(result.session.id, 'claude-code', 'nobody')).rejects.toThrow('Account not found for this engine');
+  } finally { await manager.shutdown(); await usage.close(); }
+});
