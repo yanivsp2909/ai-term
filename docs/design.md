@@ -225,6 +225,12 @@ A path field with completion. It sets the folder for the next agent only. A fold
   - Opt-in with `/settings` → `bar: on` (`h`); default off while the Terminal.app spike exit remains unexplained. Off is full-height raw passthrough. Failed startup probe falls back to raw for that attach.
   - The agent gets one row less and follows terminal resizes. Counts drop first at narrow widths, then branch, then model; glyph and status word remain. Nothing animates; redraw only when text/cells change.
 - **v0.3, splits:** panes side by side, each with a one-row header (glyph, name, model, branch); the focused pane's header is surface-2 with an accent underline. The bottom row shows `each pane is its own agent in its own worktree` and the pane keys.
+  - **Opening (2026-10-14):** Space marks or unmarks the selected agent; its card shows `◆ marked` (accent, bold) at the end of line 3, and the note line counts `N marked · v opens them side by side` (`Space marks one more` at one). At most 4; an exited or failed agent can't be marked. `v` opens the marked agents in list order and clears the marks. With none marked, `v` reopens the split Ctrl+E left, or shows `Space marks 2–4 agents · v opens them side by side`. Both keys act only while the command field is empty.
+  - **Layout:** 2 or 3 panes side by side, 4 as 2×2. Side-by-side panes are separated by a one-column `│` divider in `line` (calmer than touching bodies; the lower headers separate the 2×2 rows). Each pane is at least **40 columns × 10 rows**, header included; the agent gets the rows under its header. Too small for all of them: as many panes as fit open (2×2 is used only for four), and the bottom row starts with `N agents didn't fit` (status-waiting); if only one fits it is a normal attach. A window resized below the panes' minimum shows only `make the window bigger · ^E home` until it grows; nothing is typed meanwhile.
+  - **Headers:** glyph + status word (status color), bold name, `model · ai/<slug>` (ink-2). Unfocused headers are surface. Model and branch drop first when narrow. An ended agent's header reads `■ exited · exit 0` or `✗ failed · exit 1` with `^\ closes` on the right; a pane another client took over reads `■ attached elsewhere`.
+  - **Bottom row:** `each pane is its own agent in its own worktree` (ink-3) left, `^\ next pane · ^\ ^\ sends ^\ · ^E home` (ink-3) right.
+  - **Keys:** typing and paste go to the focused pane only. **Ctrl+\** focuses the next pane, or closes ended panes when there are any; twice within 0.4 s sends one real Ctrl+\ to the agent that was focused. (Not Ctrl+]: Claude Code binds it by default.) A click focuses the pane under the pointer; mouse events reach that pane's agent in its coordinates. **Ctrl+E** goes home and the split is remembered for `v`. One pane left becomes a normal attach.
+  - Nothing animates; background panes redraw at most 30 times a second, the focused pane at once.
 
 ## Keyboard (homepage)
 
@@ -237,6 +243,7 @@ A path field with completion. It sets the folder for the next agent only. A fold
 | PgUp PgDn · End | scroll the preview · follow live (End: empty field only; otherwise cursor to end) |
 | d / r / s | diff (v0.7) / rename / stop the selected agent (s asks first) |
 | x | remove an exited or failed agent from the list, then keep or delete its worktree (keep is the default) |
+| Space / v | mark or unmark the selected agent for a split / open the marked agents side by side (none marked: reopen the last split) |
 | b / u | budget / usage details |
 | / / Tab | command menu / complete selected command and cycle argument values |
 | /help ↑↓ / PgUp / PgDn / Esc | scroll / page up / page down / close |

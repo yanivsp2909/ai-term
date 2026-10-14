@@ -77,6 +77,12 @@ Homepage slash commands:
 | Worktree question, clean | `remove worktree and branch ai/<slug>? k keep · d delete`; `k`, Esc or Enter keep and show `worktree kept: <path>`; `d` deletes the worktree and branch |
 | Worktree question, with loss | Lists what would be lost (`3 changed files · 2 untracked · 4 commits not in main`); type the branch name and press Enter to delete; `k` or Enter on an empty field, or Esc, keep. A paste never fills it |
 | `/worktrees` ↑↓ / Enter / Esc | Select a worktree / open its keep/delete question / close |
+| Space | Empty field marks or unmarks the selected agent for a split (`◆ marked` on its card); up to 4; exited agents can't be marked |
+| `v` | Empty field opens the marked agents side by side, in list order, and clears the marks. With none marked it reopens the split Ctrl+E left; with nothing to open it shows `Space marks 2–4 agents · v opens them side by side` |
+| Split: typing and paste | Go only to the focused pane's agent |
+| Split: Ctrl+\ | Focus the next pane; if a pane's agent has ended, closes the ended panes instead. Twice within 0.4 s sends one real Ctrl+\ to the agent that was focused |
+| Split: click / mouse | A click focuses the pane under the pointer; mouse events go to that pane's agent in its own coordinates (a drag stays with the pane it started in) |
+| Split: Ctrl+E | Home; the agents keep running and `v` with nothing marked reopens the split |
 | PgUp / PgDn / End | Preview scroll / follow live (End only while the command field is empty) |
 | Mouse wheel / drag-release | Preview scroll / copy selection; a click alone does not copy |
 | Esc | Close popup; in the command field drop a selection first, then clear the field; discards masked key input |
@@ -90,7 +96,7 @@ Homepage slash commands:
 | Ctrl+U | Clear the command field |
 | Alt+Backspace (or Ctrl+W) | Delete the previous word; a paste token counts as one word. In Terminal.app, Option sends Alt only with "Use Option as Meta key" |
 | Ctrl+C twice within one second | Quit client; sessions keep running |
-| Ctrl+E | Inside session returns home, keeping session running; inside pasted text it is pasted |
+| Ctrl+E | Inside a session or split returns home, keeping sessions running; inside pasted text it is pasted |
 | SIGTERM / SIGHUP / SIGQUIT | Client cleanup and exit 143 / 129 / 131; sessions keep running |
 | Start box ↑↓ / `m` / `c` / `e` / Tab / Enter | Select row / model / folder / effort / cycle Ask → auto → Don't ask (Claude) or Ask ↔ Don't ask (Codex) / start |
 | Start box worktree line | `new worktree · ai/<slug> from <short HEAD>`; a dirty checkout adds `uncommitted changes in your checkout aren't included` |
@@ -113,6 +119,8 @@ Homepage slash commands:
 Claude effort: `CLI default`, `low`, `medium`, `high`, `xhigh`, `max`. Codex effort: `CLI default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`, `persistent`. These are CLI-supported values; individual models may accept fewer. `/settings` can save effort. Mode is per session and resets to Ask after start/cancel; auto and Don't ask cannot be saved as defaults. Older Claude records without a conversation UUID show a note instead of resuming.
 
 The attached bar is opt-in: `/settings` → `bar: on` (`h`). It uses one surface row for glyph + status word, bold name, engine/model, `· ai/<slug>` branch, others’ counts and `^E home`; the agent gets the rows below. At narrow widths counts drop first, then branch, then model. Nothing animates. `bar: off` uses the original full-height raw passthrough. A failed startup probe uses raw for that attach and logs once. Redraw keeps link text but loses OSC 8 targets, curly/colored underlines and inline images. The Terminal.app spike’s clean vim exit is still unexplained; leave the default off until the trace and feel checks below are understood.
+
+Splits (v0.3): Space marks 2–4 agents and `v` opens them side by side (3 side by side, 4 as 2×2), each pane at least 40 columns by 10 rows with a one-row header: glyph + status word, name, model and branch. The focused header is surface-2 with an accent underline. Each agent's PTY takes its pane's size minus the header; leaving the split returns them to the usual sizes. A terminal too small for every marked agent opens as many panes as fit and says how many didn't; if only one fits, it's a normal attach. An agent that exits keeps its pane, showing how it ended, until Ctrl+\ closes it; when one pane is left it becomes a normal attach. Splits redraw each agent from a client-side mirror like the bar, whatever the bar setting, and, as on the homepage, mouse reporting stays on, so your terminal's own text selection needs its mouse-reporting bypass. The pane key is Ctrl+\ rather than Ctrl+], because Claude Code 2.1.299 binds Ctrl+] by default (open artifact) and lists Ctrl+\ among the keys it never binds.
 
 Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
 

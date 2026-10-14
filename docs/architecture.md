@@ -593,6 +593,16 @@ Fixed failure details (B16/B17): socket operations return exact allowlisted mana
 
 ---
 
+### 12.4 v0.3 splits
+
+- **Opening:** the homepage marks 2–4 agents with Space and `v` calls `split()` (`src/client/split.ts`) with their ids in list order. `split-layout.ts` fits 2 or 3 panes side by side or 4 as 2×2, each at least 40×10 including its header; fewer than two fitting returns the first agent for a normal attach.
+- **No protocol change:** the daemon lets one connection own one attached agent (§6 ownership), so each pane opens its own connection (`connect()` from the CLI, `autoStart: false`) and sends `sessions.attach {cols: pane width, rows: pane height − 1}`. Separate sockets also keep a flooding pane's bytes from queueing ahead of the focused pane's echo. Leaving sends `sessions.detach` per pane, so sizes follow §5 (preview size, or the normal attach that follows).
+- **Rendering:** each pane is a client mirror (`split-pane.ts`) with the bar's passthrough and `BodyRenderer` offset to the pane. Changed cells only, inside synchronized output; every frame ends with the real cursor on the focused pane. The focused pane keeps the bar's 8 ms frame spacing and same-tick echo; other panes draw at most at 30 fps. Flood cap: a pane's mirror parses at most 8 KB per event-loop turn, and past 1 MB queued its socket pauses (the daemon then pauses that PTY) until it is under 256 KB.
+- **Input:** `split-input.ts` splits stdin into focused-pane keys, Ctrl+\ (raw `0x1c`, kitty `CSI 92;5u`, modifyOtherKeys `CSI 27;5;92~`; kitty releases swallowed), Ctrl+E (as §6) and SGR mouse reports; nothing inside a bracketed paste is interpreted. The real terminal stays in `?1003` + `?1006` for the whole split; `split-mouse.ts` re-encodes each event for the pane under the pointer in that agent's tracking level and encoding (a drag stays with its pane). Pane key: Ctrl+\, because Claude Code 2.1.299 binds Ctrl+] (`app:openArtifact`) and lists Ctrl+\ as a key it never binds; Codex's help lists no keys (its install under `~/.codex` was not read).
+- **S15 in a split:** only the focused pane's passthrough reaches the terminal (modes, cursor shape, title, bell, OSC 52 writes); background panes are cells only. Pane mouse modes stay in their mirrors, and kitty flags are set (`CSI = flags ; 1 u`) rather than pushed, so panes never share stack entries. On focus change the terminal takes the new pane's keyboard modes, cursor shape and title (`Passthrough.restore()`). OSC 52 reads are always dropped; terminal queries follow the bar's table per pane (XTWINOPS 18 answers the pane's size).
+- **Exits:** an ended agent's pane stays with its exit state; Ctrl+\ closes ended panes; `session.removed` closes a pane at once; a takeover marks it `attached elsewhere`. One pane left returns for a normal attach.
+- **Latency gate:** `scripts/measure-split.ts`, results in `docs/testing/v0.3-split-latency.json` and PROGRESS.md.
+
 ## 13. Decisions log
 
 Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless he objects.
