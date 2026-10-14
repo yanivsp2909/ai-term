@@ -11,7 +11,7 @@ import { McpRuntime, mcpConnector, type McpConnect } from './runtime.js';
 
 // One service shared by the socket and engine-bound requests. Metadata never starts servers; owners are live agents.
 export class McpService {
- private runtime:McpRuntime;private queue:Promise<unknown>=Promise.resolve();
+ private requests=new Map<string,Set<AbortController>>();private runtime:McpRuntime;private queue:Promise<unknown>=Promise.resolve();
  constructor(private settings:SettingsStore,private keys:KeyStore,private log:Logger,private home=homedir(),connect?:McpConnect){this.runtime=new McpRuntime(keys,connect??mcpConnector(keys),()=>log.error('MCP server stop failed'));}
  private serial<T>(work:()=>Promise<T>):Promise<T>{const next=this.queue.then(work);this.queue=next.then(()=>undefined,()=>undefined);return next;}
  async list(cwd:string):Promise<McpCatalog>{
@@ -24,9 +24,11 @@ export class McpService {
  }
  private async selected(cwd:string,id:string,hash?:string,tool?:string,allowDisabled=false):Promise<McpView>{const s=(await this.list(cwd)).servers.find(s=>s.id===id);if(!s||!allowDisabled&&s.note||hash!==undefined&&s.hash!==hash||!allowDisabled&&(!s.enabled||tool!==undefined&&s.tools[tool]===false))throw new Error('MCP server or tool unavailable');return s;}
  async query(owner:string,raw:unknown):Promise<{mcp?:McpCatalog;mcpSchema?:Record<string,unknown>;mcpResult?:string}>{
+  let controller:AbortController|undefined;
   try{
    const r=parseMcpRequest(raw);
-   if(r.kind==='mcp.stop'||r.kind==='mcp.cancel'){await this.runtime.stop(owner);return {};}
+   if(['mcp.discover','mcp.schema','mcp.call'].includes(r.kind)){controller=new AbortController();const pending=this.requests.get(owner)??new Set<AbortController>();pending.add(controller);this.requests.set(owner,pending);}
+   if(r.kind==='mcp.stop'||r.kind==='mcp.cancel'){await this.stop(owner);return {};}
    if(r.kind==='mcp.add')return this.serial(async()=>{
     const settings=await this.settings.get();if((settings.mcp??[]).some(s=>s.config.name===r.config.name))throw new Error('MCP name already exists');
     // Values cannot hide in public argv/URL/metadata, even if the form also marks that value secret.
@@ -48,14 +50,14 @@ export class McpService {
     });return {};
    }
    if(!s.approved)throw new Error('MCP project server needs approval');
-   const controller=new AbortController();
+   if(!controller||controller.signal.aborted)throw new Error('MCP operation cancelled');
    if(r.kind==='mcp.discover'){
     try{await this.runtime.discover(owner,cwd,s,controller.signal);return {mcp:await this.list(cwd)};}finally{if(owner==='homepage')await this.runtime.stop(owner);}
    }
    if(r.kind==='mcp.schema')return {mcpSchema:await this.runtime.schema(owner,cwd,s,r.tool,controller.signal)};
    if(r.kind==='mcp.call')return {mcpResult:await this.runtime.call(owner,cwd,s,r.tool,r.arguments,controller.signal)};
    throw new Error('MCP operation unavailable');
-  }catch{this.log.error('MCP operation failed');throw new Error('MCP operation failed; check configuration or approval');}
+  }catch{this.log.error('MCP operation failed');throw new Error('MCP operation failed; check configuration or approval');}finally{if(controller){const pending=this.requests.get(owner);pending?.delete(controller);if(pending?.size===0)this.requests.delete(owner);}}
  }
- stop(owner:string):Promise<void>{return this.runtime.stop(owner);}
+ stop(owner:string):Promise<void>{for(const controller of this.requests.get(owner)??[])controller.abort();this.requests.delete(owner);return this.runtime.stop(owner);}
 }

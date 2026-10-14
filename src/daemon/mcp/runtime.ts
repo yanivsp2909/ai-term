@@ -19,11 +19,11 @@ class McpLoginError extends Error {}
 export function mcpConnector(keys:KeyStore,fetchFn:typeof fetch=fetch):McpConnect{return async(server,cwd,signal)=>{
  const config=server.config;
  if(config.type==='stdio')return keys.withMcp(server.id,config.env,server.hash,async values=>{
-  const transport=new McpStdio(config.command,config.args,cwd,mcpEnv(cwd,values));
+  if(signal.aborted)throw new Error('MCP connection cancelled');const transport=new McpStdio(config.command,config.args,cwd,mcpEnv(cwd,values));
   try{return {client:await createMCPClient({transport,protocolVersionDiscovery:false,initializationOptions:{signal,timeout:5000},onUncaughtError:()=>{}}),transport};}catch{await transport.close();throw new Error('MCP server unavailable');}
  });
  let login=false;const guarded:typeof fetch=async(input,init)=>{
-  const url=input instanceof Request?input.url:String(input);if(url!==config.url)throw new Error('MCP destination refused');
+  if(signal.aborted)throw new Error('MCP connection cancelled');const url=input instanceof Request?input.url:String(input);if(url!==config.url)throw new Error('MCP destination refused');
   return keys.withMcp(server.id,config.headers,server.hash,async values=>{
    const headers=new Headers(init?.headers);for(const [name,value]of Object.entries(values))headers.set(name,value);
    const response=await fetchFn(config.url,{...init,headers,redirect:'error',signal:AbortSignal.any([signal,...(init?.signal?[init.signal]:[])])});
