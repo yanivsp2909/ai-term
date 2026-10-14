@@ -1,6 +1,97 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: 7c7a6b7 test: record split latency against a single raw attach
+Roadmap step: v0.3 splits (tasks 1–6) done
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at c4e34df after `git pull --ff-only` (already up to date). Baseline 136 files / 839 passed / 2 opt-in Keychain skips. Final 141 files / 886 passed / same 2 skips, twice in a row. Session: Claude Code, Opus 5.5 (the prompt was written for Codex; Yaniv asked for it to run here).
+Prompt vs code:
+- **Pane key is Ctrl+\, not Ctrl+].** Claude Code 2.1.299's default keybindings include `"ctrl+]":"app:openArtifact"` (Global context; found in the installed binary under ~/.local/share/claude, help run with a temp HOME). The same binary lists Ctrl+\ among the keys it never binds ("Terminal quit signal (SIGQUIT)"). Codex `--help` (temp HOME) lists no keys; its install lives under ~/.codex, which the prompt forbids reading, so nothing further was checked there.
+- The daemon lets one connection own one attached agent (server.ts `peer.attached`), so each pane opens its own connection. No protocol or daemon change.
+- Splits work whatever the bar setting is: opening one is its own opt-in, and the bar's default-off is about an unexplained Terminal.app spike exit.
+- `yes` prints identical lines, so its pane's cells barely change and the diff renderer sends almost nothing. The latency gate was therefore also run with a flood of numbered lines, whose every frame is drawn (about 46 KB/s to the terminal).
+- Calmer choices where design.md was silent: a one-column `│` divider between side-by-side panes; the accent underline uses the colon form of SGR 58 (terminals that don't know it skip it, and the underline takes the text color); `◆ marked` on line 3 of the card; marks are capped at 4 and refused for exited agents; a window resized below the minimum shows `make the window bigger · ^E home` and types nowhere.
+- From the review: three panes too wide to sit side by side take two on top and one full width below (the prompt lists only side by side), so closing one of four never hides the rest.
+
+## What works
+- **Marks and `v` (homepage):** Space marks or unmarks the selected agent (`◆ marked`, accent, glyph + word), up to 4, with a note line count. `v` opens the marked agents in list order and clears the marks; with none marked it reopens the split Ctrl+E left, or shows `Space marks 2–4 agents · v opens them side by side`. Only while the command field is empty.
+- **Layout (`split-layout.ts`):** 2 and 3 side by side, 4 as 2×2, 3 falls back to 2-over-1; each pane ≥ 40×10 including its one-row header. A too-small terminal opens as many as fit and the bottom row says `N agents didn't fit`; if only one fits it's a normal attach. Each agent's PTY is attached at pane width × (pane height − 1) and resized on SIGWINCH; leaving detaches each pane, so sizes follow the existing rules.
+- **Rendering (`split.ts`, `split-pane.ts`, `tui/split-chrome.ts`):** one client mirror per pane with the bar's passthrough and `BodyRenderer` (now with a column offset). Changed cells only, inside synchronized output; every frame ends with the cursor on the focused pane. Focused pane: 8 ms spacing and same-tick echo; others at most 30 fps. Flood cap: 8 KB parse per event-loop turn per pane; past 1 MB queued, that pane's socket pauses until it is under 256 KB. Headers: glyph + word, bold name, model · branch; focused header surface-2 with an accent underline. Bottom row: `each pane is its own agent in its own worktree` and `^\ next pane · ^\ ^\ sends ^\ · ^E home`.
+- **Input (`split-input.ts`, `split-mouse.ts`):** keys and pastes go to the focused agent only. Ctrl+\ (raw, kitty, modifyOtherKeys; kitty releases swallowed) focuses the next pane or closes ended panes; twice within 0.4 s goes back and sends one real Ctrl+\ in the encoding it arrived in. Ctrl+E goes home. The terminal stays in any-motion SGR mouse mode; events are re-encoded for the pane under the pointer in its tracking level and encoding; a press focuses; a drag stays with its pane. Nothing inside a bracketed paste is interpreted.
+- **S15:** only the focused pane's passthrough reaches the terminal (modes, cursor shape, title, bell, OSC 52 writes); background panes are cells only. On focus change the terminal takes the new pane's keyboard modes, cursor shape and title (`Passthrough.restore()`). OSC 52 reads always dropped. Kitty flags are set, not pushed, so panes never share stack entries.
+- **Exits:** an ended agent's pane shows `■ exited · exit 0` / `✗ failed · exit 1` and `^\ closes`, and takes no keys; Ctrl+\ closes it; one pane left becomes a normal attach. `session.removed` closes a pane; a takeover shows `■ attached elsewhere`; a lost daemon connection ends the split with an error.
+- Docs: README key list and split notes, design.md split spec and keyboard row, architecture §12.4, in-app help rows.
+
+### Latency (scripts/measure-split.ts, docs/testing/v0.3-split-latency.json)
+Method: outer PTY 120×40, real daemon, sockets and client; write to the outer PTY → arrival of the chunk that shows the typed cell and puts the cursor after it (read between complete synchronized frames). 50 warmup + 500 measured keys per run, 15/20/25 ms gaps, two rounds in reversed order, no timeouts. Node v26.3.0 darwin arm64. Split = 2 panes, echo focused, the other pane flooding. Raw = `ai debug attach` with the bar off.
+
+| Config | Round | p50 | p95 | p99 | max | outer KB/s |
+|---|---:|---:|---:|---:|---:|---:|
+| raw attach | 1 | 1.88 | 2.14 | 2.45 | 4.34 | 0 |
+| raw attach | 2 | 1.85 | 2.07 | 2.33 | 2.48 | 0 |
+| raw attach + background numbered flood | 1 | 1.88 | 2.06 | 2.22 | 3.08 | 0 |
+| raw attach + background numbered flood | 2 | 1.74 | 2.01 | 2.18 | 3.15 | 0 |
+| split, other pane `yes` | 1 | 2.28 | 2.63 | 2.80 | 9.36 | 1 |
+| split, other pane `yes` | 2 | 2.14 | 2.55 | 2.75 | 3.91 | 2 |
+| split, other pane numbered flood | 1 | 2.02 | 2.41 | 3.20 | 6.35 | 46 |
+| split, other pane numbered flood | 2 | 2.02 | 2.32 | 2.71 | 5.73 | 47 |
+
+Gate (focused echo p95 within 2 ms of a single raw attach): `yes` +0.49 / +0.48 ms, numbered flood +0.27 / +0.25 ms. **Pass.** These are headless PTY delivery times, not Terminal.app pixels or feel.
+
+### Reviewer (typescript-reviewer, high, fresh context, diff c4e34df..167f744)
+No CRITICAL or HIGH. Six findings, all real; failing tests b3ba0ec, fixes 7247f69 and 7c0193b:
+- MEDIUM: a sync block ending in a later chunk waited out the 150 ms hold (would delay the focused echo).
+- MEDIUM: connections and attachments leaked when the split ended during attach or a connect failed.
+- MEDIUM: closing one of four panes on 81–121 columns hid every agent (three side by side need 122).
+- LOW: a press after a lost release went to the old pane.
+- LOW: one empty input frame per typed key.
+- LOW: a full redraw asked for while stdout was blocked was lost.
+Not flagged as issues: Ctrl+\/Ctrl+E kitty forms ignore lock modifiers (same as the existing home-key filter); a pane's `session.updated` redraws chrome outside the 30 fps pacing (rare).
+
+### Final check output (all exit 0)
+```
+npm run typecheck   > tsc --noEmit
+npm run lint        > eslint .
+npm run build       ESM ⚡️ Build success in 21ms
+npm test (1)        Test Files  141 passed (141) · Tests  886 passed | 2 skipped (888) · 13.31s
+npm test (2)        Test Files  141 passed (141) · Tests  886 passed | 2 skipped (888) · 13.32s
+```
+
+## What's next
+- The next roadmap step after v0.3 splits. Nothing is left from this one except the manual checks below.
+
+## Manual checks
+All need Yaniv, after an explicit daemon restart when it's safe (`node dist/cli/index.js daemon stop`), each starting with `cd ~/ai-term && npm run build && node dist/cli/index.js`:
+- Two agents, needs Yaniv: start two agents, select one and press Space, ↓, Space (both show `◆ marked`), then `v`; both open side by side and the marks are gone.
+- Type in each, needs Yaniv: type in the left pane; only it echoes. Ctrl+\ moves focus (header turns surface-2 with the underline); type in the right pane.
+- Ctrl+\ twice, needs Yaniv: two quick presses keep focus where it was and send the agent one Ctrl+\.
+- Click switches, needs Yaniv: click inside the other pane; it takes focus and the click reaches the agent if it uses the mouse.
+- Ctrl+E and v, needs Yaniv: Ctrl+E goes home with both agents running; `v` with nothing marked reopens the same split.
+- vim in one pane, needs Yaniv: `/shell` twice, mark both, `v`, run `/usr/bin/vim -Nu NONE` in one; insert, move, `:q`; the other pane is untouched.
+- Resize, needs Yaniv: drag the window narrower and wider; panes re-lay and the agents redraw; below 81 columns it shows `make the window bigger · ^E home`.
+- Exit, needs Yaniv: `/exit` in one pane's agent; the pane shows `■ exited · exit 0 · ^\ closes`; Ctrl+\ turns the other into a normal attach.
+- Headless (ran): layout math for 2/3/4 and too-small terminals; key routing (focused only, Ctrl+\ single/double in raw and kitty forms, Ctrl+E); mouse translation in all four encodings and tracking levels; one pane exiting; resize and too-small; S15 output gating; flood pause/resume; homepage marks and `v` through a headless xterm; the latency harness above.
+
+## Gotchas
+- While a split is open the terminal reports every mouse motion (`?1003`), so your terminal's own text selection needs its mouse-reporting bypass, as on the homepage.
+- Panes have no scrollback (like the bar), and wheel events reach only agents that turned mouse tracking on.
+- `measure-split.ts` reads the cursor only when the terminal is outside a synchronized frame; otherwise a half-delivered frame from the flooding pane shows the cursor parked in that pane and the echo check never matches.
+- In tests, `split()` needs a session fixture with both `worktree` and `branch` (or neither); `validateSession` rejects one without the other and the pane silently fails to attach.
+- The reviewer's scratch tests are in the session scratchpad, outside the repo.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- **One connection per pane (`src/client/split.ts`):** the daemon tracks one attached agent per socket. Giving each pane its own socket needs no protocol change, and it isolates flow control: a pane flooding output fills only its own socket buffer, so its bytes never queue in front of the focused pane's echo.
+- **Flood cap (`split-pane.ts`):** xterm parses a write for up to ~12 ms before yielding. Feeding each pane's mirror at most 8 KB per event-loop turn (and yielding with `setImmediate`, which runs after pending I/O) keeps any one pane from holding the loop, so typed keys and the focused echo get in between.
+- **Focus-gated passthrough (`passthrough.ts`, split mode):** the bar's passthrough forwards an agent's mode changes and titles to your terminal. In a split only the focused pane's are forwarded; the rest are remembered and replayed by `restore()` when that pane takes focus. That is how background panes stay "cells only" (S15) without losing their state.
+
+---
+
+## Previous checkpoint (v0.3.2 worktree removal, retained)
+
+## Checkpoint
 Last commit: f0b61eb fix: count hidden index edits and agent-written ignore rules as loss
 Roadmap step: v0.3.2 worktree removal (tasks 1–6) done
 Branch: main. This handover is the last commit; its own hash is in git log.
