@@ -92,7 +92,9 @@ it('every grant is settled: released when usage was reported, booked at its wors
   expect(daemon.settled.at(-1)?.worstCase).toBe(true); expect(daemon.booked).toHaveLength(1);
   // Cut off mid-reply (Esc): the provider may bill it, so it is booked at its worst case too.
   const controller = new AbortController();
-  const cut = await agent([{ stream: new ReadableStream({ start(c) { c.enqueue({ type: 'stream-start', warnings: [] }); c.enqueue({ type: 'text-start', id: 't' }); c.enqueue({ type: 'text-delta', id: 't', delta: 'par' }); setTimeout(() => controller.abort(), 5); } }) }], h);
+  // Esc arrives once the reply has started (not on a timer, which under load could fire before the request is sent).
+  const cut = await agent([{ stream: new ReadableStream({ start(c) { c.enqueue({ type: 'stream-start', warnings: [] }); c.enqueue({ type: 'text-start', id: 't' }); c.enqueue({ type: 'text-delta', id: 't', delta: 'par' }); } }) }], h);
+  h.text = () => { controller.abort(); };
   expect(await cut.agent.turn('go', controller.signal)).toBe('interrupted');
   expect(daemon.settled.at(-1)?.worstCase).toBe(true); expect(daemon.booked).toHaveLength(2);
   expect(daemon.ledger.reserved()).toBe(0);
