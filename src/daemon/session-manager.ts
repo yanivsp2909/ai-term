@@ -9,7 +9,10 @@ import {parseAgentStatus} from './agent-status.js';
 import { AGENT_PROVIDERS, engineTitle, keyEngine, deploymentWire } from '../shared/models.js';
 import { catalogModels } from '../shared/model-catalog.js';
 import { DEFAULT_AGENT_CAPS, type AgentFacts } from '../shared/agent-facts.js';
-import { findPrice, findLimits, deploymentAlias, type PriceSnapshot } from './usage-prices.js';
+import { findPrice, findLimits, deploymentAlias, estimateCost, type PriceSnapshot } from './usage-prices.js';
+import { cheapestWriter, handoffPlan, summarizeWithKey, type Summarize } from './handoff.js';
+import { handoffInstructions, handoffMessage, handoffPrompt, type HandoffPlan, type HandoffSummary } from '../shared/handoff.js';
+import { engineLabel } from '../shared/models.js';
 import priceData from '../../data/usage-prices.json' with {type:'json'};
 const PRICES=priceData as PriceSnapshot;
 import {parseClaudeStatus} from './claude-status.js';
@@ -18,7 +21,7 @@ import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { Paths } from '../shared/paths.js';
-import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord } from '../shared/protocol.js';
+import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord, type CliEngine } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
 import { prepareWorktree, serialize } from './worktrees.js';
@@ -62,6 +65,11 @@ interface Live {
     agentModels?:string[];
 }
 const TASK_UPDATE_MS=1000;
+// v0.6.3: a new engine has this long to start; a keyed summary this long to answer; an agent this long to write its note.
+export const HANDOFF_NOT_STARTED="The new agent didn't start; the old one keeps running";
+// Every handoff refusal is one of these fixed texts, so the socket can return it as written.
+export const HANDOFF_ERRORS=['Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED];
+const HANDOFF_START_MS=30_000,HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
 export class SessionManager extends EventEmitter {
     // /send: how long Enter waits behind the paste (static so a test can widen the window it races).
     static sendEnterDelayMs = 50;
@@ -83,6 +91,9 @@ export class SessionManager extends EventEmitter {
     // B25 (v0.6.1): every AI Term agent's in-flight worst cases, checked against the budgets before any request is sent.
     private readonly ledger?:BudgetLedger;
     private readonly taskTimers=new Map<string,ReturnType<typeof setTimeout>>();
+    // v0.6.3: how handoff summaries are written (tests swap the model call), and sources being handed off right now.
+    private handoffWriter:{prices:PriceSnapshot;summarize:Summarize}={prices:PRICES,summarize:summarizeWithKey};
+    private readonly handingOff=new Set<string>();
     private taskDirty=false;
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
@@ -459,6 +470,89 @@ export class SessionManager extends EventEmitter {
         if(['exited','error'].includes(live.info.status))return null;
         const usage=this.usage?.summary(),budgets={daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null};
         return ledger.reserve({sessionId:id,provider:key.provider,model:raw.model,amountUsd:amount},budgets,{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
+    }
+    setHandoffWriter(writer:{prices:PriceSnapshot;summarize:Summarize}):void{this.handoffWriter=writer;}
+    // v0.6.3 (D55, off by default): only an AI agent that isn't waiting on you or running a tool, to a CLI that is installed
+    // and logged in. Account logins only: a key never moves between engines.
+    private async handoffSource(id:string,engine:CliEngine):Promise<{live:Live;settings:Settings}>{
+        const settings=await new SettingsStore(this.paths.root).get();
+        if(settings.handoff!==true)throw new Error('Handoff is off · /settings g turns it on (it spends tokens)');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        if(live.info.engine==='shell'||live.info.login)throw new Error('Only an AI agent can hand off');
+        if(this.handingOff.has(id))throw new Error('Handoff already running');
+        await this.caughtUp(live);
+        if(!live.host||live.mirrorFailed||['exited','error'].includes(live.info.status))throw new Error('Agent has exited');
+        if(live.info.status==='waiting'&&live.info.statusDetail==='permission'||live.info.engine==='codex'&&live.codexRun==='action')throw new Error('Agent is asking for permission');
+        if(live.info.status==='waiting'&&live.info.statusDetail==='question')throw new Error('Agent is asking a question');
+        if((live.statusState?.toolsInFlight??0)>0)throw new Error('Agent is running a tool');
+        const target=await checkEngine(engine);
+        if(!target.installed||!target.path)throw new Error(`${engine==='codex'?'codex':'claude'} not found in PATH`);
+        if(target.loggedIn!==true)throw new Error(target.loggedIn===false?'Engine is not logged in':'Engine login status unavailable');
+        return {live,settings};
+    }
+    async handoffPlan(id:string,engine:CliEngine):Promise<HandoffPlan>{
+        const {live,settings}=await this.handoffSource(id,engine),screen=(await this.text(id)).text;
+        return handoffPlan(live.info.title,engine,screen,cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices),live.info.authMethod==='subscription');
+    }
+    // The note is written first, then the new agent starts in the same folder or worktree with it as its first message;
+    // the old agent is stopped only once the new one is running.
+    async handoff(id:string,engine:CliEngine):Promise<{session:SessionInfo;summary:HandoffSummary|null}>{
+        const {live,settings}=await this.handoffSource(id,engine);
+        this.handingOff.add(id);
+        try{
+            const screen=(await this.text(id)).text,writer=cheapestWriter(await this.keys.list(),settings,this.handoffWriter.prices);
+            const written=writer?await this.keyedSummary(id,live,engine,screen,writer,settings):{text:await this.agentSummary(live,engine),summary:null};
+            if(!written.text.trim())throw new Error('The handoff note came back empty');
+            const title=[...`${live.info.title} · ${engineLabel(engine)}`].slice(0,60).join('');
+            const continuation=live.info.worktree?{worktree:live.info.worktree,...(live.info.branch?{branch:live.info.branch}:{})}:{};
+            const next=await this.create({engine,model:null,auth:{kind:'account'},cwd:live.info.cwd,permission:'ask',title,firstMessage:handoffMessage(live.info.title,written.text)},continuation);
+            for(let waited=0;;waited+=100){
+                const status=this.get(next.id).status;
+                if(['running','waiting','done'].includes(status))break;
+                if(['exited','error'].includes(status)||waited>=HANDOFF_START_MS)throw new Error(HANDOFF_NOT_STARTED);
+                await new Promise(resolve=>setTimeout(resolve,100));
+            }
+            live.info.handoffTo=next.title;this.event({kind:'session.updated',session:{...live.info}});await this.persist();
+            await this.stop(id);
+            return {session:this.get(next.id),summary:written.summary};
+        }finally{this.handingOff.delete(id);}
+    }
+    // One request to the cheapest keyed model, held against the budgets like an agent's request (B25) and counted in Usage.
+    private async keyedSummary(id:string,live:Live,engine:CliEngine,screen:string,writer:import('./handoff.js').KeyedWriter,settings:Settings):Promise<{text:string;summary:HandoffSummary}>{
+        const plan=handoffPlan(live.info.title,engine,screen,writer,false),worst=plan.priceUsd?.high??0,usage=this.usage?.summary();
+        const held=this.ledger?.reserve({sessionId:id,provider:writer.key.provider,model:writer.model,amountUsd:worst},{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
+        if(held&&'refused' in held)throw new Error(held.refused.budget==='unavailable'?'Budget check unavailable; try again':`The handoff would pass your ${held.refused.budget} budget`);
+        const grant=held&&'grant' in held?held.grant.id:null,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),HANDOFF_SUMMARY_MS);
+        let result:import('./handoff.js').Summary;
+        try{
+            result=await this.keys.withSecret(writer.key.id,(secret,binding)=>{
+                // B12: a Foundry key goes only to its Keychain-bound endpoint and deployments.
+                if(writer.key.provider==='foundry'&&(!binding||!binding.deployments.includes(writer.model)))throw new KeyError('Foundry key details changed outside AI Term; add the key again');
+                return this.handoffWriter.summarize(writer,secret,writer.key.provider==='foundry'?binding?.endpoint??null:null,handoffPrompt(engine,screen),controller.signal);
+            });
+        }catch(error){
+            if(grant)void this.ledger?.settle(id,grant,true);
+            if(error instanceof KeyError)throw error;
+            this.log.error('Handoff summary request failed');
+            // eslint-disable-next-line preserve-caught-error -- provider errors may carry anything the provider sent; only fixed words leave.
+            throw new Error('The handoff summary request failed');
+        }finally{clearTimeout(timer);}
+        if(result.inputTokens===null||result.outputTokens===null){if(grant)await this.ledger?.settle(id,grant,true);return {text:result.text,summary:{inputTokens:0,outputTokens:0,costUsd:worst}};}
+        const costUsd=estimateCost(writer.price,result.inputTokens,result.outputTokens);
+        await this.usage?.job({ts:new Date().toISOString(),sessionId:id,provider:writer.key.provider,model:writer.model,inputTokens:result.inputTokens,outputTokens:result.outputTokens,costUsd,costSource:'price-table'});
+        if(grant)await this.ledger?.settle(id,grant,false);
+        return {text:result.text,summary:{inputTokens:result.inputTokens,outputTokens:result.outputTokens,costUsd}};
+    }
+    // No key: the agent writes its own note as its next reply (sent like /send), read from its last reply when its turn ends.
+    private async agentSummary(live:Live,engine:CliEngine):Promise<string>{
+        const before=live.lastReply;
+        await this.send(live.info.id,`${handoffInstructions(engine)} Reply with the note only.`);
+        for(let waited=0;waited<HANDOFF_REPLY_MS;waited+=200){
+            if(['exited','error'].includes(live.info.status))throw new Error('Agent exited before writing its handoff note');
+            if(live.info.status==='done'&&live.lastReply!==undefined&&live.lastReply!==before)return live.lastReply;
+            await new Promise(resolve=>setTimeout(resolve,200));
+        }
+        throw new Error("The agent didn't write its handoff note in time; it keeps running");
     }
     // Cost per task: one session's own total from its start. cost undefined: a tokens-only (subscription) report.
     private addTask(id:string,tokens:number,cost:number|null|undefined):void{

@@ -43,7 +43,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
-export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -84,6 +84,7 @@ export interface SessionInfo {
     ctxPercent: number|null;
     lastActivity?:{tool:string;at:string}|null; // Missing on legacy records; new records use null.
     taskUsage?:TaskUsage; // v0.6.1: this agent's own total since it started (absent until its first usage).
+    handoffTo?:string; // v0.6.3: the agent this one handed its work to (`handed off → <name>` on the card).
 }
 // v0.6.1 cost per task (D55): tokens always; dollars for API-key sessions only (null on a subscription, which bills
 // against the plan). unknownPrice: some of it had no price, so the dollars are a lower bound.
@@ -131,6 +132,9 @@ export type Request = {
     kind:'sessions.text'; sessionId:string; lastReply?:boolean;
 } | {
     kind:'sessions.send'; sessionId:string; text:string;
+} | {
+    // v0.6.3 engine handoff (D55, off by default): what it would run and cost (D49), then the handoff itself.
+    kind:'sessions.handoffPlan'|'sessions.handoff'; sessionId:string; engine:CliEngine;
 } | {
     kind:'sessions.find'; text:string;
 } | {
@@ -195,6 +199,8 @@ export interface SuccessResponse {
     rows?: number;
     modes?: TerminalModes;
     matches?:FindMatch[]; moreMatches?:boolean;
+    handoffPlan?: import('./handoff.js').HandoffPlan;
+    handoffSummary?: import('./handoff.js').HandoffSummary | null;
     copy?:SessionText & {more?:boolean}; // Bounded chunks echo the same request id; client joins before resolving.
 }
 export type Response = SuccessResponse | {

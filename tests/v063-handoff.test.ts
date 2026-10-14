@@ -147,6 +147,7 @@ it('/handoff asks first with who writes the note, tokens and price; ⏎ runs it,
     requests.push(body); const response: SuccessResponse = { id: randomUUID(), ok: true };
     if (body.kind === 'settings.get') response.settings = { theme: 'graphite', handoff: true };
     if (body.kind === 'sessions.list') response.sessions = [fixer];
+    if (body.kind === 'sessions.preview') { response.snapshot = 'agent screen'; response.cols = 85; response.rows = 30; }
     if (body.kind === 'sessions.handoffPlan') response.handoffPlan = { source: 'fixer', engine: 'claude-code', writer: { kind: 'key', provider: 'openai', model: 'gpt-6.1-mini', keyLabel: 'cheap', last4: 'oooo' }, inputTokens: { low: 1000, high: 3000 }, outputTokens: { low: 200, high: 2000 }, priceUsd: { low: 0.0004, high: 0.0022 }, subscription: false };
     if (body.kind === 'sessions.handoff') { response.session = { ...fixer, id: randomUUID(), title: 'fixer · claude code', engine: 'claude-code' }; response.handoffSummary = { inputTokens: 2400, outputTokens: 310, costUsd: 0.0007 }; }
     return response;

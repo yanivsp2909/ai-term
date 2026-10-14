@@ -9,7 +9,7 @@ import { WORKTREE_DELETE_ERRORS } from './worktree-removal.js';
 import { activateTerminal } from './terminal-activate.js';
 import type { TerminalBundle } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
-import { SessionManager, AGENT_COMMAND_ERRORS } from './session-manager.js';
+import { SessionManager, AGENT_COMMAND_ERRORS, HANDOFF_ERRORS } from './session-manager.js';
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
@@ -291,6 +291,14 @@ export class DaemonServer {
                     this.control(peer,{id:request.id,ok:true,session});
                     break;
                 }
+                case 'sessions.handoffPlan':
+                    this.control(peer,{id:request.id,ok:true,handoffPlan:await this.manager.handoffPlan(request.sessionId,request.engine)});
+                    break;
+                case 'sessions.handoff': {
+                    const handed=await this.manager.handoff(request.sessionId,request.engine);
+                    this.control(peer,{id:request.id,ok:true,session:handed.session,handoffSummary:handed.summary});
+                    break;
+                }
                 case 'sessions.send':
                     await this.manager.send(request.sessionId,request.text);
                     this.control(peer,{id:request.id,ok:true});
@@ -332,7 +340,7 @@ export class DaemonServer {
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
-                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS
+                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS
             ]);
             const message = error instanceof Error && (fixed.has(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.

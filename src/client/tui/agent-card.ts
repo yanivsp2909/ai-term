@@ -35,6 +35,7 @@ function activity(session: SessionInfo, now: number): Styled | null {
   if (session.status === 'waiting') return { text: session.statusDetail === 'permission' || session.statusDetail === 'question' ? `asks: ${session.statusDetail}` : session.statusDetail, color: 'status-waiting' };
   if (session.status === 'done') return { text: 'ready to review', color: 'ink-3' };
   if (session.status === 'error') return { text: session.exitCode !== null && !session.statusDetail.startsWith('exit ') ? `exit ${session.exitCode} · ${session.statusDetail}` : session.statusDetail, color: 'status-error' };
+  if (session.handoffTo) return { text: `handed off → ${session.handoffTo}`, color: 'ink-3' };
   if (session.status !== 'running') return null;
   const quiet = quietSince(session);
   if (quiet !== null && now - quiet >= QUIET_AFTER_MS) return { text: `quiet ${compact(now - quiet, 's')}`, color: 'ink-3' };

@@ -32,6 +32,8 @@ export class UsageService extends EventEmitter {
  }
  // Every counted record also goes to its session's own total (cost per task, v0.6.1).
  private async add(record:UsageRecord):Promise<void>{const write=this.store.add(record);this.emit('record',{...record});await write;}
+ // v0.6.3: a job the daemon itself ran for a session (a handoff summary), counted like any API-key usage.
+ job(record:UsageRecord):Promise<void>{return this.add(record);}
  // B25: a reservation whose usage will never arrive is booked at its worst case, as a usage record of its own.
  book(reservation:{sessionId:string;provider:UsageRecord['provider'];model:string;amountUsd:number}):Promise<void>{
   return this.add({ts:new Date().toISOString(),sessionId:reservation.sessionId,provider:reservation.provider,model:reservation.model,inputTokens:0,outputTokens:0,costUsd:reservation.amountUsd,costSource:'worst-case'});

@@ -13,6 +13,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/mcp',description:'MCP servers and per-tool load controls',argumentHint:()=> '[add|remove <name>]',current:none},
  {name:'/agents',description:'Browse subagents in the extensions popup',current:none},
  {name:'/preset',description:'Saved start setups: open, save, list, remove',argumentHint:()=>'[<name> | save <name> [first message] | rm <name>]',current:none},
+ {name:'/handoff',description:'Hand an agent over to another engine (spends tokens; asks first)',argumentHint:()=>'<agent> claude|codex',current:none},
  {name:'/settings',description:'Keys and saved defaults',current:none},
  {name:'/login',description:'Connect an engine or API key',current:none},
  {name:'/effort',description:'Reasoning for the next agent',argumentHint:c=>effortValues(c.engine).join('|'),values:c=>effortValues(c.engine),current:c=>c.effort??'CLI default'},

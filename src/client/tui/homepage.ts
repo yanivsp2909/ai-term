@@ -42,6 +42,8 @@ import { FindPanel } from './find-panel.js';
 import { TextPanel } from './text-panel.js';
 import { usageDetailLines } from './usage-details.js';
 import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
+import { HandoffAsk, handoffDone } from './handoff-ask.js';
+import { validateHandoffPlan, validateHandoffSummary } from '../../shared/handoff.js';
 import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.js';
 import { openFolder, OpenError, type FolderApp } from './open-folder.js';
 import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-command.js';
@@ -73,7 +75,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk;
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
   private marked=new Set<string>();
   private lastSplit:string[]=[];
@@ -550,8 +552,29 @@ export class Homepage {
     if (text === '/model' || text === '/cd') { this.engines=(await this.connection.request({kind:'engines.status'})).engines;this.keys=(await this.connection.request({kind:'keys.list'})).keys??[]; this.openBox(text === '/model' ? 'model' : 'folder'); return; }
     if (text==='/settings'||text==='/login') { await this.openCredentials(text==='/settings'?'settings':'login'); return; }
     if (command==='/preset') { await this.presetCommand(text); return; }
+    if (command==='/handoff') { await this.handoffCommand(argument); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
+  }
+  // v0.6.3 /handoff <agent> <claude|codex>: the D49 ask first (who writes the note, tokens, price), ⏎ then hands off.
+  private async handoffCommand(argument:string):Promise<void>{
+    const words=argument.split(' '),last=words.pop()??'',engine=last==='claude'||last==='claude-code'?'claude-code':last==='codex'?'codex':null,name=words.join(' ');
+    const source=sortSessions(this.sessions).find(s=>s.title===name&&!['exited','error'].includes(s.status));
+    if(!engine||!name){this.showNote('/handoff <agent> claude|codex');return;}
+    if(!source){this.showNote(`no running agent named ${name}`);return;}
+    let plan:import('../../shared/handoff.js').HandoffPlan;
+    try{plan=validateHandoffPlan((await this.connection.request({kind:'sessions.handoffPlan',sessionId:source.id,engine})).handoffPlan);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Handoff unavailable');return;}
+    const ask:HandoffAsk=new HandoffAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
+      this.showNote(`◐ handing off ${source.title} → ${engine==='codex'?'codex':'claude code'}`);
+      try{
+        const result=await this.connection.request({kind:'sessions.handoff',sessionId:source.id,engine});
+        const session=validateSession(result.session),summary=validateHandoffSummary(result.handoffSummary);
+        this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);
+        this.showNote(handoffDone(source.title,session.title,summary));
+      }catch(error){this.showNote(`handoff stopped: ${error instanceof Error?error.message:'request failed'}`);}
+    });});
+    this.popup=ask;this.draw(true);
   }
   // v0.6.2 /preset: save the next agent's setup, open the start box with one, list them, remove one.
   private async presetCommand(text:string):Promise<void>{
