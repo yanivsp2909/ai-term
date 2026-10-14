@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { encodeAppControl, isAppCommand, type AppCommand } from '../../src/shared/app-control.js';
+import { isAppCommand, type AppCommand } from '../../src/shared/app-control.js';
 import { appMenu, menuShortcut } from './menus.js';
 import { spawn, type IPty } from 'node-pty';
 import { Logger } from '../../src/daemon/log.js';
@@ -15,6 +15,7 @@ import { tokenColors } from '../../src/shared/theme-tokens.js';
 import { channels, pasteErrors, type TerminalSize, type MenuAction } from '../shared/api.js';
 import { MAX_COPY_BYTES, PasteRefusal, validateAppTheme, validateEmpty, validateOne, validatePaste, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
 import { CSP, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
+import { ControlGate } from './control-gate.js';
 import { describeExit, errorTag, inputAfterExit, rendererGone, startupFailed } from './failures.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -29,6 +30,10 @@ let window: BrowserWindow | undefined;
 let terminal: IPty | undefined;
 let ended = false;
 const appToken = randomBytes(32).toString('hex');
+const gate = new ControlGate(appToken);
+let gateTimer: ReturnType<typeof setTimeout> | undefined;
+// A held partial control prefix that no more output completes was ordinary text (control-gate.ts).
+const GATE_FLUSH_MS = 15;
 let closeNote = false;
 let log: Logger;
 let logReady = false;
@@ -52,7 +57,13 @@ function resize(size: TerminalSize): void {
   });
   const child = terminal;
   lifecycle.track(child);
-  child.onData(data => { if (terminal === child) output(data); });
+  child.onData(data => {
+    if (terminal !== child) return;
+    if (gateTimer) clearTimeout(gateTimer);
+    const shown = gate.output(data);
+    if (shown) output(shown);
+    if (gate.holding) gateTimer = setTimeout(() => { const rest = gate.flush(); if (rest) output(rest); }, GATE_FLUSH_MS);
+  });
   child.onExit(({ exitCode, signal }) => {
     if (terminal !== child) return;
     terminal = undefined; ended = true;
@@ -64,7 +75,10 @@ function resize(size: TerminalSize): void {
 function command(action: AppCommand): void {
   if (!terminal || !window || window.isDestroyed()) return;
   if (action !== 'theme-changed') menuAction('focus-terminal');
-  try { terminal.write(encodeAppControl(appToken, action)); } catch (error) { failure('Desktop command failed', error); }
+  // Before the client is on its own screen its PTY still echoes input: the control (and its token) would show.
+  const control = gate.command(action);
+  if (!control) return;
+  try { terminal.write(control); } catch (error) { failure('Desktop command failed', error); }
 }
 function menuAction(action: MenuAction): void { window?.webContents.send(channels.menuAction, action); }
 async function manageCommand(install:boolean):Promise<void> {
