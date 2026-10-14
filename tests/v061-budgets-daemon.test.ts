@@ -73,8 +73,8 @@ it('cost per task: an agent\'s own usage adds up on its record, priced from the 
   await a.reporter.usage('gpt-6.1-sol', { input: 1200, cached: 200, output: 300 });
   await expect.poll(() => d.manager.get(a.session.id).taskUsage?.tokens).toBe(1500);
   expect(d.manager.get(a.session.id).taskUsage?.costUsd).toBeCloseTo(d.usage.summary().today.costUsd, 10);
-  // It survives a daemon restart with the record (once the state write of the last report has landed).
-  await expect.poll(async () => { const again = new SessionManager(getPaths(d.root), new Logger(getPaths(d.root).log)); await again.load(); const tokens = again.get(a.session.id).taskUsage?.tokens; await again.shutdown(); return tokens; }).toBe(1500);
+  // It survives a daemon restart with the record (once the coalesced state write, at most a second later, has landed).
+  await expect.poll(async () => { const again = new SessionManager(getPaths(d.root), new Logger(getPaths(d.root).log)); await again.load(); const tokens = again.get(a.session.id).taskUsage?.tokens; await again.shutdown(); return tokens; }, { timeout: 4000 }).toBe(1500);
 });
 
 it('cost per task on a subscription counts tokens only, never in Usage or dollars; off in /settings sends no telemetry', async () => {
