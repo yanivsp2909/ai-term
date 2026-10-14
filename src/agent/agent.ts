@@ -275,14 +275,15 @@ export class Agent {
     const child=new Agent({...parent,model,modelId,io,reporter,child:true,limits:this.limits,instructions:{...parent.instructions,text:parent.instructions.text+'\n\n# Subagent instructions\n'+file.body},transcript:new ChildTranscript(null,parent.redact,()=>parent.io.note('subagent transcript unavailable','error'))});
     // The parent request has been sent but its usage may arrive only after this tool. Reserve its worst case while
     // the child spends, so neither caps nor budgets temporarily forget that in-flight request.
-    this.limits.reserved+=this.currentWorst;
+    const reserved = this.currentWorst;
+    this.limits.reserved+=reserved;
     try {
       const result=await child.turn(prompt,signal);
       if(result!=='done')return result==='interrupted'?'Subagent interrupted.':'Subagent failed; no final answer.';
       const answer=child.history.at(-1);
       if(answer?.role!=='assistant')return 'Subagent finished without a text answer.';
       return typeof answer.content==='string'?answer.content:answer.content.filter(p=>p.type==='text').map(p=>p.text).join('')||'Subagent finished without a text answer.';
-    } finally { this.limits.reserved-=this.currentWorst; }
+    } finally { this.limits.reserved-=reserved; }
   }
   private async clearance(inputTokens: number, controller: AbortController): Promise<AgentFacts | null> {
     const { io, reporter } = this.options;
