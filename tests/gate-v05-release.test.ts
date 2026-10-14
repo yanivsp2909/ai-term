@@ -1,9 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { expect, it, vi } from 'vitest';
 import type { IPty } from 'node-pty';
 import { buildShellEnv, buildSpawnEnv } from '../src/daemon/env.js';
 import { electronNodeNeeded } from '../src/shared/runtime-paths.js';
-import { debugSwitch } from '../app/main/security.js';
 import { describeExit, errorTag, rendererGone, startupFailed, inputAfterExit } from '../app/main/failures.js';
 import { PtyLifecycle } from '../app/main/pty-lifecycle.js';
 
@@ -25,21 +23,9 @@ it('MEDIUM env: only a daemon running as the plain Electron binary needs Electro
   expect(electronNodeNeeded('/opt/homebrew/bin/node', undefined)).toBe(false);
 });
 
-it('LOW/MEDIUM devtools: the packaged app refuses remote debugging and inspector switches', () => {
-  const has = (...names: string[]) => (name: string) => names.includes(name);
-  expect(debugSwitch(has('remote-debugging-port'), true)).toBe('remote-debugging-port');
-  expect(debugSwitch(has('remote-debugging-pipe'), true)).toBe('remote-debugging-pipe');
-  expect(debugSwitch(has('inspect'), true)).toBe('inspect');
-  expect(debugSwitch(has('inspect-brk'), true)).toBe('inspect-brk');
-  expect(debugSwitch(has(), true)).toBeNull();
-  expect(debugSwitch(has('remote-debugging-port'), false)).toBeNull();
-});
-
-it('LOW/MEDIUM devtools: packaging turns off the Node inspector fuse and verifies it after signing', () => {
-  const script = readFileSync(new URL('../scripts/package-app.mjs', import.meta.url), 'utf8');
-  expect(script).toContain('electronFuses:{runAsNode:true,enableNodeCliInspectArguments:false}');
-  expect(script).toMatch(/FuseV1Options\.EnableNodeCliInspectArguments/);
-});
+// LOW/MEDIUM devtools (--remote-debugging-port / --inspect on the packaged binary) is not fixed: Playwright drives the
+// packaged smoke suite and the latency A/B through exactly those switches, and using them needs a same-user process that
+// can already run ai and reach the daemon (D35). See PROGRESS.md, Part B.
 
 it('MEDIUM exit: a signal-killed ai reads as a failure that names the signal', () => {
   expect(describeExit({ exitCode: 0, signal: 9 })).toEqual({ text: 'ai stopped by signal 9', failed: true });

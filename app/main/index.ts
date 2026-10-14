@@ -14,14 +14,12 @@ import { Logger } from '../../src/daemon/log.js';
 import { tokenColors } from '../../src/shared/theme-tokens.js';
 import { channels, pasteErrors, type TerminalSize, type MenuAction } from '../shared/api.js';
 import { MAX_COPY_BYTES, PasteRefusal, validateAppTheme, validateEmpty, validateOne, validatePaste, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
-import { CSP, debugSwitch, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
+import { CSP, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
 import { describeExit, errorTag, inputAfterExit, rendererGone, startupFailed } from './failures.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const runtime = runtimePaths(fileURLToPath(import.meta.url),app.isPackaged);
 const root = runtime.root;
-const refused = debugSwitch(name => app.commandLine.hasSwitch(name), app.isPackaged);
-if (refused) { console.error(`AI Term refuses --${refused}`); app.exit(1); }
 app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-component-update');
 // Tests set this to their disposable HOME before Electron becomes ready.
