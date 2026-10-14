@@ -67,9 +67,11 @@ it('an Enter is not sent when a permission prompt appears between the paste and 
   const { m, session, writes, feed, status } = await agent();
   await feed('\x1b[?2004hready'); await status({ hook_event_name: 'Stop' });
   SessionManager.sendEnterDelayMs = 1000; cleanups.push(async () => { SessionManager.sendEnterDelayMs = 50; });
-  const sending = m.send(session.id, 'do it');
+  // The outcome is captured at once, so a slow status POST can't leave the rejection unhandled.
+  const sending = m.send(session.id, 'do it').then(() => 'sent', (error: unknown) => error instanceof Error ? error.message : 'failed');
+  await vi.waitFor(() => expect(writes).toHaveLength(1));
   await status({ hook_event_name: 'PermissionRequest' });
-  await expect(sending).rejects.toThrow('Text pasted but not sent; go inside');
+  expect(await sending).toBe('Text pasted but not sent; go inside');
   expect(writes).toEqual(['\x1b[200~do it\x1b[201~']);
 });
 
