@@ -119,3 +119,15 @@ it('/settings has its own switch for presets, on by default; s toggles it', asyn
   await panel.key('s'); expect(settings.presetsEnabled).toBe(false);
   expect(panel.lines().join('\n')).toContain('presets: off · /preset (s)');
 });
+
+it('MEDIUM review: names that are also object built-ins are just missing presets, never a crash or a false removal', async () => {
+  const cwd = await folder(), tty = new TTY(), client = new Client(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd, terminalProgram: 'unknown' });
+  await home.start();
+  try {
+    type(tty, '/preset constructor'); enter(tty);
+    await shows(tty, 'no preset constructor');
+    type(tty, '/preset rm constructor'); enter(tty);
+    await shows(tty, 'no preset constructor');
+    expect(client.requests.some(r => r.kind === 'settings.set')).toBe(false);
+  } finally { await home.stop(); }
+});
