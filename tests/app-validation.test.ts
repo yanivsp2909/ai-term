@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_WRITE_BYTES, validateSize, validateWrite, validateUrl, validateEmpty } from '../app/shared/validation.js';
+import { MAX_WRITE_BYTES, validateSize, validateWrite, validateUrl, validateEmpty, validateOne, validateAppTheme } from '../app/shared/validation.js';
 
 describe('app preload messages are validated before use', () => {
+  it('accepts only one light/dark acknowledgement, never a command payload', () => {
+    expect(validateAppTheme(validateOne(['dark']))).toBe('dark');
+    for (const args of [[], ['light','palette'], ['system'], [{theme:'light'}], [true]]) expect(()=>validateAppTheme(validateOne(args))).toThrow();
+  });
   it('accepts only bounded integer dimensions with exact keys', () => {
     expect(validateSize({ cols: 120, rows: 40 })).toEqual({ cols: 120, rows: 40 });
     for (const value of [null, {}, { cols: 0, rows: 40 }, { cols: 501, rows: 40 }, { cols: 80, rows: Infinity }, { cols: 80, rows: 2.5 }, { cols: '80', rows: 24 }, { cols: 80, rows: 24, extra: true }]) {

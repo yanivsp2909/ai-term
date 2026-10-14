@@ -7,7 +7,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { monoFont, sansFont, terminalFontSize, tokenColors } from '../../src/shared/theme-tokens.js';
-import { pasteErrors, type AppTheme } from '../shared/api.js';
+import { pasteErrors, type AppTheme, type MenuAction } from '../shared/api.js';
 import { fitToWindow } from './resize.js';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
@@ -19,6 +19,7 @@ function App(): unknown {
   const term = useRef<Terminal | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
+  const [closeNote, setCloseNote] = useState(false);
   useEffect(() => {
     if (!host.current) return;
     const api = window.terminal;
@@ -46,34 +47,35 @@ function App(): unknown {
     // Input/output go straight between xterm and preload; React only owns search/errors.
     const input = terminal.onData(data => { api.write(data); });
     const stopOutput = api.onOutput(data => { terminal.write(data); });
-    const stopTheme = api.onTheme(theme);
+    const stopTheme = api.onTheme(mode => { theme(mode); api.themeApplied(mode); });
     const resize = (): void => {
       fitToWindow(fit, terminal, size => { api.resize(size); });
     };
     const observer = new ResizeObserver(resize); observer.observe(host.current);
-    terminal.attachCustomKeyEventHandler(event => {
-      if (event.type !== 'keydown') return true;
-      if (!event.metaKey) return true;
-      const key = event.key.toLowerCase();
-      if (!['c', 'v', 'e', 'k', 'f', '+', '=', '-', '0'].includes(key)) return true;
-      event.preventDefault();
-      if (key === 'c') { if (terminal.hasSelection()) void api.copy(terminal.getSelection()).catch(() => { report('Could not copy terminal selection'); }); }
-      else if (key === 'v') {
-        void api.paste().then(text => { terminal.paste(text); }).catch((error: unknown) => {
-          // Electron prefixes invoke rejections; only our fixed reasons may reach chrome.
+    const action = (item: MenuAction): void => {
+      if (item === 'close-note') { setCloseNote(true); return; }
+      const field = document.activeElement instanceof HTMLInputElement ? document.activeElement : null;
+      if (item === 'copy') {
+        const selection = field ? field.value.slice(field.selectionStart ?? 0, field.selectionEnd ?? 0) : terminal.getSelection();
+        if (selection) void api.copy(selection).catch(() => { report('Could not copy terminal selection'); });
+      } else if (item === 'paste') {
+        void api.paste().then(text => {
+          if (field) { field.setRangeText(text, field.selectionStart ?? 0, field.selectionEnd ?? 0, 'end'); field.dispatchEvent(new Event('input', {bubbles:true})); finder.findNext(field.value, {incremental:true}); }
+          else terminal.paste(text);
+        }).catch((error: unknown) => {
           report(Object.values(pasteErrors).find(reason => error instanceof Error && error.message.includes(reason)) ?? pasteErrors.unavailable);
         });
-      }
-      else if (key === 'e') api.write('\x05');
-      else if (key === 'k' || key === 'f') setSearching(true);
-      else { terminal.options.fontSize = key === '0' ? terminalFontSize : Math.max(8, Math.min(32, (terminal.options.fontSize ?? terminalFontSize) + (key === '-' ? -1 : 1))); resize(); }
-      return false;
-    });
+      } else if (item === 'select-all') { if (field) field.select(); else terminal.selectAll(); }
+      else if (item === 'find') setSearching(true);
+      else { terminal.options.fontSize = item === 'font-reset' ? terminalFontSize : Math.max(8, Math.min(32, (terminal.options.fontSize ?? terminalFontSize) + (item === 'font-decrease' ? -1 : 1))); resize(); }
+    };
+    const stopMenu = api.onMenuAction(action);
     resize(); terminal.focus();
-    return () => { observer.disconnect(); stopOutput(); stopTheme(); input.dispose(); terminal.dispose(); term.current = null; search.current = null; };
+    return () => { observer.disconnect(); stopOutput(); stopTheme(); stopMenu(); input.dispose(); terminal.dispose(); term.current = null; search.current = null; };
   }, []);
   useEffect(() => { if (searching) searchInput.current?.focus(); }, [searching]);
   return h('div', null,
+    h('div', {className:'chrome'}, closeNote ? 'Closing the window keeps your agents running.' : 'AI Term'),
     h('div', { className: 'terminal', ref: host, 'aria-label': 'AI Term terminal' }),
     searching ? h('div', { className: 'search', role: 'search' },
       h('input', { ref: searchInput, 'aria-label': 'Search scrollback', placeholder: 'Search scrollback',

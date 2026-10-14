@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { channels, type AppTheme, type TerminalApi } from '../shared/api.js';
+import { channels, menuActions, type AppTheme, type MenuAction, type TerminalApi } from '../shared/api.js';
 // Each wrapper has a fixed channel. IPC events never cross the context bridge.
 const api: TerminalApi = {
   write: data => { ipcRenderer.send(channels.write, data); },
@@ -17,6 +17,13 @@ const api: TerminalApi = {
     ipcRenderer.on(channels.theme, listener);
     ipcRenderer.send(channels.theme);
     return () => { ipcRenderer.removeListener(channels.theme, listener); };
+  },
+  themeApplied: theme => { ipcRenderer.send(channels.themeApplied, theme); },
+  onMenuAction: callback => {
+    const listener = (_event: unknown, action: unknown): void => { if (typeof action === 'string' && menuActions.includes(action as MenuAction)) callback(action as MenuAction); };
+    ipcRenderer.on(channels.menuAction, listener);
+    ipcRenderer.send(channels.menuAction);
+    return () => { ipcRenderer.removeListener(channels.menuAction, listener); };
   },
 };
 contextBridge.exposeInMainWorld('terminal', api);

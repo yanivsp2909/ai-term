@@ -7,7 +7,7 @@ it('exposes only fixed-channel wrappers and strips IPC events from subscriptions
   expect(mocks.expose).toHaveBeenCalledOnce();
   expect(mocks.expose.mock.calls[0]?.[0]).toBe('terminal');
   const api = mocks.expose.mock.calls[0]?.[1] as TerminalApi;
-  expect(Object.keys(api).sort()).toEqual(['write', 'resize', 'onOutput', 'openUrl', 'copy', 'paste', 'onTheme'].sort());
+  expect(Object.keys(api).sort()).toEqual(['write', 'resize', 'onOutput', 'openUrl', 'copy', 'paste', 'onTheme', 'themeApplied', 'onMenuAction'].sort());
   api.write('hello'); api.resize({ cols: 80, rows: 24 });
   expect(mocks.send.mock.calls).toEqual([['terminal:write', 'hello'], ['terminal:resize', { cols: 80, rows: 24 }]]);
   await api.openUrl('https://example.com'); await api.copy('copy'); expect(await api.paste()).toBe('clipboard');
@@ -21,4 +21,11 @@ it('exposes only fixed-channel wrappers and strips IPC events from subscriptions
   const themeListener = mocks.on.mock.calls[1]?.[1] as (event: unknown, value: unknown) => void;
   themeListener({}, 'dark'); themeListener({}, 'unknown');
   expect(theme.mock.calls).toEqual([['dark']]);
+  api.themeApplied('light'); expect(mocks.send).toHaveBeenCalledWith('terminal:theme-applied', 'light');
+  const action = vi.fn(), stopAction = api.onMenuAction(action);
+  const actionListener = mocks.on.mock.calls[2]?.[1] as (event: unknown, value: unknown) => void;
+  actionListener({secretEvent:true}, 'find'); actionListener({}, 'approve'); actionListener({}, {});
+  expect(action.mock.calls).toEqual([['find']]); stopAction();
+  expect(mocks.remove).toHaveBeenCalledWith('terminal:menu-action', actionListener);
+  expect(mocks.send).toHaveBeenCalledWith('terminal:menu-action');
 });

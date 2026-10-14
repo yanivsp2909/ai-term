@@ -1,4 +1,8 @@
-import { pasteErrors, type TerminalSize } from './api.js';
+import { pasteErrors, type TerminalSize, type AppTheme } from './api.js';
+export function validateAppTheme(value: unknown): AppTheme {
+  if (value !== 'light' && value !== 'dark') throw new Error('Invalid theme acknowledgement');
+  return value;
+}
 export const MAX_WRITE_BYTES = 64 * 1024;
 export const MAX_COPY_BYTES = 5 * 1024 * 1024;
 export function validateWrite(value: unknown, limit = MAX_WRITE_BYTES): string {

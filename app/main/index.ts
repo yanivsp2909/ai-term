@@ -1,12 +1,15 @@
 import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeTheme, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { encodeAppControl, isAppCommand, type AppCommand } from '../../src/shared/app-control.js';
+import { appMenu, menuShortcut } from './menus.js';
 import { spawn, type IPty } from 'node-pty';
 import { Logger } from '../../src/daemon/log.js';
 import { tokenColors } from '../../src/shared/theme-tokens.js';
-import { channels, pasteErrors, type TerminalSize } from '../shared/api.js';
-import { MAX_COPY_BYTES, PasteRefusal, validateEmpty, validateOne, validatePaste, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
+import { channels, pasteErrors, type TerminalSize, type MenuAction } from '../shared/api.js';
+import { MAX_COPY_BYTES, PasteRefusal, validateAppTheme, validateEmpty, validateOne, validatePaste, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
 import { CSP, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +20,8 @@ app.setName('AI Term');
 let window: BrowserWindow | undefined;
 let terminal: IPty | undefined;
 let ended = false;
+const appToken = randomBytes(32).toString('hex');
+let closeNote = false;
 let log: Logger;
 function output(data: string): void { if (window && !window.isDestroyed()) window.webContents.send(channels.output, data); }
 function failure(message: string): void { log.error(message); output(`\r\n✗ ${message}\r\n`); }
@@ -30,15 +35,22 @@ function resize(size: TerminalSize): void {
   // this flag also follows the CLI's normal detached daemon spawn. No key lookup occurs here.
   terminal = spawn(process.execPath, [join(root, 'dist/cli/index.js')], {
     name: 'xterm-256color', cols: size.cols, rows: size.rows, cwd: root,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', TERM_PROGRAM: 'AI_Term', COLORTERM: 'truecolor' },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', TERM_PROGRAM: 'AI_Term', COLORTERM: 'truecolor', AI_TERM_APP_TOKEN: appToken },
   });
-  terminal.onData(output);
-  terminal.onExit(({ exitCode }) => {
+  const child = terminal;
+  child.onData(data => { if (terminal === child) output(data); });
+  child.onExit(({ exitCode }) => {
+    if (terminal !== child) return;
     terminal = undefined; ended = true;
     output(`\r\n■ ai exited (${exitCode}) · close the window to finish\r\n`);
     if (exitCode !== 0) log.error('Desktop ai process exited unsuccessfully');
   });
 }
+function command(action: AppCommand): void {
+  if (!terminal || !window || window.isDestroyed()) return;
+  try { terminal.write(encodeAppControl(appToken, action)); } catch { failure('Desktop command failed'); }
+}
+function menuAction(action: MenuAction): void { window?.webContents.send(channels.menuAction, action); }
 function registerIpc(): void {
   const receive = (channel: string, action: (args: unknown[]) => void): void => {
     ipcMain.on(channel, (event, ...args: unknown[]) => {
@@ -51,6 +63,11 @@ function registerIpc(): void {
     terminal.write(data);
   });
   receive(channels.resize, args => { resize(validateSize(validateOne(args))); });
+  receive(channels.themeApplied, args => {
+    const theme = validateAppTheme(validateOne(args));
+    if (theme === (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')) command('theme-changed');
+  });
+  receive(channels.menuAction, args => { validateEmpty(args); if (closeNote) { menuAction('close-note'); closeNote = false; } });
   receive(channels.theme, args => { validateEmpty(args); window?.webContents.send(channels.theme, nativeTheme.shouldUseDarkColors ? 'dark' : 'light'); });
   ipcMain.handle(channels.openUrl, async (event, ...args: unknown[]) => {
     try { trusted(event); await shell.openExternal(validateUrl(validateOne(args))); }
@@ -69,16 +86,10 @@ function registerIpc(): void {
     }
   });
 }
-void app.whenReady().then(async () => {
-  const dataPath = app.getPath('userData');
-  mkdirSync(dataPath, { recursive: true, mode: 0o700 });
-  log = new Logger(join(dataPath, 'app.log'));
-  log.on('writeFailed', () => { console.error('Desktop log could not be written'); });
-  // Keep the application menu minimal so native Edit/View accelerators cannot
-  // compete with xterm's clipboard, search and font shortcuts.
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: 'AI Term', submenu: [{ role: 'quit' }] }]));
+function createWindow(): Promise<void> {
+  ended = false;
   const colors = tokenColors(nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
-  window = new BrowserWindow({ title: 'AI Term', width: 1100, height: 720, minWidth: 480, minHeight: 300, backgroundColor: colors.bg, webPreferences: secureWebPreferences(join(here, '../preload/index.cjs')) });
+  window = new BrowserWindow({ title: 'AI Term', width: 1100, height: 720, minWidth: 480, minHeight: 300, backgroundColor: colors.bg, titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 14 }, webPreferences: secureWebPreferences(join(here, '../preload/index.cjs')) });
   window.setMenu(null);
   denyPermissions(window.webContents.session);
   lockNavigation(window.webContents);
@@ -86,6 +97,32 @@ void app.whenReady().then(async () => {
   window.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [CSP] } });
   });
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !input.meta || input.alt || input.control) return;
+    if (input.shift && !['+', '='].includes(input.key)) return;
+    const shortcut = menuShortcut(input.key);
+    if (!shortcut) return;
+    event.preventDefault();
+    if (shortcut === 'close') window?.close(); else if (shortcut === 'quit') app.quit();
+    else if (isAppCommand(shortcut)) command(shortcut); else menuAction(shortcut);
+  });
+  window.on('closed', () => {
+    window = undefined;
+    // Only the outer ai client dies; its existing detached daemon and agents survive.
+    const child = terminal; terminal = undefined;
+    if (child) { try { child.kill(); } catch { log.error('Desktop terminal cleanup failed'); } }
+  });
+  window.webContents.on('render-process-gone', () => { log.error('Desktop renderer exited'); window?.close(); });
+  return window.loadFile(join(here, '../renderer/index.html'));
+}
+void app.whenReady().then(async () => {
+  const dataPath = app.getPath('userData');
+  mkdirSync(dataPath, { recursive: true, mode: 0o700 });
+  log = new Logger(join(dataPath, 'app.log'));
+  log.on('writeFailed', () => { console.error('Desktop log could not be written'); });
+  try { writeFileSync(join(dataPath, 'close-note-shown'), '', {flag:'wx',mode:0o600}); closeNote = true; }
+  catch (error) { if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) { log.error('Desktop first-use note could not be saved'); closeNote = true; } }
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenu({command,action:menuAction,theme:source=>{nativeTheme.themeSource=source;},themeSource:nativeTheme.themeSource})));
   registerIpc();
   nativeTheme.on('updated', () => {
     if (!window || window.isDestroyed()) return;
@@ -93,12 +130,7 @@ void app.whenReady().then(async () => {
     window.setBackgroundColor(tokenColors(mode).bg);
     window.webContents.send(channels.theme, mode);
   });
-  window.on('closed', () => {
-    window = undefined;
-    // Only the outer ai client dies; its existing detached daemon and agents survive.
-    if (terminal) { try { terminal.kill(); } catch { log.error('Desktop terminal cleanup failed'); } terminal = undefined; }
-  });
-  window.webContents.on('render-process-gone', () => { log.error('Desktop renderer exited'); window?.close(); });
-  await window.loadFile(join(here, '../renderer/index.html'));
+  app.on('activate', () => { if (!window) void createWindow().catch(() => { log.error('Desktop window could not reopen'); app.quit(); }); });
+  await createWindow();
 }).catch(() => { console.error('AI Term desktop startup failed'); app.quit(); });
-app.on('window-all-closed', () => { app.quit(); });
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
