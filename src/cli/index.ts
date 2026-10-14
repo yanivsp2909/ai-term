@@ -17,7 +17,7 @@ function usage(): void { process.stderr.write('Usage:\n'+aiSubcommands.map(comma
 async function main(): Promise<void> {
     if (args.length === 0) {
         const client = await Connection.connect(getPaths(), { entry });
-        try { const { homepage } = await import('../client/tui/homepage.js'); await homepage(client); }
+        try { const { homepage } = await import('../client/tui/homepage.js'); await homepage(client, () => Connection.connect(getPaths(), { entry, autoStart: false })); }
         finally { client.close(); }
         return;
     }
@@ -25,7 +25,7 @@ async function main(): Promise<void> {
     if (args[0] === '--attach') {
         if (args.length !== 2 || !isUUID(args[1])) { usage(); return; }
         const client = await Connection.connect(getPaths(), { entry });
-        try { const { homepage } = await import('../client/tui/homepage.js'); await homepage(client, args[1]); }
+        try { const { homepage } = await import('../client/tui/homepage.js'); await homepage(client, () => Connection.connect(getPaths(), { entry, autoStart: false }), args[1]); }
         finally { client.close(); }
         return;
     }

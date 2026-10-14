@@ -28,7 +28,8 @@ export function visibleCards(view: Pick<HomepageView, 'cols' | 'rows' | 'session
 export function visibleStart(selected: number, capacity: number, start: number): number { return selected < start ? selected : selected >= start + capacity ? selected - capacity + 1 : start; }
 export const commands = commandRegistry.map(c=>c.name);
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
-export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; notePriority?: boolean; commandMenu?: boolean; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string; field?: FieldView;usage?:UsageSummary|null;budgets?:Budgets;effort?:Effort|null;permission?:Permission;worktrees?:'on'|'off';themeName?:import('../../shared/protocol.js').ThemeName }
+export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; notePriority?: boolean; commandMenu?: boolean; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string; field?: FieldView;usage?:UsageSummary|null;budgets?:Budgets;effort?:Effort|null;permission?:Permission;worktrees?:'on'|'off';themeName?:import('../../shared/protocol.js').ThemeName;marked?:ReadonlySet<string> }
+export const SPLIT_MARK = '◆ marked';
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
   if (layout.tiny) { const label = 'make the window bigger'; grid.text(Math.floor((cols - label.length) / 2), Math.floor(rows / 2), label, t['ink-3']); return grid.cells; }
@@ -54,9 +55,12 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     if(session.permission==='dontAsk')grid.text(panel.w-statusW-2,y,'!',t['status-error'],bg);
     grid.text(7, y + 1, card.model, t['ink-2'], bg, false, card.ctx ? textW - card.ctx.text.length - 1 : textW);
     if (card.ctx) grid.text(panel.w - card.ctx.text.length - 2, y + 1, card.ctx.text, t[card.ctx.color], bg);
+    // A split mark (Space) sits at the end of line 3 as glyph + word; the line's own text gives it room.
+    const marked = view.marked?.has(session.id) ?? false, lineW = marked ? Math.max(0, textW - textWidth(SPLIT_MARK) - 2) : textW;
     // Activity in its own color; the auth that follows it (when it fits whole) stays calm.
-    if (card.activity) { const end = grid.text(7, y + 2, card.activity.text, t[card.activity.color], bg, false, textW); if (card.line3 !== card.activity.text) grid.text(end, y + 2, card.line3.slice(card.activity.text.length), t['ink-3'], bg, false, 7 + textW - end); }
-    else grid.text(7, y + 2, card.line3, session.engine === 'shell' && (session.status === 'error' || session.status === 'waiting') ? t[card.status.color] : t['ink-3'], bg, false, textW);
+    if (card.activity) { const end = grid.text(7, y + 2, card.activity.text, t[card.activity.color], bg, false, lineW); if (card.line3 !== card.activity.text) grid.text(end, y + 2, card.line3.slice(card.activity.text.length), t['ink-3'], bg, false, 7 + lineW - end); }
+    else grid.text(7, y + 2, card.line3, session.engine === 'shell' && (session.status === 'error' || session.status === 'waiting') ? t[card.status.color] : t['ink-3'], bg, false, lineW);
+    if (marked) grid.text(panel.w - textWidth(SPLIT_MARK) - 2, y + 2, SPLIT_MARK, t.accent, bg, true);
   }
   if (!sessions.length) grid.text(3, 3, 'No sessions yet', t['ink-3']);
   const selected = sessions.find(s => s.id === view.selectedId);

@@ -2,7 +2,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { graphemes } from './grid.js';
 import { MAX_FIRST_MESSAGE_BYTES } from '../../shared/validate.js';
 import { MessageField } from './message-field.js';
-export type Action = { kind: 'draw' | 'preview' | 'up' | 'down' | 'page-up' | 'page-down' | 'end' | 'attach' | 'quit' | 'stop' | 'rename' | 'remove' | 'copy' } | { kind: 'note'; text: string } | { kind: 'submit'; text: string; message: MessageField };
+export type Action = { kind: 'draw' | 'preview' | 'up' | 'down' | 'page-up' | 'page-down' | 'end' | 'attach' | 'quit' | 'stop' | 'rename' | 'remove' | 'copy' | 'mark' | 'split' } | { kind: 'note'; text: string } | { kind: 'submit'; text: string; message: MessageField };
 export class CommandField extends MessageField {
   private lastInterrupt = -Infinity;
   key(key: string, now = Date.now()): Action {
@@ -21,7 +21,7 @@ export class CommandField extends MessageField {
     if (key === 'enter') { const text = this.text, message = this.copy(); this.text = ''; return text ? { kind: 'submit', text, message } : { kind: 'attach' }; }
     if (['page-up', 'page-down', 'end'].includes(key)) return { kind: key as 'page-up' | 'page-down' | 'end' };
     if (!this.text) {
-      const shortcut: Record<string, Action['kind']> = { c:'copy', p: 'preview', s: 'stop', r: 'rename', x: 'remove', up: 'up', down: 'down' };
+      const shortcut: Record<string, Action['kind']> = { c:'copy', p: 'preview', s: 'stop', r: 'rename', x: 'remove', ' ': 'mark', v: 'split', up: 'up', down: 'down' };
       const action = shortcut[key]; if (action) return { kind: action } as Action;
     }
     if (graphemes(key).length === 1 && !/[\p{C}]/u.test(key)) { const error = this.type(key); if (error) return { kind: 'note', text: error }; }

@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
 import { DaemonRequestError, type RequestBody } from '../connection.js';
 import { type AttachReason } from '../attach.js';
+import { split, type SplitResult } from '../split.js';
 import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
 import type { SessionInfo, SuccessResponse, AgentEngine, EnginesStatus, AuthRef, KeyView, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
@@ -30,11 +31,12 @@ import {WorktreesPanel} from './worktrees-panel.js';
 import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,type CommandContext} from './commands.js';
 import {drawHelp,wrapHelpLines} from './help.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
+import { MAX_PANES } from '../split-layout.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
 export interface HomepageConnection extends EventEmitter { request(body: RequestBody): Promise<SuccessResponse> }
-interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason>; attachOnStart?: string; terminalProgram?:string }
+interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; attachSession?: (id: string) => Promise<AttachReason>; splitSessions?: (ids: string[], theme: Theme) => Promise<SplitResult>; attachOnStart?: string; terminalProgram?:string }
 const ENTER_HOME = RESET_MODES + '\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1002h\x1b[?1006h\x1b[?2004h';
 export class Homepage {
   readonly done: Promise<void>;
@@ -55,6 +57,9 @@ export class Homepage {
   private effort:Effort|null=null;private permission:Permission='ask';private cleanIds:string[]|null=null;private helpOffset:number|null=null;
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
+  // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
+  private marked=new Set<string>();
+  private lastSplit:string[]=[];
   private theme: Theme = createTheme('graphite');
   private background?: string;
   private backgroundResolve?: () => void;
@@ -293,12 +298,42 @@ export class Homepage {
       case 'rename': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.renameId = session.id; this.field.text = session.title; this.showNote('rename: type a name, ⏎ save · Esc cancel'); } break; }
       case 'copy': {const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.copySelected(selected));break;}
       case 'remove': { const session = this.sessions.find(s => s.id === this.selectedId); if (session && ['exited', 'error'].includes(session.status)) this.enqueue(() => this.removeSession(session.id)); break; }
+      case 'mark': this.mark(); break;
+      case 'split': this.enqueue(() => this.openSplit()); break;
     }
     this.draw(true);
   }
   private async operation(body: RequestBody): Promise<void> {
     try { await this.connection.request(body); this.showNote(''); }
     catch (error) { this.showNote(error instanceof Error ? error.message : 'Operation failed'); }
+  }
+  private splittable(id:string):boolean{const session=this.sessions.find(s=>s.id===id);return !!session&&!['exited','error'].includes(session.status);}
+  // Space marks or unmarks the selected agent for a split; an ended agent can't join one, and a split holds four.
+  private mark():void{
+    const session=this.sessions.find(s=>s.id===this.selectedId);if(!session)return;
+    if(!this.marked.has(session.id)&&!this.splittable(session.id)){this.showNote(`${session.title} has exited · x removes it`);return;}
+    const count=[...this.marked].filter(id=>this.splittable(id)).length;
+    if(!this.marked.has(session.id)&&count>=MAX_PANES){this.showNote(`a split holds ${MAX_PANES} agents · Space unmarks one`);return;}
+    const marked=new Set(this.marked);if(marked.has(session.id))marked.delete(session.id);else marked.add(session.id);this.marked=marked;
+    const now=[...marked].filter(id=>this.splittable(id)).length;
+    this.showNote(now?`${now} marked · ${now>=2?'v opens them side by side':'Space marks one more'}`:'');
+  }
+  // v opens the marked agents side by side in list order; with none marked it reopens the split Ctrl+E left.
+  private async openSplit():Promise<void>{
+    const marked=sortSessions(this.sessions).filter(s=>this.marked.has(s.id)&&this.splittable(s.id)).map(s=>s.id);
+    const ids=marked.length?marked:this.lastSplit.filter(id=>this.splittable(id));
+    if(ids.length<2){this.showNote(marked.length===1?'Space marks one more agent · v opens the split':'Space marks 2–4 agents · v opens them side by side');return;}
+    const split=this.options.splitSessions;if(!split){this.showNote('Split unavailable');return;}
+    this.marked=new Set();
+    await this.away(async()=>{
+      const result=await split(ids,this.theme);
+      this.lastSplit=result.reason==='home key'?ids:[];
+      if(!result.remaining)return result.reason==='client interrupted'?result.reason:'';
+      // One pane left (or only one fits) is a normal attach.
+      const note=result.dropped?`only one pane fits · ${result.dropped} ${result.dropped===1?'agent':'agents'} didn't fit`:'';
+      const reason=this.options.attachSession?await this.options.attachSession(result.remaining):'home key';
+      return reason==='home key'?note:reason;
+    });
   }
   // The record goes first; its worktree then gets one keep/delete question, and keeping is the default.
   private async removeSession(id:string):Promise<void>{
@@ -603,12 +638,17 @@ export class Homepage {
   private async openSelected(): Promise<void> {
     const id = this.selectedId, session = this.sessions.find(s => s.id === id);
     if (session && (session.status === 'exited' || session.status === 'error')) { this.showNote(`${session.title} has exited · x removes it`); return; }
-    if (!id || !this.options.attachSession) { this.showNote(id ? 'Attach unavailable' : 'No session selected'); return; }
+    const attachSession = this.options.attachSession;
+    if (!id || !attachSession) { this.showNote(id ? 'Attach unavailable' : 'No session selected'); return; }
+    await this.away(async () => { const reason = await attachSession(id); return reason === 'home key' ? '' : reason; });
+  }
+  // Hands the terminal to an attach or a split and takes it back afterwards, with the returned note.
+  private async away(run: () => Promise<string>): Promise<void> {
     await this.connection.request({ kind: 'sessions.preview', sessionId: null }); this.previewId = null; this.loading = null;
     await this.subscribeStats(false);await this.subscribeUsage(false);
     this.attached = true; this.leave();
-    let note = '';
-    try { const reason = await this.options.attachSession(id); if (reason !== 'home key') note = reason; }
+    let note: string;
+    try { note = await run(); }
     catch (error) { if (error instanceof ClientSignal) throw error; note = error instanceof Error ? error.message : 'Attach failed'; }
     finally { this.attached = false; }
     if (this.ended) return;
@@ -678,7 +718,7 @@ export class Homepage {
         this.nextPreview = now + 1000 / 30;
       }
       const cwd = this.folder, home = homedir();
-      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), field: this.fieldView(cols), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,worktrees:this.worktrees,usage:this.usage,budgets:this.budgets }, this.theme);
+      let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), field: this.fieldView(cols), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,worktrees:this.worktrees,usage:this.usage,budgets:this.budgets,marked:this.marked }, this.theme);
       if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);
@@ -690,7 +730,9 @@ export class Homepage {
     } catch (error) { this.onError(error); }
   }
 }
-export async function homepage(connection: import('../connection.js').Connection, attachOnStart?: string): Promise<void> {
-  const home = new Homepage(connection, { truecolor: process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', attachSession: id => configuredAttach(connection, id), ...(attachOnStart ? { attachOnStart } : {}) });
+// `connect` opens one more daemon connection: a split gives each pane its own (split.ts).
+export async function homepage(connection: import('../connection.js').Connection, connect: () => Promise<import('../connection.js').Connection>, attachOnStart?: string): Promise<void> {
+  const truecolor = process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', log = new Logger(getPaths().log);
+  const home = new Homepage(connection, { truecolor, attachSession: id => configuredAttach(connection, id), splitSessions: (ids, theme) => split(ids, { connect, theme, truecolor, log: text => log.error(text) }), ...(attachOnStart ? { attachOnStart } : {}) });
   await Promise.all([home.start(), home.done]);
 }
