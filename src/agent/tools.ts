@@ -73,7 +73,8 @@ export const writeTool: GatedTool<WriteInput> = {
   async preview(root, input) {
     const path = await resolveInside(root, textInput(input.path, 'path', 4096)), content = textInput(input.content, 'content');
     let before: string | null = null;
-    try { before = (await readCapped(path, WRITE_MAX_BYTES)).text; }
+    // A file past the cap would be cut on write while the preview compares only its start: refused like edit does.
+    try { const read = await readCapped(path, WRITE_MAX_BYTES); if (read.cut) throw new ToolError(`File is larger than ${WRITE_MAX_BYTES} bytes`); before = read.text; }
     catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
     return { title: `write ${visible(show(root, path))}`, body: diffPreview(before, content) };
   },
