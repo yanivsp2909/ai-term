@@ -51,6 +51,7 @@ it('MEDIUM: the note reaching argv carries no escapes, controls or bidi override
   // eslint-disable-next-line no-control-regex -- the controls are what must be gone.
   expect(message).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f-\x9f‪-‮⁦-⁩]/);
   expect(message).toContain('\ne\tf');
+  expect(handoffMessage('x', '👩‍💻 日本')).toContain('👩‍💻 日本');
 });
 it('LOW: the handoff runs only with the writer the user approved', async () => {
   const d = await daemon();

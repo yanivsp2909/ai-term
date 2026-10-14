@@ -26,9 +26,9 @@ export function handoffPrompt(target: CliEngine, screen: string): string {
 export function handoffMessage(from: string, summary: string): string {
   const header = `Handoff from ${from}. Continue this work in this folder; check the state yourself before changing anything.\n\n`;
   // The note goes into the new CLI's argv: no escapes, C0/C1 controls or bidi/invisible format characters, only text,
-  // new lines and tabs (whatever wrote it: a provider, or the agent's own last reply).
+  // new lines and tabs (whatever wrote it: a provider, or the agent's own last reply). ZWJ stays, for emoji (as in S15).
   // eslint-disable-next-line no-control-regex -- removing terminal controls is the point.
-  let body = stripVTControlCharacters(summary).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]|[\p{Cf}\u2028\u2029]/gu, '').trim();
+  let body = stripVTControlCharacters(summary).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]|[\p{Cf}\u2028\u2029]/gu, char => char === '\u200d' ? char : '').trim();
   while (Buffer.byteLength(header + body) > HANDOFF_SUMMARY_BYTES) body = [...body].slice(0, Math.floor([...body].length * 0.9)).join('');
   return header + body;
 }
