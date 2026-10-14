@@ -268,3 +268,13 @@ Letter keys act as shortcuts only while the command field is empty; otherwise th
 - No spinners: `◐` is static.
 - The sparkline moves because the data moves, every 1 s (D46).
 - If an effect costs redraw time, it goes.
+
+## macOS desktop window
+
+The app uses a hidden native title bar with traffic lights inset 16 px from the left and 14 px from the top. A 40 px draggable chrome strip sits above the terminal, which starts at 48 px including its 8 px top padding. Chrome uses the system sans font from the tokens; the terminal uses the approved installed JetBrains Mono → SF Mono → Menlo → system monospace chain. No font is distributed. The first launch shows one quiet line: “Closing the window keeps your agents running.” Later launches show AI Term. No animation or vibrancy.
+
+Light/dark/system is in View. Native appearance updates the window/xterm colors first; `ai` then probes OSC 11 again and redraws its automatic palette. An app launch does not change the persisted theme used in Terminal.app. Attached AI Term bars and split chrome share the live theme; the agents' own colors remain their own output.
+
+Native menu shortcuts: ⌘K command palette, ⌘F scrollback Find, ⌘T Start a new agent, ⌘1–9 homepage selection in displayed order, ⌘D marked split, ⌘E home, ⌘, Settings. These dismiss existing forms without confirming them. Edit has ⌘C Copy, ⌘V Paste, ⌘A Select All; search-field selection follows the same actions. View has ⌘+/⌘−/⌘0 font size and appearance; Window has ⌘M Minimize and Zoom. App has About, Settings, Hide/Hide Others (⌘H/⌥⌘H), Quit (⌘Q); File has Close (⌘W). Closing or quitting only ends the outer client, keeping agents in the daemon. Other terminal keys, including Option as Meta, are unchanged.
+
+Ligatures stay off; no shaping addon has been added or verified under the sandbox/CSP, so the optional toggle is omitted. Solid token surfaces preserve predictable contrast; no zero-cost vibrancy claim is made. No provider names or logos are added to the app menus/chrome (D51).

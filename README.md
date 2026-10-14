@@ -23,27 +23,39 @@ Ask passes explicit ask flags. New Claude agents keep a conversation UUID for `/
 
 Run `node dist/cli/index.js` after `npm run build`, or `npm run dev` from source. If the `ai` binary is installed, the same arguments work with `ai`.
 
-The macOS desktop terminal lives in `app/`. After `npm install`, run `npm exec -- install-electron --no` once (Electron 44's binary installer), then `npm run app:dev`. It builds and opens one Electron window running the built `ai` CLI. You type directly into xterm; React owns only search and error messages. Development uses local production bundles: rerun the command after editing. `npm run app:build` builds the three desktop bundles; build `ai` with `npm run build` too. This step does not package an installable `.app`.
+The macOS desktop terminal lives in `app/`. After `npm install`, run `npm exec -- install-electron --no` once (Electron 44's binary installer), then `npm run app:dev`. It builds and opens one Electron window running the built `ai` CLI. You type directly into xterm; React owns only the small title/search/error surfaces. Development uses local production bundles: rerun the command after editing. `npm run app:build` builds the three desktop bundles; build `ai` with `npm run build` too. This step does not package an installable `.app`.
 
 | Desktop command | Action |
 |---|---|
 | `npm run app:dev` | Build `ai` and the desktop bundles, then open the window |
 | `npm run app:build` | Build Electron main, sandbox preload, and renderer in `app/out/` |
 | `npm run app:test` | Playwright Electron smoke/security checks; disposable HOME and daemon |
-| `npm exec -- tsx scripts/measure-app-latency.ts` | Disposable-home keydown/output-arrival measurement; writes `docs/testing/v0.5-app-latency.json` |
+| `npm exec -- tsx scripts/measure-app-latency.ts` | Disposable-home keydown/output-arrival measurement; writes `docs/testing/v0.5-native-app-latency.json`; compares the frozen v0.5.1 p95 |
 
 | Desktop key | Action |
 |---|---|
-| ⌘C | Copy xterm's selection; with none selected, does nothing (Ctrl+C still goes to `ai`) |
-| ⌘V | Paste clipboard text through xterm's bracketed paste; text over 64 KiB or containing actual ESC bytes is refused visibly |
-| ⌘E | Send Ctrl+E: home from an attached session or split |
-| ⌘K / ⌘F | Search terminal scrollback; ⏎ next, ⇧⏎ previous, Esc closes |
-| ⌘+ / ⌘− / ⌘0 | Increase / decrease / reset font size (8–32 px; default 13 px) |
+| ⌘C | Copy terminal selection (or selected search text); no selection does nothing. Ctrl+C still reaches `ai` |
+| ⌘V | Paste through xterm's bracketed paste; clipboard ESC bytes and text over the 64 KiB budget are refused visibly |
+| ⌘A | Select all terminal scrollback, or all text in the search field |
+| ⌘E | Return home from an agent or split; dismiss a home popup without accepting it |
+| ⌘K | Open `ai`'s command palette (`/` menu) |
+| ⌘F | Find in scrollback; ⏎ next, ⇧⏎ previous, Esc closes |
+| ⌘T | Return home and open the Start a new agent box; nothing starts until you confirm |
+| ⌘1–⌘9 | Select the corresponding agent in the homepage's displayed order |
+| ⌘D | Open the marked agents in a split, like `v`; with none marked, reopen the last split |
+| ⌘, | Open `/settings` |
+| ⌘+ / ⌘− / ⌘0 | Increase / decrease / reset font size (8–32 px; token default 13 px) |
+| ⌘W | Close the window; the daemon and agents keep running. Activate the app in the Dock to reopen |
+| ⌘Q | Quit the app; the daemon and agents keep running |
+| ⌘M | Minimize (Window menu); Zoom is also available there |
+| ⌘H / ⌥⌘H | Hide AI Term / hide other apps (App menu) |
 | Option+← / Option+→ | Meta word movement, enabled in the app |
 
-Other terminal keys go straight to `ai`. Web links open only in your default browser; http/https only. The window and xterm default colors follow macOS light/dark, using the shared design tokens and JetBrains Mono → SF Mono → Menlo fallback. The TUI still honors its saved `/theme`: choose `/theme auto` to match the app at startup (a running TUI does not yet redraw its truecolor palette when macOS switches). No animations. Closing the app closes its client PTY; the daemon and agents keep running. The app inherits its launcher environment, as the current CLI does; it does not read login files, fetch keys, or construct a login-shell environment.
+Other terminal keys go straight to `ai`. Web links open only http/https in your default browser. The hidden title bar keeps inset traffic lights above the terminal; solid colors follow macOS live, including the TUI's palette after a new OSC 11 probe. View → Light / Dark / Use System Appearance changes the app's appearance. App launches use an automatic palette without changing the saved Terminal.app theme. The installed JetBrains Mono font is preferred, then SF Mono/Menlo/system monospace; no font is bundled. Ligatures and vibrancy are omitted. Nothing animates. The first launch shows “Closing the window keeps your agents running.”
 
-The v0.5 release gate is still open until the app/Terminal.app typing comparison and real-session checks in PROGRESS.md are completed. The measurement above is output arrival, not physical paint, and its direct CLI baseline is not a Terminal.app measurement.
+The app inherits its launcher environment, matching current CLI startup; it does not read login files, fetch keys or reconstruct a login-shell environment. Desktop controls are authenticated with a per-launch token consumed before child-environment inheritance. They cannot carry agent text or approve a prompt; pasted and agent-printed controls are inert. Plain `ai` ignores these sequences.
+
+The earlier app/Terminal.app physical typing comparison remains unmeasured. This step's regression gate uses the same output-arrival method as v0.5.1 at 151×37 cells: app p95 must be no greater than 1.20 ms (previous 1.00 ms + 0.20 ms). These numbers do not measure display paint or prove Terminal.app parity.
 
 `npm run build:notifier` builds the macOS notification helper (needs `swiftc` from the Xcode Command Line Tools) into `build/notifier/AI Term.app`, ad-hoc signed, always at that path so macOS keeps your Allow across rebuilds. Without `swiftc` it prints `Notifier not built: …` and AI Term works without notifications.
 

@@ -1,3 +1,4 @@
+import baseline from '../docs/testing/v0.5-app-latency.json' with {type:'json'};
 import { _electron as electron } from '@playwright/test';
 import { spawn as spawnPty, type IPty } from 'node-pty';
 import headless from '@xterm/headless';
@@ -86,8 +87,19 @@ async function appCapture(): Promise<{ records: RecordItem[]; cols: number; rows
     });
     await application.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.setSize(1040, 720); });
     await sleep(150);
+    // Preserve the frozen cell geometry while accounting for hidden native chrome.
+    let height = 720;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const geometry = await page.evaluate(() => ({rows:document.querySelector('.xterm-accessibility-tree')?.children.length ?? 0,height:document.querySelector('.xterm-screen')?.getBoundingClientRect().height ?? 0}));
+      if (geometry.rows === baseline.rows) break;
+      if (!geometry.rows) throw new Error('No terminal grid');
+      height += Math.round((baseline.rows - geometry.rows) * geometry.height / geometry.rows);
+      await application.evaluate(({BrowserWindow}, value)=>{BrowserWindow.getAllWindows()[0]?.setSize(1040,value);},height);
+      await sleep(150);
+    }
     const size = await page.locator('.xterm-accessibility-tree').evaluate(tree => Array.from(tree.children, row => row.textContent ?? ''));
     const rows = size.length, cols = Math.max(...size.map(textWidth));
+    if (cols !== baseline.cols || rows !== baseline.rows) throw new Error('Native app latency grid differs from frozen baseline');
     for (let index = 0; index < keys + warmup; index++) {
       if (index > 0 && index % 60 === 0) { await page.keyboard.press('Control+u'); await sleep(80); }
       await page.keyboard.press(index % 2 ? 'j' : 'z'); await sleep(15 + index % 3 * 5);
@@ -124,6 +136,8 @@ const result = {
   limits: 'Output arrival, not physical display paint. Direct CLI baseline excludes Terminal.app input/paint and uses system Node; it is not a Terminal.app measurement. No app-versus-Terminal release claim.',
   date: new Date().toISOString(), node: process.version, platform: process.platform, arch: process.arch,
   cols: app.cols, rows: app.rows, webgl: app.webgl, app: appResult, directCli: cliResult, terminalApp: null,
+  baselineP95: baseline.app.p95, allowedRegressionP95: 0.2, p95Gate: appResult.p95 <= baseline.app.p95 + 0.2,
 };
-await writeFile(resolve('docs/testing/v0.5-app-latency.json'), JSON.stringify(result, null, 2) + '\n');
+await writeFile(resolve('docs/testing/v0.5-native-app-latency.json'), JSON.stringify(result, null, 2) + '\n');
 process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+if (!result.p95Gate) process.exitCode = 1;
