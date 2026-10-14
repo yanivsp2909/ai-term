@@ -32,9 +32,9 @@ export function mcpPreview(server: McpView): string {
 }
 
 export function mcpContains(value:unknown,secret:string):boolean {
- if(typeof value==='string')return value.includes(secret);
+ if(typeof value==='string')return mcpSecretForms(secret).some(form=>value.includes(form));
  if(Array.isArray(value))return value.some(v=>mcpContains(v,secret));
- return !!value&&typeof value==='object'&&Object.entries(value).some(([key,v])=>key.includes(secret)||mcpContains(v,secret));
+ return !!value&&typeof value==='object'&&Object.entries(value).some(([key,v])=>mcpSecretForms(secret).some(form=>key.includes(form))||mcpContains(v,secret));
 }
 
 export const mcpSecretForms=(secret:string):string[]=>[JSON.stringify(secret).slice(1,-1),secret];
