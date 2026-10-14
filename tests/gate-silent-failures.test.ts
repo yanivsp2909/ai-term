@@ -49,7 +49,7 @@ it('M2: a failed daemon request logs which request kind failed, with fixed text 
 
 it('M4: a Claude session whose node or ai path is outside the safe set logs that its status line is off', async () => {
   const { root, paths } = await home(), log = new Logger(paths.log), usage = new UsageService(root, log);
-  const manager = new SessionManager(paths, log, undefined, undefined, undefined, undefined, usage, '/Users/test/My Projects/ai-term/dist/cli/index.js');
+  const manager = new SessionManager(paths, log, undefined, undefined, undefined, undefined, usage, "/Users/test/Yaniv's Projects/ai-term/dist/cli/index.js");
   vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/stub', version: '1', loggedIn: true, authMethod: 'subscription' });
   const exits: ((e: { exitCode: number }) => void)[] = [];
   vi.spyOn(pty, 'spawn').mockImplementation(() => ({ pid: 900002, onData: () => ({ dispose() {} }), onExit: (cb: (e: { exitCode: number }) => void) => { exits.push(cb); return { dispose() {} }; }, write() {}, resize() {}, pause() {}, resume() {} }) as unknown as pty.IPty);
