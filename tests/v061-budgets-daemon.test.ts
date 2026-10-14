@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, writeFile, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, realpath, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pty from 'node-pty';
@@ -78,7 +78,11 @@ it('cost per task: an agent\'s own usage adds up on its record, priced from the 
   await expect.poll(() => d.manager.get(a.session.id).taskUsage?.tokens, { timeout: 4000 }).toBe(1500);
   expect(d.manager.get(a.session.id).taskUsage?.costUsd).toBeCloseTo(d.usage.summary().today.costUsd, 10);
   // It survives a daemon restart with the record (once the coalesced state write, at most a second later, has landed).
-  await expect.poll(async () => { const again = new SessionManager(getPaths(d.root), new Logger(getPaths(d.root).log)); await again.load(); const tokens = again.get(a.session.id).taskUsage?.tokens; await again.shutdown(); return tokens; }, { timeout: 4000 }).toBe(1500);
+  // Wait for the live manager's coalesced write on disk first: a second manager opened on the same home writes its own
+  // (older) view when it loads, which could overwrite a newer write if it were opened earlier.
+  await expect.poll(async () => (await readFile(join(d.root, 'state.json'), 'utf8')).includes('"tokens":1500'), { timeout: 5000 }).toBe(true);
+  const again = new SessionManager(getPaths(d.root), new Logger(getPaths(d.root).log)); await again.load();
+  expect(again.get(a.session.id).taskUsage?.tokens).toBe(1500); await again.shutdown();
 });
 
 it('cost per task on a subscription counts tokens only, never in Usage or dollars; off in /settings sends no telemetry', async () => {
