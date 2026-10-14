@@ -137,7 +137,7 @@ Reference size 130 × 45 cells. Everything is drawn with box borders in `line`, 
   - `tokens` row: ink-2, compact (`1.9M`). When a period has cache reads, its cached share follows in ink-3: `80.8K (71.0K cached)` when every column fits that, else `80.8K (71.0K)` with `(…) cached ·` before the hint line, else the totals alone. Columns share the panel after the labels, at most 23 cells each (B23, 2026-10-13).
   - `budget` row: the limit per period or `none`, with `b add` (key cap + accent) at the end.
 - **Scope:** API-key sessions only. Subscription sessions aren't counted.
-- **`u`:** opens Usage details (by provider, by model, by agent; v0.1 can ship without it).
+- **`u`** (or `/usage`, 2026-10-14): opens Usage details, a surface popup like Help titled `Usage`: per period `TODAY  ≈ $1.50 · 2.0K tokens (500 cached) · budget $10` (ink; status-waiting with `· ! over budget` when crossed), then one ink-2 row per provider, then the scope line in ink-3. By model and by agent wait until the daemon aggregates them.
 
 ### This Mac panel (under the preview, right, 36 cols)
 - **CPU:** `CPU 31%` (bold value), a 10-sample sparkline in accent (`▁▂▃▄▅▆▇█`), right `agents 19%`.
@@ -216,6 +216,14 @@ A path field with completion. It sets the folder for the next agent only. A fold
 - Nothing animates; `checking what would be lost` and `deleting` are static lines.
 - `/help` lists registry commands and the key table in a calm surface overlay. ↑↓ scrolls, PgUp/PgDn pages, Esc closes; long lines wrap at narrow widths. Homepage keys remain isolated from agents.
 
+### /retry, /send, /find, /open, /doctor, /budget and /usage (2026-10-14)
+- `/retry` acts on the selected exited/failed agent: a fresh start with its saved engine, model, auth, effort, mode and folder, in its worktree if that still exists. The new agent replaces the old card and is selected; the note says `✓ restarted <name> in its worktree · its first message isn't resent`. A running agent gets `<name> is still running · /retry restarts finished agents`.
+- `/send <agent> <text>` (D50) is the only way homepage text reaches an agent. The name must match exactly; Tab completes and cycles running agents' names. Paste tokens go whole. Success: `✓ sent to <name>` (`· N lines` when multi-line). Refusals are one note line naming the agent: `<agent> is asking for permission, go inside to answer`, `<agent> is asking a question, go inside to answer`, `<agent> is open in a session or split · type there`, `<agent> has exited · /retry restarts it`, `<agent> may be asking to trust its folder · go inside first`, `too long to send (16 KB): go inside and paste`.
+- **`/find <text>` popup:** a surface box like Help, titled `Find “<text>” · N` (`N+` when capped), `· searching every agent` (ink-3, static) until results arrive. One row per hit: the agent's name (ink, bold when selected, at most 18 cols), then the line (ink-2) with the match in **accent + bold**, so it reads without color too. The selected row has surface-2 fill and the accent `▎` bar. Rows follow the agent list order, newest line first inside each agent. No hits: `no matches in any agent` (ink-3). Capped: `showing the first 200 · type a longer search to narrow it` (ink-3). Footer: `↑↓ select · ⏎ show in preview · Esc close`. ⏎ closes the popup, selects that agent (showing the preview if it was hidden) and scrolls the preview so the line sits a third of the way down; the usual `↑ N lines back` banner and End follow live apply. Plain text and any case; nothing typed is a pattern.
+- `/open` and `/open code` act on the selected agent's folder (its worktree root when it has one): `opened <path> in Finder` / `in VS Code`, or a one-line reason (`VS Code's code command isn't on PATH · <path>`, `folder is gone · <path>`).
+- `/doctor` shows the `ai doctor` lines in a surface popup titled `Doctor`, `· checking Node, the daemon, files and the CLIs` until they arrive. `/usage` is `u`; `/budget` is `b`. These popups scroll with ↑↓/PgUp/PgDn and close with Esc.
+- A damaged agent list (B24) shows the persistent warning line `couldn't read your agent list; saved it as <file>` until the background service restarts.
+
 ## Inside a session
 
 - **v0.1, full screen:** AI Term draws nothing; the agent owns every cell. **Ctrl+E** goes to the homepage and the agent keeps running.
@@ -244,7 +252,8 @@ A path field with completion. It sets the folder for the next agent only. A fold
 | d / r / s | diff (v0.7) / rename / stop the selected agent (s asks first) |
 | x | remove an exited or failed agent from the list, then keep or delete its worktree (keep is the default) |
 | Space / v | mark or unmark the selected agent for a split / open the marked agents side by side (none marked: reopen the last split) |
-| b / u | budget / usage details |
+| b / u | budget / usage details (also `/budget`, `/usage`) |
+| /retry · /send · /find · /open · /doctor | restart a finished agent · send text to a running one · search every agent · open its folder · the doctor report |
 | / / Tab | command menu / complete selected command and cycle argument values |
 | /help ↑↓ / PgUp / PgDn / Esc | scroll / page up / page down / close |
 | Esc | close a popup; clear the field |

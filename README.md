@@ -54,11 +54,18 @@ Homepage slash commands:
 | `/effort [CLI default\|<level>]` | Reasoning for next agent; levels follow selected CLI; CLI default passes nothing |
 | `/mode [ask\|auto\|don't ask]` | Per-session mode; Claude auto only, Codex Ask/Don't ask; saved default stays Ask |
 | `/resume` | Continue selected finished Claude conversation; Codex opens its own folder-filtered resume picker |
+| `/retry` | Restart the selected exited or failed agent fresh: same engine, model, auth, effort, mode and folder, in its worktree if it still has one. A new conversation, not a resume; the first message isn't resent (AI Term never keeps it). The restarted agent replaces the old card. Running agents get `<name> is still running`; a deleted worktree or folder gets `<name>: its worktree is gone · start a new agent` |
+| `/send <agent> <text>` | Send text to a running agent without going inside (D50): one bracketed paste, then Enter, so pasted lines arrive as one message. `<agent>` is the exact name (Tab completes and cycles running agents; with names that start alike the longest wins). Up to 16 KB; controls except newlines are dropped (tabs too). Refused, naming the agent, while it asks for permission or a question (`<agent> is asking for permission, go inside to answer`), while it's open in a session or split, after it exits, and before an AI agent has reported its status (it may be at its folder-trust prompt: go inside once). Never logged or saved |
+| `/find <text>` | Search every agent's screen and scrollback as plain text, any case. Results popup: agent, line, the match bold in accent; ↑↓ select, ⏎ selects that agent and scrolls its preview to the line, Esc closes. At most 50 hits per agent and 200 in all (`showing the first 200`) |
+| `/open` · `/open code` | Open the selected agent's folder (its worktree if it has one) in Finder with `/usr/bin/open -- <path>`, or in VS Code with `code -- <path>` when `code` is on PATH (otherwise a note) |
 | `/shell` | Start a plain login shell in the /cd folder |
 | `/copy` | Copy the agent's last reply (Claude Stop hook, Codex notify) when present; otherwise cleaned whole session with the fallback note |
 | `/copy all` | Copy cleaned selected-agent scrollback and screen; up to 5 MiB, oldest content cut if needed |
 | `/clean` | Confirm y/n before removing all exited/failed list records; reports removed/failed counts and first failure; running agents and files untouched; never deletes worktrees: says `kept N worktrees · /worktrees reviews them` |
 | `/worktrees` | Popup listing every worktree AI Term created, including those whose agent is gone: branch, folder, what deleting would lose, and its agent if one still exists. ⏎ opens the keep/delete question |
+| `/budget` | Same as `b`: daily, weekly and monthly USD limits |
+| `/usage` | Same as `u`: usage details popup, each period then each provider (spend, tokens, cached share, budget). By model and by agent aren't available yet |
+| `/doctor` | The `ai doctor` report in a popup: Node, daemon, file modes, CLI install, version and login method |
 | `/help` | All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
 | `/theme graphite\|slate\|ink\|auto\|light` | Save the theme |
 | `/exit` | Quit client; sessions keep running |
@@ -71,6 +78,9 @@ Homepage slash commands:
 | `p` | Empty field toggles preview |
 | `c` | Empty field copies the agent's last reply (Claude or Codex) when present; otherwise cleaned session with the fallback note; with field text, types c |
 | `b` | Empty field opens daily/weekly/monthly USD budget limits; empty limit means none, ↑↓ edits fields, Enter saves, Esc cancels; exceeding a limit warns and never blocks |
+| `u` | Empty field opens usage details (same as `/usage`); ↑↓/PgUp/PgDn scroll, Esc closes |
+| `/find` ↑↓ / Enter / Esc | Select a hit / select its agent and scroll the preview to the line / close |
+| `/doctor`, `/usage` ↑↓ / PgUp / PgDn / Esc | Scroll / page / close |
 | `r` | Empty field renames selected session; Enter saves, Esc cancels |
 | `s`, then `y` / `n` | Empty field asks to stop selected session; confirms/cancels |
 | `x` | Empty field removes an exited/failed session; if it had a worktree, one keep/delete question follows (keep is the default) |
@@ -121,6 +131,8 @@ Claude effort: `CLI default`, `low`, `medium`, `high`, `xhigh`, `max`. Codex eff
 The attached bar is opt-in: `/settings` → `bar: on` (`h`). It uses one surface row for glyph + status word, bold name, engine/model, `· ai/<slug>` branch, others’ counts and `^E home`; the agent gets the rows below. At narrow widths counts drop first, then branch, then model. Nothing animates. `bar: off` uses the original full-height raw passthrough. A failed startup probe uses raw for that attach and logs once. Redraw keeps link text but loses OSC 8 targets, curly/colored underlines and inline images. The Terminal.app spike’s clean vim exit is still unexplained; leave the default off until the trace and feel checks below are understood.
 
 Splits (v0.3): Space marks 2–4 agents and `v` opens them side by side (3 side by side, or two on top and one below when that's too wide; 4 as 2×2), each pane at least 40 columns by 10 rows with a one-row header: glyph + status word, name, model and branch. The focused header is surface-2 with an accent underline. Each agent's PTY takes its pane's size minus the header; leaving the split returns them to the usual sizes. A terminal too small for every marked agent opens as many panes as fit and says how many didn't; if only one fits, it's a normal attach. An agent that exits keeps its pane, showing how it ended, until Ctrl+\ closes it; when one pane is left it becomes a normal attach. Splits redraw each agent from a client-side mirror like the bar, whatever the bar setting, and, as on the homepage, mouse reporting stays on, so your terminal's own text selection needs its mouse-reporting bypass. The pane key is Ctrl+\ rather than Ctrl+], because Claude Code 2.1.299 binds Ctrl+] by default (open artifact) and lists Ctrl+\ among the keys it never binds.
+
+A damaged agent list no longer stops the background service (B24). If `~/.ai-term/state.json` can't be read, parsed, checked or upgraded, AI Term never writes over it: it moves the file to `state.json.corrupt-<timestamp>` (0600), starts with an empty list and shows `couldn't read your agent list; saved it as <file>` on the homepage until the service restarts. The log names only the stage (read, parse, validate, migrate). Worktree records go with the list, so those worktrees show in `/worktrees` as `✗ Not in AI Term's record` and are never deleted by AI Term. If the file can't even be moved, the service stops with that reason and leaves it untouched.
 
 Letter shortcuts act only when the command field is empty. Paste a task beginning with a shortcut letter to keep that letter. Next-agent defaults show `own login · sub`, `own login · API key`, `own login`, or `key ····last4` before starting. Inside an attached CLI, its own commands and keys apply, with Ctrl+E reserved for home. `/exit` inside a CLI is that CLI's exit command.
 
