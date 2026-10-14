@@ -1,3 +1,4 @@
+import { ExtensionService } from './extensions.js';
 import { catalogIds } from '../shared/model-catalog.js';
 import { createServer, type Socket, type Server } from 'node:net';
 import type { Paths } from '../shared/paths.js';
@@ -203,6 +204,8 @@ export class DaemonServer {
                 case 'engines.status':
                     this.control(peer, { id: request.id, ok: true, engines: await enginesStatus(), notifier: this.notifier?.state() ?? 'not built' });
                     break;
+                case 'extensions.list': case 'extensions.read': case 'extensions.toggle':
+                    this.control(peer, {id:request.id,ok:true,...await new ExtensionService(this.settings).query(request)}); break;
                 case 'settings.get':
                     this.control(peer, { id: request.id, ok: true, settings: await this.settings.get(),notificationPermission:(request.refreshNotifications?await this.notifier?.refreshPermission?.():this.notifier?.permission?.())??'unknown' });
                     break;

@@ -1,3 +1,5 @@
+import { validateExtensionCatalog, validateExtensionFile } from '../shared/validate.js';
+import type { ExtensionAccess } from '../shared/extensions.js';
 import { request } from 'node:http';
 import { parseAgentFacts, type AgentFacts } from '../shared/agent-facts.js';
 
@@ -10,7 +12,7 @@ export type AgentStatus =
   | { event: 'turn-failed'; error: string } | { event: 'context'; percent: number | null } | { event: 'model'; model: string };
 export interface TokenUsage { input: number; cached: number; output: number; reasoning?: number }
 export interface ReporterEnv { port: number; status: string; usage?: string }
-const REQUEST_TIMEOUT_MS = 1000, FACTS_MAX_BYTES = 16 * 1024;
+const REQUEST_TIMEOUT_MS = 1000, FACTS_MAX_BYTES = 512 * 1024;
 
 export function reporterEnv(env: NodeJS.ProcessEnv): ReporterEnv | null {
   const port = Number(env.AITERM_STATUS_PORT), status = env.AITERM_STATUS_TOKEN, usage = env.AITERM_USAGE_TOKEN;
@@ -22,7 +24,7 @@ export interface Reporter { status(update: AgentStatus): Promise<void>; usage(mo
 
 // Requests go one at a time: the receiver numbers them in arrival order, so overlapping requests could reorder a turn.
 // Awaiting status() therefore means the daemon has applied this update and everything before it.
-export class HttpReporter implements Reporter {
+export class HttpReporter implements Reporter, ExtensionAccess {
   private queue: Promise<void> = Promise.resolve();
   private sequence = 0;
   failures = 0;
@@ -37,16 +39,24 @@ export class HttpReporter implements Reporter {
     return this.post('/v1/metrics', this.env?.usage, JSON.stringify(body));
   }
   // In the same queue as status and usage: an answer always counts the usage this agent reported before asking.
-  facts(model: string): Promise<AgentFacts | null> {
+  async facts(model: string): Promise<AgentFacts | null> {
     const env = this.env;
     if (!env) return Promise.resolve(null);
-    const body = JSON.stringify({ model });
-    let answer: AgentFacts | null = null;
+    const value = await this.query({model});
+    return parseAgentFacts(value);
+  }
+  async list(cwd: string) { const v=await this.query({kind:'extensions.list',cwd}); return validateExtensionCatalog(v && typeof v==='object' && 'extensions' in v ? v.extensions : null); }
+  async read(cwd: string, extensionId: string) { const v=await this.query({kind:'extensions.read',cwd,extensionId}); return validateExtensionFile(v && typeof v==='object' && 'extension' in v ? v.extension : null); }
+  async toggle(cwd: string, extensionId: string, enabled: boolean) { const v=await this.query({kind:'extensions.toggle',cwd,extensionId,enabled}); return validateExtensionCatalog(v && typeof v==='object' && 'extensions' in v ? v.extensions : null); }
+  private query(payload: unknown): Promise<unknown> {
+    const env=this.env; if(!env)return Promise.resolve(null);
+    const body = JSON.stringify(payload);
+    let answer: unknown = null;
     this.queue = this.queue.then(() => new Promise<void>(resolve => {
       const req = request({ hostname: '127.0.0.1', port: env.port, path: '/v1/agent/ai-term', method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-ai-term-session': env.status } }, res => {
         const chunks: Buffer[] = []; let bytes = 0;
         res.on('data', (chunk: Buffer) => { bytes += chunk.length; if (bytes <= FACTS_MAX_BYTES) chunks.push(chunk); });
-        res.on('end', () => { if (res.statusCode === 200 && bytes <= FACTS_MAX_BYTES) { try { answer = parseAgentFacts(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { answer = null; } } resolve(); });
+        res.on('end', () => { if (res.statusCode === 200 && bytes <= FACTS_MAX_BYTES) { try { answer = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; } catch { answer = null; } } resolve(); });
         res.on('error', () => resolve());
       });
       const timer = setTimeout(() => { req.destroy(); }, REQUEST_TIMEOUT_MS);

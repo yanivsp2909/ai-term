@@ -43,7 +43,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'}
-export interface Settings {budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -105,7 +105,7 @@ export type Request = {
 } | {
     kind: 'settings.set';
     patch: SettingsPatch;
-} | {
+} | {kind:'extensions.list';cwd:string} | {kind:'extensions.read';cwd:string;extensionId:string} | {kind:'extensions.toggle';cwd:string;extensionId:string;enabled:boolean} | {
     kind: 'sessions.list';
 } | {
     kind: 'engines.status';
@@ -170,6 +170,8 @@ export interface SuccessResponse {
     worktrees?: WorktreeView[];
     worktree?: WorktreeView;
     deletedWorktree?: string;
+    extensions?: import('./extensions.js').ExtensionCatalog;
+    extension?: import('./extensions.js').ExtensionFile;
     settings?: Settings;
     engines?: EnginesStatus;
     notifier?: NotifierState;

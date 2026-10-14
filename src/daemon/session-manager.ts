@@ -1,3 +1,4 @@
+import { ExtensionService } from './extensions.js';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { stripVTControlCharacters } from 'node:util';
@@ -74,7 +75,7 @@ export class SessionManager extends EventEmitter {
     private onLogFailure = () => this.warning('log', 'Log could not be saved; agents keep running.');
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
-        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentFacts(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+        super();usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -399,6 +400,12 @@ export class SessionManager extends EventEmitter {
     }
     // POST /v1/agent/ai-term (§12.5): what the agent needs before a model request. Only a live AI Term agent asking about a
     // model it may use (bound to its key and tested) gets an answer; anything else gets none (the receiver answers 204).
+    private async agentQuery(id:string,raw:unknown):Promise<unknown> {
+        const live=this.sessions.get(id);
+        if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status))return null;
+        if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind' in raw)return new ExtensionService(new SettingsStore(this.paths.root)).query(raw as Record<string,unknown>);
+        return this.agentFacts(id,raw);
+    }
     async agentFacts(id:string,raw:unknown):Promise<AgentFacts|null>{
         const live=this.sessions.get(id);
         if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status)||!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).length!==1)return null;

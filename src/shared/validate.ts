@@ -1,3 +1,4 @@
+import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DESCRIPTION_CHARS, catalogTokens, type ExtensionCatalog, type ExtensionFile } from './extensions.js';
 import { isAgentCaps } from './agent-facts.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
@@ -83,6 +84,9 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields = ['patch'];
             validateSettingsPatch(v.patch, true);
             break;
+        case 'extensions.list': case 'extensions.read': case 'extensions.toggle':
+            fields = v.kind === 'extensions.list' ? ['cwd'] : v.kind === 'extensions.read' ? ['cwd','extensionId'] : ['cwd','extensionId','enabled'];
+            validateExtensionRequest(v); break;
         case 'keys.list': fields=[]; break;
         case 'keys.add':
             fields=['provider','label','secret','endpoint','deployments'];
@@ -181,6 +185,8 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.deletedWorktree!==undefined&&!isSafeAbsolutePath(v.deletedWorktree))throw new ValidationError('Invalid deleted worktree');
     if(v.worktree!==undefined)validateWorktreeView(v.worktree);
     if(v.worktrees!==undefined){if(!Array.isArray(v.worktrees)||v.worktrees.length>500)throw new ValidationError('Invalid worktrees');v.worktrees.forEach(validateWorktreeView);}
+    if(v.extensions!==undefined)validateExtensionCatalog(v.extensions);
+    if(v.extension!==undefined)validateExtensionFile(v.extension);
     if(v.settings!==undefined)validateSettings(v.settings);
     if(v.engines!==undefined) { if (!v.engines || typeof v.engines !== 'object' || !('claudeCode' in v.engines) || !('codex' in v.engines)) throw new ValidationError('Invalid engines status'); validateEngineStatus(v.engines.claudeCode); validateEngineStatus(v.engines.codex); }
     if(v.notifier!==undefined&&!['ready','not built','launch failed'].includes(String(v.notifier)))throw new ValidationError('Invalid notifier state');
@@ -233,7 +239,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','extensions'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -242,6 +248,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     // per-run caps (D53) and the 85% context warning (D55).
     if(v.deploymentModels!==undefined&&(!v.deploymentModels||typeof v.deploymentModels!=='object'||Array.isArray(v.deploymentModels)||Object.keys(v.deploymentModels).length>200||Object.entries(v.deploymentModels).some(([k,m])=>['__proto__','prototype','constructor'].includes(k)||!isValidModelId(k)||typeof m!=='string'||!isValidModelId(m))))throw new ValidationError('Invalid deployment models');
     if(v.agentCaps!==undefined&&!isAgentCaps(v.agentCaps))throw new ValidationError('Invalid agent caps');
+    if(v.extensions!==undefined&&(!v.extensions||typeof v.extensions!=='object'||Array.isArray(v.extensions)||Object.keys(v.extensions).length>EXTENSION_MAX_ITEMS||Object.entries(v.extensions).some(([id,on])=>!isExtensionId(id)||typeof on!=='boolean')))throw new ValidationError('Invalid extension settings');
     if(v.contextWarning!==undefined&&typeof v.contextWarning!=='boolean')throw new ValidationError('Invalid context warning');
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
@@ -404,4 +411,31 @@ export function validateWorktreeView(value:unknown):import('./protocol.js').Work
   agent!==undefined&&(!agent||typeof agent!=='object'||Object.keys(agent).some(k=>!['id','title','status'].includes(k))||!isUUID(agent.id)||!isTitle(agent.title)||!['starting','running','waiting','done','exited','error'].includes(String(agent.status)))||
   loss!==undefined&&(!loss||typeof loss!=='object'||Object.keys(loss).some(k=>!['changed','untracked','ignored','repos','commits','base','baseSource','missing'].includes(k))||!count(loss.changed)||!count(loss.untracked)||!count(loss.ignored)||!count(loss.repos)||Number(loss.repos)>Number(loss.untracked)||!count(loss.commits)||typeof loss.base!=='string'||!/^[A-Za-z0-9._/-]{1,200}$/.test(loss.base)||!['recorded','start commit','checkout'].includes(String(loss.baseSource))||typeof loss.missing!=='boolean'))throw new ValidationError('Invalid worktree view');
  return v as unknown as import('./protocol.js').WorktreeView;
+}
+
+// Both socket and engine-bound HTTP extension requests use these exact fields. No request supplies a file path.
+export function validateExtensionRequest(v: Record<string, unknown>): void {
+    const fields = v.kind === 'extensions.list' ? ['kind','cwd'] : v.kind === 'extensions.read' ? ['kind','cwd','extensionId'] : v.kind === 'extensions.toggle' ? ['kind','cwd','extensionId','enabled'] : [];
+    if (!fields.length || Object.keys(v).some(k => k !== 'id' && !fields.includes(k)) || typeof v.cwd !== 'string' || !isAbsolute(v.cwd) || v.cwd.length > 3000 || /[\p{C}]/u.test(v.cwd) || v.kind !== 'extensions.list' && !isExtensionId(v.extensionId) || v.kind === 'extensions.toggle' && typeof v.enabled !== 'boolean') throw new ValidationError('Invalid extension request');
+}
+export function validateExtensionCatalog(value: unknown): ExtensionCatalog {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid extensions');
+    const c = value as Record<string, unknown>;
+    if (Object.keys(c).some(k=>!['items','notes','tokens'].includes(k)) || !Array.isArray(c.items) || c.items.length > EXTENSION_MAX_ITEMS || !Array.isArray(c.notes) || c.notes.length > 100 || c.notes.some(n=>typeof n!=='string'||n.length>4096||/[\p{C}]/u.test(n)) || !Number.isSafeInteger(c.tokens) || Number(c.tokens) < 0) throw new ValidationError('Invalid extensions');
+    for (const raw of c.items) {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ValidationError('Invalid extension');
+        const i = raw as Record<string,unknown>;
+        if (Object.keys(i).some(k=>!['id','kind','name','description','source','enabled','tokens','model'].includes(k)) || !isExtensionId(i.id) || !['skill','agent','command'].includes(String(i.kind)) || typeof i.name!=='string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(i.name) || typeof i.description!=='string'||i.description.length>EXTENSION_DESCRIPTION_CHARS||/[\p{C}]/u.test(i.description) || !['Claude','Codex','shared','this project'].includes(String(i.source)) || typeof i.enabled!=='boolean' || !Number.isSafeInteger(i.tokens)||Number(i.tokens)<0 || i.model!==undefined&&(typeof i.model!=='string'||i.model.length>240||/[\p{C}]/u.test(i.model))) throw new ValidationError('Invalid extension');
+    }
+    const result = value as ExtensionCatalog;
+    if (new Set(result.items.map(i=>i.id)).size !== result.items.length || result.tokens !== catalogTokens(result.items)) throw new ValidationError('Invalid extension total');
+    return result;
+}
+export function validateExtensionFile(value: unknown): ExtensionFile {
+    if (!value || typeof value!=='object'||Array.isArray(value)) throw new ValidationError('Invalid extension file');
+    const f = value as Record<string,unknown>;
+    if (Object.keys(f).length!==3 || !('item' in f) || typeof f.text!=='string'||typeof f.body!=='string'||Buffer.byteLength(f.text)>EXTENSION_FILE_BYTES||Buffer.byteLength(f.body)>EXTENSION_FILE_BYTES) throw new ValidationError('Invalid extension file');
+    const item = f.item as import('./extensions.js').ExtensionItem;
+    validateExtensionCatalog({items:[item],notes:[],tokens:catalogTokens([item])});
+    return value as ExtensionFile;
 }
