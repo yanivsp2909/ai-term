@@ -5,7 +5,7 @@ import type { SettingsStore } from '../settings.js';
 import type { KeyStore } from '../keys.js';
 import type { Logger } from '../log.js';
 import { parseMcpRequest, validateMcpServer, validateMcpCatalog } from '../../shared/validate.js';
-import { mcpTokens, type McpServer, type McpCatalog, type McpView } from '../../shared/mcp.js';
+import { mcpContains, mcpTokens, type McpServer, type McpCatalog, type McpView } from '../../shared/mcp.js';
 import { hashMcp, projectMcp } from './project.js';
 import { McpRuntime, mcpConnector, type McpConnect } from './runtime.js';
 
@@ -30,7 +30,7 @@ export class McpService {
    if(r.kind==='mcp.add')return this.serial(async()=>{
     const settings=await this.settings.get();if((settings.mcp??[]).some(s=>s.config.name===r.config.name))throw new Error('MCP name already exists');
     // Values cannot hide in public argv/URL/metadata, even if the form also marks that value secret.
-    if(Object.values(r.values).some(v=>JSON.stringify(r.config).includes(v)))throw new Error('MCP value duplicated in configuration');
+    if(Object.values(r.values).some(v=>mcpContains(r.config,v)))throw new Error('MCP value duplicated in configuration');
     const id=randomBytes(8).toString('hex'),hash=hashMcp({id,config:r.config}),names=r.config.type==='stdio'?r.config.env:r.config.headers,values:McpServer['values']=[],written:string[]=[];
     try{for(const name of names){values.push({name,last4:await this.keys.saveMcp(id,name,r.values[name]??'',hash)});written.push(name);}
      const server=validateMcpServer({id,config:r.config,hash,values,enabled:true,tools:{}});await this.settings.update(async s=>({...s,mcp:[...s.mcp??[],server]}));

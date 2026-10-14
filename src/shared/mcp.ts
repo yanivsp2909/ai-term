@@ -30,3 +30,9 @@ export function mcpPreview(server: McpView): string {
   const c=server.config;
   return `${c.name} · ${server.source}\n${c.type==='stdio'?`command: ${JSON.stringify(c.command)}\nargs: ${JSON.stringify(c.args)}\nenv names: ${c.env.join(', ')||'(none)'}`:`URL: ${c.url}\nheader names: ${c.headers.join(', ')||'(none)'}`}\n${server.values.map(v=>`${v.name}: secret ····${v.last4}`).join('\n')}`;
 }
+
+export function mcpContains(value:unknown,secret:string):boolean {
+ if(typeof value==='string')return value.includes(secret);
+ if(Array.isArray(value))return value.some(v=>mcpContains(v,secret));
+ return !!value&&typeof value==='object'&&Object.entries(value).some(([key,v])=>key.includes(secret)||mcpContains(v,secret));
+}
