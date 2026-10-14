@@ -1,13 +1,61 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: (this handover; see git log)
-Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Part B v0.5 release gate done: **v0.5 is closed**. Part C v0.6.1 done. Part D v0.6.2 done. Part E v0.6.3 done. Part F follows below.
-Branch: main. Started clean at c03e02d after `git pull --ff-only` (already up to date). No other agent was working in this repo (the running Codex sessions' cwd is ~/NARVIS).
+Last commit: (this handover; see git log — the commit before it is e2f7570)
+Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended) — **all six parts done**: A v0.5.3 done · B v0.5 release gate done, **v0.5 closed** · C v0.6.1 done · D v0.6.2 done · E v0.6.3 done · F v0.6.4 done. Each part was committed and pushed before the next started.
+Branch: main, pushed. Started clean at c03e02d after `git pull --ff-only` (already up to date). No other agent worked in this repo (the running Codex sessions' cwd is ~/NARVIS).
 
 Prompt vs code (overnight):
-- AGENTS.md says one roadmap step per session; this prompt explicitly orders six parts in sequence, each finished and pushed before the next. Followed the prompt, with a full handover per part.
-- PID 83116 (`AI Term ... daemon`, started 23:25, before this run) is a leaked smoke-test daemon: its cwd is a `ai-term-desktop-*` temp HOME from tests/electron/app.spec.ts, not ~/.ai-term. Left running (not created tonight); it holds two test PTYs, so it won't idle-exit. Safe to stop: `HOME=<that temp dir> ai daemon stop`, or kill it.
+- AGENTS.md says one roadmap step per session; this prompt explicitly ordered six parts in sequence, each finished and pushed before the next. Followed the prompt, with a handover section per part.
+- PID 83116 (`AI Term ... daemon`, started 23:25 before this run) is a leaked smoke-test daemon: its cwd is an `ai-term-desktop-*` temp HOME from tests/electron/app.spec.ts, not ~/.ai-term. Left running (not created tonight); it holds two test PTYs, so it won't idle-exit. Safe to stop (manual list below). No other leaked process from tonight's smoke runs.
+- `security-bounty-hunter` and `engineering:code-review` are skills, not agent types: they ran as fresh general-purpose agents told to load them. Every review agent was fresh (none had seen the code written) and read-only.
+- The devtools hardening for the packaged app was reverted on purpose (Part B): Playwright drives the packaged smoke suite and the latency A/B through `--inspect`/`--remote-debugging-port`; using them needs same-user access (D35).
+- OpenAI's terms and help pages refused automated fetches (HTTP 403), so Part F carries no verbatim OpenAI quote, only search-summary wording marked unverified.
+
+## Morning report
+| Part | Result | Commits | Findings fixed (by severity) | Not fixed (reason in its section) |
+|---|---|---|---|---|
+| A v0.5.3 | done | 29600d3, 5ba923a | 1 stale test (spaces allowed since b2e203f) | — |
+| B v0.5 gate | done, v0.5 closed | dca8b64 … c558cf7 | HIGH 1 (my own first scrubber), MEDIUM 7, LOW 3 | devtools switches (D35, test harness), dev-app agent env, theme reprobe mid-passthrough, version handoff, node-pty EIO print, 4 small LOWs |
+| C v0.6.1 | done | bf466a1 … 292c722 | HIGH 1 (pre-existing: AI Term record dropped the agent list), MEDIUM 3, LOW 5, 1 pre-existing flake | settle/exit race books on top; one grant for SDK retries; running sessions keep reporting after taskCost off |
+| D v0.6.2 | done | d574282 … 56d292d | HIGH 1, MEDIUM 2, LOW 2 | concurrent preset saves (single user); bad preset makes settings unreadable (D35) |
+| E v0.6.3 | done | 6e12e87 … f98218e | HIGH 3, MEDIUM 7, LOW 5 | narrow exit-during-record window; Keychain prompt holds the lock; failed booking dropped; running agent stopped mid-turn once the new one runs |
+| F v0.6.4 | done | dbcdc44, af25a75 … e2f7570 | MEDIUM 7, LOW 6 | CLI writes through the shared-extension symlinks (D17 design); Codex keyring-per-home undocumented |
+
+Latency A/B (dev 11362d1 vs packaged): Part A +0.10 ms p95 (c03e02d), after the gate fixes +0.10 ms (df2c429); limit +0.30 ms. Pass.
+Final checks at e2f7570: typecheck exit 0 · lint "No issues found" · build ok · app:build ok · `npm test` twice: 206 files, 1297 passed, 2 skipped (20.47 s, 20.63 s) · coverage (src) 87.56% statements, 81.79% branches, 88.92% functions, 94.43% lines · dev smoke 9 passed (37.6 s) · `app:dist` at e2f7570 codesign valid · packaged smoke 9 passed (42.4 s).
+
+Part F findings in one place (details: docs/architecture.md §12.10):
+- **Keychain:** the official Claude Code Authentication page says that with `CLAUDE_CONFIG_DIR` set, Claude Code "keys the macOS Keychain entry to that directory too, so a session with a different `CLAUDE_CONFIG_DIR` reads a different entry", and documents multiple accounts exactly this way. Claude multi-account shipped. Codex: `auth.json` under `CODEX_HOME` is per profile; whether its OS-keyring mode is per `CODEX_HOME` is undocumented → manual check below.
+- **Terms:** Anthropic Consumer Terms §2 "You may not share your Account login information, Anthropic API key, or Account credentials with anyone else." / "You also may not make your Account available to anyone else." (nothing limits how many accounts you hold); Claude Code legal page: "Advertised usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the Agent SDK." OpenAI Terms of Use: not fetchable; search summaries say they forbid "circumventing rate limits or restrictions" (unverified — read the page). So AI Term never switches at a limit; it only offers the handoff. D53 updated accordingly.
+
+## What's next
+- Yaniv's manual checks below (real keys, real logins, real terminal). Nothing from tonight's six parts is left open except the items each part lists as not fixed.
+- The next roadmap step after v0.6.4 hasn't started. Candidates noted tonight: a `/model` account column; an opt-in Codex `cli_auth_credentials_store` choice if the keyring check fails; the dev-app daemon's Electron Node mode for AI Term's own agent.
+
+## Gotchas
+- Two managers on one AI Term home race each other's state writes (load writes D32's view): tests that "restart" must wait for the first one's write on disk (tests/v061-budgets-daemon).
+- The Bash tool turns `\uXXXX` in heredocs into real characters; a literal U+2028 inside a JS regex literal breaks parsing. Write invisible characters as escapes from Python (tests/v063-handoff-review).
+- The packaged app can't refuse `--inspect`/`--remote-debugging-port`: Playwright needs them for the packaged smoke suite and the latency A/B.
+- `budget-reservations.json` and `profiles/` are new under ~/.ai-term; profiles hold the CLIs' own logins and are never deleted by AI Term.
+- New settings keys: `taskCost`, `presets`, `presetsEnabled`, `handoff`, `accounts`, `defaultAccounts` (D55 switches: o, s, g in /settings).
+
+## Manual checks (everything from tonight, plus the v0.5 install checks still open)
+- `cd ~/ai-term && kill 83116` — optional: stop the leaked test daemon from the earlier smoke run (it is not your ~/.ai-term daemon).
+- `cd ~/ai-term && npm run app:dist && open build/desktop/dist` — drag AI Term.app into Applications (the bundle in build/ is already at e2f7570).
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — first open (right-click Open if macOS asks); press Cmd+K and Cmd+T right away while it starts, then `/exit` and scroll up: no `^[]777;ai-term;…` text anywhere (token echo fix).
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — start a Claude Code agent, enter it, run `! env | grep ELECTRON_RUN_AS_NODE` → nothing (env leak fix).
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — App → Install ai command; check the exact paths; then `cd ~/ai-term && "$HOME/.local/bin/ai"` works in Terminal.app without Node; App → Uninstall removes only its link.
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — notifications still say AI Term and open the agent; quit with Cmd+Q: no unexpected-quit dialog.
+- `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js` — restart the daemon onto tonight's code (stops running agents), then: B25 — set a tiny daily budget (`b`, e.g. $0.05) and start two AI Term agents on your API key with a long task each: one runs, the other pauses with `budget: today … held by other agents' requests`; Usage shows the held amount once settled.
+- `cd ~/ai-term && node dist/cli/index.js` — cost per task: after a turn, a key agent's card shows `· $0.xx`, a subscription Claude/Codex card shows `· N tok`; `/usage` lists BY AGENT; `/settings` o turns it off.
+- `cd ~/ai-term && node dist/cli/index.js` — presets: `/mode don't ask`, `/preset save risky first message`, `/preset risky` shows the box in red Don't ask, Esc puts your setup back; `/preset rm risky`.
+- `cd ~/ai-term && node dist/cli/index.js` — handoff with a key: `/settings` g on, `/handoff <agent> codex` → the ask names the model, tokens and price; ⏎ → a Codex agent starts in the same worktree with the note; the old card reads `handed off → …`. Without a priced key, on a finished Claude agent: it writes its own note.
+- `cd ~/ai-term && node dist/cli/index.js` — accounts: `/account add claude work`, log in through Claude's own browser flow in the session that opens, Ctrl+E, then `cd ~/ai-term && claude auth status --json` in Terminal.app still shows your normal account (separate Keychain entries).
+- `cd ~/ai-term && node dist/cli/index.js` — start box `a` → `account work`; inside that agent `! echo $CLAUDE_CONFIG_DIR` → `~/.ai-term/profiles/work`; the card reads `account work · sub`.
+- `cd ~/ai-term && CODEX_HOME="$HOME/.ai-term/profiles/side" codex login status; codex login status` — after `/account add codex side` and its login: each command shows its own account (the Codex keyring question).
+- `cd ~/ai-term && node dist/cli/index.js` — when an account really hits its limit: the card shows `⏸ limit · resets HH:MM` and the note offers `/handoff <agent> claude:<other>`; nothing switches by itself. Tell me the exact banner text if it isn't detected.
+- `cd ~/ai-term && open https://openai.com/policies/row-terms-of-use/` — read "What you cannot do" yourself before using a second ChatGPT account at a limit (the quote couldn't be fetched).
 
 ## Part A: v0.5.3 deferred checks — done
 - Packaged app rebuilt at HEAD c03e02d (`npm run app:dist`, codesign verify valid for app and helper), then `npm exec -- tsx scripts/measure-packaged-latency.ts` ran back to back on this machine: dev 11362d1 first, then the packaged .app. Gate on the p95 difference only.
@@ -22,6 +70,37 @@ Prompt vs code (overnight):
 - Full suite: the first runs failed 1 test every time: `tests/gate-silent-failures.test.ts` M4 used `/Users/test/My Projects/...` as an "unsafe" status-line path, but b2e203f deliberately allowed ASCII spaces (AI Term.app). Stale fixture, not a product bug: 29600d3 uses an apostrophe instead. Then two consecutive full runs, dot reporter: **194 files, 1197 passed, 2 skipped** (opt-in Keychain), 18.91 s and 18.66 s.
 - Smoke after the rebuild: dev `npm run app:test` 9 passed (37.7 s); packaged `AI_TERM_TEST_APP=<.app exe> npm run app:test` 9 passed (39.1 s). No new leaked processes.
 - The test output prints one `Unhandled pty write error [Error: EIO...]` line from a test that writes after its PTY exits; it fails nothing (handed to Part B's silent-failure review).
+
+## Part F: v0.6.4 several accounts per engine (D53) — done
+Commits dbcdc44 (findings first, as asked) → af25a75/013e47d (RED) → b19196d (GREEN) → review fixes through e2f7570.
+
+What works:
+- **Findings first** (docs/architecture.md §12.10): Claude Code keys its Keychain entry per `CLAUDE_CONFIG_DIR` (official docs, quoted), so Claude multi-account ships; Codex file storage is per `CODEX_HOME`, its keyring mode undocumented (manual check); the Anthropic and (unverified) OpenAI terms wording. D53 updated.
+- **Profiles:** `/account add claude|codex <name>` saves `{name, engine}` and opens the CLI's own login with `~/.ai-term/profiles/<name>` (0700) as `CLAUDE_CONFIG_DIR` / `CODEX_HOME`, set in env.ts only. AI Term never reads, copies or stores the token (S11 unchanged). Your skills, agents and commands (Codex: prompts, skills, agents) are shared into the profile by symlinks to those folders only.
+- **Choosing:** `/account default <name>` per engine; `/account use <name|own>` or the start box `a` for one agent; a picked account stays across a same-engine model pick; `/retry` and `/resume` keep the account an agent ran on; the card reads `account <name> · sub`; a missing profile refuses (`Account not found for this engine`); unreadable settings refuse to guess once profiles exist.
+- **Limits:** a CLI banner line on the visible screen (Claude Code "… limit reached … resets 3pm", "Claude usage limit reached … reset at 7:30 pm", "You've hit your limit · resets 2pm"; Codex "You've hit your usage limit … try again at 3:45 PM") sets `limit {resets}`; the card shows `⏸ limit · resets HH:MM`; the homepage says once: wait, or `/handoff <agent> claude:<account>` (Part E's handoff, same worktree, onto that account). Never automatic.
+- README: `/account`, the start box `a`, the limit row, `/handoff … claude:<account>`, plus `/preset`, `/handoff`, `/settings` o/s/g in the full command list.
+
+Prompt vs code:
+- "/model or the start box picks another for one agent": the start box `a` and `/account use` do; `/model` keeps choosing model/engine/key only (an account is not a model). The box keeps a picked account across a same-engine `/model` pick.
+- "the card shows ⏸ limit · resets HH:MM and asks": the card shows it and the homepage note asks once; there is no modal (calmer, and D22 keeps keys off agents).
+- Codex keyring: not overridden (forcing file storage would put tokens in a plaintext file under ~/.ai-term); a manual check confirms separation.
+
+Findings (failing test commit, then fix commit; fresh security and TypeScript reviewers, then a fix review):
+- **MEDIUM:** unreadable settings started an account agent on your normal login (wrong account billed) → refused once profiles exist; with none, the old fail-open start stays (gate test M2+L6 still passes).
+- **MEDIUM:** a handoff without an account checked one login and started on the default account → resolved once.
+- **MEDIUM:** a model pick dropped the picked account (twice: first fix was dead code, caught by the fix review) and left a stale label; `/account use` kept a wrong-engine model; `/account add` left a name with no login and pointed at a refused retry; limit detection matched code or prose quoting a banner and hid a pending question; a limited agent with no key waited 5 minutes for a note it couldn't write → all fixed.
+- **LOW:** defaults pointing at missing accounts; the card wording `own login · sub · work`; a limit check after exit; older/labelled banner shapes; the limited-no-key refusal moved before the ask.
+- Not fixed, with reasons: whatever the CLI writes into the shared-extension folders under a profile lands in your real ones, as with your normal login (D17's design; documented); an entry already in a profile folder is left as is (0700 folder you own).
+
+Checks: in the Morning report above (final, at e2f7570).
+
+Concepts introduced:
+- **Config folder per account:** both CLIs read their login and settings from one folder chosen by an environment variable; giving each account its own folder keeps logins apart without AI Term touching any token (`buildSpawnEnv` profileDir in `src/daemon/env.ts`).
+- **Symlink sharing:** a symlink is a pointer to another folder; the profile "contains" your skills without copying them, so editing one place updates every account (`prepareProfile` in `src/daemon/accounts.ts`).
+- **Banner matching:** reading a program's screen is brittle, so only whole phrases at the start of a line count, after stripping decoration (`parseLimit` in `src/daemon/limit-detect.ts`).
+
+New dependencies: none.
 
 ## Part E: v0.6.3 engine handoff — done (off by default)
 Commits: see `git log 56d292d..HEAD` (RED test commits precede each fix); GREEN ffdf270; review fixes a71ee01, the ZWJ and fix-review commits after it.
