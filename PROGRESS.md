@@ -1,6 +1,98 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: ab09fcf fix: page long approvals, cap commands, survive bad imports, unwrap retries
+Roadmap step: v0.4.1 AI Term's own agent — done (a real model call needs Yaniv's key: manual checks below)
+Branch: main. This handover is the last commit; its own hash is in git log.
+Started clean at 56f1755 after `git pull --ff-only` (already up to date). Baseline 150 files / 959 passed / 2 opt-in Keychain skips. Final 161 files / 1012 passed / same 2 skips, twice in a row. Session: Claude Code, Opus 5.5. Plan: `docs/plans/v0.4.md`.
+Prompt vs code:
+- D53 and D55 don't exist in docs/architecture.md (the log ends at D52); nothing was read for them.
+- The prompt's "one provider, whichever key you already have": the only key on record is the Foundry key (narvis-resource, GPT deployments, tested through the Responses API), so the provider is Foundry via `@ai-sdk/azure`. Consequence for D47: only Foundry keys route to AI Term's agent in v0.4.1; Anthropic and OpenAI keys keep starting Claude Code / Codex until v0.4.2 adds their providers (starting an agent the agent can't serve would be worse).
+- The prompt says "AGENTS.md (and CLAUDE.md imports)": built as AGENTS.md, then CLAUDE.md with whole-line `@path` imports, folder only (no parent folders), each file once.
+- ctx %: the reporting path is built and tested, but a Foundry deployment name doesn't reveal its context window and the price catalog has no limits, so ctx stays empty until v0.4.2 (Models.dev limits). Not invented.
+- The key's variable name appears in `env.ts` (sets it) and in `src/agent/main.ts` (takes it out of its own env first); nowhere else.
+- design.md said the model picker footer reads "API key → Claude Code / Codex until v0.4"; updated with the new settings row (`keys run on`, r). The /settings footer stays as designed; the panel is one row taller (it scrolls).
+- Saved defaults carry no key, so an AI Term model can't be saved as the default model (it would start a CLI login); the box says so.
+- Esc interrupts a turn and reports done with the partial reply (Claude's Esc reports nothing; ours can).
+
+## What works
+- **Engine `ai-term`, protocol first** (7638fa9): `Engine`/`AgentEngine` gain it (Ask or Don't ask, no effort, key auth only, `CliEngine` for the rest); `keysRunOn: 'ai-term'|'cli'` (default ai-term, `/settings` r); validators, store, cards (`… · ai term`, badge by model family: GP for GPT deployments), start box, model picker.
+- **D47 routing** (`keyEngine`, `src/shared/models.ts`): Foundry key → `ai agent`; `keysRunOn: cli` → Codex as before; Anthropic/OpenAI keys → their CLIs until v0.4.2; accounts → CLIs always. The daemon applies it again on create.
+- **`ai agent`** (1d9b227, `src/agent/`): scrolling chat UI in the PTY (prompt, bracketed paste, streamed replies, one row per tool call, queued messages, Esc interrupts, Ctrl+C twice quits, `/model`, `/cd`, `/help`, `/exit`); theme tokens; no escape sequence from the model, a tool or a folder name reaches the terminal.
+- **Tools**: read, write, edit, bash, search (ripgrep, else plain text), file tools jailed to the folder (S18); bash `/bin/sh -c` in a process group with timeout, output caps and a keyless env (S19).
+- **Ask** (S20): every write, edit and command shows exactly what runs (paged when taller than the screen; `y` only on the last page), the daemon has the waiting status before it's drawn, one typed y/n answers, never a paste. Don't ask is per session, its flag only in env.ts.
+- **Status and usage** through the existing receiver: `/v1/status/ai-term` (running, waiting permission, done + last reply for `c`, turn failed, model) and OTLP `ai_term.token.usage` on `/v1/metrics` (priced like Codex). /send is gated on its tools like Claude's (D50).
+- **Key path**: Keychain → daemon `withSecret` → only the agent's env, cut to the B12 binding; Foundry requests only to the bound endpoint, `api-key` header only, no redirects; key redacted from tool output, screen and transcript (`sessions/<id>/transcript.jsonl`, 0600, removed with the agent).
+- Headless end-to-end (ran): the built `dist` agent through the real SessionManager, PTY, mirror and receiver, temp home, in-memory vault, endpoint `https://127.0.0.1:9` (nothing left the machine): banner, AGENTS.md/CLAUDE.md read, the turn fails locally with a fixed reason, the card goes to `waiting · turn failed`, `/send /model gpt-6-luna` updates the card, `/cd` and `/help` work, the canary key is in no screen, transcript, log, state or session list; stop → exited.
+
+## Security review (fresh security-reviewer, told to break the jail, leak the key, pass Ask)
+No CRITICAL or HIGH. Every finding: failing test, then fix.
+- **MEDIUM**: a long bash command (or diff) scrolled what runs off the screen before `y` → paged approvals, `y` only on the last page; commands over 16 KB refused before any approval. ea9708c → ab09fcf.
+- **LOW–MEDIUM**: an `@import` name the file system rejects (ENAMETOOLONG) crashed the agent at start or on `/cd` → skipped with a note; `/cd` guarded. ea9708c → ab09fcf.
+- **LOW**: a retried 429/5xx lost its reason and HTTP status (SDK RetryError) → unwrapped. ea9708c → ab09fcf.
+- **LOW (found by me, confirmed by the reviewer for the file-name variant)**: the banner printed the folder and file names raw → `plain()`. 17bc17f → 75b5e55.
+- Also found while writing tests: the AI SDK prints stream errors to stderr by default (the agent's own screen; a provider message could carry anything) → `onError` handled, fixed-text crash guard (1d9b227, 6b991fa).
+- Held (reviewer): `..`/absolute/symlink/dangling/case tricks, ripgrep argv (`--no-config`, `--regexp`, `--`), loader jail, allowlisted envs, key never in argv/state/logs/protocol, `/model` limited to bound tested deployments (agent and daemon), `guardedFetch`, serialized tool calls, abort races deny, paste/CSI never approves, `--dont-ask` can't be smuggled, /send gate, the new status route (S12), `visible()` markers.
+
+## Check output
+```
+npm run build            ESM ⚡️ Build success in 24ms
+npm run typecheck        > tsc --noEmit            (exit 0)
+npm run lint             ESLint: No issues found
+npm test (1)             Test Files  161 passed (161) · Tests  1012 passed | 2 skipped (1014) · 15.77s
+npm test (2)             Test Files  161 passed (161) · Tests  1012 passed | 2 skipped (1014) · 15.68s
+grep exec(/execSync(/shell: true            none (only RegExp .exec)
+grep sk-                                    only guards (isToolName, model ids) and log redaction
+grep --dont-ask                             src/daemon/env.ts only (the agent imports the constant)
+grep permission flags outside env.ts        none
+grep AITERM_AGENT_KEY                       src/daemon/env.ts (sets) and src/agent/main.ts (removes); getPassword only in keys.ts
+git diff --check 56f1755..HEAD              clean
+```
+verification-loop: build, types, lint, tests twice, security greps, diff review (52 files), headless end-to-end of the built agent; no stray processes.
+
+## What's next
+- v0.4.2 (proposed in docs/plans/v0.4.md): Anthropic and OpenAI providers (then every key routes here), Foundry chat-only deployments, Models.dev context windows (ctx %), exact cost and the hard budget, resume from the transcript.
+- Nothing from v0.4.1 is open except the real-key manual checks below.
+
+## Manual checks (v0.4.1, need Yaniv's Foundry key; the key stays in the Keychain)
+Restart first (stops running agents): `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js`
+- Make a scratch repo: `cd ~/ai-term && rm -rf /tmp/ai-agent-try && mkdir /tmp/ai-agent-try && printf '# try\n' > /tmp/ai-agent-try/README.md && git -C /tmp/ai-agent-try init -q -b main && git -C /tmp/ai-agent-try add -- README.md && git -C /tmp/ai-agent-try -c user.name=you -c user.email=you@example.invalid commit -qm init` — needs Yaniv.
+- Start with the key: `cd ~/ai-term && node dist/cli/index.js` → `/cd /tmp/ai-agent-try`, `/model` → FOUNDRY tab → `gpt-6.1-sol · ai term · key ····ITid`, type `Add a line "Hello from AI Term" to README.md`, ⏎, keep Ask, ⏎; ⏎ again to go inside → banner `AI Term agent · gpt-6.1-sol · …/ai-term`, `· read` nothing (no AGENTS.md) — needs Yaniv.
+- Approve: the agent reads, then `● allow edit README.md?` with `+ Hello from AI Term`; press `y` → `✓ edited README.md` and a short reply. Check it landed in the worktree: `cd ~/ai-term && git -C /tmp/ai-agent-try worktree list && node dist/cli/index.js debug ls` (branch `ai/ai-term`), then `cd ~/ai-term && git -C "$(git -C /tmp/ai-agent-try worktree list --porcelain | awk '/^worktree /{p=$2} END{print p}')" diff` — needs Yaniv.
+- Deny: type `Run ls -la` → `● allow bash · 120s limit?` showing `ls -la`; press `n` → `✗ denied`, the reply doesn't retry — needs Yaniv.
+- Esc: type `Count from 1 to 300, one number per line` and press Esc while it streams → `■ interrupted`; the next message still works — needs Yaniv.
+- Key not in bash: type `Run env | sort` → approve → no `AITERM`, `OPENAI`, `ANTHROPIC` or key value in the output — needs Yaniv.
+- Jail: type `Read /etc/hosts with the read tool` → `✗ Path is outside the folder` — needs Yaniv.
+- Card, notification, `c`, Usage: Ctrl+E home → card `✓ done` with `gpt-6.1-sol · ai term`, `GP` badge, `API key ····ITid`; `c` copies the last reply; Usage shows Foundry tokens (≈ cost, or `price ?` without a price) after the turn; give it a task, go home before it asks → `<name> · waiting: permission` banner — needs Yaniv.
+- `/model` inside: `/model` lists the key's tested deployments, `/model <other>` switches and the card follows — needs Yaniv.
+- Fallback: `/settings` → `r` → `keys run on: the cli`; `/model` now shows the Foundry row as `· codex` and a start runs Codex; `r` again restores `ai term` — needs Yaniv.
+- Still open from v0.2 and v0.3: the consolidated list in the retained v0.3 gate checkpoint below.
+
+## Gotchas
+- Only Foundry keys run on AI Term's agent in v0.4.1; Anthropic/OpenAI keys still start the CLIs.
+- An AI Term model can't be the saved default model (defaults hold no key); pick it per agent.
+- The agent's bash isn't sandboxed (like Claude Code's). In Don't ask it runs whatever the model writes.
+- `ps eww <agent pid>` shows the env the agent started with, including the key (as for the CLIs' key sessions, D35); everything the agent prints, keeps or sends to the model is redacted.
+- ctx % stays empty for AI Term agents until v0.4.2.
+- `ai agent` run by hand exits 2: it needs the daemon's env.
+- Tests that use a real ripgrep skip when `rg` isn't on PATH (it isn't here); `tests/ai-agent-search-rg.test.ts` covers the argv with a stub.
+
+## New dependencies
+- `ai` 7.0.140: the Vercel AI SDK (D3), the agent loop, tool calling and streaming.
+- `@ai-sdk/azure` 4.0.101: its Foundry/Azure OpenAI provider, the one provider v0.4.1 needs (sends the key in `api-key` only).
+- (zod 4.6.7 arrived as the SDK's peer dependency; AI Term's code doesn't use it.)
+
+## Concepts introduced
+- **Agent loop (`src/agent/agent.ts`):** the model answers with text or tool calls; the SDK runs each tool, feeds the result back, and asks again, up to a step limit. Our tools run one at a time behind the Ask gate, and an AbortSignal (Esc) stops both the stream and a running command.
+- **Folder jail (`src/agent/jail.ts`):** a path is resolved the way the OS would follow it (every symlink on the way) and must land inside the folder's real path; checking the text of the path alone would miss a symlink that points out.
+- **Allowlisted env (`buildAgentEnv`, `buildBashEnv` in `src/daemon/env.ts`):** instead of removing known secrets from a copy of your environment (a denylist always misses one), the agent and its commands get only the few variables a program needs, plus exactly what AI Term adds.
+- **Paged approval (`src/agent/screen.ts`, `app.ts`):** a confirmation is only meaningful if everything it confirms was on screen; long ones are split into pages and `y` only counts on the last.
+
+---
+
+## Previous checkpoint (v0.3 release gate, retained)
+
+## Checkpoint
 Last commit: 40424dd fix: /send trusts Codex's approval title; split input and output stay per pane
 Roadmap step: v0.3 release gate done — **v0.3 is closed** (only Yaniv's real-terminal checks below remain, as for v0.2)
 Branch: main. This handover is the last commit; its own hash is in git log.
