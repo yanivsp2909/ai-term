@@ -208,3 +208,8 @@ it('MEDIUM review: unreadable settings keep worktrees on when no account was eve
     expect(s.auth).toEqual({ kind: 'account' });
   } finally { await d.close(); }
 });
+it('LOW fix review: older and labelled limit banners still count', () => {
+  expect(parseLimit('Claude AI usage limit reached|1760000000')).toEqual({ resets: null });
+  expect(parseLimit('  ⎿  API Error: Claude usage limit reached. Your limit will reset at 2pm')).toEqual({ resets: '14:00' });
+  expect(parseLimit("You've hit your limit · resets 2pm")).toEqual({ resets: '14:00' });
+});

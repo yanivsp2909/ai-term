@@ -108,3 +108,16 @@ it('MEDIUM review: an account whose login could not start is taken back, so /acc
     expect(client.settings.accounts).toEqual([]);
   } finally { await h.done(); }
 });
+it('MEDIUM fix review: picking a model of the same engine keeps the account the box shows', async () => {
+  const client = new Client(); client.settings = { theme: 'graphite', accounts: [{ name: 'work', engine: 'claude-code' }] };
+  const h = await open(client);
+  try {
+    type(h.tty, '/account use work'); enter(h.tty); await shows(h.tty, 'next agent: work · claude code');
+    type(h.tty, 'a task'); enter(h.tty); await shows(h.tty, 'Start a new agent');
+    type(h.tty, 'm'); await shows(h.tty, 'Select model');
+    enter(h.tty); await shows(h.tty, 'Start a new agent');
+    await shows(h.tty, 'account        work · a');
+    enter(h.tty);
+    await vi.waitFor(() => expect(client.requests.find(r => r.kind === 'sessions.create')).toMatchObject({ engine: 'claude-code', auth: { kind: 'account', profile: 'work' } }));
+  } finally { await h.done(); }
+});
