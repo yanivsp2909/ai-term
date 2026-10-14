@@ -271,7 +271,8 @@ export class Agent {
     const low=estimateTokens(file.body+this.options.instructions.text+prompt+extensionManifest(this.catalog.items)),steps=this.options.maxSteps??DEFAULT_MAX_STEPS;
     const high=steps*(low+steps*(maxOutputTokens(facts)+64*1024)+maxOutputTokens(facts));
     const price=facts?.price?`$0–$${((high+steps*1400)*Math.max(facts.price.input,facts.price.output)/1e6).toFixed(2)}`:'price unknown; spend limits will pause before a request';
-    return {title:`task ${name}`,body:`AI Term · ${modelId}\nestimated ${low.toLocaleString()}–${high.toLocaleString()} tokens (up to ${steps} requests) · ${price}\nSame folder, Ask permissions, budget and caps as parent.\n${prompt}`};
+    const permission=this.options.permission==='ask'?'Ask permissions':"Don't ask permissions; commands are unsandboxed";
+    return {title:`task ${name}`,body:`AI Term · ${modelId}\nestimated ${low.toLocaleString()}–${high.toLocaleString()} tokens (up to ${steps} requests) · ${price}\nSame folder, ${permission}, budget and caps as parent.\n${prompt}`};
   }
   private async subagent(name: string, prompt: string, signal: AbortSignal): Promise<string> {
     const confirmed=this.confirmedTask;this.confirmedTask=null;
