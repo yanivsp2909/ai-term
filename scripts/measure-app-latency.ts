@@ -107,7 +107,12 @@ export async function appCapture(options:{main?:string;executablePath?:string}={
     }
     await sleep(100);
     const records = await page.evaluate(() => { window.latencyCapture?.stop(); return window.latencyCapture?.records ?? []; });
-    return { records, cols, rows, webgl: await page.locator('.xterm-screen canvas').count() > 0 };
+    const webgl=await page.locator('.xterm-screen canvas').count()>0;
+    // The unchanged checkpoint has the old node-pty quit race. End its homepage
+    // after recording, so its native exit callback finishes before app teardown.
+    await page.evaluate(()=>{window.terminal.write('\x15/exit\r');});
+    await page.waitForFunction(()=>document.querySelector('.xterm-accessibility-tree')?.textContent?.includes('ai exited'));
+    return { records, cols, rows, webgl };
   } finally { await application.close(); await cleanup(home); }
 }
 async function cliCapture(cols: number, rows: number): Promise<RecordItem[]> {
