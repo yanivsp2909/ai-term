@@ -406,7 +406,7 @@ export class Homepage {
     if(!this.sessions.some(s=>s.id===match.sessionId)){this.showNote('that agent is gone');return;}
     const resize=!this.visible;this.visible=true;this.selectedId=match.sessionId;this.drag=null;this.previewCells=undefined;
     await this.updatePreview(resize);
-    this.currentPreview()?.scrollTo(match.fromEnd);this.draw(true);
+    this.currentPreview()?.scrollTo(match.fromEnd,match.text.slice(match.start,match.start+match.length));this.draw(true);
   }
   private async openFolderOf(session:SessionInfo|null,app:FolderApp):Promise<void>{
     if(!session){this.showNote('select an agent first');return;}

@@ -8,11 +8,11 @@ export type MirrorSignal={kind:'bell'}|{kind:'osc9';text:string}|{kind:'title';t
 const COPY_STRIP=/[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}]|(?!\u200d)\p{Cf}/gu;
 // /find results are drawn as plain text: every control, format and private-use character goes.
 const FIND_STRIP=/[\p{C}\p{Zl}\p{Zp}]/gu;
-// Lower-cased text plus, for each of its UTF-16 units, the offset in the original. A few characters change length when
-// lower-cased (İ), so matching on the folded text and slicing the original needs the map.
+// Case-folded text (upper then lower, so ς and σ meet at Σ) plus, for each of its UTF-16 units, the offset in the
+// original. Some characters change length when folded (ß, İ), so matching on the folded text and slicing the original needs the map.
 function fold(text:string):{text:string;map:number[]}{
     let folded='',offset=0;const map:number[]=[];
-    for(const char of text){const lower=char.toLowerCase();for(let i=0;i<lower.length;i++)map.push(offset);folded+=lower;offset+=char.length;}
+    for(const char of text){const lower=char.toUpperCase().toLowerCase();for(let i=0;i<lower.length;i++)map.push(offset);folded+=lower;offset+=char.length;}
     map.push(offset);return {text:folded,map};
 }
 export class Mirror {
@@ -82,7 +82,7 @@ export class Mirror {
     // /find: plain-text, case-insensitive matches in the scrollback and screen, newest first, at most `limit`.
     // Rows joined by soft wraps are searched as one line; fromEnd names the row the match starts on.
     find(query:string,limit:number):Omit<FindMatch,'sessionId'>[]{
-        const buffer=this.terminal.buffer.active,needle=query.toLowerCase(),found:Omit<FindMatch,'sessionId'>[]=[];
+        const buffer=this.terminal.buffer.active,needle=fold(query).text,found:Omit<FindMatch,'sessionId'>[]=[];
         for(let bottom=buffer.length-1;bottom>=0&&found.length<limit;){
             let top=bottom;while(top>0&&buffer.getLine(top)?.isWrapped)top--;
             let line='';const starts:number[]=[];

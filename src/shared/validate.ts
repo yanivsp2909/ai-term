@@ -256,7 +256,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
     if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex'].includes(s.engine)) ||
         !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
-        s.worktree!==undefined&&!isSafeAbsolutePath(s.worktree) || s.branch!==undefined&&!isWorktreeBranch(s.branch) || (s.worktree===undefined)!==(s.branch===undefined) || s.worktreeNote!==undefined&&!isWorktreeNote(s.worktreeNote) ||
+        s.worktree!==undefined&&!isSafeAbsolutePath(s.worktree) || s.branch!==undefined&&!isWorktreeBranch(s.branch) || (s.worktree===undefined)!==(s.branch===undefined) || s.worktreeNote!==undefined&&!isWorktreeNote(s.worktreeNote) || s.login!==undefined&&(s.login!==true||s.engine==='shell') ||
         !isAuthView(s.auth) || !(s.engine==='shell'?s.permission==='ask':isPermissionForEngine(s.engine,s.permission)) || s.effort!==undefined && !isEffortForEngine(s.engine,s.effort) || s.conversationId!==undefined && (s.engine!=='claude-code'||!isUUID(s.conversationId)) ||
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||

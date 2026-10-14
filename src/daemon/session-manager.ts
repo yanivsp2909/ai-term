@@ -121,7 +121,7 @@ export class SessionManager extends EventEmitter {
             if (!isUUID(r.id) || !isTitle(r.title) || !['shell','claude-code','codex'].includes(String(r.engine)) || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
             const saved = validateSession(r);
-            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}) });
+            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}), ...(saved.login?{login:true as const}:{}) });
         }
         return { sessions, worktrees: 'worktrees' in state && Array.isArray(state.worktrees) ? state.worktrees as unknown[] : [] };
     }
@@ -181,17 +181,18 @@ export class SessionManager extends EventEmitter {
         const saved=this.get(id);
         if(!['exited','error'].includes(saved.status))throw new Error('Retry needs a finished agent');
         if(this.retrying.has(id))throw new Error('Retry already starting');
-        if(saved.worktree){
-            if(this.busyWorktrees.has(saved.worktree))throw new Error('Worktree is busy');
-            if(this.list().some(s=>s.worktree===saved.worktree&&!['exited','error'].includes(s.status)))throw new Error('Worktree in use by a running agent');
-            if(!this.worktreeRecords.has(saved.worktree)||!(await validCwd(saved.cwd)))throw new Error('Its worktree is gone');
-        }else if(!(await validCwd(saved.cwd)))throw new Error('Its folder is gone');
-        const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const};
+        if(saved.worktree&&this.busyWorktrees.has(saved.worktree))throw new Error('Worktree is busy');
+        // Both flags are taken before the first await, so a second retry or a delete arriving meanwhile is refused.
         this.retrying.add(id);if(saved.worktree)this.busyWorktrees.add(saved.worktree);
         let next:SessionInfo;
         try{
-            // An empty continuation still counts as one: an agent that ran in place gets no new worktree.
-            next=await this.create(saved.engine==='shell'?{cwd:saved.cwd,title:saved.title}:{engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{});
+            if(saved.worktree){
+                if(this.list().some(s=>s.worktree===saved.worktree&&!['exited','error'].includes(s.status)))throw new Error('Worktree in use by a running agent');
+                if(!this.worktreeRecords.has(saved.worktree)||!(await validCwd(saved.cwd)))throw new Error('Its worktree is gone');
+            }else if(!(await validCwd(saved.cwd)))throw new Error('Its folder is gone');
+            const auth=saved.auth.kind==='key'?{kind:'key' as const,keyId:saved.auth.keyId}:{kind:'account' as const};
+            // A login session retries as the same login; an empty continuation keeps an agent that ran in place there.
+            next=await this.create(saved.engine==='shell'?{cwd:saved.cwd,title:saved.title}:saved.login?{engine:saved.engine,model:null,auth:{kind:'account'},cwd:saved.cwd,permission:'ask',login:true,title:saved.title}:{engine:saved.engine,model:saved.model,effort:saved.effort??null,auth,cwd:saved.cwd,permission:saved.permission,title:saved.title},saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{});
         }finally{this.retrying.delete(id);if(saved.worktree)this.busyWorktrees.delete(saved.worktree);}
         try{await this.remove(id);}catch{this.log.error('Retried agent: old record could not be removed');}
         return next;
@@ -223,7 +224,7 @@ export class SessionManager extends EventEmitter {
         } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
-        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
+        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent?.engine === 'codex' ? 'Codex' : agent ? 'Claude Code' : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account' }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
             try {

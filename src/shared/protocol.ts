@@ -65,6 +65,8 @@ export interface SessionInfo {
     worktree?: string;
     branch?: string;
     worktreeNote?: WorktreeNote;
+    // A /login session (claude auth login, codex login); /retry runs the same login again.
+    login?: boolean;
     permission: Permission;
     authMethod?: AuthMethod;
     status: Status;

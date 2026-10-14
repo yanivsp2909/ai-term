@@ -53,10 +53,18 @@ export class Preview {
     if (top === base) this.newCount = 0;
     this.selection = null; this.changed();
   }
-  // /find: bring the row `fromEnd` rows above the buffer's last row into view, a third of the way down. Counting from
-  // the bottom works although this buffer holds a different amount of scrollback than the daemon's mirror.
-  scrollTo(fromEnd: number): void {
-    const buffer = this.terminal.buffer.active, row = Math.max(0, buffer.length - 1 - fromEnd);
+  // /find: bring a hit into view, a third of the way down. `fromEnd` counts rows up from the buffer's last row when the
+  // daemon searched (this buffer holds a different amount of scrollback, but its bottom is the same); an agent that
+  // printed since moved the line up, so the row nearest that guess holding the matched text wins.
+  scrollTo(fromEnd: number, text = ''): void {
+    const buffer = this.terminal.buffer.active, guess = Math.max(0, buffer.length - 1 - fromEnd), needle = text.toLowerCase();
+    // A row and the next one, so a match across a soft wrap is still found.
+    const holds = (row: number) => ((buffer.getLine(row)?.translateToString(true) ?? '') + (buffer.getLine(row + 1)?.isWrapped ? buffer.getLine(row + 1)?.translateToString(true) ?? '' : '')).toLowerCase().includes(needle);
+    let row = guess;
+    if (needle) for (let distance = 0; distance < buffer.length; distance++) {
+      if (guess - distance >= 0 && holds(guess - distance)) { row = guess - distance; break; }
+      if (guess + distance < buffer.length && holds(guess + distance)) { row = guess + distance; break; }
+    }
     this.scroll(Math.max(0, row - Math.floor(this.terminal.rows / 3)) - this.top);
   }
   follow(): void { this.anchor?.dispose(); this.anchor = null; this.newCount = 0; this.selection = null; this.changed(); }
