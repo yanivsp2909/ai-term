@@ -2,7 +2,7 @@
 
 ## Checkpoint
 Last commit: (this handover; see git log)
-Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Part B v0.5 release gate done: **v0.5 is closed**. Part C v0.6.1 done. Parts D–F follow below as they finish.
+Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended). Part A v0.5.3 done. Part B v0.5 release gate done: **v0.5 is closed**. Part C v0.6.1 done. Part D v0.6.2 done. Parts E–F follow below as they finish.
 Branch: main. Started clean at c03e02d after `git pull --ff-only` (already up to date). No other agent was working in this repo (the running Codex sessions' cwd is ~/NARVIS).
 
 Prompt vs code (overnight):
@@ -22,6 +22,43 @@ Prompt vs code (overnight):
 - Full suite: the first runs failed 1 test every time: `tests/gate-silent-failures.test.ts` M4 used `/Users/test/My Projects/...` as an "unsafe" status-line path, but b2e203f deliberately allowed ASCII spaces (AI Term.app). Stale fixture, not a product bug: 29600d3 uses an apostrophe instead. Then two consecutive full runs, dot reporter: **194 files, 1197 passed, 2 skipped** (opt-in Keychain), 18.91 s and 18.66 s.
 - Smoke after the rebuild: dev `npm run app:test` 9 passed (37.7 s); packaged `AI_TERM_TEST_APP=<.app exe> npm run app:test` 9 passed (39.1 s). No new leaked processes.
 - The test output prints one `Unhandled pty write error [Error: EIO...]` line from a test that writes after its PTY exits; it fails nothing (handed to Part B's silent-failure review).
+
+## Part D: v0.6.2 presets — done
+Commits d574282 (RED) → f79a2a7 (GREEN) → review fixes through 0c167d1.
+
+What works:
+- A preset (`src/shared/presets.ts`) is a saved start setup for one new agent: engine, model, effort, auth (account or a key **id**, never the key), mode, folder, worktree on/off, optional first message (≤ 4 KB). Stored in settings.json through the existing validators (`validateSettingsPatch` → `validatePresets`; names `a-z0-9-` ≤ 32, at most 20; checked on every read and write; the 16 KB settings cap has its own message).
+- `/preset` lists (popup), `/preset <name>` opens the start box filled with it (⏎ starts, Esc puts your previous next-agent setup back), `/preset save <name> [first message]` keeps the next agent's setup as it is, `/preset rm <name>`. The start box `p` steps through presets by name; one whose key or folder is gone shows `✗ preset <name>: …` and the next `p` moves on. Don't ask is kept only when it was the chosen mode when saving (note `· ! don't ask`; the started card shows the red `!` as always). A keyed preset starts where keys run today (`/settings` r). `sessions.create` takes `useWorktree` for that one agent.
+- D55: `/settings` → `presets: on · /preset (s)`, on by default.
+
+Prompt vs code:
+- `/preset <name>` opens the filled start box instead of starting at once (⏎ starts): the calmer choice, and it shows Don't ask and the folder before anything runs.
+- "permission mode (Don't ask only if chosen when saving)": D13 forbids Don't ask as a *saved default*; a preset is not a default and is only applied by an explicit `/preset <name>` or `p` plus ⏎.
+
+Findings (failing test commit, then fix commit):
+- **HIGH (TS review) / MEDIUM (security review), same bug:** `/preset constructor` (any Object built-in name) crashed the homepage; `/preset rm constructor` reported a false removal. 6f92cd0 → 90c678d.
+- **MEDIUM (TS review):** a keyed preset kept the engine it was saved with, so the box could show AI Term while the daemon started Claude Code (or the reverse, dropping effort/mode silently) after `keys run on` changed. 7363dd3 → 8339ce2.
+- **MEDIUM (TS review):** Esc after a preset left its model, key and folder as the next agent's setup; a `p` whose folder check finished after Esc could set Don't ask with no box open. 7363dd3 → 8339ce2.
+- **LOW:** the 16 KB settings cap reported "permission default must be ask"; the dirty-checkout line showed under "worktree off · this preset"; README said a broken preset is "skipped". 7363dd3 → 8339ce2, d0b933d.
+- Not fixed, by design: two clients saving presets at the same instant can lose one change (the whole map is one settings key; single-user tool); a bad preset written into settings.json by another process makes settings unreadable, like any other bad settings value (D35); `/preset save` takes the next-agent mode, not a mode cycled with Tab inside an open start box.
+
+Checks (at 0c167d1):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0
+npm run build       ESM Build success in 31ms
+npm run app:build   built in 58ms
+npm run app:test    9 passed (37.8s)   (TUI under Electron, after the settings rows grew)
+npm test (1)        Test Files 202 passed · Tests 1251 passed | 2 skipped · 19.28s
+npm test (2)        Test Files 202 passed · Tests 1251 passed | 2 skipped · 19.86s
+```
+- One more load-sensitive Part C test (cost per task through the agent reporter's 1 s client timeout) now posts its usage directly (0c167d1).
+
+Concepts introduced:
+- **Own property lookup:** a plain JavaScript object also "has" inherited names such as `constructor`; `Object.hasOwn(presets, name)` asks only about entries you stored (`presetCommand` in `src/client/tui/homepage.ts`).
+- **Restore on cancel:** applying a preset changes the "next agent" setup; the start box keeps a snapshot (`AgentBox.restore` in `src/client/tui/agent-box.ts`) so Esc returns everything to how it was.
+
+New dependencies: none.
 
 ## Part C: v0.6.1 budgets that hold across agents (B25) + cost per task — done
 Commits bf466a1..HEAD of this part (tests first: bf466a1 RED → ea2ac71 GREEN; review rounds below).
