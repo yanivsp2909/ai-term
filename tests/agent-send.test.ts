@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { request } from 'node:http';
 import pty from 'node-pty';
 import { getPaths, preparePaths } from '../src/shared/paths.js';
 import { Logger } from '../src/daemon/log.js';
@@ -23,8 +24,17 @@ async function agent(engine: 'claude-code' | 'codex' = 'claude-code') {
   await usage.start(); await m.load();
   const session = await m.create({ engine, model: engine === 'codex' ? 'gpt-test' : 'sonnet', auth: { kind: 'account' }, cwd: root, permission: 'ask', title: 'alpha' });
   const feed = async (text: string) => { output(text); await m.snapshot(session.id); };
-  const status = async (body: unknown) => { await fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/status/claude`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': env.AITERM_STATUS_TOKEN ?? '' }, body: JSON.stringify(body) }); };
-  return { m, session, writes, feed, status, output: (text: string) => output(text), exit: () => { for (const e of exits) e({ exitCode: 0 }); } };
+  const endpoint = engine === 'codex' ? '/v1/status/codex' : '/v1/status/claude';
+  const status = async (body: unknown) => { await fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': env.AITERM_STATUS_TOKEN ?? '' }, body: JSON.stringify(body) }); };
+  // A status request whose body is still arriving (a notify mid-send); the returned function finishes it.
+  const hold = async (body: string) => {
+    const req = request({ hostname: '127.0.0.1', port: Number(env.AITERM_STATUS_PORT), path: endpoint, method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': env.AITERM_STATUS_TOKEN ?? '', 'transfer-encoding': 'chunked' } }, res => { res.resume(); });
+    const answered = new Promise<void>(resolve => req.on('response', res => res.on('end', resolve)));
+    await new Promise<void>(resolve => req.write(body.slice(0, 1), () => resolve()));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    return async () => { req.end(body.slice(1)); await answered; };
+  };
+  return { m, session, writes, feed, status, hold, output: (text: string) => output(text), exit: () => { for (const e of exits) e({ exitCode: 0 }); } };
 }
 
 it('multi-line /send arrives as one bracketed paste, then Enter as its own write', async () => {
@@ -132,4 +142,45 @@ it('late hook: /send is refused while a Claude tool call is in flight, since its
   await status({ hook_event_name: 'Stop' });
   await m.send(session.id, 'after the turn');
   expect(writes).toEqual(['\x1b[200~between tools\x1b[201~', '\r', '\x1b[200~after the turn\x1b[201~', '\r']);
+});
+
+it('gate F2: a late Codex turn-complete notify while an approval is still on screen never lets /send press Enter on it', async () => {
+  const { m, session, writes, feed, status } = await agent('codex');
+  await feed('\x1b[?2004h\x1b]0;Working | Context 90% left\x07');
+  await feed('\x1b]9;Approval requested: rm -rf build\x07\x1b]0;[ ! ] Action Required | Context 88% left\x07');
+  await expect.poll(() => m.get(session.id).statusDetail).toBe('permission');
+  // The previous turn's notify arrives late; the approval title is still up.
+  await status({ type: 'agent-turn-complete', 'last-assistant-message': 'Finished the last turn.' });
+  await expect(m.send(session.id, 'next task')).rejects.toThrow('Agent is asking for permission');
+  expect(writes).toEqual([]);
+});
+
+it('gate F1: a Codex approval the mirror parsed is seen even while another status request is still arriving', async () => {
+  const { m, session, writes, feed, output, hold } = await agent('codex');
+  await feed('\x1b[?2004h\x1b]0;Working | Context 90% left\x07');
+  await expect.poll(() => m.get(session.id).status).toBe('running');
+  const finish = await hold(JSON.stringify({ type: 'agent-turn-complete', 'last-assistant-message': 'done' }));
+  output('\x1b]9;Approval requested: rm -rf build\x07\x1b]0;[ ! ] Action Required\x07');
+  const result = m.send(session.id, 'yes go ahead').then(() => 'sent', (error: unknown) => error instanceof Error ? error.message : 'failed');
+  await new Promise(resolve => setTimeout(resolve, 30));
+  await finish();
+  expect(await result).toBe('Agent is asking for permission');
+  expect(writes).toEqual([]);
+});
+
+it('gate F1b: an approval that comes in during the Enter gap is never turned back to running by that Enter', async () => {
+  const { m, session, writes, feed, output, status, hold } = await agent('codex');
+  await feed('\x1b[?2004h\x1b]0;Working | Context 90% left\x07'); await status({ type: 'agent-turn-complete', 'last-assistant-message': 'done' });
+  await expect.poll(() => m.get(session.id).status).toBe('done');
+  SessionManager.sendEnterDelayMs = 200; cleanups.push(async () => { SessionManager.sendEnterDelayMs = 50; });
+  const sending = m.send(session.id, 'go').then(() => 'sent', (error: unknown) => error instanceof Error ? error.message : 'failed');
+  await vi.waitFor(() => expect(writes).toHaveLength(1));
+  // A status request is mid-body while the approval arrives, so its waiting signal queues behind it.
+  const finish = await hold(JSON.stringify({ type: 'agent-turn-complete', 'last-assistant-message': 'done' }));
+  output('\x1b]9;Approval requested: rm -rf build\x07');
+  await new Promise(resolve => setTimeout(resolve, 250));
+  await finish();
+  expect(await sending).toBe('Text pasted but not sent; go inside');
+  await expect.poll(() => m.get(session.id).status).toBe('waiting');
+  expect(writes).toEqual(['\x1b[200~go\x1b[201~']);
 });

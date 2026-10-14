@@ -256,3 +256,56 @@ it('a full redraw asked for while the terminal is blocked happens when it drains
  expect(tty.output).toContain('\x1b[2J');
  press(tty, [5]); await run;
 });
+
+it('gate S1: output a pane printed while in the background never reaches the terminal live after it takes focus', async () => {
+ const { tty, run, conn, infos } = setup();
+ await ready(tty);
+ tty.output = '';
+ conn(1).emit('output', infos[1]?.id, Buffer.from('\x1b]52;c;QkFDS0dST1VORA==\x07\x1b]2;bg title\x07\x07BG_TEXT'));
+ press(tty, [0x1c]);
+ await shows(tty, 'BG_TEXT');
+ expect(tty.output).not.toContain('52;c;QkFDS0dST1VORA==');
+ expect(tty.output).not.toContain('\x07BG');
+ // Output printed after the focus moved is the focused pane's own, and does reach the terminal.
+ conn(1).emit('output', infos[1]?.id, Buffer.from('\x1b]52;c;Rk9DVVNFRA==\x07NOW_FOCUSED'));
+ await shows(tty, 'NOW_FOCUSED');
+ expect(tty.output).toContain('52;c;Rk9DVVNFRA==');
+ press(tty, [5]); await run;
+});
+it('gate S1b: under a flood, nothing from the background backlog runs live after focus moves to that pane', async () => {
+ const { tty, run, conn, infos } = setup();
+ await ready(tty);
+ tty.output = '';
+ conn(1).emit('output', infos[1]?.id, Buffer.from(('x'.repeat(120) + '\r\n').repeat(4000)));
+ conn(1).emit('output', infos[1]?.id, Buffer.from('\x1b]52;c;RkxPT0Q=\x07FLOOD_END'));
+ await new Promise(r => setTimeout(r, 5));
+ press(tty, [0x1c]);
+ await shows(tty, 'FLOOD_END');
+ expect(tty.output).not.toContain('52;c;RkxPT0Q=');
+ press(tty, [5]); await run;
+});
+it('gate S2: wheel and motion over a background pane reach nobody; a press focuses that pane and then reaches its agent', async () => {
+ const { tty, run, conn } = setup(2, { modes:[{ mouseTracking:'any', mouseEncoding:'sgr' }, { mouseTracking:'any', mouseEncoding:'sgr' }] });
+ await ready(tty);
+ press(tty, '\x1b[<65;71;6M\x1b[<35;72;7M');
+ await new Promise(r => setTimeout(r, 20));
+ expect(conn(1).typed()).toBe(''); expect(conn(0).typed()).toBe('');
+ press(tty, '\x1b[<0;71;6M');
+ await vi.waitFor(() => expect(conn(1).typed()).toBe('\x1b[<0;5;5M'));
+ press(tty, [5]); await run;
+});
+it('gate S3: a pane\'s theme query is answered from the probed background, never forwarded for a reply another pane could get', async () => {
+ const { installPassthrough } = await import('../src/client/passthrough.js');
+ for (const [background, answer] of [['rgb:0000/0000/0000', '\x1b[?997;1n'], ['rgb:ffff/ffff/ffff', '\x1b[?997;2n']] as const) {
+  const terminal = new headless.Terminal({ cols:20, rows:5, allowProposedApi:true }), out: string[] = [], replies: string[] = [];
+  installPassthrough(terminal, { kitty:false, background }, data => out.push(data), data => replies.push(data), true);
+  await new Promise<void>(resolve => terminal.write('\x1b[?996n', resolve));
+  expect(out.join('')).not.toContain('996'); expect(replies).toEqual([answer]);
+  terminal.dispose();
+ }
+ const terminal = new headless.Terminal({ cols:20, rows:5, allowProposedApi:true }), out: string[] = [], replies: string[] = [];
+ installPassthrough(terminal, { kitty:false }, data => out.push(data), data => replies.push(data), true);
+ await new Promise<void>(resolve => terminal.write('\x1b[?996n', resolve));
+ expect(out.join('')).not.toContain('996'); expect(replies).toEqual([]);
+ terminal.dispose();
+});
