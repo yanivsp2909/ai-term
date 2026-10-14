@@ -40,7 +40,7 @@ function resize(size: TerminalSize): void {
   // CLI startup inherits its caller's env today. Electron runs the built CLI in Node mode;
   // this flag also follows the CLI's normal detached daemon spawn. No key lookup occurs here.
   terminal = spawn(app.isPackaged?runtime.node:process.execPath, [runtime.entry], {
-    name: 'xterm-256color', cols: size.cols, rows: size.rows, cwd: root,
+    name: 'xterm-256color', cols: size.cols, rows: size.rows, cwd: app.isPackaged ? homedir() : root,
     env: runtimeEnv({ ...process.env, TERM_PROGRAM: 'AI_Term', COLORTERM: 'truecolor', AI_TERM_APP_TOKEN: appToken }),
   });
   const child = terminal;
