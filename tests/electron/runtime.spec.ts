@@ -29,6 +29,7 @@ test('window uses an existing protocol-compatible dev daemon without stopping it
   while(!client){try{client=await Connection.connect(paths,{entry:resolve('dist/cli/index.js'),autoStart:false});}catch(error){if(Date.now()>deadline||daemon.exitCode!==null){const log=await readFile(paths.log,'utf8').catch((e:unknown)=>{if(e instanceof Error&&'code'in e&&e.code==='ENOENT')return '';throw e;});throw new Error('Disposable dev daemon failed: '+startup+log,{cause:error});}await new Promise(r=>setTimeout(r,30));}}
   const original=(await client.request({kind:'sessions.create',engine:'shell',cwd:home,title:'agent before app'})).session;
   application=await electron.launch({...(packaged?{executablePath:packaged}:{}),args:packaged?[]:[resolve('app/out/main/index.js')],env});
+  await application.evaluate(async({app})=>{await app.whenReady();});
   const page=await application.firstWindow();await expect(page.locator('.xterm-accessibility-tree')).toContainText('agent before app');
   expect((await client.request({kind:'hello',protocol:1,version:'test'})).daemonPid).toBe(daemon.pid);
   if(packaged){

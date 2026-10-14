@@ -19,6 +19,7 @@ test.beforeEach(async () => {
   application = await electron.launch({ ...(process.env.AI_TERM_TEST_APP?{executablePath:process.env.AI_TERM_TEST_APP}:{}),args: [...(process.env.AI_TERM_TEST_APP?[]:[resolve('app/out/main/index.js')]), '--disable-background-networking', '--disable-component-update'], env: {
     HOME: home, AI_TERM_HOME: state, AI_TERM_APP_DATA: join(home, 'electron'), PATH: '/usr/bin:/bin', SHELL: '/bin/sh', LANG: 'en_US.UTF-8',
   } });
+  await application.evaluate(async({app})=>{await app.whenReady();});
 });
 // eslint-disable-next-line no-empty-pattern -- Playwright requires fixture destructuring even when none are used.
 test.afterEach(async ({}, info) => {
