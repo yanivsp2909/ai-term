@@ -17,7 +17,7 @@ it('resolves packaged CLI, runtime and notifier inside the bundle',()=>{
  configureCliRuntime('/repo/dist/cli/index.js',processLike);expect(processLike.execPath).toBe(paths.node);
 });
 it('internal Node env refuses caller loader injection and enables Electron Node mode',()=>{
- expect(runtimeEnv({HOME:'/temp',NODE_OPTIONS:'--import=/bad',NODE_PATH:'/bad',ELECTRON_NO_ASAR:'1'})).toEqual({HOME:'/temp',ELECTRON_RUN_AS_NODE:'1'});
+ expect(runtimeEnv({HOME:'/temp',NODE_OPTIONS:'--import=/bad',NODE_PATH:'/bad',ELECTRON_NO_ASAR:'1',NAPI_RS_NATIVE_LIBRARY_PATH:'/outside/binding.node'})).toEqual({HOME:'/temp',ELECTRON_RUN_AS_NODE:'1'});
 });
 it('quoted internal launch paths support the actual app name without accepting shell syntax',()=>{
  const entry='/Applications/AI Term.app/Contents/Resources/app/dist/cli/index.js';
