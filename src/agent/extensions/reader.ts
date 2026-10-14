@@ -78,10 +78,11 @@ export class ExtensionReader {
         if (!info.isFile()) { note(logical, 'not a regular file'); return; }
         if (kind === 'skill' ? basename(logical) !== 'SKILL.md' : !logical.endsWith('.md')) return;
         if (info.size > EXTENSION_FILE_BYTES || bytes + info.size > EXTENSION_TOTAL_BYTES) { note(logical, 'size limit'); return; }
-        const buffer = Buffer.alloc(info.size + 1), count = readSync(fd, buffer, 0, buffer.length, 0);
-        if (count > info.size || realpathSync(logical) !== real) throw new Error('changed file');
-        const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, count));
+        const buffer = Buffer.alloc(Math.min(info.size + 1, EXTENSION_TOTAL_BYTES - bytes)), count = readSync(fd, buffer, 0, buffer.length, 0);
+        // Rejected contents still consumed IO and memory. Charge them before decoding or parsing can throw.
         bytes += count;
+        if (count !== info.size || fstatSync(fd).size !== info.size || realpathSync(logical) !== real) throw new Error('changed file');
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, count));
         if (text.includes('\0')) throw new Error('binary file');
         const parsed = parseExtension(text, kind, kind === 'skill' ? basename(resolve(logical, '..')) : basename(logical, '.md'));
         const nameKey = kind + ':' + parsed.name;
