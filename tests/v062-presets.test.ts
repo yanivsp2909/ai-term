@@ -156,5 +156,5 @@ it('MEDIUM review: Esc after a preset puts the next agent\'s setup back as it wa
   } finally { await home.stop(); }
 });
 it('LOW review: a settings file that would pass 16 KiB says so', () => {
-  expect(() => validateSettingsPatch({ presets: Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`p${i}`, preset({ firstMessage: 'x'.repeat(4000) })])) }, true)).toThrow('Settings would pass 16 KiB');
+  expect(() => validateSettingsPatch({ presets: Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`p${i}`, preset({ firstMessage: 'x'.repeat(4000) })])) }, true)).toThrow('settings would pass 16 KiB');
 });
