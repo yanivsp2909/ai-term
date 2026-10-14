@@ -100,6 +100,24 @@ describe('SettingsStore', () => {
     expect(await store.set({ theme: 'slate' })).toEqual({ theme: 'slate' });
     expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ theme: 'slate' });
   });
+  it('rejects toggles that overflow UTF-8 settings bytes before replacing readable settings', async () => {
+    const root = await temp(), store = new SettingsStore(root);
+    const before = await store.set({ defaultCwd: '/' + '界'.repeat(300), priceOverrides: Object.fromEntries(Array.from({ length: 100 }, (_, n) => ['model-' + n, { input: 1, output: 2 }])) });
+    const extensions = Object.fromEntries(Array.from({ length: 500 }, (_, n) => [n.toString(16).padStart(16, '0'), false]));
+    const next = { ...before, extensions };
+    expect(JSON.stringify(next).length).toBeLessThan(16384);
+    expect(Buffer.byteLength(JSON.stringify(next) + '\n')).toBeGreaterThan(16384);
+    await expect(store.update(async settings => ({ ...settings, extensions }))).rejects.toThrow('Invalid settings patch');
+    expect(await store.get()).toEqual(before);
+  });
+  it('includes the atomic-write newline when checking settings at the size boundary', async () => {
+    const root = await temp(), store = new SettingsStore(root);
+    const base = { theme: 'graphite', defaultCwd: '/' };
+    const exact = '/' + 'x'.repeat(16384 - Buffer.byteLength(JSON.stringify(base)));
+    expect(Buffer.byteLength(JSON.stringify({ ...base, defaultCwd: exact }))).toBe(16384);
+    await expect(store.set({ defaultCwd: exact })).rejects.toThrow('Invalid settings patch');
+    expect(await store.get()).toEqual({ theme: 'graphite' });
+  });
 });
 it('separate stores serialize patches and key metadata updates for the same file',async()=>{
  const root=await mkdtemp('/tmp/ai-settings-shared-');try{
