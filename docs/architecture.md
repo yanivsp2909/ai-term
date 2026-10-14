@@ -621,7 +621,7 @@ The preload (`app/preload/index.ts`, bundled as CommonJS for Electron's sandbox)
 | `onOutput(callback)` | Main → renderer; PTY text; returns unsubscribe |
 | `openUrl(url)` | Renderer → main → `shell.openExternal`; explicit http/https, no credentials/controls, at most 8192 characters |
 | `copy(text)` | Renderer → main → clipboard; string, at most 5 MiB UTF-8; waits for Electron's async write |
-| `paste()` | Renderer → main → renderer; zero arguments, awaits clipboard read, leaves 12 bytes under the 64 KiB limit for bracketed paste wrappers; xterm handles the paste mode |
+| `paste()` | Renderer → main → renderer; zero arguments, awaits clipboard read, leaves 12 bytes under the 64 KiB limit for bracketed paste wrappers; actual ESC bytes are refused so a clipboard paste-end cannot become an approval; xterm handles the paste mode |
 | `onTheme(callback)` | Main → renderer; only light/dark; registration requests current nativeTheme, then updates; returns unsubscribe |
 
 Main rejects unknown types, unexpected argument counts, extra size keys, and senders other than this window's main frame before acting. It logs fixed failures through the existing Logger and shows input/resize failures in the terminal, clipboard/link failures in visible error chrome. App logs are in Electron userData (`AI_TERM_APP_DATA` redirects it for tests), never contain raw input/output, URLs or environments. PTY env is inherited from the launcher, matching current CLI inheritance, plus terminal identification and Electron Node mode. No login file or Keychain read occurs in the wrapper. Finder/Dock login-environment reconstruction and an installable app bundle are not part of the delivered build.

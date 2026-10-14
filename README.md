@@ -35,7 +35,7 @@ The macOS desktop terminal lives in `app/`. After `npm install`, run `npm exec -
 | Desktop key | Action |
 |---|---|
 | ⌘C | Copy xterm's selection; with none selected, does nothing (Ctrl+C still goes to `ai`) |
-| ⌘V | Paste clipboard text through xterm's bracketed paste; text over 64 KiB is refused visibly |
+| ⌘V | Paste clipboard text through xterm's bracketed paste; text over 64 KiB or containing actual ESC bytes is refused visibly |
 | ⌘E | Send Ctrl+E: home from an attached session or split |
 | ⌘K / ⌘F | Search terminal scrollback; ⏎ next, ⇧⏎ previous, Esc closes |
 | ⌘+ / ⌘− / ⌘0 | Increase / decrease / reset font size (8–32 px; default 13 px) |
