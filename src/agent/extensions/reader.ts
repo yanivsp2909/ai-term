@@ -66,9 +66,11 @@ export class ExtensionReader {
       if (visited.has(identity)) return;
       let fd: number | undefined;
       try {
-        const directory = statSync(real).isDirectory();
+        const before = statSync(real), directory = before.isDirectory();
         if (deniedExtensionPath(this.home,logical,directory) || deniedExtensionPath(this.home,real,directory)) {note(logical,'denied target');return;}
+        if (before.isFile() && before.nlink !== 1) { note(logical,'hard links are not allowed'); return; }
         fd = secureOpen(real, directory); const info = fstatSync(fd);
+        if (info.isFile() && info.nlink !== 1) { note(logical,'hard links are not allowed'); return; }
         if (realpathSync(logical) !== real || statSync(real).ino !== info.ino || statSync(real).dev !== info.dev) throw new Error('changed path');
         visited.add(identity);
         if (info.isDirectory()) {
@@ -84,7 +86,8 @@ export class ExtensionReader {
         const buffer = Buffer.alloc(Math.min(info.size + 1, EXTENSION_TOTAL_BYTES - bytes)), count = readSync(fd, buffer, 0, buffer.length, 0);
         // Rejected contents still consumed IO and memory. Charge them before decoding or parsing can throw.
         bytes += count;
-        if (count !== info.size || fstatSync(fd).size !== info.size || realpathSync(logical) !== real) throw new Error('changed file');
+        const after = fstatSync(fd);
+        if (count !== info.size || after.size !== info.size || after.nlink !== 1 || realpathSync(logical) !== real) throw new Error('changed file');
         const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, count));
         if (text.includes('\0')) throw new Error('binary file');
         const parsed = parseExtension(text, kind, kind === 'skill' ? basename(resolve(logical, '..')) : basename(logical, '.md'));
