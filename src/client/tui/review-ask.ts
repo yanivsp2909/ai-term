@@ -17,7 +17,7 @@ export function reviewLines(plan: ReviewPlan, choice: number): Line[] {
     { text: `estimated ${compactTokens(plan.inputTokens.low)}–${compactTokens(plan.inputTokens.high)} in · ${compactTokens(plan.outputTokens.low)}–${compactTokens(plan.outputTokens.high)} out`, tone: 'ink-3' },
     ...plan.models.slice(start, start + WINDOW).map((m, i) => ({ text: `${start + i === choice ? '›' : ' '} ${m.model} · key ····${m.last4} · ${money(m.priceUsd.low)}–${money(m.priceUsd.high)}`, tone: start + i === choice ? 'ink' as const : 'ink-2' as const })),
     ...(plan.models.length > WINDOW ? [{ text: `${plan.models.length} models · ↑↓ for more`, tone: 'ink-3' as const }] : []),
-    { text: '↑↓ picks · ⏎ reviews · Esc cancels', tone: 'ink-3' },
+    { text: '↑↓ choose · ⏎ reviews · Esc cancels', tone: 'ink-3' },
   ];
 }
 export class ReviewAsk {

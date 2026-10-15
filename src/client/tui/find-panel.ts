@@ -51,7 +51,7 @@ export class FindPanel {
       grid.text(at, top, match.text.slice(match.start + match.length), theme.colors['ink-2'], bg, false, x + 3 + width - at);
     });
     if (this.more) grid.text(x + 3, y + h - 3, `showing the first ${matches?.length ?? MAX_FIND_RESULTS} · type a longer search to narrow it`, theme.colors['ink-3'], surface, false, width);
-    grid.text(x + 3, y + h - 2, '↑↓ select · ⏎ show in preview · Esc close', theme.colors['ink-3'], surface, false, width);
+    grid.text(x + 3, y + h - 2, '↑↓ choose · ⏎ shows it in the preview · Esc closes', theme.colors['ink-3'], surface, false, width);
     return grid.cells;
   }
 }

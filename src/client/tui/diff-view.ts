@@ -56,7 +56,7 @@ export class DiffView {
         grid.text(bodyX, y + 1 + i, line, fg, bg, false, bodyW);
       });
     }
-    grid.text(x + 2, y + h - 2, this.actions.merge ? '↑↓ files · PgUp/PgDn scroll · m merge · x discard · Esc later' : '↑↓ files · PgUp/PgDn scroll · Esc close', t['ink-3'], surface, false, w - 4);
+    grid.text(x + 2, y + h - 2, this.actions.merge ? '↑↓ files · PgUp/PgDn scroll · m merges · x discards · Esc closes' : '↑↓ files · PgUp/PgDn scroll · Esc closes', t['ink-3'], surface, false, w - 4);
     return grid.cells;
   }
 }

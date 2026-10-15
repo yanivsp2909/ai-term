@@ -128,7 +128,7 @@ it('/worktrees lists branch, folder, loss and agent; Enter opens the same questi
  try {
   type(tty, '/worktrees'); press(tty, '\r');
   await shows(tty, 'Worktrees 4');
-  for (const text of ['ai/agent', '/tmp/trees/agent', '✓ nothing would be lost', 'agent agent · ■ exited', 'ai/old', '! 3 changed files · 2 untracked · 4 commits not in main', '/tmp/trees/stray', "✗ Not in AI Term's record", '◐ running · Stop the agent first', '↑↓ select · ⏎ keep or delete · Esc close'])
+  for (const text of ['ai/agent', '/tmp/trees/agent', '✓ nothing would be lost', 'agent agent · ■ exited', 'ai/old', '! 3 changed files · 2 untracked · 4 commits not in main', '/tmp/trees/stray', "✗ Not in AI Term's record", '◐ running · Stop the agent first', '↑↓ choose · ⏎ keeps or deletes · Esc closes'])
    expect(await screen(tty)).toContain(text);
   press(tty, '\x1b[B'); press(tty, '\r');
   await vi.waitFor(() => expect(client.requests).toContainEqual({ kind:'worktrees.check', path:'/tmp/trees/old' }));

@@ -58,7 +58,7 @@ export class WorktreesPanel {
       grid.text(x + 3, top + 1, state.text, theme.colors[state.tone], bg, false, width);
     });
     if (this.note) grid.text(x + 3, y + h - 3, this.note, theme.colors['ink-2'], surface, false, width);
-    grid.text(x + 3, y + h - 2, '↑↓ select · ⏎ keep or delete · Esc close', theme.colors['ink-3'], surface, false, width);
+    grid.text(x + 3, y + h - 2, '↑↓ choose · ⏎ keeps or deletes · Esc closes', theme.colors['ink-3'], surface, false, width);
     return this.question ? this.question.draw(grid.cells, theme) : grid.cells;
   }
 }

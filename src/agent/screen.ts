@@ -65,7 +65,7 @@ export class Screen {
     const last = index === pages.length - 1, page = pages.length > 1 ? ` · page ${index + 1} of ${pages.length}` : '';
     this.line(this.paint('status-waiting', `● allow ${title}?${page}`, true));
     for (const row of pages[index] ?? []) this.line(this.paint(row.startsWith('- ') ? 'status-error' : row.startsWith('+ ') ? 'status-done' : 'ink-2', `  ${row}`));
-    this.line(this.paint('ink-3', last ? job ? '  ⏎ run job · Esc cancel' : mcp?'  y allow · a allow this tool for this session · n deny · Esc deny and stop':'  y allow · n deny · Esc deny and stop' : job ? '  space shows more · Esc cancel · ⏎ works on the last page' : '  space shows more · n deny · Esc deny and stop · y works on the last page'));
+    this.line(this.paint('ink-3', last ? job ? '  ⏎ runs the job · Esc cancels' : mcp?'  y allows · a allows this tool for this session · n denies · Esc denies and stops':'  y allows · n denies · Esc denies and stops' : job ? '  space shows more · Esc cancels · ⏎ works on the last page' : '  space shows more · n denies · Esc denies and stops · y works on the last page'));
   }
   answered(allowed: boolean): void { this.line(allowed ? this.paint('ink-3', '  ✓ allowed') : this.paint('status-waiting', '  ✗ denied')); }
   note(text: string, tone: 'info' | 'warn' | 'error' = 'info'): void { this.line(tone === 'error' ? this.paint('status-error', `✗ ${plain(text)}`) : tone === 'warn' ? this.paint('status-waiting', `● ${plain(text)}`) : this.paint('ink-3', `· ${plain(text)}`)); }

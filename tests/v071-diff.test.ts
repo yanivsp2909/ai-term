@@ -103,7 +103,7 @@ it('the popup lists files left and the unified diff right; ↑↓ files, PgUp/Pg
   const view = new DiffView(validateAgentDiff(sample), { changed: () => calls.push('changed'), close: () => calls.push('close'), merge: () => calls.push('merge'), discard: () => calls.push('discard') });
   const text = () => plainText(view.draw(new Grid(120, 40, theme).cells, theme));
   expect(text()).toContain('Diff fixer · ai/fixer vs main @ abc1234 · 2 files +3 −1');
-  expect(text()).toContain('› M src/a.ts +2 −1'); expect(text()).toContain('+TWO'); expect(text()).toContain('m merge · x discard · Esc later');
+  expect(text()).toContain('› M src/a.ts +2 −1'); expect(text()).toContain('+TWO'); expect(text()).toContain('m merges · x discards · Esc closes');
   view.key('down'); expect(text()).toContain('› U new.md +1'); expect(text()).toContain('+# hi'); expect(text()).not.toContain('+TWO');
   view.key('m'); view.key('x'); view.key('escape');
   expect(calls).toEqual(expect.arrayContaining(['merge', 'discard', 'close']));

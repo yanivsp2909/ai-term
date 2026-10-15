@@ -24,7 +24,7 @@ export class TextPanel {
     this.offset = Math.min(this.offset, Math.max(0, rows.length - this.page));
     grid.box(x, y, w, h, this.title, surface);
     rows.slice(this.offset, this.offset + this.page).forEach((row, i) => grid.text(x + 3, y + 1 + i, row.text, theme.colors[row.tone], surface, false, width));
-    grid.text(x + 3, y + h - 2, rows.length > this.page ? '↑↓ scroll · PgUp/PgDn page · Esc close' : 'Esc close', theme.colors['ink-3'], surface, false, width);
+    grid.text(x + 3, y + h - 2, rows.length > this.page ? '↑↓ scroll · PgUp/PgDn page · Esc closes' : 'Esc closes', theme.colors['ink-3'], surface, false, width);
     return grid.cells;
   }
 }

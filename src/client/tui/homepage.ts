@@ -384,7 +384,7 @@ export class Homepage {
         const id = this.renameId, title = this.field.text;
         this.renameId = null; this.field.text = ''; this.enqueue(() => this.operation({ kind: 'sessions.rename', sessionId: id, title })); return;
       }
-      this.field.key(event.key); this.showNote('rename: type a name, ⏎ save · Esc cancel'); return;
+      this.field.key(event.key); this.showNote('rename: type a name · ⏎ saves · Esc cancels'); return;
     }
     if(!this.field.hasPastes&&this.field.text.startsWith('/')){
       const choices=filteredCommands(this.field.text);
@@ -418,7 +418,7 @@ export class Homepage {
       case 'page-up': case 'page-down': this.currentPreview()?.scroll((action.kind === 'page-up' ? -1 : 1) * homepageLayout(this.size().cols, this.size().rows).terminal.h); break;
       case 'end': this.currentPreview()?.follow(); break;
       case 'stop': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.confirmId = session.id; this.showNote(`stop ${session.title}? y/n`); } break; }
-      case 'rename': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.renameId = session.id; this.field.text = session.title; this.showNote('rename: type a name, ⏎ save · Esc cancel'); } break; }
+      case 'rename': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) { this.renameId = session.id; this.field.text = session.title; this.showNote('rename: type a name · ⏎ saves · Esc cancels'); } break; }
       case 'copy': {const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.copySelected(selected));break;}
       case 'remove': { const session = this.sessions.find(s => s.id === this.selectedId); if (session && ['exited', 'error'].includes(session.status)) this.enqueue(() => this.removeSession(session.id)); break; }
       case 'mark': this.mark(); break;

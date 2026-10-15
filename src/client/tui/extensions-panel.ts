@@ -69,7 +69,7 @@ export class ExtensionsPanel {
       grid.text(x+3,top+1,item.description||'No description',theme.colors['ink-2'],bg,false,width);
     });
     if(this.note)grid.text(x+3,y+h-3,this.note,theme.colors['ink-3'],surface,false,width);
-    grid.text(x+3,y+h-2,'←→ tab · ↑↓ item · Space on/off · ⏎ full file · Esc close',theme.colors['ink-3'],surface,false,width);
+    grid.text(x+3,y+h-2,'←→ tab · ↑↓ item · Space on/off · ⏎ full file · Esc closes',theme.colors['ink-3'],surface,false,width);
     return this.preview?this.preview.draw(grid.cells,theme):grid.cells;
   }
   // The agent starts from a blank alternate screen; the homepage overlays its existing frame.
