@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { isFsError } from '../shared/paths.js';
 import { sandboxedArgv, type BashOptions } from './bash.js';
 import { killGroup } from '../shared/kill-tree.js';
+import { LSP_LANGUAGES, type LspLanguage } from '../shared/lsp-languages.js';
 
 // v0.9.3 LSP diagnostics for AI Term's agent (D55, off by default: they add tokens to every write or edit). After a write
 // or edit the agent gets that file's errors from a language server, as a short tool result. Only a server on PATH outside
@@ -13,16 +14,10 @@ import { killGroup } from '../shared/kill-tree.js';
 // env (no keys); without a sandbox no server starts, said once. One server per language, stopped when the agent exits or
 // after 10 idle minutes. The client is a minimal LSP over stdio: initialize, didOpen/didChange, publishDiagnostics.
 export const LSP_IDLE_MS = 10 * 60_000, LSP_MAX_LINES = 40, LSP_WAIT_MS = 8000, LSP_SETTLE_MS = 300;
-export interface Language { id: string; server: string; args: string[]; languageId: (ext: string) => string }
-const LANGUAGES: readonly (Language & { exts: readonly string[] })[] = [
-  { id: 'typescript', server: 'typescript-language-server', args: ['--stdio'], exts: ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'], languageId: ext => ext.includes('ts') ? (ext === '.tsx' ? 'typescriptreact' : 'typescript') : ext === '.jsx' ? 'javascriptreact' : 'javascript' },
-  { id: 'python', server: 'pyright-langserver', args: ['--stdio'], exts: ['.py', '.pyi'], languageId: () => 'python' },
-  { id: 'go', server: 'gopls', args: [], exts: ['.go'], languageId: () => 'go' },
-  { id: 'rust', server: 'rust-analyzer', args: [], exts: ['.rs'], languageId: () => 'rust' },
-];
+export type Language = LspLanguage;
 export function languageOf(path: string): Language | null {
   const ext = extname(path).toLowerCase();
-  return LANGUAGES.find(language => language.exts.includes(ext)) ?? null;
+  return LSP_LANGUAGES.find(language => language.exts.includes(ext)) ?? null;
 }
 const inside = (path: string, root: string) => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
 // The first executable `name` in PATH's absolute folders that isn't in the worktree or a node_modules/.bin, by its real
@@ -166,7 +161,9 @@ export class LspPool {
     return entry;
   }
   private async start(language: Language): Promise<Server | string> {
-    const program = await findServer(language.server, this.options.env.PATH ?? '', this.options.root); if (!program) return '';
+    // Not installed: said once for the language, with the command that installs it (not quietly nothing).
+    const program = await findServer(language.server, this.options.env.PATH ?? '', this.options.root);
+    if (!program) return `diagnostics for ${language.label} need ${language.server}, and it isn't installed · ${language.install} installs it`;
     // bash's env (no keys) and bash's sandbox; without a sandbox nothing starts.
     const argv = await sandboxedArgv([program, ...language.args], { cwd: this.options.root, env: this.options.env, sandbox: { ...this.options.sandbox, require: false } });
     if (argv.unsandboxed) { if (this.told) return ''; this.told = true; return `diagnostics are off for this agent: language servers run only in AI Term's sandbox, and ${argv.unsandboxed}`; }
