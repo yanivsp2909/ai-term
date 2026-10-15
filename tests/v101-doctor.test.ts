@@ -65,3 +65,21 @@ it('the full report runs without a daemon and adds the four lines', async () => 
     expect(lines).toContain("Credential store: not checked · the daemon isn't running; start ai, then run ai doctor again");
   } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
 });
+
+// Part B review (typescript-reviewer, fresh context): each failed before its fix.
+it('HIGH (review): a daemon that refuses keys.health (an older one) or dies costs one line, not the report', async () => {
+  const lines = await extraLines('/x', { ...base, keychain: async () => { throw new Error('Unknown request'); } });
+  expect(lines).toEqual(['Sandbox: sandbox-exec · agent bash, tests and dev servers run in it', "Credential store: not checked · the daemon didn't answer (an older one? ai daemon stop, then ai)", 'gh: /opt/homebrew/bin/gh; logged in', 'Notifier: built']);
+});
+
+it('MEDIUM (review): gh auth status that times out (offline) reads as unavailable, not as logged out', async () => {
+  expect((await extraLines('/x', { ...base, ghStatus: async () => ({ code: null, output: '' }) }))[2]).toBe('gh: /opt/homebrew/bin/gh; status unavailable');
+});
+
+it('MEDIUM (review): the keychain probe waits its turn behind other keychain calls', async () => {
+  let inFlight = 0, overlapped = false;
+  const read = async () => { inFlight++; if (inFlight > 1) overlapped = true; await new Promise(resolve => setTimeout(resolve, 30)); inFlight--; return null; };
+  const store = new KeyStore(await mkdtemp(join(tmpdir(), 'ai-keys-health-')), { vault: { read, write: async () => {}, remove: async () => {} } });
+  await Promise.all([store.health(), store.health(), store.health()]);
+  expect(overlapped).toBe(false);
+});
