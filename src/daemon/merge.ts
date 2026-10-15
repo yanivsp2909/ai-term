@@ -20,7 +20,7 @@ export const MERGE_ERRORS = ['Your checkout has uncommitted changes; commit or s
   'Secret scan found possible secrets; type override to go on anyway', 'Merge conflict; it was undone and your checkout is as it was', 'Git refused the merge; your checkout is as it was',
   'Merge unavailable; git could not read the repository', 'This repo has no origin remote', 'gh is missing or not logged in', 'Push failed; nothing was opened',
   'gh pr create failed; the branch is pushed', 'This agent has no worktree branch to merge', 'Merge conflict; undoing it failed: run git merge --abort in your checkout',
-  "Your checkout's git folder isn't a plain .git folder; merge it yourself"] as const;
+  "Your checkout's git folder isn't a plain .git folder; merge it yourself", 'This remote uses the git:// protocol; push it yourself'] as const;
 export const CHECKOUT_NOT_ON_BASE = /^Your checkout is not on [A-Za-z0-9._/-]{1,200}; switch to it yourself first$/;
 // The user's own git: where their global config is, and the environment git, ssh and gh need (PATH, HOME, the ssh
 // agent socket). Never a key: these processes run as you, with what you set up yourself.
@@ -111,12 +111,19 @@ export async function merge(t: MergeTarget, fingerprint: string, override: boole
 }
 
 // ---- /pr ----
-// Your global config's own credential helpers and ssh command, so the repo's config (which an agent can write) can't
-// put its own command in their place for this push; the ext transport is off and receive-pack pinned on the command.
-async function pushGuards(user: UserGit): Promise<string[]> {
-  const read = (key: string) => runGit('/', ['config', '--file', user.globalConfig, '--get-all', key]).then(out => out.split('\n').filter(Boolean), () => [] as string[]);
-  const helpers = await read('credential.helper'), ssh = (await read('core.sshCommand')).at(-1) ?? 'ssh';
-  return ['-c', `core.sshCommand=${ssh}`, '-c', 'credential.helper=', ...helpers.flatMap(h => ['-c', `credential.helper=${h}`]), '-c', 'protocol.ext.allow=never', '-c', 'core.askPass=/usr/bin/false'];
+// Your own config's credential settings (system, then global, includes followed, URL-scoped ones too: `gh auth
+// setup-git` writes those) and ssh command, re-applied after an empty helper resets the list, so the repo's config
+// (which an agent can write) can't put its own command in their place for this push. Also off: the ext transport,
+// askpass, core.gitProxy, submodule pushes (they'd run with each submodule's config) and signed pushes (gpg.program).
+async function ownCredential(args: string[]): Promise<string[]> {
+  const out = await runGit('/', ['config', '--includes', ...args, '--get-regexp', '^credential\\.'], 'Git check failed', { env: { GIT_CONFIG_NOSYSTEM: '0' } }).catch(() => '');
+  return out.split('\n').filter(Boolean).map(line => { const at = line.indexOf(' '); return at < 0 ? `${line}=true` : `${line.slice(0, at)}=${line.slice(at + 1)}`; });
+}
+export async function pushGuardArgs(user: UserGit): Promise<string[]> {
+  const credentials = [...await ownCredential(['--system']), ...await ownCredential(['--file', user.globalConfig])];
+  const ssh = (await runGit('/', ['config', '--file', user.globalConfig, '--get-all', 'core.sshCommand']).then(out => out.split('\n').filter(Boolean), () => [] as string[])).at(-1) ?? 'ssh';
+  return ['-c', `core.sshCommand=${ssh}`, '-c', 'credential.helper=', ...credentials.flatMap(pair => ['-c', pair]), '-c', 'protocol.ext.allow=never', '-c', 'core.askPass=/usr/bin/false',
+    '-c', 'core.gitProxy=', '-c', 'push.recurseSubmodules=no', '-c', 'push.gpgSign=false'];
 }
 async function ghStatus(user: UserGit): Promise<{ state: PrPlan['gh']; path: string | null }> {
   const path = await resolveExecutable('gh', user.env.PATH ?? '');
@@ -129,6 +136,8 @@ async function prState(t: MergeTarget, user: UserGit): Promise<{ plan: PrPlan; g
   // Read from your checkout with your global config, so the URL shown is where the push really goes (insteadOf included).
   const remote = (await userRun(t.repo, [`--git-dir=${join(t.repo, '.git')}`, 'remote', 'get-url', '--push', '--', 'origin'], user).catch(() => '')).trim();
   if (!remote) throw new MergeError('This repo has no origin remote');
+  // git:// runs core.gitProxy (a command the repo config could name) and carries no authentication: not pushed by AI Term.
+  if (/^git:\/\//i.test(remote)) throw new MergeError('This remote uses the git:// protocol; push it yourself');
   const baseCommit = await commitOf(t.repo, `refs/heads/${t.base}`), branchCommit = await commitOf(t.repo, `refs/heads/${t.branch}`), gh = await ghStatus(user), found = await scan(t, baseCommit, branchCommit);
   const plan: PrPlan = { title: t.title, branch: t.branch, base: t.base, remote, gh: gh.state, commands: [`cd ${t.worktree}`, `git push -u -- origin ${t.branch}`, `gh pr create --head ${t.branch} --base ${t.base} --fill`], hits: found.hits, moreHits: found.more, ...(t.scan ? {} : { scanOff: true as const }), fingerprint: '' };
   plan.fingerprint = sha('pr', branchCommit, remote, found, t.scan, gh.state);
@@ -145,7 +154,7 @@ export async function openPr(t: MergeTarget, fingerprint: string, override: bool
   // git keeps the FIRST receivepack value it reads (the repo's), so -c can't pin it; a local remote runs it here, hooks
   // off; a remote host is sent the standard command (GitHub's ssh accepts only that).
   const local = /^(?:\/|\.|file:)/.test(plan.remote) || !/[:@]/.test(plan.remote), receivePack = local ? 'git -c core.hooksPath=/dev/null receive-pack' : 'git-receive-pack';
-  try { await userRun(t.repo, [`--git-dir=${join(t.repo, '.git')}`, ...await pushGuards(user), 'push', `--receive-pack=${receivePack}`, '-u', '--', 'origin', `refs/heads/${t.branch}:refs/heads/${t.branch}`], user); }
+  try { await userRun(t.repo, [`--git-dir=${join(t.repo, '.git')}`, ...await pushGuardArgs(user), 'push', `--receive-pack=${receivePack}`, '--no-recurse-submodules', '--no-signed', '--no-follow-tags', '-u', '--', 'origin', `refs/heads/${t.branch}:refs/heads/${t.branch}`], user); }
   catch (error) { throw new MergeError('Push failed; nothing was opened', { cause: error }); }
   // gh runs in your checkout too, its own git calls pinned to that .git folder and work tree, fsmonitor, hooks and askpass off.
   const out = await new Promise<string | null>(resolve => execFile(gh, ['pr', 'create', '--head', t.branch, '--base', t.base, '--fill'], { cwd: t.repo, env: { ...user.env, ...PINNED_ENV, GIT_DIR: join(t.repo, '.git'), GIT_WORK_TREE: t.repo }, timeout: 60_000, maxBuffer: 1024 * 1024 }, (error, stdout) => resolve(error ? null : stdout)));

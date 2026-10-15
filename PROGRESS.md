@@ -2,8 +2,51 @@
 
 ## Checkpoint
 Last commit: (see git log; this run started at 22669aa)
-Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1 done · D v0.7.2 done · E v0.7.3, F v0.7.4 in order (each section below says done or blocked).
+Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1 done · D v0.7.2 done · E v0.7.3 done · F v0.7.4 in order (each section below says done or blocked).
 Branch: main, pushed after each part. Started clean at 22669aa after `git pull --ff-only` (already up to date). No other agent worked in this repo.
+
+## Part E: v0.7.3 /merge, /pr, secret scan (D55, scan on) — done
+Commits: see `git log d7a5897..` (RED test commits precede each fix): GREEN 747e37e, review fixes 1e79abd and the fix-review commits after it, plus this handover.
+
+What works:
+- **Secret scan** (`/settings` v, on): before a merge or PR, the lines the branch adds since it forked from the base are scanned (redaction patterns + a high-entropy check for quoted or assigned random-looking values; lockfiles, hashes, integrity strings, paths and test fixtures skipped). A hit shows `file:line · kind · N characters hidden`, never the value, and blocks until you type `override` and ⏎ (once; a paste never counts).
+- **/merge [agent]** (and `m` in the diff popup): merges `ai/<slug>` into its base in **your** checkout only when it is on that base and has no tracked changes; the popup shows the exact commands (`cd <checkout>`, `git merge --no-ff --no-edit --no-gpg-sign -- ai/<slug>`), the commit count and the scan; `y` runs. A conflict is aborted at once; then `/merge <agent> rebase` starts an agent of the same engine, model and account in that worktree (once the first one stopped) to rebase it. Repos whose config or attributes name a filter or merge driver (LFS included) are refused: you merge them yourself. Never checkout, reset, stash, rebase or force; no other branch.
+- **/pr [agent]**: shows `git push -u -- origin refs/heads/ai/<slug>:refs/heads/ai/<slug>` (and where origin really points) and `gh pr create --head ai/<slug> --base <base> --fill`; `y` runs them from your checkout with your own git credentials and gh login (AI Term never reads gh's token). No `gh` or not logged in: one line.
+
+Prompt vs code:
+- "run `gh pr create` in the worktree": it runs in your checkout (same repository, its own `.git`), because the worktree's `.git` file is the agent's to rewrite (security review HIGH); the branch and base are named explicitly.
+- "`git merge --no-ff -- ai/<slug>`": plus `--no-edit` (no editor can open) and `--no-gpg-sign` (the repo config, writable by the agent, could otherwise name the signing program); both shown in the popup.
+
+Findings (fresh typescript-reviewer and security-reviewer on d7a5897..747e37e; a security fix review on 1e79abd):
+- **HIGH (security):** the push and gh ran with the worktree as cwd, so the agent's `.git` file chose the repository; the repo config's `core.askPass` could run during a push. Fixed: from your checkout's `.git`, explicit refspec, askpass/fsmonitor/hooks pinned off through environment config.
+- **HIGH (TS + security):** the scanner treated an added line starting with `++ ` as a file header (a secret could hide behind it) and kept a tab in names with spaces (the plan then failed validation, no popup, no override). Fixed: hunk counts decide; git's quoting undone.
+- **MEDIUM:** `core.worktree` in the shared config redirected the merge to another folder (now `--git-dir/--work-tree` pinned); drivers added between plan and merge (now re-checked last); a failed abort read as an unrelated error; gh's git calls used the repo config unguarded; entropy false positives; the rebase agent used the homepage's current engine and account (now the original agent's, and only once it stopped).
+- **LOW:** a popup opened while a plan was computed got replaced; `/merge rebase` needed a name; the hit count over 100 was undercounted; causes of push and gh failures weren't logged (now by class/code).
+- **Fix review (HIGH, my own first fix):** resetting the credential helper list dropped URL-scoped helpers (`gh auth setup-git`) and the system keychain helper, so HTTPS pushes failed; now every `credential.*` setting of your system and global config (includes followed) is re-applied. Also from it: `core.gitProxy` (git:// origins now refused), submodule pushes with their own config (`--no-recurse-submodules`), signed pushes running `gpg.program` (`--no-signed`), tags the plan didn't show (`--no-follow-tags`), and lockfiles skipping every pattern (now only the entropy check).
+- Not fixed, with reasons:
+  - A background process the agent left running could still add a driver or attributes between the last check and `git merge` (a few milliseconds; agents themselves are refused while they run or ask; D35).
+  - gh's own behaviour beyond its git calls (API requests with your login) is gh's; AI Term passes it argv only.
+  - The entropy check will still flag some random-looking test data outside `fixtures/`-style folders; one typed `override` passes it.
+  - gh picks the base repository from the remotes' fetch URLs and `remote.origin.gh-resolved` in the repo config, which the agent can write; a wrong base most likely fails (the branch isn't there), and the plan shows the push URL. `http.proxy`/`http.sslVerify` in the repo config are not pinned. A per-repo `core.sshCommand` (deploy keys) is ignored on purpose; such repos push themselves.
+  - The entropy check skips values with a slash and no `+`/`=`, so a slash-bearing secret without a secret-looking name can pass; hex-only tokens too.
+
+Checks (at the last Part E fix):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0
+npm run build       ok
+npm run app:build   ok
+npm run app:test    9 passed (37.4s)
+npm test (1)        Test Files 219 passed · Tests 1429 passed | 2 skipped · 25.17s
+npm test (2)        Test Files 219 passed · Tests 1429 passed | 2 skipped · 24.65s
+```
+
+New dependencies: none.
+
+Concepts introduced:
+- **`--git-dir` / `--work-tree`:** git normally finds its repository and files from the current folder and config; naming both outright means a config setting (`core.worktree`) or a `.git` file can't send the command somewhere else (`checkout()` in `src/daemon/merge.ts`).
+- **Environment config (`GIT_CONFIG_COUNT`):** settings passed this way rank above every config file, so a repository can't turn back on what AI Term turned off for one command (`PINNED_ENV`).
+- **Shannon entropy:** a measure of how unpredictable a string's characters are; random keys score high, words and identifiers low, which lets the scan flag secrets it has no pattern for (`shannonEntropy` in `src/shared/secret-scan.ts`).
 
 ## Part D: v0.7.2 checkpoints + /undo, /redo (D55, on) — done
 Commits: 73f74ba (RED) → 3cad3a4 (GREEN) → 7550ffd (review RED) → 88300d5 → 67e9d08 (fix-review RED) → its fix, plus this handover.

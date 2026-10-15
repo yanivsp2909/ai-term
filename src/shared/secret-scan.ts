@@ -74,7 +74,8 @@ export function scanPatch(patch: string, max = MAX_HITS): SecretHit[] {
     if (oldLeft > 0 || newLeft > 0) {
       if (raw.startsWith('+')) {
         newLeft--;
-        if (file && !LOCKFILES.test(file)) { const hit = scanLine(raw.slice(1), FIXTURES.test(file)); if (hit) { hits.push({ file, line, ...hit }); if (hits.length >= max) return hits; } }
+        // Lockfiles and fixtures skip only the entropy check (random by design); every pattern still applies.
+        if (file) { const hit = scanLine(raw.slice(1), FIXTURES.test(file) || LOCKFILES.test(file)); if (hit) { hits.push({ file, line, ...hit }); if (hits.length >= max) return hits; } }
         line++;
       } else if (raw.startsWith('-')) oldLeft--;
       else if (raw.startsWith(' ')) { oldLeft--; newLeft--; line++; }
