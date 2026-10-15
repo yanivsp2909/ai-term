@@ -64,11 +64,11 @@ export function testsText(tests: TestResult): Styled {
 }
 // Text for one agent card whose text area is `width` cells. Debug shells keep their v0.1 activity line.
 // D55: at 85% context a card says so once it gets there, in place of its activity, while the agent isn't waiting on you.
-// AI Term's agent has /clear; the CLIs have /compact. /settings turns it off.
+// AI Term's agent has /compact (v0.7.4) and /clear; the CLIs have /compact. /settings turns it off.
 export const CONTEXT_WARN_PERCENT = 85;
 function contextWarning(session: SessionInfo): Styled | null {
   if (session.ctxPercent === null || session.ctxPercent < CONTEXT_WARN_PERCENT || !['running', 'done'].includes(session.status)) return null;
-  return { text: `context ${Math.round(session.ctxPercent)}% · ${session.engine === 'ai-term' ? '/clear' : '/compact'} or start fresh`, color: 'status-waiting' };
+  return { text: `context ${Math.round(session.ctxPercent)}% · ${session.engine === 'ai-term' ? '/compact or /clear' : '/compact or start fresh'}`, color: 'status-waiting' };
 }
 // Cost per task (v0.6.1, D55): dollars for API-key sessions, tokens on a subscription (it bills the plan, not a key).
 export function taskCostText(usage: TaskUsage | undefined): string | null {

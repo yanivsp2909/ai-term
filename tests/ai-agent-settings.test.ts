@@ -53,7 +53,7 @@ const now = new Date().toISOString();
 const session = (engine: SessionInfo['engine'], ctxPercent: number | null, status: SessionInfo['status'] = 'running'): SessionInfo => ({ id: randomUUID(), title: 'a', engine, model: 'm', auth: { kind: 'account' }, cwd: '/tmp', permission: 'ask', status, statusDetail: status === 'waiting' ? 'permission' : status, statusSince: now, createdAt: now, lastOutputAt: now, exitCode: null, ctxPercent, lastActivity: null });
 
 it('a card at 85% context says so (per engine), not when off, and never over a waiting agent', () => {
-  expect(cardText(session('ai-term', 86), Date.now(), 60).activity).toEqual({ text: 'context 86% · /clear or start fresh', color: 'status-waiting' });
+  expect(cardText(session('ai-term', 86), Date.now(), 60).activity).toEqual({ text: 'context 86% · /compact or /clear', color: 'status-waiting' });
   expect(cardText(session('claude-code', 90, 'done'), Date.now(), 60).activity?.text).toBe('context 90% · /compact or start fresh');
   expect(cardText(session('codex', 84), Date.now(), 60).activity?.text ?? '').not.toContain('context');
   expect(cardText(session('ai-term', 95), Date.now(), 60, { contextWarning: false }).activity?.text ?? '').not.toContain('context');

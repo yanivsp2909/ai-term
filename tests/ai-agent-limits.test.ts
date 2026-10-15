@@ -116,7 +116,7 @@ it('context % is reported per request and the 85% warning shows once per crossin
   const { agent: a } = await agent([toolStep('read', { path: '.' }, usage(900, 1)), textStep('a', usage(950, 1)), textStep('b', usage(400, 1)), textStep('c', usage(870, 1))], h);
   await a.turn('one', go()); await a.turn('two', go()); await a.turn('three', go());
   expect(h.statuses.filter(s => s.event === 'context')).toEqual([90, 95, 40, 87].map(percent => ({ event: 'context', percent })));
-  expect(h.notes.filter(n => n.tone === 'warn').map(n => n.text)).toEqual(['context 90% · /clear or start fresh', 'context 87% · /clear or start fresh']);
+  expect(h.notes.filter(n => n.tone === 'warn').map(n => n.text)).toEqual(['context 90% · /compact or /clear', 'context 87% · /compact or /clear']);
   const off = new Harness(stubFacts({ context: 1000, contextWarning: false }));
   await (await agent([textStep('a', usage(990, 1))], off)).agent.turn('one', go());
   expect(off.notes.some(n => n.tone === 'warn')).toBe(false);

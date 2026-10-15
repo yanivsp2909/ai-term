@@ -71,7 +71,8 @@ it('/compact in the agent asks first (⏎ compacts, Esc keeps everything); nothi
   await vi.waitFor(() => expect(app.running).toBe(false));
   expect(s.model.doStreamCalls).toHaveLength(4);
   app.input('/compact\r');
-  await vi.waitFor(() => expect(stripVTControlCharacters(out)).toContain('summarize 2 older turns'));
+  // The second ask is on screen (the first one's text is still above it).
+  await vi.waitFor(() => expect(stripVTControlCharacters(out).split('allow compact?')).toHaveLength(3));
   app.input('\r');
   await vi.waitFor(() => expect(stripVTControlCharacters(out)).toContain('compacted 2 older turns'));
   expect(s.model.doStreamCalls).toHaveLength(5);

@@ -13,6 +13,7 @@ import type { Reporter } from './report.js';
 import type { Transcript } from './transcript.js';
 import { RunLimits, maxOutputTokens, requestCost, estimateTokens, refusalPause, NOT_ANSWERING } from './limits.js';
 import type { AgentFacts } from '../shared/agent-facts.js';
+import { COMPACT_OUTPUT_LOW, COMPACT_OUTPUT_TOKENS, compactedHistory, compactPrompt, KEEP_TURNS, splitHistory } from './compact.js';
 
 export type AgentPermission = 'ask' | 'dontAsk';
 export type ToolName = 'read' | 'write' | 'edit' | 'bash' | 'search' | 'skill' | 'task' | 'mcp_tools' | 'mcp_call';
@@ -409,7 +410,7 @@ export class Agent {
     const percent = Math.min(100, Math.round(input / facts.context * 100));
     void this.options.reporter.status({ event: 'context', percent });
     if (percent < CONTEXT_WARN) { this.warned = false; return; }
-    if (!this.warned && facts.contextWarning) this.options.io.note(`context ${percent}% · /clear or start fresh`, 'warn');
+    if (!this.warned && facts.contextWarning) this.options.io.note(`context ${percent}% · /compact or /clear`, 'warn');
     this.warned = true;
   }
   // The turn's exact cost from the provider's own counts (input, cached, output, reasoning), priced like Usage.
@@ -428,4 +429,49 @@ export class Agent {
     this.usageWarned = true;
   }
   clear(): void { this.history = []; this.warned = false; void this.options.reporter.status({ event: 'context', percent: 0 }); }
+  // v0.7.4 /compact: what it would summarize and cost (D49 asks with this); null when there is nothing older to compact.
+  async compactPlan(): Promise<{ older: number; kept: number; model: string; inputTokens: { low: number; high: number }; outputTokens: { low: number; high: number }; priceUsd: { low: number; high: number } | null } | null> {
+    const split = splitHistory(this.history);
+    if (!split) return null;
+    const tokens = estimateTokens(compactPrompt(split.older)), input = { low: Math.round(tokens * 0.8), high: Math.round(tokens * 1.25) };
+    const output = { low: COMPACT_OUTPUT_LOW, high: COMPACT_OUTPUT_TOKENS }, price = (await this.options.reporter.facts(this.options.modelId))?.price ?? null;
+    return { older: split.turns, kept: KEEP_TURNS, model: this.options.modelId, inputTokens: input, outputTokens: output,
+      priceUsd: price ? { low: requestCost(price, input.low, 0, output.low) ?? 0, high: requestCost(price, input.high, 0, output.high) ?? 0 } : null };
+  }
+  // One request on the agent's own model, checked like any turn (caps, budgets, a grant for its worst case) and counted
+  // from the provider's own usage; the older turns are replaced only once the summary arrived whole.
+  async compact(signal: AbortSignal): Promise<TurnResult> {
+    const split = splitHistory(this.history);
+    if (!split) return 'failed';
+    const { io, reporter } = this.options, prompt = compactPrompt(split.older), controller = new AbortController(), stop = () => controller.abort();
+    signal.addEventListener('abort', stop, { once: true }); if (signal.aborted) stop();
+    let grant: string | null = null, open = 0;
+    const settle = (worstCase: boolean | Promise<boolean>): void => { const id = grant; grant = null; if (id) void reporter.settle?.(id, worstCase); };
+    try {
+      const cleared = await this.clearance(estimateTokens(prompt), controller);
+      grant = cleared.grant; open = this.limits.lastWorst;
+      const result = streamText({ model: this.options.model, prompt, maxOutputTokens: Math.min(COMPACT_OUTPUT_TOKENS, this.limits.lastMaxOutput), abortSignal: controller.signal, maxRetries: 0 });
+      let summary = '', error: unknown;
+      for await (const part of result.fullStream) {
+        if (part.type === 'text-delta') summary += part.text;
+        else if (part.type === 'error') { error = part.error; break; }
+        else if (part.type === 'finish-step') {
+          const input = part.usage.inputTokens ?? 0, output = part.usage.outputTokens ?? 0, cost = requestCost(cleared.facts?.price ?? null, input, 0, output);
+          if (part.usage.inputTokens === undefined && part.usage.outputTokens === undefined) { this.limits.chargeUnfinished(open); settle(true); }
+          else { this.limits.record(cost); const taken = reporter.usage(this.options.modelId, { input, cached: 0, output, reasoning: 0 }); void taken.then(r => { if (r === false) this.usageLost(cost); }); settle(taken.then(r => r === false)); io.note(`compacted ${split.turns} older turn${split.turns === 1 ? '' : 's'} · ${input} in · ${output} out · ${cost === null ? 'price ?' : `$${cost.toFixed(4)}`}`); }
+          open = 0;
+        }
+      }
+      if (controller.signal.aborted) { if (open) this.limits.chargeUnfinished(open); io.note('compact stopped; the conversation is unchanged'); return 'interrupted'; }
+      if (error !== undefined || !summary.trim()) { if (open) this.limits.chargeUnfinished(open); io.note('compact failed; the conversation is unchanged', 'error'); return 'failed'; }
+      this.history = compactedHistory(this.options.redact(summary.trim()), split.kept);
+      void this.options.transcript.append({ kind: 'note', text: `compacted ${split.turns} older turns` });
+      return 'done';
+    } catch {
+      if (controller.signal.aborted) { io.note('compact stopped; the conversation is unchanged'); return 'interrupted'; }
+      if (open) this.limits.chargeUnfinished(open);
+      io.note('compact failed; the conversation is unchanged', 'error');
+      return 'failed';
+    } finally { settle(true); signal.removeEventListener('abort', stop); }
+  }
 }

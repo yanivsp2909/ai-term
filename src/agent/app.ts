@@ -20,7 +20,7 @@ export interface AppOptions {
   quit(): void;
 }
 const QUIT_WINDOW_MS = 3000;
-const HELP = ['/mcp [add|remove <name>]   manage MCP servers; a allows a prompted tool for this session', '/skills · /agents   browse Skills, Agents, Commands and MCP; Space toggles, Enter reads', '/name [arguments]   run an enabled extension command', '/model [id]   switch to another model of this key', '/caps [turns N|off] [spend N|off]   show or change this run\'s caps', '/clear        forget the conversation (frees the context)', '/cd <folder>  work in another folder (AGENTS.md is read again)', '/exit         quit (Ctrl+C twice also quits)', 'Esc interrupts a turn · Ctrl+K kills the request and every running command at once · y / n answer an approval · ⏎ goes on at a limit pause · a message sent during a turn waits for it to end'];
+const HELP = ['/mcp [add|remove <name>]   manage MCP servers; a allows a prompted tool for this session', '/skills · /agents   browse Skills, Agents, Commands and MCP; Space toggles, Enter reads', '/name [arguments]   run an enabled extension command', '/model [id]   switch to another model of this key', '/caps [turns N|off] [spend N|off]   show or change this run\'s caps', '/clear        forget the conversation (frees the context)', '/compact      summarize older turns into one note to cut context (asks first with a price range)', '/cd <folder>  work in another folder (AGENTS.md is read again)', '/exit         quit (Ctrl+C twice also quits)', 'Esc interrupts a turn · Ctrl+K kills the request and every running command at once · y / n answer an approval · ⏎ goes on at a limit pause · a message sent during a turn waits for it to end'];
 
 // One controller per agent process: it owns the prompt, the queue of messages typed during a turn, the approval in
 // progress and the quit gesture. The agent turn itself lives in agent.ts.
@@ -131,7 +131,7 @@ export class AgentApp implements AgentIO {
   close(): void { if (this.closed) return; this.closed = true; this.generation++; this.options.screen.closePopup(); killAllBash(); this.paused?.resolve(false); this.approval?.resolve(false); this.turn?.abort(); this.options.screen.hidePrompt();if(!this.agent.mcpAccess){this.options.quit();return;}void this.agent.stopMcp().then(()=>this.options.quit(),()=>{this.options.screen.note('MCP stop failed','error');this.options.quit();}); }
 
   private submit(message: string): void {
-    const command = message.trim().match(/^\/(help|exit|model|cd|caps|clear|skills|agents|mcp)(?:\s+(.*))?$/s);
+    const command = message.trim().match(/^\/(help|exit|model|cd|caps|clear|compact|skills|agents|mcp)(?:\s+(.*))?$/s);
     if (command) { this.commandBusy = true; void this.command(command[1] ?? '', (command[2] ?? '').trim()).finally(() => { this.commandBusy = false; this.next(); }); return; }
     const slash=message.trim().match(/^\/([A-Za-z0-9][A-Za-z0-9._:-]{0,79})(?:\s+([\s\S]*))?$/);
     if(slash&&this.agent.extensionAccess){const generation=this.generation;this.commandBusy=true;void this.agent.slash(slash[1]??'',slash[2]??'').then(expanded=>{this.commandBusy=false;if(this.closed||generation!==this.generation){this.next();return;}if(expanded===null){this.options.screen.note('Unknown or disabled command; /skills lists commands','error');this.next();}else this.runTurn(expanded);},()=>{this.commandBusy=false;this.options.screen.note('Command could not load','error');this.next();});return;}
@@ -158,9 +158,25 @@ export class AgentApp implements AgentIO {
       }
     } else if (name === 'caps') screen.note(this.caps(argument));
     else if (name === 'clear') { this.agent.clear(); screen.note('conversation cleared; the next message starts fresh'); }
+    else if (name === 'compact') await this.compact();
     else if (name === 'cd') {
       try { await this.changeFolder(argument); } catch { screen.note(`couldn't switch to ${argument}`, 'error'); }
     }
+  }
+  // v0.7.4 /compact: the D49 ask (what is summarized, by which model, tokens and price), ⏎ compacts, Esc keeps it all.
+  // Esc and Ctrl+K stop the request like a turn's (it runs as the turn).
+  private async compact(): Promise<void> {
+    const screen = this.options.screen, plan = await this.agent.compactPlan();
+    if (!plan) { screen.note('nothing older to compact yet; the last two turns are always kept'); return; }
+    const n = (v: number) => v.toLocaleString('en-US'), price = plan.priceUsd ? `$${plan.priceUsd.low.toFixed(4)}–$${plan.priceUsd.high.toFixed(4)}` : 'price unknown; spend limits will pause before a request';
+    const turn = new AbortController(); this.turn = turn;
+    try {
+      const body = `summarize ${plan.older} older turn${plan.older === 1 ? '' : 's'} with ${plan.model} into one note; the last two turns stay word for word\nestimated ${n(plan.inputTokens.low)}–${n(plan.inputTokens.high)} in · ${n(plan.outputTokens.low)}–${n(plan.outputTokens.high)} out · ${price}\n⏎ compacts · Esc keeps the conversation as it is`;
+      if (!await this.confirmJob({ title: 'compact', body }, turn.signal)) { screen.note('compact cancelled; nothing was sent'); return; }
+      screen.working();
+      const result = await this.agent.compact(turn.signal);
+      screen.turnEnd(result);
+    } finally { if (this.turn === turn) this.turn = null; }
   }
   private async openExtensions(tab:'skills'|'agents'|'mcp',add=false):Promise<void>{
     const access=this.agent.extensionAccess;if(!access){this.options.screen.note('Extensions unavailable','error');return;}
