@@ -1,15 +1,88 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: see the handover commit after 7d8cccf (Part A, B29)
-Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A (B29, D56/D57 pinned) done · B v0.8.1 Linux next
+Last commit: see the handover commit after 64e78ec (Part B, v0.8.1 Linux)
+Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A (B29, D56/D57 pinned) done · B v0.8.1 Linux done · C v0.8.2 Windows next
 Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64); no Linux or Windows machine here (Docker/colima are installed but not running, and starting them would download a VM image, which the limits rule out), so Linux and Windows run for real only in GitHub Actions (Part D).
 
 | Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
 |---|---|---|---|
-| A B29, pin D56/D57 | done | this push | review: 0 / 2 fixed / 1 fixed + 3 explained / 3 explained |
+| A B29, pin D56/D57 | done | fb31f36 | review: 0 / 2 fixed / 1 fixed + 3 explained / 3 explained |
+| B v0.8.1 Linux | done (Linux paths first run for real in Part D's CI) | this push | review: 0 / 4 fixed / 9 fixed + 2 explained / 7 fixed + 5 explained |
 
 **The prompt was cut off:** it ends inside Part E ("times passed while the"), and Part F (v0.9.2 dev servers per worktree) has no text at all. Part E will follow the visible text and the safer reading of the cut sentence; Part F can't be built from no spec, so the run stops before it.
+
+## Part B: v0.8.1 Linux — done
+Commits: 625cbe6 (RED) / e399281; review 91f677b (RED) / 64e78ec.
+
+**Linux couldn't run here:** this is a Mac with no Linux machine, and Docker/colima would need a VM download, which the limits rule out. So:
+- every Linux decision is unit-tested on macOS (argv, plans, parsers);
+- the two real bubblewrap tests are skipped here (`skipIf` bwrap missing or its probe failing) and run first in Part D on GitHub's ubuntu-latest.
+
+**What was built:**
+- **Socket and files:** unchanged rules under `~/.ai-term`. `XDG_RUNTIME_DIR` isn't used, so it needs no checks of its own.
+- **Keys:** Secret Service (already the library's Linux store). Any failure is one line: `No Secret Service keyring (none running, or it is locked); API keys need one, and AI Term never stores them in a file`. There's no file fallback.
+- **Sandboxes (`src/daemon/bwrap.ts`, D58 Proposed):**
+  - **Test runs:** `--unshare-all` gives them their own network. The system is read-only. Home, `/home`, `/root`, `/tmp`, `/var/tmp`, `/run`, `/media` and `/mnt` are hidden; toolchains and the git dir come back read-only; key folders stay hidden. Only the worktree and the temp folder are writable.
+  - **Agent bash:**
+    - its own PID namespace and `/proc`;
+    - `~/.ai-term` and the session runtime folders hidden;
+    - home and the folders holding persistence places rebuilt, so those places are read-only and can't be created;
+    - pinned ancestors;
+    - hooks and config read-only.
+  - **No bwrap:** auto-test asks every time. AI Term's agent is Ask only, with a one-line note in the start box and `/mode`; the daemon refuses Don't ask, and bash in Don't ask never runs without its sandbox. The same goes anywhere a sandbox can't start.
+- **Notifications:** `notify-send` (escaped, minimal env) when installed, else `none`. No click-through.
+- **Elsewhere:**
+  - Clipboard: `wl-copy`, `xclip` or `xsel`. `/open`: `xdg-open`. These helpers come only from system folders.
+  - Stats: `/proc` and ps CPU-time deltas.
+  - Probes use `/bin/sh -c :`. A bwrap exec failure reads as `tests couldn't start`.
+  - `/test` explains 127.0.0.1 on Linux.
+- **Desktop app:** AppImage and .deb targets (`scripts/app-config.mjs`), unsigned.
+  - **Layout:** `runtimePaths` accepts `resources/app`.
+  - **Keys:** Ctrl+Shift accelerators, with shifted keys read by their physical key.
+  - **AppImage:** the daemon starts from the AppImage itself, not the app's temporary mount.
+
+**Fresh review (security-reviewer, typescript-reviewer):**
+- **HIGH fixed:**
+  - Renaming an ancestor (`mv ~/work/proj …; cp -a` back) dodged the read-only hooks and dotfile targets. Ancestors are now pinned, and a missing `hooks/` is created and protected.
+  - In Ask, a bubblewrap that can't start (Ubuntu 24.04 user namespaces) broke every command. Ask now falls back to the approved plain run.
+  - A dead network mount in home stopped bash. It's now left out.
+  - The AppImage daemon was pinned to the app's temporary mount.
+- **MEDIUM fixed:**
+  - The runtime folder was missed (the bash env has no `XDG_RUNTIME_DIR`; links weren't resolved).
+  - PATH-planted helpers ran outside the sandbox.
+  - Linux persistence places were missing: systemd user units in `~/.local/share`, X session files, PAM env, Plasma and window-manager autostart, `~/.local/bin` and `~/bin`, gpg-agent.
+  - An xclip copy could hang.
+  - `bwrap: execvp` read as no sandbox.
+  - Linux CPU was a lifetime average.
+  - Virtual interfaces were counted twice.
+  - A failed probe was cached for a minute.
+  - The model wasn't told that new files at home's top level vanish.
+- **LOW fixed:**
+  - NixOS has no `/bin/true`.
+  - The probe now uses the real flags.
+  - Ctrl+Shift+digit shortcuts.
+  - Loopback text on Linux.
+  - The stale "commands are unsandboxed" text.
+  - Dead code.
+  - Notifier text on Windows.
+- **Explained, not changed:**
+  - **Agent bash shares the network, as on macOS:** the Docker socket, X11, a `/tmp` ssh-agent and abstract D-Bus buses stay reachable.
+  - **The Secret Service has no per-application access**, so any process of yours outside a sandbox can read a key while the keyring is unlocked. That is the platform's design, and README says so.
+  - **Test-sandbox tmpfs has no size limit:** bubblewrap's `--size` is too new for many distros. Writes there are temporary.
+  - **Filesystem sockets outside the hidden roots** (`/var/snap`, `/var/lib/lxd`) stay reachable from tests.
+  - **A test that prints `bwrap: …` and exits 1 gets `nosandbox`.** That only asks you; it never runs anything.
+  - **Rebuilding home** makes new files at those levels vanish. That's by design, and the model is told.
+  - **A custom `XDG_CONFIG_HOME`** isn't followed for the persistence list.
+- **Checks (after 64e78ec):**
+  - typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 36ms`; app:build `✓ built in 59ms`.
+  - npm test twice: `Test Files 232 passed (232)` · `Tests 1551 passed | 4 skipped (1555)` (30.10s, 29.92s).
+  - app:test `9 passed (37.7s)`.
+  - verification-loop: no `sk-` literals, no console.log in src.
+- **New manual checks (Linux, need a Linux machine):**
+  - `cd ~/ai-term && sudo apt install bubblewrap && npm ci && npm run build && node dist/cli/index.js`. Start AI Term's agent with a key in Don't ask; `cat ~/.ai-term/settings.json` fails and `echo x >> ~/.bashrc` shows `✗ blocked by sandbox: ~/.bashrc`.
+  - `cd ~/ai-term && sudo apt remove bubblewrap && node dist/cli/index.js`: the start box shows `ask · don't ask needs bubblewrap (bwrap), which isn't installed`.
+  - `cd ~/ai-term && npm run app:dist`: an AppImage and a .deb appear in `build/desktop/dist`. Quit the AppImage app and run `node dist/cli/index.js`; agents still start.
 
 ## Part A: B29 and D56/D57 pinned — done
 Commits: 38909fa (RED) / 5558a19; review 626d7b0 (RED) / 6841798; ux-copy 7d8cccf.
