@@ -121,9 +121,20 @@ it.skipIf(!WIN)('Windows: the AI Term folder is yours alone (ACL), the daemon an
   const { getPaths, preparePaths } = await import('../src/shared/paths.js');
   const { checkMine } = await import('../src/shared/win-acl.js');
   const dir = await temp(), root = join(dir, 'Ünï côdé', '.ai-term'); await mkdir(join(dir, 'Ünï côdé'));
-  const paths = getPaths(root); await preparePaths(paths);
+  const paths = getPaths(root); await preparePaths(paths, { daemon: true });
   expect(await checkMine(root)).toBe(true);
-}, 60_000);
+  // The daemon on its pipe: the client shows the token, the daemon proves it, a request goes through; then a graceful stop.
+  const { SessionManager } = await import('../src/daemon/session-manager.js');
+  const { DaemonServer } = await import('../src/daemon/server.js');
+  const { Logger } = await import('../src/daemon/log.js');
+  const { Connection } = await import('../src/client/connection.js');
+  const manager = new SessionManager(paths, new Logger(paths.log)); await manager.load();
+  const server = new DaemonServer(paths, manager, new Logger(paths.log)); await server.listen();
+  try {
+    const connection = await Connection.connect(paths, { entry: join(process.cwd(), 'src', 'cli', 'index.ts'), autoStart: false });
+    try { expect((await connection.request({ kind: 'settings.get' })).settings).toBeTruthy(); } finally { connection.close(); }
+  } finally { await server.close(); await manager.shutdown(); }
+}, 120_000);
 
 it('env on Windows: Path is spelled PATH in a copy; a credential variable goes whatever its case', async () => {
   const { buildShellEnv, buildSpawnEnv } = await import('../src/daemon/env.js');
@@ -188,7 +199,7 @@ it('MEDIUM (TS review): a .bat or a non-npm .cmd is refused; a launcher whose np
 });
 
 it('MEDIUM (TS review): without Git for Windows there is no git (never a bare git.exe found in the folder)', () => {
-  expect(gitExecutable('win32', 'C:\\nowhere')).toBeNull();
+  expect(gitExecutable('win32', 'C:\\nowhere', [])).toBeNull();
 });
 
 it('MEDIUM (TS review): worktree checks on Windows ignore case and slash style', async () => {
@@ -234,4 +245,23 @@ it('MEDIUM (security review): the folder and each of its folders are checked in 
   const me = 'S-1-5-21-1-2-3-1001';
   expect(parseAcls(`#\n${me}\n${me}\n#\nS-1-5-21-9-9-9-500\n${me}\n`)).toEqual([{ owner: me, entries: [me] }, { owner: 'S-1-5-21-9-9-9-500', entries: [me] }]);
   for (const bad of ['C:\\x\\file.txt:stream', 'C:\\x\\NUL', 'C:\\x\\con.txt', 'C:\\COM1\\y']) expect(isSafeAbsolutePath(bad, 'win32'), bad).toBe(false);
+});
+
+// v0.8 gate, found by GitHub Actions on windows-latest and ubuntu-latest: each failed there before its fix.
+it.skipIf(!WIN)('gate (CI, Windows): settings and keys can be saved (a folder can\'t be fsynced on Windows)', async () => {
+  const { atomicWrite } = await import('../src/daemon/store.js');
+  const dir = await temp();
+  await atomicWrite(join(dir, 'settings.json'), { theme: 'graphite' });
+  expect(JSON.parse(await (await import('node:fs/promises')).readFile(join(dir, 'settings.json'), 'utf8'))).toEqual({ theme: 'graphite' });
+});
+
+it('gate (CI, Windows): git lookup can be pointed at places with no git; the ACL tools get the env PowerShell needs', async () => {
+  expect(gitExecutable('win32', 'C:\\nowhere', [])).toBeNull();
+  const { aclToolEnv } = await import('../src/shared/win-acl.js');
+  expect(aclToolEnv({ SystemRoot: 'C:\\Windows', TEMP: 'C:\\t', SECRET_TOKEN: 'x' })).toEqual({ SystemRoot: 'C:\\Windows', PATH: 'C:\\Windows\\System32', PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules', TEMP: 'C:\\t' });
+});
+
+it.runIf(process.platform === 'linux' && process.env.CI === 'true')('gate (CI, Linux): bubblewrap works on the CI machine, so the real sandbox tests ran rather than skipped', async () => {
+  const { agentSandbox } = await import('../src/daemon/agent-sandbox.js');
+  expect(await agentSandbox('linux')).toEqual({ dontAsk: true });
 });
