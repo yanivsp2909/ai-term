@@ -256,6 +256,9 @@ export class DaemonServer {
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
+                case 'sessions.diff':
+                    this.control(peer,{id:request.id,ok:true,diff:await this.manager.diff(request.sessionId)});
+                    break;
                 case 'sessions.text':
                     await this.sendText(peer,request.id,await this.manager.text(request.sessionId,request.lastReply));
                     break;
@@ -342,7 +345,7 @@ export class DaemonServer {
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const fixed = new Set([
                 'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
-                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
+                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine','This agent has no worktree to diff','This worktree has no recorded start to diff against','Diff unavailable; git could not read the worktree',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
                 'Resume needs a finished agent','A shell has no AI conversation to resume','This older Claude agent has no conversation ID',
                 'Conversation already running','Conversation already starting','Invalid session request','Invalid session or title',
                 'Invalid preview size','Invalid attach','Session unavailable','Invalid resize','Not attached',

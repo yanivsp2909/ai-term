@@ -88,6 +88,7 @@ export interface SessionInfo {
     taskUsage?:TaskUsage; // v0.6.1: this agent's own total since it started (absent until its first usage).
     limit?:{resets:string|null}; // v0.6.4: its account hit a usage limit (read from its screen); resets HH:MM when it says.
     handoffTo?:string; // v0.6.3: the agent this one handed its work to (`handed off → <name>` on the card).
+    diffStat?:import('./diff.js').DiffStat; // v0.7.1: its worktree's changes since it started, counted when it finished a turn.
 }
 // v0.6.1 cost per task (D55): tokens always; dollars for API-key sessions only (null on a subscription, which bills
 // against the plan). unknownPrice: some of it had no price, so the dollars are a lower bound.
@@ -132,6 +133,9 @@ export type Request = {
 } | {
     kind: 'sessions.stop' | 'sessions.remove' | 'sessions.resume' | 'sessions.retry';
     sessionId: string;
+} | {
+    // v0.7.1: the agent's worktree against the commit it started from, as text (d, /diff).
+    kind:'sessions.diff'; sessionId:string;
 } | {
     kind:'sessions.text'; sessionId:string; lastReply?:boolean;
 } | {
@@ -196,6 +200,7 @@ export interface SuccessResponse {
     notificationPermission?:NotificationAuthorization;
     keys?: KeyView[];
     key?: KeyView;
+    diff?: import('./diff.js').AgentDiff;
     results?: DeploymentTest[];
     found?: {name:string;provider:KeyProvider}[];
     sessions?: SessionInfo[];

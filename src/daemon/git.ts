@@ -6,7 +6,7 @@ import { isFsError } from '../shared/paths.js';
 import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
 
 export class GitError extends Error {
-    constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed' | 'Not a git repo') { super(message); }
+    constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed' | 'Not a git repo' | 'Diff too large') { super(message); }
 }
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // An explicit env prevents inherited GIT_DIR/GIT_WORK_TREE, hooks and routing from targeting a different checkout.
@@ -22,7 +22,7 @@ function run(cwd: string, args: string[], failure: ConstructorParameters<typeof 
             cwd, env: { PATH: '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}) },
             timeout, maxBuffer, encoding: 'utf8',
         // The env has no LANG, so git's messages are its fixed English ones; stderr is matched here and never logged.
-        }, (error, stdout, stderr) => error ? reject(new GitError(notRepo && typeof error.code === 'number' && /not a git repository/.test(stderr) ? 'Not a git repo' : failure)) : resolve(stdout));
+        }, (error, stdout, stderr) => error ? reject(new GitError(notRepo && typeof error.code === 'number' && /not a git repository/.test(stderr) ? 'Not a git repo' : error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'Diff too large' : failure)) : resolve(stdout));
         // A failed stdin write (git exited early) surfaces through the exit callback above.
         child.stdin?.on('error', () => undefined);
         child.stdin?.end(input ?? '');
@@ -201,3 +201,40 @@ export async function removeWorktree(repo: string, path: string): Promise<void> 
 export async function forceRemoveWorktree(repo: string, path: string): Promise<void> { deletable(path); await run(repo, ['worktree', 'remove', '--force', '--', path], 'Worktree remove failed', { timeout: REMOVE_TIMEOUT }); }
 export async function deleteBranch(repo: string, branch: string): Promise<void> { if (!isWorktreeBranch(branch)) throw new GitError('Branch delete failed'); await run(repo, ['branch', '-d', '--', branch], 'Branch delete failed'); }
 export async function forceDeleteBranch(repo: string, branch: string): Promise<void> { if (!isWorktreeBranch(branch)) throw new GitError('Branch delete failed'); await run(repo, ['branch', '-D', '--', branch], 'Branch delete failed'); }
+
+// v0.7.1 diff (read-only). A repo's config could name an external diff or textconv command, so both are off; colour and
+// submodules too. The base is a commit id checked here, and --end-of-options keeps it from ever reading as an option.
+const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--no-color', '--find-renames', '--ignore-submodules=all'];
+export interface NameStatus { code: string; path: string; from?: string }
+export async function diffNameStatus(path: string, base: string): Promise<NameStatus[]> {
+    if (!COMMIT.test(base)) throw new GitError('Git check failed');
+    const fields = (await run(path, ['diff', ...DIFF_FLAGS, '--name-status', '-z', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: BIG })).split('\0'), out: NameStatus[] = [];
+    // R and C carry a score and two names (old, then new); the rest one name.
+    for (let i = 0; i < fields.length - 1;) {
+        const code = fields[i] ?? '', two = /^[RC]/.test(code), first = fields[i + 1] ?? '', second = two ? fields[i + 2] ?? '' : '';
+        if (!code) break;
+        out.push(two ? { code: code[0] ?? 'M', path: second, from: first } : { code: code[0] ?? 'M', path: first });
+        i += two ? 3 : 2;
+    }
+    return out;
+}
+// The unified diff itself, capped at 32 MiB of git output (larger: 'Diff too large', and only the file list is shown).
+export async function diffPatch(path: string, base: string): Promise<string> {
+    if (!COMMIT.test(base)) throw new GitError('Git check failed');
+    return run(path, ['diff', ...DIFF_FLAGS, '--unified=3', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: 32 * 1024 * 1024, timeout: 30_000 });
+}
+export async function diffNumstat(path: string, base: string): Promise<{ added: number; removed: number; files: number }> {
+    if (!COMMIT.test(base)) throw new GitError('Git check failed');
+    const stat = { added: 0, removed: 0, files: 0 };
+    for (const line of (await run(path, ['diff', ...DIFF_FLAGS, '--numstat', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: BIG })).split('\n')) {
+        const match = line.match(/^(\d+|-)\t(\d+|-)\t/);
+        if (!match) continue;
+        stat.files++; stat.added += Number(match[1]) || 0; stat.removed += Number(match[2]) || 0;
+    }
+    return stat;
+}
+// Untracked files that aren't ignored (the repo's own ignore rules; no global ones, GIT_CONFIG_GLOBAL is /dev/null).
+export async function untrackedFiles(path: string): Promise<string[]> {
+    return (await run(path, ['ls-files', '--others', '--exclude-standard', '-z', '--'], 'Git check failed', { maxBuffer: BIG })).split('\0').filter(Boolean);
+}
+export async function isWorktreeTop(path: string): Promise<boolean> { return (await identity(path).catch(() => null))?.top === path; }

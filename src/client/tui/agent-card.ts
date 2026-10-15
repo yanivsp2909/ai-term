@@ -37,7 +37,8 @@ function activity(session: SessionInfo, now: number): Styled | null {
   // A question that needs you comes first; then an account limit (D53), over the usual activity. Nothing switches by itself.
   if (session.status !== 'waiting' && session.limit && !['exited', 'error'].includes(session.status)) return { text: `⏸ limit${session.limit.resets ? ` · resets ${session.limit.resets}` : ''}`, color: 'status-waiting' };
   if (session.status === 'waiting') return { text: session.statusDetail === 'permission' || session.statusDetail === 'question' ? `asks: ${session.statusDetail}` : session.statusDetail, color: 'status-waiting' };
-  if (session.status === 'done') return { text: 'ready to review', color: 'ink-3' };
+  // design.md: done reads `+N −M · ready to review` once the daemon has counted the worktree's changes (v0.7.1).
+  if (session.status === 'done') { const stat = session.diffStat; return { text: stat ? `${stat.files ? `+${stat.added} −${stat.removed}` : 'no changes'} · ready to review` : 'ready to review', color: 'ink-3' }; }
   if (session.status === 'error') return { text: session.exitCode !== null && !session.statusDetail.startsWith('exit ') ? `exit ${session.exitCode} · ${session.statusDetail}` : session.statusDetail, color: 'status-error' };
   if (session.status !== 'running') return null;
   const quiet = quietSince(session);

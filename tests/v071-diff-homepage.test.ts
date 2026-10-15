@@ -50,6 +50,7 @@ it('/diff <agent> opens that agent\'s diff; a name two agents share or none has 
     type(tty, '/diff writer\r');
     await vi.waitFor(() => expect(client.requests).toContainEqual({ kind: 'sessions.diff', sessionId: b.id }));
     await shows(tty, 'Diff writer'); await escape(tty);
+    await vi.waitFor(async () => expect(await screen(tty)).not.toContain('Diff writer'));
     type(tty, '/diff twin\r'); await shows(tty, '2 agents are named twin · rename one with r');
     type(tty, '/diff ghost\r'); await shows(tty, 'no agent named ghost');
   } finally { await home.stop(); }

@@ -45,6 +45,8 @@ import { TextPanel } from './text-panel.js';
 import { usageDetailLines } from './usage-details.js';
 import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
 import { HandoffAsk, handoffDone, handoffRequest } from './handoff-ask.js';
+import { DiffView } from './diff-view.js';
+import { validateAgentDiff } from '../../shared/diff.js';
 import { accountAuthLabel, parseAccountCommand, parseHandoffTarget } from './accounts.js';
 import { OWN_ACCOUNT, type AccountProfile } from '../../shared/accounts.js';
 import { validateHandoffPlan, validateHandoffSummary } from '../../shared/handoff.js';
@@ -79,7 +81,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView;
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
   private marked=new Set<string>();
   private lastSplit:string[]=[];
@@ -398,6 +400,7 @@ export class Homepage {
       case 'remove': { const session = this.sessions.find(s => s.id === this.selectedId); if (session && ['exited', 'error'].includes(session.status)) this.enqueue(() => this.removeSession(session.id)); break; }
       case 'mark': this.mark(); break;
       case 'split': this.enqueue(() => this.openSplit()); break;
+      case 'diff': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) this.enqueue(() => this.openDiff(session)); break; }
     }
     this.draw(true);
   }
@@ -560,6 +563,7 @@ export class Homepage {
     if (text==='/settings'||text==='/login') { await this.openCredentials(text==='/settings'?'settings':'login'); return; }
     if (command==='/preset') { await this.presetCommand(text); return; }
     if (command==='/handoff') { await this.handoffCommand(argument); return; }
+    if (command==='/diff') { await this.diffCommand(argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
@@ -614,6 +618,30 @@ export class Homepage {
     // Only the name goes: the CLI's folder keeps its login until you log out there (AI Term never deletes it).
     if(this.auth.kind==='account'&&this.auth.profile===account.name)this.auth={kind:'account'};
     await save({accounts:accounts.filter(a=>a.name!==account.name),defaultAccounts:rest},`✓ account ${account.name} removed · its folder stays: ~/.ai-term/profiles/${account.name} (log out there first if you delete it)`);
+  }
+  // v0.7.1 /diff [agent]: the named agent (like /send, a name two agents share is refused), else the selected one.
+  private async diffCommand(name:string):Promise<void>{
+    if(!name){const selected=this.sessions.find(s=>s.id===this.selectedId);if(!selected){this.showNote('select an agent, then d or /diff');return;}await this.openDiff(selected);return;}
+    const named=this.sessions.filter(s=>s.title===name);
+    if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}
+    const session=named[0];if(!session){this.showNote(`no agent named ${name}`);return;}
+    await this.openDiff(session);
+  }
+  // The review queue's popup (v0.7.1): m merges (v0.7.3), x discards through the v0.3.2 removal flow, Esc keeps it for later.
+  private async openDiff(session:SessionInfo):Promise<void>{
+    let diff:import('../../shared/diff.js').AgentDiff;
+    try{diff=validateAgentDiff((await this.connection.request({kind:'sessions.diff',sessionId:session.id})).diff);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Diff unavailable');return;}
+    const close=()=>{if(this.popup===view)this.popup=undefined;this.draw(true);};
+    const view:DiffView=new DiffView(diff,{changed:()=>this.draw(true),close,
+      merge:()=>{this.showNote('merge arrives with /merge (v0.7.3)');},
+      discard:()=>{
+        const current=this.sessions.find(s=>s.id===session.id);
+        // The note line sits under the popup: it closes first, so the reason shows.
+        if(current&&!['exited','error'].includes(current.status)){close();this.showNote(`stop ${current.title} first (s), then x in its diff`);return;}
+        close();this.enqueue(()=>this.removeSession(session.id));
+      }});
+    this.popup=view;this.draw(true);
   }
   // v0.6.3 /handoff <agent> <claude|codex>: the D49 ask first (who writes the note, tokens, price), ⏎ then hands off.
   private async handoffCommand(argument:string):Promise<void>{

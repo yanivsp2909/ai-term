@@ -26,6 +26,8 @@ export function requestTimeout(kind: RequestBody['kind']): number {
     if (kind === 'keys.test') return 40 * 30_000 + 5000;
     if (kind === 'sessions.handoff') return 7 * 60_000;
     if (kind === 'sessions.handoffPlan') return 30_000;
+    // A large worktree's diff and untracked files take a while to read (git has 30 s for the patch alone).
+    if (kind === 'sessions.diff') return 60_000;
     return ['keys.add', 'keys.importEnv', 'sessions.create', 'sessions.resume'].includes(kind) ? 60_000 : 5000;
 }
 export class Connection extends EventEmitter {

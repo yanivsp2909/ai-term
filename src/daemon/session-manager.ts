@@ -24,6 +24,9 @@ import { isFsError, type Paths } from '../shared/paths.js';
 import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord, type CliEngine } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
+import { GitError, isWorktreeTop } from './git.js';
+import { worktreeDiff, worktreeStat } from './diff.js';
+import type { AgentDiff } from '../shared/diff.js';
 import { prepareWorktree, serialize } from './worktrees.js';
 import { checkWorktree, deleteWorktree, unrecordedFolders, WorktreeError } from './worktree-removal.js';
 import { atomicWrite, keepCopy, moveAside, readState, StateLoadError } from './store.js';
@@ -188,7 +191,7 @@ export class SessionManager extends EventEmitter {
             if (!isUUID(r.id) || !isTitle(r.title) || !['shell','claude-code','codex','ai-term'].includes(String(r.engine)) || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
             const saved = validateSession(r);
-            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}), ...(saved.login?{login:true as const}:{}), ...(saved.taskUsage?{taskUsage:saved.taskUsage}:{}),...(saved.handoffTo?{handoffTo:saved.handoffTo}:{}) });
+            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}), ...(saved.login?{login:true as const}:{}), ...(saved.taskUsage?{taskUsage:saved.taskUsage}:{}),...(saved.handoffTo?{handoffTo:saved.handoffTo}:{}),...(saved.diffStat?{diffStat:saved.diffStat}:{}) });
         }
         return { sessions, worktrees: 'worktrees' in state && Array.isArray(state.worktrees) ? state.worktrees as unknown[] : [] };
     }
@@ -688,6 +691,8 @@ export class SessionManager extends EventEmitter {
         if(!live.statusState||next===live.statusState)return;
         const previous=live.statusState;live.statusState=next;
         Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
+        // v0.7.1: a finished turn counts what the worktree changed for the card (`+N −M · ready to review`).
+        if(next.status==='done'&&previous.status!=='done'&&live.info.worktree)void this.refreshDiffStat(live);
         this.event({kind:'session.updated',session:{...live.info}});live.outputClock?.sent();
         // Notifications listen here; a listener failure must never stop status from applying.
         try{this.emit('statusChanged',{...live.info},previous,next,live.attached);}catch{this.log.error('Status listener failed');}
@@ -803,6 +808,28 @@ export class SessionManager extends EventEmitter {
             }
             return {sessionId:id,...live.mirror.plainText()};
         });
+    }
+    // v0.7.1 d and /diff: the agent's worktree against the commit it started from. Read-only; text only (src/daemon/diff.ts).
+    async diff(id:string):Promise<AgentDiff>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        const {path,base,label}=await this.diffTarget(live);
+        let body;
+        try{body=await worktreeDiff(path,base);}catch(error){this.log.error(`Diff failed: ${error instanceof GitError?error.message:'unexpected error'}`);throw new Error('Diff unavailable; git could not read the worktree',{cause:error});}
+        return {title:live.info.title,branch:live.info.branch??'',base:label,...body};
+    }
+    private async diffTarget(live:Live):Promise<{path:string;base:string;label:string}>{
+        const path=live.info.worktree,record=path?this.worktreeRecords.get(path):undefined;
+        if(!path||!live.info.branch)throw new Error('This agent has no worktree to diff');
+        const base=record?.baseCommit;
+        if(!base||!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(base))throw new Error('This worktree has no recorded start to diff against');
+        // The folder must still be that worktree: an agent can rewrite its .git file to point somewhere else.
+        if(!await isWorktreeTop(path))throw new Error('Diff unavailable; git could not read the worktree');
+        return {path,base,label:`${record?.baseBranch??'start'} @ ${base.slice(0,7)}`};
+    }
+    private async refreshDiffStat(live:Live):Promise<void>{
+        try{const {path,base}=await this.diffTarget(live),stat=await worktreeStat(path,base);live.info.diffStat=stat;this.event({kind:'session.updated',session:{...live.info}});void this.persist();}
+        catch{this.log.error('Diff stat unavailable for a finished agent');}
     }
     async stop(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }

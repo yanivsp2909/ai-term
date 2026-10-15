@@ -5,6 +5,7 @@ import { MCP_MAX_SERVERS, MCP_MAX_TOOLS, mcpTokens, type McpConfig, type McpServ
 import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DESCRIPTION_CHARS, catalogTokens, type ExtensionCatalog, type ExtensionFile } from './extensions.js';
 import { isAgentCaps } from './agent-facts.js';
 import { PROVIDER_LABELS, isBedrockEndpoint, isDirectProvider, isLocalEndpoint } from './providers.js';
+import { isDiffStat, validateAgentDiff } from './diff.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
     // eslint-disable-next-line no-useless-escape
@@ -141,6 +142,8 @@ export async function validateRequest(value: unknown): Promise<Request> {
             break;
         case 'sessions.text':
             fields=['sessionId','lastReply'];if(!isUUID(v.sessionId)||v.lastReply!==undefined&&typeof v.lastReply!=='boolean')throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.diff':
+            fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
         case 'sessions.send':
             fields=['sessionId','text'];if(!isUUID(v.sessionId)||!isSendText(v.text))throw new ValidationError('Invalid send request');break;
         case 'sessions.handoffPlan':
@@ -187,6 +190,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.kind!==undefined && (v.kind!=='hello'||v.protocol!==1||typeof v.version!=='string'||!/^[A-Za-z0-9._-]{1,40}$/.test(v.version)||!Number.isSafeInteger(v.daemonPid)||Number(v.daemonPid)<2))throw new ValidationError('Invalid daemon hello');
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
     if(v.copy!==undefined)validateSessionText(v.copy);
+    if(v.diff!==undefined)validateAgentDiff(v.diff);
     if(v.usage!==undefined)validateUsageSummary(v.usage);
     if(v.usageDiagnostics!==undefined)validateUsageDiagnostics(v.usageDiagnostics);
     if(v.key!==undefined)validateKeyView(v.key);
@@ -306,7 +310,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || !(s.ctxPercent===null||isShare(s.ctxPercent)) || s.lastActivity!==undefined&&s.lastActivity!==null&&!isActivity(s.lastActivity) ||
-        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit)) throw new ValidationError('Invalid daemon session');
+        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit) || s.diffStat!==undefined&&!isDiffStat(s.diffStat)) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }
 function isLimit(value: unknown): boolean { return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 && 'resets' in value && (value.resets === null || typeof value.resets === 'string' && /^\d{2}:\d{2}$/.test(value.resets)); }
