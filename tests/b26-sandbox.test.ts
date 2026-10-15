@@ -235,3 +235,11 @@ it.skipIf(!MAC)('macOS (skipped elsewhere: sandbox-exec is macOS only): a test c
   expect(await readFile(join(tree, 'tool.txt'), 'utf8')).toBe('tool-ran\n');
   expect(await readFile(join(tree, 'git.txt'), 'utf8')).toBe('first\n');
 }, 30_000);
+
+it.skipIf(!MAC)('MEDIUM (TS review, macOS: sandbox-exec is macOS only): /test y works out what to run once, with the sandbox, so nothing fails after the sandbox is made and leaves its temp folder', async () => {
+  const { m, agent } = await setup('#!/bin/sh\nexit 0\n');
+  const plan = await m.testPlan(agent.id), target = vi.spyOn(m as unknown as { testTarget: (live: unknown) => Promise<unknown> }, 'testTarget');
+  await m.runTestPlan(agent.id, plan.fingerprint);
+  expect(target).toHaveBeenCalledTimes(1);
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+}, 20_000);

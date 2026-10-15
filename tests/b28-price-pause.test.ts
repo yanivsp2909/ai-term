@@ -39,7 +39,7 @@ const budgets = { daily: 3, weekly: null, monthly: null };
 it('the pause says what to press: p for any provider, m only for a Foundry deployment, ⏎ checks again; no going on with a budget', () => {
   expect(pricePauseText('my-kimi', 'foundry', true, 16_000)).toBe("no price known for my-kimi, so your budgets can't count it · p sets its price · m marks which catalog model it is · ⏎ checks again · Esc stops");
   expect(pricePauseText('vendor/model', 'openrouter', true, 16_000)).toBe("no price known for vendor/model, so your budgets can't count it · p sets its price · ⏎ checks again · Esc stops");
-  expect(pricePauseText('vendor/model', null, false, 16_000)).toBe("no price known for vendor/model, so what it spends is not counted in this run's spend cap · p sets its price · ⏎ goes on for this model this run (at most 16,000 output tokens a request) · Esc stops");
+  expect(pricePauseText('vendor/model', 'openrouter', false, 16_000)).toBe("no price known for vendor/model, so what it spends is not counted in this run's spend cap · p sets its price · ⏎ goes on for this model this run (at most 16,000 output tokens a request) · Esc stops");
   const limits = new RunLimits(), pause = limits.check(stubFacts({ model: 'my-kimi', price: null, budgets }), 100);
   expect(pause).toMatchObject({ price: { model: 'my-kimi', budgets: true } });
   expect(pause?.onContinue).toBeUndefined();
