@@ -1,14 +1,86 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: see the handover commit after the queue-test fix (Part B, v1.0.1)
-Roadmap step: run 2026-10-15 (4), Claude Code, Opus 5.5 (the prompt was written for Codex; Yaniv asked Claude to run it), long run A–C: A v0.9.3 done · B v1.0.1 install and docs done · C v1.0.2 /brain next
+Last commit: see the handover commit (Part C, v1.0.2 /brain) — this run's last
+Roadmap step: run 2026-10-15 (4), Claude Code, Opus 5.5 (the prompt was written for Codex; Yaniv asked Claude to run it), long run A–C: all three done · A v0.9.3 · B v1.0.1 install and docs · C v1.0.2 /brain
 Branch: main, pushed after each part. Started at cf6e64e after `git pull --ff-only` (already up to date). macOS 26.5.1 (arm64); no CI by Yaniv's choice, every check runs on this Mac.
 
 | Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
 |---|---|---|---|
 | A v0.9.3 diagnostics, performance, polish | done | 9da1447 | review: 0 / 3 fixed / 3 fixed + 1 explained / 4 fixed + 2 explained |
-| B v1.0.1 install and docs | done | this push | review: 0 / 2 fixed / 2 fixed / 1 explained |
+| B v1.0.1 install and docs | done | a8139cb | review: 0 / 2 fixed / 2 fixed / 1 explained |
+| C v1.0.2 /brain | done | this push | TS + security review: 0 / 3 fixed / 9 fixed + 1 explained / 6 fixed + 2 explained |
+
+## Part C: v1.0.2 /brain — done
+Commits:
+- **Build:** ace12a8 (RED) / df679c9.
+- **TS review:** 6ea30cb and cea007e (RED).
+- **Security review:** 4820ff6 (RED).
+- **Review fixes:** 5eaad3f.
+- **Flaky tests:** 2 commits loosening test timing under load.
+
+**What it does** (only when you run `/brain`):
+- **Which repository:** the one the homepage's folder is in; a worktree maps its main repository.
+- **Local pass** (free):
+  - git's file list, so ignored files never show.
+  - TS/JS and Python imports and exports, and who imports whom; other languages are listed as files.
+  - Skipped and counted: binaries, files over 256 KB, `.env`, secret-named files, files with a line the secret scan flags, and odd file names.
+  - Never read through a link.
+- **Model pass** (optional):
+  - The popup shows the free row, then your keys' priced models with the token and price range for the modules not yet summarized (D49).
+  - Batches are held against your budgets and the per-run cap, with secrets removed as `/review` does, and counted in Usage.
+  - A pass that fails partway keeps what it paid for.
+- **Output:** `~/.ai-term/brain/<repo id>/brain.md` (≤2,000 lines; summaries quoted and marked as notes, not instructions) and `brain.json` (hashes). Nothing goes in the repo, `~/.claude` or `~/.codex`. `/brain` again parses and prices only changed files.
+- **Agents get it** (D55, on; `a` in the popup):
+  - **AI Term's agent:** reads it at start (`--brain=`, ≤64 KiB).
+  - **Claude Code:** `--append-system-prompt-file=<path>`, one argv element. It's in the 2.1.301 binary, though `--help` lists it only inside `--bare`'s text.
+  - **Codex:** 0.160.1 has no flag that adds instructions from a file (`model_instructions_file` replaces its own), so the start box's `n` puts the path in the first message.
+  - **The card** shows `brain · 2h old`.
+- **`/brain show`** opens it and **`/brain rm`** deletes it.
+
+**Real local run on ~/ai-term itself** (local pass only, no model, through a throwaway daemon over its socket; your ~/.ai-term untouched, the repo left clean):
+- `brain.plan`: 566 files · skipped: 2 over 256 KB, 101 flagged by the secret scan (mostly tests with fake keys) · 436 modules a model pass could summarize · 0.32 s.
+- `brain.build`: brain.md of 1,683 lines (under 2,000) · 0.31 s.
+- `brain.plan` again: 0 changed, 0 removed.
+
+**Fresh reviews (typescript-reviewer, security-reviewer):**
+- **HIGH fixed:**
+  - A `/*` inside a string made the parser drop the code after it.
+  - `export const` turned function arguments and array items into exports.
+  - (security) A folder in the repo swapped for a link let files outside be read and sent to the model.
+- **MEDIUM fixed:**
+  - A failed model pass lost what it had paid for.
+  - Earlier design notes were pushed out.
+  - Memory: all text was held.
+  - A quadratic parse pattern.
+  - Plan/build fingerprint gaps.
+  - (security) A file name with a newline added lines to the agents' map; such names are now skipped and counted.
+  - (security) Model lines could look like headings or instructions; they're now quoted and marked as notes.
+  - (security) Long one-line files froze the parse.
+  - (security) Scans had no total bound; now 200 MB.
+- **MEDIUM explained:** prompt injection through summaries can't be ruled out; it's reduced by quoting and the "notes, not instructions" lines.
+- **LOW fixed:**
+  - A swap between lstat and open.
+  - Odd prompt paths lost their summaries.
+  - Python package roots, `from . import`, `FOO ==`.
+  - brain.md's time is now the map's own.
+  - The brain folder is checked on every read.
+- **LOW explained:**
+  - Plans don't share an in-flight scan; each is bounded instead.
+  - UNC Windows homes don't get the brain.
+
+**Checks (after the last commit):**
+- typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 41ms`; app:build `✓ built in 61ms`.
+- npm test twice: `Test Files 252 passed (252)` · `Tests 1701 passed | 7 skipped (1708)` (35.93s, 35.04s).
+- app:test `9 passed (37.0s)`, hidden.
+- verification scan clean.
+
+**New manual checks (C):**
+- `cd ~/ai-term && npm run build && node dist/cli/index.js`:
+  - `/cd ~/ai-term`, then `/brain`: the popup says 566 files and skipped counts. ⏎ gives `✓ brain for ai-term: … lines · /brain show`. Then `/brain show`.
+- `cd ~/ai-term && node dist/cli/index.js`: with an API key, `/brain`, then ↓ to a model: the price shows. ⏎ adds summaries, and `/usage` counts it.
+- `cd ~/ai-term && node dist/cli/index.js`: start Claude Code in ~/ai-term. Its card shows `brain · 0m old`; ask it "what does src/daemon/brain.ts do" and it knows from the map.
+- `cd ~/ai-term && node dist/cli/index.js`: start box with Codex, `n` → `brain mentioned in the first message`. Its first message starts with "Before you start, read the repository map…".
 
 ## Part B: v1.0.1 install and docs — done
 Commits:
