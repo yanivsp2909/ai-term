@@ -18,6 +18,7 @@ import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
 import { testDirect } from './providers/direct.js';
 import { PROFILE_OTHER_ENGINE } from './accounts.js';
+import { CHECKPOINT_ERRORS } from './checkpoints.js';
 import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
 import { DIRECT_HOSTS } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
@@ -256,6 +257,12 @@ export class DaemonServer {
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
+                case 'sessions.undoPlan':
+                    this.control(peer,{id:request.id,ok:true,undoPlan:await this.manager.undoPlan(request.sessionId,request.redo?'redo':'undo')});
+                    break;
+                case 'sessions.undo':
+                    this.control(peer,{id:request.id,ok:true,undone:await this.manager.undo(request.sessionId,request.redo?'redo':'undo',request.fingerprint)});
+                    break;
                 case 'sessions.export':
                     this.control(peer,{id:request.id,ok:true,exportData:await this.manager.exportSession(request.sessionId)});
                     break;
@@ -348,7 +355,7 @@ export class DaemonServer {
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const fixed = new Set([
                 'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
-                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine','This agent has no worktree to diff','This worktree has no recorded start to diff against','Diff unavailable; git could not read the worktree',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
+                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine','This agent has no worktree to diff',...CHECKPOINT_ERRORS,'This worktree has no recorded start to diff against','Diff unavailable; git could not read the worktree',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
                 'Resume needs a finished agent','A shell has no AI conversation to resume','This older Claude agent has no conversation ID',
                 'Conversation already running','Conversation already starting','Invalid session request','Invalid session or title',
                 'Invalid preview size','Invalid attach','Session unavailable','Invalid resize','Not attached',

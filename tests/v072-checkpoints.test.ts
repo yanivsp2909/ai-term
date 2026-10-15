@@ -37,7 +37,8 @@ const agentGit = async (tree: string) => [await readFile(join((await git(tree, '
 it('a checkpoint holds tracked and untracked (not ignored) files and leaves the agent\'s index, HEAD and branch alone', async () => {
   const { tree } = await fixture();
   await writeFile(join(tree, 'src', 'a.ts'), 'two\n'); await writeFile(join(tree, 'new.md'), 'new\n'); await writeFile(join(tree, 'debug.log'), 'ignored\n');
-  const before = await agentGit(tree), status = (await git(tree, 'status', '--porcelain')).stdout;
+  // git status itself refreshes the index's stat data, so the index is read after it.
+  const status = (await git(tree, 'status', '--porcelain')).stdout, before = await agentGit(tree);
   const first = await snapshot(tree, 'fixer');
   expect(first?.n).toBe(1);
   expect((await git(tree, 'show-ref', '--', 'refs/ai-term/checkpoints/fixer/1')).stdout).toContain(first?.commit ?? 'missing');
@@ -112,10 +113,10 @@ it('the daemon checkpoints a turn that ends, refuses /undo while the agent runs 
   const paths = getPaths(home); await preparePaths(paths);
   const m = new SessionManager(paths, new Logger(paths.log)); managers.push(m); await m.load();
   const agent = await m.create({ engine: 'codex', model: 'gpt-test', auth: { kind: 'account' }, cwd: repo, permission: 'ask', title: 'fixer' });
-  const tree = agent.worktree ?? '';
+  const tree = agent.worktree ?? '', slug = (agent.branch ?? '').slice(3);
   await writeFile(join(tree, 'work.md'), 'work\n');
   await m.checkpointTurn(agent.id);
-  expect((await listCheckpoints(tree, 'fixer')).map(c => c.n)).toEqual([1]);
+  expect((await listCheckpoints(tree, slug)).map(c => c.n)).toEqual([1]);
   const live = (m as unknown as { sessions: Map<string, { info: SessionInfo }> }).sessions.get(agent.id);
   if (!live) throw new Error('no live');
   live.info.status = 'running';
@@ -127,7 +128,7 @@ it('the daemon checkpoints a turn that ends, refuses /undo while the agent runs 
   expect((await m.undoPlan(agent.id, 'undo')).target).toBe(1);
   await new SettingsStore(home).set({ checkpoints: false });
   await m.checkpointTurn(agent.id);
-  expect((await listCheckpoints(tree, 'fixer')).map(c => c.n)).toEqual([1]);
+  expect((await listCheckpoints(tree, slug)).map(c => c.n)).toEqual([1]);
   await expect(m.undoPlan(agent.id, 'undo')).rejects.toThrow('Checkpoints are off · /settings u turns them on');
 });
 

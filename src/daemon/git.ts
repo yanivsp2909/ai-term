@@ -12,15 +12,16 @@ export class GitError extends Error {
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // An explicit env prevents inherited GIT_DIR/GIT_WORK_TREE, hooks and routing from targeting a different checkout.
 // notRepo: git's own "not a git repository" answer becomes GitError('Not a git repo'), so callers can tell it from a failure.
-interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; literal?: boolean; notRepo?: boolean }
-function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true, notRepo = false }: RunOptions = {}): Promise<string> {
+// env: extra variables for one call (v0.7.2 checkpoints: GIT_OBJECT_DIRECTORY and a fixed author), on top of the fixed env.
+interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; literal?: boolean; notRepo?: boolean; env?: Record<string, string> }
+function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true, notRepo = false, env: extra = {} }: RunOptions = {}): Promise<string> {
     if (!isSafeAbsolutePath(cwd)) return Promise.reject(new GitError(failure));
     return new Promise((resolve, reject) => {
         // log.showSignature off: with it a repo's config would make show run gpg.program.
         const child = execFile('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', '-c', 'log.showSignature=false', ...args], {
             // Optional locks off: a read-only status must not rewrite the agent's index while it is inspected.
             // Literal pathspecs: file names from a repo reach ls-files/check-ignore after --, and ":(...)" magic must stay a name.
-            cwd, env: { PATH: '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}) },
+            cwd, env: { PATH: '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}), ...extra },
             timeout, maxBuffer, encoding: 'utf8',
         // The env has no LANG, so git's messages are its fixed English ones; stderr is matched here and never logged.
         }, (error, stdout, stderr) => error ? reject(new GitError(notRepo && typeof error.code === 'number' && /not a git repository/.test(stderr) ? 'Not a git repo' : error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'Diff too large' : failure)) : resolve(stdout));
@@ -212,9 +213,23 @@ const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--no-color', '--find-rena
 // `isolatedGitDir`): a minimal config, the repo's objects through `alternates`, a copy of the worktree's index. No
 // filter, driver or hook can be defined there; attributes come from the empty tree and no attributes file is read.
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-export interface IsolatedGit { args: string[]; dispose(): Promise<void> }
-export async function isolatedGitDir(path: string, base: string): Promise<IsolatedGit> {
-    if (!isSafeAbsolutePath(path) || !COMMIT.test(base)) throw new GitError('Git check failed');
+export { run as runGit, COMMIT as COMMIT_ID };
+// A blob's exact bytes (v0.7.2 restore): same fixed env and options as run(), output kept as bytes, never decoded.
+export function blobBytes(cwd: string, args: string[], hash: string, env: Record<string, string>): Promise<Buffer> {
+    if (!isSafeAbsolutePath(cwd) || !COMMIT.test(hash)) return Promise.reject(new GitError('Git check failed'));
+    return new Promise((resolve, reject) => {
+        execFile('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', '-c', 'log.showSignature=false', ...args, 'cat-file', 'blob', hash], {
+            cwd, env: { PATH: '/usr/bin:/bin', GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...env },
+            timeout: 60_000, maxBuffer: 256 * 1024 * 1024, encoding: 'buffer',
+        }, (error, stdout) => error ? reject(new GitError('Git check failed')) : resolve(stdout));
+    });
+}
+// common: the repository's shared git folder (refs live there); env: what a call that writes objects needs (writes).
+export interface IsolatedGit { args: string[]; common: string; env: Record<string, string>; dispose(): Promise<void> }
+// base: a commit for HEAD and the hash format (diffs); none for a snapshot. writes: new objects go straight into the
+// repository's own object store (checkpoints must outlive this folder), still without reading its config.
+export async function isolatedGitDir(path: string, base?: string, options: { writes?: boolean } = {}): Promise<IsolatedGit> {
+    if (!isSafeAbsolutePath(path) || base !== undefined && !COMMIT.test(base)) throw new GitError('Git check failed');
     // Where the worktree's git data is, read from its files (no git, so no config is read): `.git` is the main repo's
     // folder, or a file `gitdir: <admin dir>` whose `commondir` names the shared repository.
     const dotGit = join(path, '.git'), info = await lstat(dotGit);
@@ -227,9 +242,13 @@ export async function isolatedGitDir(path: string, base: string): Promise<Isolat
     const temp = await mkdtemp(join(tmpdir(), 'ai-term-diff-'));
     try {
         await mkdir(join(temp, 'objects', 'info'), { recursive: true }); await mkdir(join(temp, 'refs'));
-        const sha256 = base.length === 64;
+        // The hash format: from the base, else from the repository's config, read as text (git never reads it here).
+        const sha256 = base ? base.length === 64 : /objectformat\s*=\s*sha256/i.test(await readFile(join(common, 'config'), 'utf8').catch(() => ''));
         await writeFile(join(temp, 'config'), `[core]\n\trepositoryformatversion = ${sha256 ? 1 : 0}\n\tbare = false\n${sha256 ? '[extensions]\n\tobjectformat = sha256\n' : ''}`, { mode: 0o600 });
-        await writeFile(join(temp, 'HEAD'), `${base}\n`, { mode: 0o600 });
+        await writeFile(join(temp, 'HEAD'), base ? `${base}\n` : 'ref: refs/heads/ai-term-snapshot\n', { mode: 0o600 });
+        // The repository's own ignore list (info/exclude) is plain text, copied so a snapshot skips what git status skips.
+        await mkdir(join(temp, 'info'));
+        try { const exclude = join(common, 'info', 'exclude'); if ((await lstat(exclude)).isFile()) await copyFile(exclude, join(temp, 'info', 'exclude')); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
         await writeFile(join(temp, 'objects', 'info', 'alternates'), `${join(common, 'objects')}\n`, { mode: 0o600 });
         // The index tells git which files are tracked (and lets it skip unchanged ones); only a regular file is copied.
         const index = join(gitDir, 'index');
@@ -237,7 +256,8 @@ export async function isolatedGitDir(path: string, base: string): Promise<Isolat
         // A split index keeps most entries in sharedindex.<hash> beside it (core.splitIndex, feature.manyFiles).
         for (const name of await readdir(gitDir)) if (/^sharedindex\.[0-9a-f]{40,64}$/.test(name) && (await lstat(join(gitDir, name))).isFile()) await copyFile(join(gitDir, name), join(temp, name));
     } catch (error) { await rm(temp, { recursive: true, force: true }); throw error; }
-    return { args: [`--git-dir=${temp}`, `--work-tree=${path}`, `--attr-source=${EMPTY_TREE}`, '-c', 'core.attributesFile=/dev/null'], dispose: () => rm(temp, { recursive: true, force: true }) };
+    const objects = join(common, 'objects');
+    return { args: [`--git-dir=${temp}`, `--work-tree=${path}`, `--attr-source=${EMPTY_TREE}`, '-c', 'core.attributesFile=/dev/null'], common, env: options.writes ? { GIT_OBJECT_DIRECTORY: objects } : {}, dispose: () => rm(temp, { recursive: true, force: true }) };
 }
 export interface NameStatus { code: string; path: string; from?: string }
 // The agent can write its own index, and git doesn't check names when it loads one: an entry named ../x would make the

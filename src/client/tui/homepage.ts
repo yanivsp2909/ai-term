@@ -46,6 +46,8 @@ import { usageDetailLines } from './usage-details.js';
 import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
 import { HandoffAsk, handoffDone, handoffRequest } from './handoff-ask.js';
 import { DiffView } from './diff-view.js';
+import { UndoAsk } from './undo-ask.js';
+import { validateUndoPlan } from '../../shared/checkpoints.js';
 import { exportHtml } from './export-html.js';
 import { saveExport } from '../export-file.js';
 import { validateSessionExport } from '../../shared/session-export.js';
@@ -84,7 +86,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk;
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
   private marked=new Set<string>();
   private lastSplit:string[]=[];
@@ -376,7 +378,8 @@ export class Homepage {
       if(event.key==='tab'){this.field.text=completeCommand(this.field.text,this.menuChoice,this.commandContext());this.menuChoice=0;this.draw(true);return;}
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
-        if(command!=='/copy'&&command!=='/open'&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
+        if(!['/copy','/open','/diff','/export','/undo','/redo'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -569,6 +572,7 @@ export class Homepage {
     if (command==='/handoff') { await this.handoffCommand(argument); return; }
     if (command==='/diff') { await this.diffCommand(argument); return; }
     if (command==='/export') { await this.exportCommand(argument); return; }
+    if (command==='/undo'||command==='/redo') { await this.undoCommand(command==='/redo',argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
@@ -631,6 +635,22 @@ export class Homepage {
     if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}
     const session=named[0];if(!session){this.showNote(`no agent named ${name}`);return;}
     await this.openDiff(session);
+  }
+  // v0.7.2 /undo [agent] and /redo [agent]: the plan (what changes) first; y restores, n or Esc keeps everything.
+  private async undoCommand(redo:boolean,name:string):Promise<void>{
+    let session:SessionInfo|undefined;
+    if(name){const named=this.sessions.filter(s=>s.title===name);if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}session=named[0];if(!session){this.showNote(`no agent named ${name}`);return;}}
+    else{session=this.sessions.find(s=>s.id===this.selectedId);if(!session){this.showNote(`select an agent, then /${redo?'redo':'undo'}`);return;}}
+    let plan:import('../../shared/checkpoints.js').UndoPlan;
+    try{plan=validateUndoPlan((await this.connection.request({kind:'sessions.undoPlan',sessionId:session.id,redo})).undoPlan);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Undo unavailable');return;}
+    const target=session;
+    const ask:UndoAsk=new UndoAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
+      try{await this.connection.request({kind:'sessions.undo',sessionId:target.id,redo,fingerprint:plan.fingerprint});}
+      catch(error){this.showNote(`${redo?'redo':'undo'} stopped: ${error instanceof Error?error.message:'request failed'}`);return;}
+      this.showNote(redo?`✓ redone · ${target.title} is back where it was before /undo`:`✓ undone · ${target.title} is back at checkpoint ${plan.target ?? '?'} · /redo brings it back`);
+    });});
+    this.popup=ask;this.draw(true);
   }
   // v0.7.1 /export [agent] [folder]: one HTML file of the session (screen text, and the conversation for AI Term's agent),
   // redacted by the daemon, saved to ~/Downloads or the folder given (a last word starting with / or ~).

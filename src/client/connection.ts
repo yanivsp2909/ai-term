@@ -28,6 +28,8 @@ export function requestTimeout(kind: RequestBody['kind']): number {
     if (kind === 'sessions.handoffPlan') return 30_000;
     // A large worktree's diff and untracked files take a while to read (git has 30 s for the patch alone).
     if (kind === 'sessions.diff' || kind === 'sessions.export') return 60_000;
+    // A snapshot hashes the worktree's files (git add has 120 s), then the restore writes them.
+    if (kind === 'sessions.undoPlan' || kind === 'sessions.undo') return 5 * 60_000;
     return ['keys.add', 'keys.importEnv', 'sessions.create', 'sessions.resume'].includes(kind) ? 60_000 : 5000;
 }
 export class Connection extends EventEmitter {

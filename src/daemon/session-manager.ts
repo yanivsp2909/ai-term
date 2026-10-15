@@ -28,6 +28,8 @@ import { GitError, isWorktreeTop } from './git.js';
 import { worktreeDiff, worktreeStat } from './diff.js';
 import type { AgentDiff } from '../shared/diff.js';
 import { fitExport, redactExportMeta, transcriptFor } from './session-export.js';
+import { applyUndo, CheckpointError, dropCheckpoints, snapshot, undoPlan } from './checkpoints.js';
+import type { UndoPlan } from '../shared/checkpoints.js';
 import { EXPORT_TEXT_CHARS, type SessionExport } from '../shared/session-export.js';
 import { redactSecrets } from '../shared/redact.js';
 import { prepareWorktree, serialize } from './worktrees.js';
@@ -697,6 +699,8 @@ export class SessionManager extends EventEmitter {
         Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
         // v0.7.1: a finished turn counts what the worktree changed for the card (`+N −M · ready to review`).
         if(next.status==='done'&&previous.status!=='done'&&live.info.worktree)void this.refreshDiffStat(live);
+        // v0.7.2 (D55): a turn that ends (done, or waiting on you) is checkpointed, in the agent's own queue.
+        if(previous.status==='running'&&(next.status==='done'||next.status==='waiting')&&live.info.worktree)void this.checkpointTurn(live.info.id);
         // Working again: the last count is stale until the next finished turn.
         if(next.status==='running'&&live.info.diffStat){delete live.info.diffStat;live.diffStatSeq=(live.diffStatSeq??0)+1;}
         this.event({kind:'session.updated',session:{...live.info}});live.outputClock?.sent();
@@ -815,6 +819,53 @@ export class SessionManager extends EventEmitter {
             return {sessionId:id,...live.mirror.plainText()};
         });
     }
+    // v0.7.2 checkpoints, /undo and /redo. One checkpoint, undo or redo at a time per agent; a failure is logged and the
+    // agent goes on (a checkpoint is a convenience, never a reason to stop work).
+    private checkpointQueues=new Map<string,Promise<unknown>>();
+    private inCheckpointQueue<T>(id:string,work:()=>Promise<T>):Promise<T>{
+        const next=(this.checkpointQueues.get(id)??Promise.resolve()).then(work,work);
+        const settled=next.then(()=>undefined,()=>undefined);this.checkpointQueues.set(id,settled);
+        void settled.then(()=>{if(this.checkpointQueues.get(id)===settled)this.checkpointQueues.delete(id);});
+        return next;
+    }
+    private checkpointSlug(live:Live):string{
+        if(!live.info.worktree||!live.info.branch?.startsWith('ai/'))throw new CheckpointError('This agent has no worktree; checkpoints need one');
+        return live.info.branch.slice(3);
+    }
+    async checkpointTurn(id:string):Promise<void>{
+        const live=this.sessions.get(id);if(!live||!live.info.worktree)return;
+        let settings:Settings|null=null;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; checkpoints stay on');}
+        if(settings?.checkpoints===false)return;
+        await this.inCheckpointQueue(id,async()=>{
+            try{const path=live.info.worktree;if(!path||!await isWorktreeTop(path))throw new Error('not its worktree');await snapshot(path,this.checkpointSlug(live));}
+            catch{this.log.error('Checkpoint failed; the agent goes on');}
+        });
+    }
+    // Refused while the agent works or asks you something: its next write could land between the plan and the restore.
+    private async undoTarget(id:string):Promise<{live:Live;path:string;slug:string}>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        let settings:Settings|null=null;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; checkpoints stay on');}
+        if(settings?.checkpoints===false)throw new CheckpointError('Checkpoints are off · /settings u turns them on');
+        if(['running','starting'].includes(live.info.status))throw new CheckpointError('Stop or wait for the agent first; it is running');
+        if(live.info.status==='waiting')throw new CheckpointError('Stop or wait for the agent first; it is asking');
+        const slug=this.checkpointSlug(live),path=live.info.worktree??'';
+        if(!await isWorktreeTop(path))throw new CheckpointError('Undo unavailable; git could not read the worktree');
+        return {live,path,slug};
+    }
+    async undoPlan(id:string,kind:'undo'|'redo'):Promise<UndoPlan>{
+        const {live,path,slug}=await this.undoTarget(id);
+        return this.inCheckpointQueue(id,()=>undoPlan(path,slug,kind,live.info.title).catch((error:unknown)=>{throw this.undoError(error);}));
+    }
+    async undo(id:string,kind:'undo'|'redo',fingerprint:string):Promise<{restored:number}>{
+        const {path,slug}=await this.undoTarget(id);
+        return this.inCheckpointQueue(id,()=>applyUndo(path,slug,kind,fingerprint).catch((error:unknown)=>{throw this.undoError(error);}));
+    }
+    private undoError(error:unknown):Error{
+        if(error instanceof CheckpointError)return error;
+        this.log.error(`Undo failed: ${error instanceof GitError?error.message:'unexpected error'}`);
+        return new CheckpointError('Undo unavailable; git could not read the worktree');
+    }
     // v0.7.1 /export: the session's screen text (its end, ~1 MiB) and, for AI Term's own agent, its transcript, all redacted.
     async exportSession(id:string):Promise<SessionExport>{
         const text=await this.text(id),live=this.sessions.get(id);if(!live)throw new Error('Session not found');
@@ -885,11 +936,17 @@ export class SessionManager extends EventEmitter {
             // The agent is read inside the queue, so a start or resume that finished first is seen.
             await serialize(this.paths.root,()=>deleteWorktree(this.paths.root,record,this.worktreeAgent(path),{fingerprint,...(confirm?{confirm}:{})}));
             this.worktreeRecords.delete(path);
+            await this.dropWorktreeCheckpoints(record);
         }catch(error){
             // The worktree itself is gone once its step succeeded; the kept branch stays in git for the user.
-            if(error instanceof WorktreeError&&error.message==='Worktree removed; branch delete failed')this.worktreeRecords.delete(path);
+            if(error instanceof WorktreeError&&error.message==='Worktree removed; branch delete failed'){this.worktreeRecords.delete(path);await this.dropWorktreeCheckpoints(record);}
             throw error;
         }finally{this.busyWorktrees.delete(path);await this.persist();}
+    }
+    // v0.7.2: a worktree's checkpoints and redo go with it (after the unchanged v0.3.2 removal), from its repository.
+    private async dropWorktreeCheckpoints(record:WorktreeRecord):Promise<void>{
+        if(!record.repo||!record.branch.startsWith('ai/'))return;
+        try{await dropCheckpoints(record.repo,record.branch.slice(3));}catch{this.log.error('Checkpoints of a removed worktree could not be removed');}
     }
     async rename(id: string, title: string): Promise<SessionInfo> { if (this.closing) throw new Error('Background service is stopping'); const live = this.sessions.get(id); if (!live || !isTitle(title))
         throw new Error('Invalid session or title'); live.info.title = title; await this.persist(); this.event({ kind: 'session.updated', session: { ...live.info } }); return { ...live.info }; }
