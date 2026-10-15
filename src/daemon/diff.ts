@@ -3,7 +3,7 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join } from 'node:path';
 import { DIFF_FILE_LINES, DIFF_LINE_CHARS, DIFF_MAX_FILES, DIFF_MAX_LINES, diffLine, diffPath, type AgentDiff, type DiffFile, type DiffStat, type DiffStatus } from '../shared/diff.js';
 import { isFsError } from '../shared/paths.js';
-import { diffNameStatus, diffNumstat, diffPatch, GitError, untrackedFiles, type NameStatus } from './git.js';
+import { diffNameStatus, diffNumstat, diffPatch, GitError, isolatedGitDir, untrackedFiles, type IsolatedGit, type NameStatus } from './git.js';
 
 // v0.7.1: an agent's worktree against the commit it started from: committed and uncommitted work from git's own diff,
 // untracked (not ignored) files read here as all-added. Text only: every line goes through diffLine; the totals keep
@@ -59,9 +59,13 @@ async function readUntracked(root: string, path: string): Promise<Omit<DiffFile,
 // git writes an unquoted header as `diff --git a/<old> b/<new>`; a quoted one (unusual names) can't be checked this way.
 const owns = (section: Section, entry: NameStatus) => section.header.includes('"') || !section.header.startsWith('diff --git ') || section.header === `diff --git a/${entry.from ?? entry.path} b/${entry.path}`;
 export async function worktreeDiff(path: string, base: string): Promise<Body> {
-  const listed = await diffNameStatus(path, base);
+  const git = await isolatedGitDir(path, base);
+  try { return await diffWith(path, base, git); } finally { await git.dispose(); }
+}
+async function diffWith(path: string, base: string, git: IsolatedGit): Promise<Body> {
+  const listed = await diffNameStatus(path, base, git);
   let patch: string | null;
-  try { patch = await diffPatch(path, base); } catch (error) { if (error instanceof GitError && error.message === 'Diff too large') patch = null; else throw error; }
+  try { patch = await diffPatch(path, base, git); } catch (error) { if (error instanceof GitError && error.message === 'Diff too large') patch = null; else throw error; }
   const parts = patch === null ? [] : sections(patch), files: DiffFile[] = [];
   let next = 0, aligned = true;
   for (const entry of listed) {
@@ -74,7 +78,7 @@ export async function worktreeDiff(path: string, base: string): Promise<Body> {
     files.push({ path: diffPath(entry.path), status: STATUS[entry.code] ?? 'modified', ...(entry.from ? { from: diffPath(entry.from) } : {}), added, removed, lines, ...(shown.some(section => section.binary) ? { binary: true as const, lines: ['(binary file, not shown)'] } : {}) });
   }
   // Untracked files past the file cap are counted as cut, never opened; reading stops once the line cap is reached.
-  const names = await untrackedFiles(path), room = Math.max(0, DIFF_MAX_FILES - files.length);
+  const names = await untrackedFiles(path, git), room = Math.max(0, DIFF_MAX_FILES - files.length);
   let read = 0;
   for (const name of names.slice(0, room)) {
     if (read >= DIFF_MAX_LINES) { files.push({ path: diffPath(name), status: 'untracked', added: 0, removed: 0, lines: [], cut: true }); continue; }
@@ -85,9 +89,12 @@ export async function worktreeDiff(path: string, base: string): Promise<Body> {
 }
 // The card's `+N −M`: git's counts, plus untracked files' lines (the first 200 files; a folder or binary counts as none).
 export async function worktreeStat(path: string, base: string): Promise<DiffStat> {
-  const stat = await diffNumstat(path, base), names = await untrackedFiles(path);
-  for (const name of names.slice(0, 200)) stat.added += (await untracked(path, name)).added;
-  return { ...stat, files: stat.files + names.length };
+  const git = await isolatedGitDir(path, base);
+  try {
+    const stat = await diffNumstat(path, base, git), names = await untrackedFiles(path, git);
+    for (const name of names.slice(0, 200)) stat.added += (await untracked(path, name)).added;
+    return { ...stat, files: stat.files + names.length };
+  } finally { await git.dispose(); }
 }
 // Totals count every line; what is shown is capped per file, overall and by file count.
 function cap(all: DiffFile[], tooLarge: boolean): Body {

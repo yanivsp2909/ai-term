@@ -62,7 +62,11 @@ const FRAME_BUDGET = 3 * 1024 * 1024;
 export function fitExport(data: SessionExport): SessionExport {
   let out = data;
   const size = () => Buffer.byteLength(JSON.stringify(out));
-  while (size() > FRAME_BUDGET && out.text.length > 0) out = { ...out, text: out.text.slice(Math.ceil(out.text.length / 4)), truncated: true };
-  while (size() > FRAME_BUDGET && out.transcript?.length) out = { ...out, transcript: out.transcript.slice(0, Math.floor(out.transcript.length * 3 / 4)), transcriptTruncated: true };
+  // Whichever part is larger gives way first, a quarter at a time; both shrink every round, so this ends.
+  const transcriptBytes = () => Buffer.byteLength(JSON.stringify(out.transcript ?? []));
+  while (size() > FRAME_BUDGET && (out.text.length > 0 || out.transcript?.length)) {
+    if (out.transcript?.length && (transcriptBytes() >= Buffer.byteLength(out.text) || !out.text.length)) out = { ...out, transcript: out.transcript.slice(0, Math.floor(out.transcript.length * 3 / 4)), transcriptTruncated: true };
+    else out = { ...out, text: out.text.slice(Math.ceil(out.text.length / 4)), truncated: true };
+  }
   return out;
 }
