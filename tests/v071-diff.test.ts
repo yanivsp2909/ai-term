@@ -179,3 +179,16 @@ it('MEDIUM (both reviews): untracked files past the file cap are never read, and
   expect(diff.files.length).toBeLessThanOrEqual(500); expect(diff.capped).toBe(true);
   expect(Buffer.byteLength(JSON.stringify(diff))).toBeLessThan(2 * 1024 * 1024);
 }, 30_000);
+
+it('HIGH (fix review): the diff never reads the repo\'s config at all, so swapping it mid-diff can\'t add a filter', async () => {
+  const { temp, dir, base } = await repo();
+  // A config that includes a FIFO hangs any git that reads it; a diff that finishes never read it.
+  const fifo = join(temp, 'hang'); await run('/usr/bin/mkfifo', [fifo]);
+  await git(dir, 'config', 'include.path', fifo);
+  await writeFile(join(dir, '.gitattributes'), '* filter=evil\n'); await writeFile(join(dir, 'src', 'a.ts'), 'changed\n');
+  const { worktreeStat } = await import('../src/daemon/diff.js');
+  const started = Date.now(), diff = await worktreeDiff(dir, base), stat = await worktreeStat(dir, base);
+  expect(Date.now() - started).toBeLessThan(5000);
+  expect(diff.files.find(f => f.path === 'src/a.ts')?.lines).toContain('+changed'); expect(stat.files).toBeGreaterThan(0);
+}, 30_000);
+

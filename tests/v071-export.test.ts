@@ -115,3 +115,9 @@ it('LOW (security and TS reviews): metadata redacted, bidi controls gone from th
   const { transcriptFor } = await import('../src/daemon/session-export.js');
   expect(await transcriptFor(join(tmpdir(), `missing-${randomUUID()}.jsonl`))).toEqual({ entries: [], truncated: false });
 });
+
+it('LOW (fix review): an export trims the larger part first', async () => {
+  const { fitExport } = await import('../src/daemon/session-export.js');
+  const fitted = fitExport({ ...data, text: 'short screen', transcript: Array.from({ length: 4000 }, () => ({ at: data.createdAt, kind: 'note' as const, label: 'note', text: 'x'.repeat(1000) })) });
+  expect(fitted.text).toBe('short screen'); expect(fitted.transcriptTruncated).toBe(true);
+});
