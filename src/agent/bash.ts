@@ -99,13 +99,21 @@ export function blockedPlace(output: string, cwd: string, user: string, guarded:
 // The argv that runs a command line: sandboxed when it can be; a folder no profile can hold is refused, never run bare.
 // guard: what a refusal is read against afterwards.
 // unsandboxed: why an Ask command ran without a sandbox, reported with its result (gate: it was silent).
-interface Argv { program: string; args: string[]; guard?: { user: string; cwd: string; places: Persistence & { home: string } }; unsandboxed?: string }
+export interface Argv { program: string; args: string[]; guard?: { user: string; cwd: string; places: Persistence & { home: string } }; unsandboxed?: string }
 async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
-  const plain: Argv = { program: '/bin/sh', args: ['-c', command] };
   const platform = options.sandbox?.platform ?? process.platform, required = options.sandbox?.require === true;
   if (platform === 'win32') { if (required) throw new ToolError("bash can't run in don't ask without a sandbox: Windows has none AI Term can use"); return { ...await windowsArgv(command), ...options.sandbox ? { unsandboxed: 'Windows has none AI Term can use' } : {} }; }
+  return sandboxedArgv(['/bin/sh', '-c', command], options);
+}
+// Any program under the bash sandbox (v0.9.3: language servers for diagnostics, which need what bash needs: the worktree,
+// toolchains, caches). Without a sandbox it runs plain, saying why in `unsandboxed`, unless the sandbox is required.
+export async function sandboxedArgv(argv: readonly string[], options: BashOptions): Promise<Argv> {
+  const [first = '', ...rest] = argv, command = [first, ...rest];
+  const plain: Argv = { program: first, args: rest };
+  const platform = options.sandbox?.platform ?? process.platform, required = options.sandbox?.require === true;
   if (!options.sandbox) return plain;
   const without = (why: string): Argv => { if (required) throw new ToolError(`bash can't run in don't ask without a sandbox: ${why}`); return { ...plain, unsandboxed: why }; };
+  if (platform === 'win32') return without('Windows has none AI Term can use');
   if (platform === 'linux') return linuxArgv(command, options, without);
   if (platform !== 'darwin') return without('this system has none AI Term can use');
   try { await access(SANDBOX_EXEC, constants.X_OK); } catch { return without("macOS's sandbox-exec is missing"); }
@@ -121,7 +129,7 @@ async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
   persistence = { ...persistence, parents: [...new Set([...persistence.parents ?? [], ...ancestorLiterals([...persistence.files, ...persistence.dirs, ...protect, home], realUser), ...ancestorLiterals([...persistence.files, ...persistence.dirs, ...protect, home], user)])] };
   let profile: string;
   try { profile = bashProfile(home, cwd, protect, persistence); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a path with quotes, parentheses or control characters (this folder, or where one of your dotfile links leads)"); throw error; }
-  return { program: SANDBOX_EXEC, args: ['-p', profile, '--', '/bin/sh', '-c', command], guard: { user: realUser, cwd, places: { ...persistence, home } } };
+  return { program: SANDBOX_EXEC, args: ['-p', profile, '--', ...command], guard: { user: realUser, cwd, places: { ...persistence, home } } };
 }
 
 // Windows (v0.8.2): no sandbox (so Ask only); the command line goes to Git for Windows' bash.exe as one argv element, as
@@ -145,7 +153,7 @@ const probeLinux = (bwrap: string): Promise<boolean> => {
   void probe.then(ok => { if (probeCacheMs(ok) === 0 && linuxReady === probe) linuxReady = null; });
   return probe;
 };
-async function linuxArgv(command: string, options: BashOptions, without: (why: string) => Argv): Promise<Argv> {
+async function linuxArgv(command: readonly string[], options: BashOptions, without: (why: string) => Argv): Promise<Argv> {
   const sandbox = options.sandbox; if (!sandbox) return without('no sandbox was asked for');
   const bwrap = sandbox.linux ? sandbox.linux.bwrap : await findBwrap();
   if (!bwrap) return without("bubblewrap (bwrap) isn't installed");
@@ -159,7 +167,7 @@ async function linuxArgv(command: string, options: BashOptions, without: (why: s
   } catch (error) {
     return without(error instanceof ShadowError ? error.message.replace(/^bash can't run here: /, '') : error instanceof SandboxPathError ? 'a path it protects has control characters' : "AI Term couldn't check the folders its sandbox protects");
   }
-  return { program: bwrap, args: [...args, '--', '/bin/sh', '-c', command], guard: { user: spec.shadows[0]?.dir ?? user, cwd: spec.cwd, places: { ...persistence, home: spec.aiTermHome } } };
+  return { program: bwrap, args: [...args, '--', ...command], guard: { user: spec.shadows[0]?.dir ?? user, cwd: spec.cwd, places: { ...persistence, home: spec.aiTermHome } } };
 }
 
 // The bash tool runs the model's command line as one argv element of /bin/sh -c: running that line *is* the tool, and it is

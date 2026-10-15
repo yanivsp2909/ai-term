@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
-import { AGENT_ASK_FLAG, AGENT_DONT_ASK_FLAG, buildBashEnv } from '../daemon/env.js';
+import { AGENT_ASK_FLAG, AGENT_DONT_ASK_FLAG, AGENT_LSP_FLAG, buildBashEnv } from '../daemon/env.js';
 import { killAllBash } from './bash.js';
 import { isEndpoint, isKeyProvider, isSecret, isThemeName, isValidModelId } from '../shared/validate.js';
 import { isLocalEndpoint } from '../shared/providers.js';
@@ -18,12 +18,13 @@ import { HttpReporter, readAgentSecrets, reporterEnv } from './report.js';
 import { Screen } from './screen.js';
 import { findRipgrep } from './tools.js';
 import { Transcript } from './transcript.js';
+import { LspPool } from './lsp.js';
 
-export interface AgentArgs { provider: KeyProvider; model: string; models: string[]; theme: ThemeName; transcript: string | null; permission: AgentPermission; firstMessage?: string }
+export interface AgentArgs { provider: KeyProvider; model: string; models: string[]; theme: ThemeName; transcript: string | null; permission: AgentPermission; lsp: boolean; firstMessage?: string }
 export class AgentUsageError extends Error {}
 // The argv env.ts builds (buildAgentArgs). Anything else is refused: Ask unless the one Don't ask flag is there.
 export function parseAgentArgs(args: readonly string[]): AgentArgs {
-  let provider: KeyProvider | null = null, model: string | null = null, models: string[] = [], theme: ThemeName = 'graphite', transcript: string | null = null, permission: AgentPermission = 'ask', firstMessage: string | undefined;
+  let provider: KeyProvider | null = null, model: string | null = null, models: string[] = [], theme: ThemeName = 'graphite', transcript: string | null = null, permission: AgentPermission = 'ask', lsp = false, firstMessage: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
     if (arg === '--') { if (i !== args.length - 2) throw new AgentUsageError('Expected one message after --'); firstMessage = args[i + 1]; break; }
@@ -35,12 +36,13 @@ export function parseAgentArgs(args: readonly string[]): AgentArgs {
     else if (name === '--transcript' && value && isAbsolute(value) && !value.includes('\0')) transcript = value;
     else if (arg === AGENT_ASK_FLAG) permission = 'ask';
     else if (arg === AGENT_DONT_ASK_FLAG) permission = 'dontAsk';
+    else if (arg === AGENT_LSP_FLAG) lsp = true;
     else throw new AgentUsageError(`Unknown argument ${JSON.stringify(arg.slice(0, 40))}`);
   }
   if (!provider) throw new AgentUsageError('Missing --provider');
   if (!model) throw new AgentUsageError('Missing --model');
   if (!models.includes(model)) models = [model, ...models];
-  return { provider, model, models, theme, transcript, permission, ...(firstMessage !== undefined ? { firstMessage } : {}) };
+  return { provider, model, models, theme, transcript, permission, lsp, ...(firstMessage !== undefined ? { firstMessage } : {}) };
 }
 
 // The key and credentials are copied out of the environment and deleted from it before anything else runs, so nothing
@@ -96,16 +98,19 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   try { firstModel = await makeModel(parsed.model); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof WireError ? error.message : 'the model could not be set up'}\n`); return 1; }
   return new Promise<number>(resolveExit => {
     const restore = () => { terminal.stdout.write('\x1b[?2004l'); terminal.stdin.setRawMode?.(false); terminal.stdin.pause(); };
+    const bashSandbox = { home: aiTermHome ?? join(homedir(), '.ai-term'), require: parsed.permission === 'dontAsk', shell: Object.fromEntries(Object.entries(shell).filter(([, value]) => value !== undefined)), ...(gitCommon ? { protect: [gitCommon] } : {}) };
+    // v0.9.3: language servers under bash's sandbox with bash's env (no keys), only when /settings z turned them on.
+    const lsp = parsed.lsp ? new LspPool({ root, env: bashEnv, sandbox: bashSandbox }) : null;
     // A crash prints fixed words, never a stack or an error message, which could carry anything a provider sent.
-    const crash = () => { killAllBash(); restore(); terminal.stderr.write('\nai agent stopped after an internal error\n');void reporter.mcp.stop().then(()=>resolveExit(1),()=>resolveExit(1)); };
+    const crash = () => { killAllBash(); void lsp?.stopAll(); restore(); terminal.stderr.write('\nai agent stopped after an internal error\n');void reporter.mcp.stop().then(()=>resolveExit(1),()=>resolveExit(1)); };
     process.once('uncaughtException', crash); process.once('unhandledRejection', crash);
     // Stopped from the homepage (s), by the daemon or by a closed terminal: every running command's process group goes
     // with it (they run in their own groups, so the PTY's signal alone would leave them behind), then the agent exits.
-    for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); app.close(); });
+    for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); void lsp?.stopAll(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox: { home: aiTermHome ?? join(homedir(), '.ai-term'), require: parsed.permission === 'dontAsk', shell: Object.fromEntries(Object.entries(shell).filter(([, value]) => value !== undefined)), ...(gitCommon ? { protect: [gitCommon] } : {}) }, extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
-      quit: () => { restore(); void transcript.close().then(() => resolveExit(0)); },
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox, ...(lsp ? { diagnostics: lsp } : {}), extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
+      quit: () => { restore(); void Promise.all([transcript.close(), lsp?.stopAll()]).then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);
     // Bracketed paste: a paste (or a /send from the homepage) arrives as one piece, never as typed keys.

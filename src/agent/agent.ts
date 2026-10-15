@@ -50,6 +50,8 @@ export interface AgentOptions {
   bashSandbox?: { home: string; protect?: readonly string[]; require?: boolean; shell?: import('./bash.js').ShellDirs };
   extensions?: ExtensionAccess; models?: readonly string[]; makeModel?(id: string): Promise<LanguageModel>;
   limits?: RunLimits; child?: boolean;
+  // v0.9.3 (D55, off by default): a file's diagnostics after each write or edit.
+  diagnostics?: { diagnose(path: string): Promise<string> };
   mcp?:McpAccess; mcpSession?:{allowed:Set<string>;schemas:Set<string>};
 }
 export type TurnResult = 'done' | 'interrupted' | 'failed';
@@ -147,8 +149,15 @@ export class Agent {
       }
     });
   }
-  private gated<T>(name: ToolName, summary: (input: T) => string, gatedTool: GatedTool<T>) {
-    return this.run<T>(name, summary, input => gatedTool.run(this.options.root, input), input => gatedTool.preview(this.options.root, input));
+  private gated<T extends { path: string }>(name: ToolName, summary: (input: T) => string, gatedTool: GatedTool<T>) {
+    return this.run<T>(name, summary, async input => {
+      const done = await gatedTool.run(this.options.root, input), diagnostics = this.options.diagnostics;
+      if (!diagnostics) return done;
+      // A server that fails costs the write nothing: the agent reads one plain line instead of its errors.
+      let found: string;
+      try { found = await diagnostics.diagnose(input.path); } catch { found = "diagnostics couldn't run for this file"; }
+      return found ? `${done}\n${found}` : done;
+    }, input => gatedTool.preview(this.options.root, input));
   }
 
   private mcpKey(server:McpView,tool:string):string{return JSON.stringify([server.id,server.hash,tool]);}

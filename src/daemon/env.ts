@@ -44,6 +44,8 @@ export function buildSpawnEnv(engine: CliEngine, auth: {kind:'account'} | {kind:
 // D40: Ask passes explicit ask flags, or the user's own CLI config (e.g. Codex YOLO) silently turns Ask into Don't ask. Claude 2.1.296 help lists this mode as 'manual'; the CLI maps 'manual' to its canonical 'default'.
 // AI Term's own agent reads its mode from these two flags only; it imports the constants, so the spelling lives here (S10).
 export const AGENT_ASK_FLAG='--ask',AGENT_DONT_ASK_FLAG='--dont-ask';
+// v0.9.3: LSP diagnostics after writes and edits (D55 switch, off by default: they add tokens to every turn).
+export const AGENT_LSP_FLAG='--lsp';
 const PERMISSION_ARGS:Record<AgentEngine,Partial<Record<Permission,readonly string[]>>>={
     'claude-code':{ask:['--permission-mode=default'],auto:['--permission-mode=auto'],dontAsk:['--permission-mode=bypassPermissions']},
     codex:{ask:['--ask-for-approval=on-request','--sandbox=workspace-write'],dontAsk:['--ask-for-approval=never','--sandbox=workspace-write']},
@@ -108,11 +110,11 @@ const MAX_AGENT_MODELS=200;
 const absolute=(path:unknown):path is string=>typeof path==='string'&&(path.startsWith('/')||process.platform==='win32'&&isSafeAbsolutePath(path))&&!path.includes('\0')&&path.length<=4096;
 // `ai agent` runs like the status commands: node plus AI Term's entry (source mode adds the tsx loader). No shell, no secret:
 // the model, the deployments it may switch to and the mode are plain argv; the key goes only into buildAgentEnv.
-export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvider;model:string;models:readonly string[];permission:Permission;theme:ThemeName;transcript:string;firstMessage?:string}):{executable:string;args:string[]}{
+export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvider;model:string;models:readonly string[];permission:Permission;theme:ThemeName;transcript:string;firstMessage?:string;lsp?:boolean}):{executable:string;args:string[]}{
     const {command}=request;
     if(!absolute(command.node)||!absolute(command.entry)||command.loader!==undefined&&!absolute(command.loader)||command.entry.endsWith('.ts')&&command.loader===undefined)throw new Error('Invalid agent command');
     if(!isKeyProvider(request.provider)||!isValidModelId(request.model)||!request.models.length||request.models.length>MAX_AGENT_MODELS||!request.models.every(isValidModelId)||!request.models.includes(request.model)||!isPermissionForEngine('ai-term',request.permission)||!isThemeName(request.theme)||!absolute(request.transcript)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid agent arguments');
-    const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--provider=${request.provider}`,`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[])];
+    const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--provider=${request.provider}`,`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[]),...(request.lsp===true?[AGENT_LSP_FLAG]:[])];
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return {executable:command.node,args};
 }

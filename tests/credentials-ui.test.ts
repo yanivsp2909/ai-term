@@ -31,7 +31,7 @@ it('settings keeps its selected key and defaults visible with many saved keys',a
  const panel=new CredentialsPanel('settings',{request:async body=>({id:randomUUID(),ok:true,...(body.kind==='keys.list'?{keys}:body.kind==='settings.get'?{settings:{theme:'graphite'}}:{})}),changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});await panel.load();for(let i=0;i<19;i++)await panel.key('down');const lines=panel.lines();
  // v0.4.1-v0.4.2 add the keys-run-on, caps and context-warning rows; the popup scrolls to the selected row, so a short
  // terminal still shows it.
- expect(lines.length).toBeLessThan(34); // v0.6.1 cost per task, v0.6.2 presets, v0.6.3 handoff, v0.7.2 checkpoints, v0.7.3 secret scan, v0.7.4 auto-test and auto-review rows, v0.9.1 queue, v0.9.2 dev servers
+ expect(lines.length).toBeLessThan(35); // v0.6.1 cost per task, v0.6.2 presets, v0.6.3 handoff, v0.7.2 checkpoints, v0.7.3 secret scan, v0.7.4 auto-test and auto-review rows, v0.9.1 queue, v0.9.2 dev servers, v0.9.3 diagnostics
  const {Grid,plainText}=await import('../src/client/tui/grid.js'),{createTheme}=await import('../src/client/tui/theme.js');
  expect(plainText(panel.draw(new Grid(100,24,createTheme('graphite')).cells,createTheme('graphite')))).toContain('› key-19');expect(lines.join('\n')).toContain('› key-19');expect(lines.join('\n')).toContain('DEFAULTS');
 });

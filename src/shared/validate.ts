@@ -333,7 +333,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -354,6 +354,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.secretScan!==undefined&&typeof v.secretScan!=='boolean')throw new ValidationError('Invalid secret scan setting');
     if(v.queue!==undefined&&typeof v.queue!=='boolean')throw new ValidationError('Invalid queue setting');
     if(v.devServers!==undefined&&typeof v.devServers!=='boolean')throw new ValidationError('Invalid dev server setting');
+    if(v.lspDiagnostics!==undefined&&typeof v.lspDiagnostics!=='boolean')throw new ValidationError('Invalid diagnostics setting');
     if(v.devCommands!==undefined&&(!isRecord(v.devCommands)||Object.keys(v.devCommands).length>50||Object.entries(v.devCommands).some(([repo,command])=>['__proto__','prototype','constructor'].includes(repo)||!isSafeAbsolutePath(repo)||!isTestCommand(command))))throw new ValidationError('Invalid dev commands');
     if(v.autoTest!==undefined&&typeof v.autoTest!=='boolean')throw new ValidationError('Invalid auto-test setting');
     if(v.autoReview!==undefined&&typeof v.autoReview!=='boolean')throw new ValidationError('Invalid auto-review setting');
