@@ -227,3 +227,27 @@ it('LOW (silent failures): an Ollama listing failure keeps its class for the log
   const reset = await caught(() => listOllama('http://127.0.0.1:11434', async () => { throw Object.assign(new Error('x secret'), { code: 'ECONNRESET' }); }));
   expect((reset as OllamaError).detail).toBe('ECONNRESET');
 });
+
+// ---- fix review (fresh typescript-reviewer on 750c544) ----
+it('HIGH (fix review): bare and JSON-quoted secret names are redacted too', () => {
+  for (const [input, gone] of [['PASSWORD=hunter2', 'hunter2'], ['password=hunter2', 'hunter2'], ['SECRET=abc123', 'abc123'], ['TOKEN=abc123', 'abc123'], ['{"password": "hunter2"}', 'hunter2'], ['"api_key":"abcd1234"', 'abcd1234'], ["apiKey: 'zz9-QQ-zz9'", 'zz9-QQ-zz9'], ['refreshToken=eyJhbGciOi.x', 'eyJhbGciOi.x']] as const)
+    expect(redactSecrets(input), input).not.toContain(gone);
+});
+
+it('MEDIUM (fix review): ordinary code and notes are left alone', () => {
+  for (const text of ['max_tokens: 4096', 'monkey=1', 'export const sortKey: string = "a"', 'password: string', 'const token = getToken();', 'Key: do this first', 'Basic src/daemon/session-manager.ts', 'primaryKey: id', 'type K = keyof T', 'see sk-learn docs'])
+    expect(redactSecrets(text), text).toBe(text);
+});
+
+it('MEDIUM (fix review): a long unbroken run is redacted in linear time', () => {
+  const started = performance.now();
+  redactSecrets('a-'.repeat(25_000)); redactSecrets('x'.repeat(100_000) + 'KEY=1');
+  expect(performance.now() - started).toBeLessThan(200);
+});
+
+it('LOW (fix review): a secret split by a control or cut at the 48k edge is still redacted', () => {
+  expect(handoffMessage('x', 'sk-ant-api03-AAAA\u0007AAAAAAAAAAAAAAAAAAAAAA')).not.toContain('AAAAAAAAAAAAAAAAAAAAAA');
+  const key = '-----BEGIN OPENSSH PRIVATE KEY-----\n' + 'Q'.repeat(2000) + '\n-----END OPENSSH PRIVATE KEY-----\n';
+  const screen = 'x'.repeat(48_000 - 1000) + key + 'y'.repeat(500);
+  expect(handoffPrompt('codex', screen)).not.toContain('QQQQQQQQQQ');
+});
