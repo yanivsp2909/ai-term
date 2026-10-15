@@ -58,7 +58,7 @@ it('/test-cmd shows and sets the command of the selected agent\'s project; none 
 });
 
 it('/test shows the command, the folder and the changed setup files; y runs exactly that plan', async () => {
-  const plan = { title: 'fixer', command: ['./check.sh'], cwd: '/tmp/trees/fixer', changed: ['package.json'], fingerprint: fp };
+  const plan = { title: 'fixer', command: ['./check.sh'], cwd: '/tmp/trees/fixer', changed: ['package.json'], fingerprint: fp, sandbox: true, loopback: false };
   const h = await open(body => body.kind === 'sessions.testPlan' ? { testPlan: plan } : {});
   try {
     h.type('/test fixer\r');
