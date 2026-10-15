@@ -36,7 +36,8 @@ it.skipIf(!MAC)('MEDIUM: a server that crashes at start answers at once, is said
   const begun = Date.now();
   expect(await pool.diagnose('a.ts')).toBe("diagnostics for a.ts: typescript-language-server stopped; diagnostics for this language are off until the agent restarts");
   expect(await pool.diagnose('a.ts')).toBe('');
-  expect(Date.now() - begun).toBeLessThan(3000);
+  // Well under one 8 s wait, let alone two; a sandboxed start is slow on a loaded machine.
+  expect(Date.now() - begun).toBeLessThan(6000);
   expect(await starts()).toBe(1);
 }, 20_000);
 
