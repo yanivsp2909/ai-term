@@ -6,7 +6,7 @@ export interface ModelLimits {context?:number;output?:number}
 // v0.6.5 still loads (those providers are then unpriced, never priced from another table).
 export type CatalogTable='anthropic'|'openai'|'azure'|'xai'|'moonshotai'|'zai'|'openrouter'|'amazon-bedrock'|'google-vertex';
 type NewTable=Exclude<CatalogTable,'anthropic'|'openai'|'azure'>;
-const TABLE_OF:Partial<Record<KeyProvider,CatalogTable>>={xai:'xai',moonshot:'moonshotai',zai:'zai',openrouter:'openrouter',bedrock:'amazon-bedrock',vertex:'google-vertex'};
+const TABLE_OF:Partial<Record<KeyProvider,NewTable>>={xai:'xai',moonshot:'moonshotai',zai:'zai',openrouter:'openrouter',bedrock:'amazon-bedrock',vertex:'google-vertex'};
 export interface PriceSnapshot {fetchedAt:string;providers:Record<'anthropic'|'openai'|'azure',Record<string,ModelPrice>>&Partial<Record<NewTable,Record<string,ModelPrice>>>;limits?:Partial<Record<CatalogTable,Record<string,ModelLimits>>>}
 const object=(v:unknown):Record<string,unknown>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{};
 export function trimPrices(raw:unknown,fetchedAt:string):PriceSnapshot{
@@ -35,7 +35,7 @@ export function findPrice(snapshot:PriceSnapshot,provider:KeyProvider,model:stri
  if(provider==='anthropic'||provider==='openai')return own(snapshot.providers[provider]);
  // v0.6.5 providers: an override (/settings p), else their own Models.dev table, else unknown (`price ?`).
  const table=TABLE_OF[provider];
- if(table)return overridden??own(snapshot.providers[table as NewTable]??{});
+ if(table)return overridden??own(snapshot.providers[table]??{});
  if(provider!=='foundry')return overridden;
  if(!override&&alias)return own(snapshot.providers.azure,alias)??own(snapshot.providers.openai,alias)??own(snapshot.providers.anthropic,alias);
  return overridden??own(snapshot.providers.azure)??own(snapshot.providers.openai);

@@ -1,6 +1,61 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: (see git log; this run started at 22669aa)
+Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate, C v0.7.1, D v0.7.2, E v0.7.3, F v0.7.4 in order (each section below says done or blocked).
+Branch: main, pushed after each part. Started clean at 22669aa after `git pull --ff-only` (already up to date). No other agent worked in this repo.
+
+## Part A: v0.6.5 more providers — done
+Commits: 75f504c (RED) → 2a258e0 (GREEN) → a781e5d (UI RED) → 3f1adb8 (UI GREEN) → e81e86a (docs, copy) → review fixes a0409ef (RED) / e2da06f → built-in prices 7456539 (RED) / 4a59330, plus this handover.
+
+What works:
+- **Keys for xAI, Moonshot (Kimi), Z.ai (GLM), OpenRouter** (OpenAI-compatible Chat Completions, `@ai-sdk/openai-compatible`), **Amazon Bedrock** (one API key as a bearer token + a region, `@ai-sdk/amazon-bedrock`) and **Google Vertex express mode** (one API key in `x-goog-api-key`, Gemini models, `@ai-sdk/google-vertex/edge`). Each key only in its own header, only to its provider's fixed official host in code (`src/shared/providers.ts`; Bedrock: `bedrock-runtime.<region>.amazonaws.com`, the region bound in the Keychain entry like a Foundry endpoint, B12), through `guardedFetch` (no redirects, nothing outside the endpoint). Provider error text never shows.
+- **Ollama:** `http://127.0.0.1:<port>` only (default 11434; `localhost` and anything else refused), no key, no Keychain entry, no Authorization header; models from its own `GET /api/tags` (5 s, 256 KiB, valid ids, ≤ 40), refreshed by `t`.
+- **A tiny test request before a model is offered:** one 16-token request per model (Chat Completions / Bedrock Converse / Vertex generateContent), 15 s, status or fixed reason only (`src/daemon/providers/direct.ts`), run right after the key is saved and on `t`. Only passing models appear in `/model` and can start (`Model must pass its test first; test the key in /settings (t)`).
+- **Never on a CLI:** these keys always start AI Term's agent, even with `keys run on: the cli`; the CLI branch refuses them too.
+- **Budgets/reservations apply to all:** list prices built in from Models.dev (approved one download mid-run, see below), overrides win (`/settings` p, now any model id), unknown models pause once per run when a limit is set, Ollama $0 unless overridden. Context limits come with the catalog.
+- **/login and /settings:** ten providers; the new ones go straight to their form (label, key, models; Bedrock region; Ollama endpoint), saved keys are tested at once, shown by provider name and last 4 (Ollama `no key`; cards `local · no key`), removed with `x`, retested with `t`.
+
+Prompt vs code:
+- "Bedrock/Vertex only if a single API key works": both do, per the docs bundled in their npm packages (Bedrock: "API key authentication … takes precedence over any SigV4 credentials"; Vertex: "Express mode … using an API key instead of OAuth"). Shipped. Vertex express keys reach Google's own models only; Claude on Vertex needs a Google Cloud login and isn't offered.
+- Prices: the prompt allowed network only for git and npm. Yaniv asked mid-run to build the prices in and approved one read-only download of `https://models.dev/api.json`; the existing Anthropic/OpenAI/Azure tables were byte-identical in it, so only the six new tables and the date changed.
+- Not added: `.env` import for these providers (a key needs model ids first); the handoff note writer stays on Anthropic/OpenAI/Foundry (the one-shot reviewed in v0.6.3).
+
+Findings (fresh typescript-reviewer and security-reviewer on 22669aa..e81e86a; a third fresh typescript-reviewer on e81e86a..4a59330 found no bugs, its typing tidy-up applied):
+- **LOW (TS review):** an Ollama endpoint on port 80 passed validation, then the guard refused every request (`URL.origin` drops `:80`). Fixed: decided from the parsed URL.
+- **LOW (security review, defense in depth):** plain http depended only on the endpoint looking local, not on there being no key. Fixed: only a guard built with `plainLocal` (Ollama, keyless) allows http.
+- **LOW (security review):** Ollama was $0 even for a billed cloud model you priced. Fixed: an override wins.
+- Not fixed: price overrides are keyed by model id across providers (a Foundry deployment and an OpenRouter model with the same id share one); budget math only.
+- One pre-existing test adjusted on purpose: `keys-binding` repoints `keys.view` for the argv read; routing now reads the key once before that, so the mock covers both reads (same intent).
+
+Checks (Part A, before the push):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0 (ESLint: No issues found)
+npm run build       ESM Build success in 32ms
+npm run app:build   built in 58ms
+npm run app:test    9 passed (37.8s), twice; an earlier run under load (two reviewers running) failed 1–2 different tests each time, then 9/9 twice on a quiet machine
+npm test (1)        Test Files 211 passed · Tests 1338 passed | 2 skipped · 20.96s
+npm test (2)        Test Files 211 passed · Tests 1338 passed | 2 skipped · 21.92s
+```
+- One full run before the price commit showed 1 failing test that didn't reproduce in the next four runs (name not captured; noted as a flake to watch).
+
+Manual checks (need real keys or a real Ollama; added to the final list):
+- each new provider: `/login` → provider → key + one model → test shows `ready`; start an agent; a turn shows `$…`.
+- Ollama: `ollama serve`, `/login` → Ollama → ⏎ → models listed; an agent runs with `local · no key`.
+
+New dependencies:
+- `@ai-sdk/openai-compatible` 3.0.68: one AI SDK provider for xAI, Moonshot, Z.ai, OpenRouter and Ollama (OpenAI-compatible Chat Completions); `@ai-sdk/openai` targets OpenAI's own API.
+- `@ai-sdk/amazon-bedrock` 5.0.115: Bedrock's Converse API with an API key (bearer); no existing package speaks it.
+- `@ai-sdk/google-vertex` 5.0.111: Vertex express mode (only its `/edge` entry is imported, so google-auth-library is installed but never loaded).
+All three pinned to versions that share the installed `@ai-sdk/provider` 4.0.27 / `provider-utils` 5.0.59 (no duplicates).
+
+Concepts introduced:
+- **Fixed host vs bound host:** where a key may go must never come from a file another program can edit. Fixed hosts live in code (`DIRECT_HOSTS` in `src/shared/providers.ts`); a host that depends on your choice (Foundry endpoint, Bedrock region) is stored with the secret in the Keychain and checked against settings.json on every use (`withSecret` in `src/daemon/keys.ts`).
+- **OpenAI-compatible API:** many providers copy OpenAI's Chat Completions request shape, so one client (`createOpenAICompatible` in `src/agent/providers/compatible.ts`) talks to all of them by changing only the base URL and key.
+- **Loopback address:** `127.0.0.1` always means "this machine"; a name like `localhost` is looked up and could be pointed elsewhere, so Ollama is only reached by the literal address (`isLocalEndpoint`).
+
+## Previous run: checkpoint (overnight 2026-10-14/15)
 Last commit: (this handover; see git log — the commit before it is e2f7570)
 Roadmap step: overnight run 2026-10-14/15 (Claude Code, Opus 5.5, unattended) — **all six parts done**: A v0.5.3 done · B v0.5 release gate done, **v0.5 closed** · C v0.6.1 done · D v0.6.2 done · E v0.6.3 done · F v0.6.4 done. Each part was committed and pushed before the next started.
 Branch: main, pushed. Started clean at c03e02d after `git pull --ff-only` (already up to date). No other agent worked in this repo (the running Codex sessions' cwd is ~/NARVIS).
@@ -12,7 +67,7 @@ Prompt vs code (overnight):
 - The devtools hardening for the packaged app was reverted on purpose (Part B): Playwright drives the packaged smoke suite and the latency A/B through `--inspect`/`--remote-debugging-port`; using them needs same-user access (D35).
 - OpenAI's terms and help pages refused automated fetches (HTTP 403), so Part F carries no verbatim OpenAI quote, only search-summary wording marked unverified.
 
-## Morning report
+## Previous run: Morning report
 | Part | Result | Commits | Findings fixed (by severity) | Not fixed (reason in its section) |
 |---|---|---|---|---|
 | A v0.5.3 | done | 29600d3, 5ba923a | 1 stale test (spaces allowed since b2e203f) | — |
@@ -29,18 +84,18 @@ Part F findings in one place (details: docs/architecture.md §12.10):
 - **Keychain:** the official Claude Code Authentication page says that with `CLAUDE_CONFIG_DIR` set, Claude Code "keys the macOS Keychain entry to that directory too, so a session with a different `CLAUDE_CONFIG_DIR` reads a different entry", and documents multiple accounts exactly this way. Claude multi-account shipped. Codex: `auth.json` under `CODEX_HOME` is per profile; whether its OS-keyring mode is per `CODEX_HOME` is undocumented → manual check below.
 - **Terms:** Anthropic Consumer Terms §2 "You may not share your Account login information, Anthropic API key, or Account credentials with anyone else." / "You also may not make your Account available to anyone else." (nothing limits how many accounts you hold); Claude Code legal page: "Advertised usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the Agent SDK." OpenAI Terms of Use: not fetchable; search summaries say they forbid "circumventing rate limits or restrictions" (unverified — read the page). So AI Term never switches at a limit; it only offers the handoff. D53 updated accordingly.
 
-## What's next
+## Previous run: What's next
 - Yaniv's manual checks below (real keys, real logins, real terminal). Nothing from tonight's six parts is left open except the items each part lists as not fixed.
 - The next roadmap step after v0.6.4 hasn't started. Candidates noted tonight: a `/model` account column; an opt-in Codex `cli_auth_credentials_store` choice if the keyring check fails; the dev-app daemon's Electron Node mode for AI Term's own agent.
 
-## Gotchas
+## Previous run: Gotchas
 - Two managers on one AI Term home race each other's state writes (load writes D32's view): tests that "restart" must wait for the first one's write on disk (tests/v061-budgets-daemon).
 - The Bash tool turns `\uXXXX` in heredocs into real characters; a literal U+2028 inside a JS regex literal breaks parsing. Write invisible characters as escapes from Python (tests/v063-handoff-review).
 - The packaged app can't refuse `--inspect`/`--remote-debugging-port`: Playwright needs them for the packaged smoke suite and the latency A/B.
 - `budget-reservations.json` and `profiles/` are new under ~/.ai-term; profiles hold the CLIs' own logins and are never deleted by AI Term.
 - New settings keys: `taskCost`, `presets`, `presetsEnabled`, `handoff`, `accounts`, `defaultAccounts` (D55 switches: o, s, g in /settings).
 
-## Manual checks (everything from tonight, plus the v0.5 install checks still open)
+## Previous run: Manual checks (everything from tonight, plus the v0.5 install checks still open)
 - `cd ~/ai-term && kill 83116` — optional: stop the leaked test daemon from the earlier smoke run (it is not your ~/.ai-term daemon).
 - `cd ~/ai-term && npm run app:dist && open build/desktop/dist` — drag AI Term.app into Applications (the bundle in build/ is already at e2f7570).
 - `cd ~/ai-term && open '/Applications/AI Term.app'` — first open (right-click Open if macOS asks); press Cmd+K and Cmd+T right away while it starts, then `/exit` and scroll up: no `^[]777;ai-term;…` text anywhere (token echo fix).
