@@ -15,7 +15,7 @@ import { Agent } from '../src/agent/agent.js';
 import { AgentApp } from '../src/agent/app.js';
 import { Screen } from '../src/agent/screen.js';
 import { Transcript } from '../src/agent/transcript.js';
-import { HttpReporter, reporterEnv } from '../src/agent/report.js';
+import { HttpReporter, readAgentSecrets, reporterEnv } from '../src/agent/report.js';
 import { loadInstructions } from '../src/agent/instructions.js';
 import { redactor } from '../src/agent/display.js';
 import { killAllBash } from '../src/agent/bash.js';
@@ -72,7 +72,8 @@ async function world(settings: Record<string, unknown> = {}) {
   const session = await manager.create({ engine: 'ai-term', model: MODEL, auth: { kind: 'key', keyId: key.id }, cwd: repo, permission: 'ask' });
   await expect.poll(() => manager.get(session.id).status).toBe('running');
   const env = spawned.at(-1) ?? {};
-  expect(env.AITERM_AGENT_KEY).toBe(SECRET);
+  // Gate: the key reaches the agent in its 0600 secrets file, never in its env.
+  expect(env.AITERM_AGENT_KEY).toBeUndefined(); expect(readAgentSecrets(env).AITERM_AGENT_KEY).toBe(SECRET);
   return { home, root, repo, manager, usage: usageService, session, env, log: paths.log };
 }
 

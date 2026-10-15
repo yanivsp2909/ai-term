@@ -9,6 +9,7 @@ import { SessionManager } from '../src/daemon/session-manager.js';
 import { UsageService } from '../src/daemon/usage-service.js';
 import { KeyStore } from '../src/daemon/keys.js';
 import * as engines from '../src/daemon/engines.js';
+import { readAgentSecrets } from '../src/agent/report.js';
 
 // v0.6.5 (Part A) in the daemon: keys for the new providers live in the Keychain like any other (Ollama has none), a model
 // starts only after its test passed, a new provider never reaches a CLI, and the key reaches only the agent's env.
@@ -46,7 +47,8 @@ it('an xAI key starts AI Term\'s agent on a tested model only, with the key only
   expect(session).toMatchObject({ engine: 'ai-term', model: 'grok-5', auth: { kind: 'key', provider: 'xai', last4: 'cdef' } });
   const run = d.spawned.at(-1); if (!run) throw new Error('no spawn');
   expect(run.args).toContain('--provider=xai'); expect(run.args).toContain('--models=grok-5');
-  expect(run.env.AITERM_AGENT_KEY).toBe(SECRET); expect(run.env.AITERM_AGENT_ENDPOINT).toBeUndefined();
+  // Gate: key and endpoint reach the agent in its 0600 secrets file, never in its env.
+  expect(run.env.AITERM_AGENT_KEY).toBeUndefined(); expect(readAgentSecrets(run.env).AITERM_AGENT_KEY).toBe(SECRET); expect(readAgentSecrets(run.env).AITERM_AGENT_ENDPOINT).toBeUndefined();
   expect(run.args.join(' ')).not.toContain(SECRET); expect(await readFile(d.paths.state, 'utf8')).not.toContain(SECRET);
 });
 
@@ -69,7 +71,7 @@ it('Bedrock binds its region in the Keychain; a changed copy in settings.json re
   const session = await d.manager.create({ engine: 'ai-term', model: 'us.anthropic.claude-sonnet-5-v1:0', auth: { kind: 'key', keyId: key.id }, cwd: d.root, permission: 'ask' });
   expect(session.engine).toBe('ai-term');
   const run = d.spawned.at(-1);
-  expect(run?.env.AITERM_AGENT_ENDPOINT).toBe('https://bedrock-runtime.us-east-1.amazonaws.com'); expect(run?.env.AITERM_AGENT_KEY).toBe(SECRET);
+  expect(readAgentSecrets(run?.env ?? {}).AITERM_AGENT_ENDPOINT).toBe('https://bedrock-runtime.us-east-1.amazonaws.com'); expect(readAgentSecrets(run?.env ?? {}).AITERM_AGENT_KEY).toBe(SECRET);
   const settings = JSON.parse(await readFile(join(d.root, 'settings.json'), 'utf8')) as { keys: { endpoint?: string }[] };
   settings.keys = settings.keys.map(k => ({ ...k, endpoint: 'https://bedrock-runtime.eu-west-1.amazonaws.com' }));
   await writeFile(join(d.root, 'settings.json'), JSON.stringify(settings), { mode: 0o600 });
@@ -85,7 +87,7 @@ it('Ollama: no Keychain entry at all, models from the local listing, the endpoin
   const session = await d.manager.create({ engine: 'ai-term', model: 'llama4:8b', auth: { kind: 'key', keyId: key.id }, cwd: d.root, permission: 'ask' });
   expect(session).toMatchObject({ engine: 'ai-term', auth: { kind: 'key', provider: 'ollama' } });
   const run = d.spawned.at(-1);
-  expect(run?.args).toContain('--provider=ollama'); expect(run?.env.AITERM_AGENT_ENDPOINT).toBe('http://127.0.0.1:11434'); expect(run?.env.AITERM_AGENT_KEY).toBeUndefined();
+  expect(run?.args).toContain('--provider=ollama'); expect(readAgentSecrets(run?.env ?? {}).AITERM_AGENT_ENDPOINT).toBe('http://127.0.0.1:11434'); expect(readAgentSecrets(run?.env ?? {}).AITERM_AGENT_KEY).toBeUndefined();
   await expect(d.keys.withSecret(key.id, () => 'used')).rejects.toThrow('Ollama has no key');
   await d.keys.remove(key.id);
   expect(d.ops.filter(op => op.includes('ollama'))).toEqual([]);
