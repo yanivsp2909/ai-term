@@ -1,8 +1,8 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: see the handover commit after 855adc0 (Part E, v0.9.1 queue)
-Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A–D done (**v0.8 closed**) · E v0.9.1 queue done · F v0.9.2 dev servers next (spec written here, below)
+Last commit: see the handover commit after dfce6ed (Part F, v0.9.2 dev servers)
+Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: all six done · A B29 · B v0.8.1 Linux · C v0.8.2 Windows · D v0.8 gate (**v0.8 closed**) · E v0.9.1 queue · F v0.9.2 dev servers (E's tail and F's whole spec written here because the prompt was cut off)
 Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64); no Linux or Windows machine here (Docker/colima are installed but not running, and starting them would download a VM image, which the limits rule out), so Linux and Windows run for real only in GitHub Actions (Part D).
 
 | Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
@@ -11,9 +11,67 @@ Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-on
 | B v0.8.1 Linux | done (Linux paths first run for real in Part D's CI) | 29cc615 | review: 0 / 4 fixed / 9 fixed + 2 explained / 7 fixed + 5 explained |
 | C v0.8.2 Windows | done | 3c4493c | review: 0 / 6 fixed / 11 fixed + 2 explained / 4 fixed + 6 explained |
 | D v0.8 release gate | done, **v0.8 closed** (no cloud CI, by Yaniv) | 8722739 | CI run: 4 real bugs fixed; reviewers: 0 / 3 fixed / 12 fixed + 4 explained / 9 fixed + 6 explained |
-| E v0.9.1 queue | done (spec completed where the prompt was cut) | this push | review: 0 / 5 fixed / 12 fixed + 2 explained / 5 fixed + 3 explained |
+| E v0.9.1 queue | done (spec completed where the prompt was cut) | 0fed369 | review: 0 / 5 fixed / 12 fixed + 2 explained / 5 fixed + 3 explained |
+| F v0.9.2 dev servers | done (whole spec written here; the prompt's part F never arrived) | this push | review: 0 / 5 fixed / 12 fixed + 2 explained / 4 fixed + 4 explained |
 
 **The prompt was cut off:** it ends inside Part E ("times passed while the"), and Part F (v0.9.2 dev servers per worktree) has no text at all. Part E will follow the visible text and the safer reading of the cut sentence; Part F can't be built from no spec, so the run stops before it.
+
+## Part F: v0.9.2 dev servers per worktree (D55, off by default) — done
+Commits: 2310bdb (RED) / 14ee822; typed on the homepage 6e1769b; review 7a093e4 (RED) / dfce6ed.
+
+**No prompt text arrived for this part.** Yaniv said "fix this" about the cut-off prompt. The spec below is mine, chosen the cautious way (D55 off by default; D56: an agent's code runs sandboxed or after your say-so), for him to correct:
+- **The switch:** `/settings` y turns dev servers on or off.
+- **`/dev-cmd <command> | none`:** one dev command per repository, run without a shell.
+- **`/dev [agent]`:**
+  - **The popup** shows the command, folder, `http://127.0.0.1:<port>` and `PORT`, and the sandbox. Without a sandbox it also shows the package script it starts.
+  - **Starting:** `y` starts exactly that plan. Without a sandbox it takes a capital `Y`. A changed command, port, sandbox or setup file refuses.
+  - **A running one** shows its last 20 lines; `x` stops it.
+- **Ports:** each worktree gets one from 4100–4199 on 127.0.0.1, held while its server runs. The env has `PORT`, `HOST=127.0.0.1`, `BROWSER=none`, and no keys or AI Term variables.
+- **Sandbox:**
+  - **macOS:** the test sandbox opened for that port only, with writes only in the worktree and a temp folder and no internet.
+  - **Linux:** a sandboxed server has its own network your browser can't reach, so it asks every time.
+  - **Windows:** none, so it asks every time.
+- **The card** shows `▶ dev :4101` whatever the agent does, or `✗ dev exited <code>`. Removing the agent or stopping the daemon stops it. Nothing starts or restarts it by itself.
+- **Tried for real:** a sandboxed server here served `hello from dev` on its port while its write to home was refused, and stopped on `x`. The daemon path was driven end to end: plan, `y`, card, fetch, stop. `/dev-cmd`, `/dev`, `y`, the running lines and `x` were typed on the homepage.
+
+**Fresh review (security-reviewer, typescript-reviewer):**
+- **HIGH fixed:**
+  - A tab in the server's output made `/dev` unreadable, so the server couldn't be stopped from the UI.
+  - Colors left `[32m` in the tail.
+  - `remove()` stopped the server before checking the removal was allowed.
+  - A start racing a removal or shutdown could leave a server running after AI Term.
+  - A double `y` leaked a sandbox folder.
+- **MEDIUM fixed:**
+  - The sandbox opened every local service; now only its own port.
+  - The approval didn't cover the script's files, and the script wasn't shown without a sandbox.
+  - One key started an unsandboxed server.
+  - Ports were reserved by just viewing `/dev`.
+  - A stale `running` was saved to state.
+  - The card showed dev only for done agents.
+  - Spawn failures read as "exited -2".
+  - The client imported daemon code for the popup.
+  - Emoji titles failed validation.
+  - A stop could hang forever.
+  - A concurrent start.
+- **LOW fixed:** bidi and zero-width characters in the tail; `\r` progress lines; split UTF-8 and escapes; the last line without a newline.
+- **Explained, not changed:**
+  - A daemon that crashes leaves its dev servers running (like an agent's own background processes); there's no startup sweep.
+  - A server that daemonizes itself (`setsid`) escapes the group stop.
+  - The free-port check and the bind aren't atomic.
+  - A typed-ahead `y` right after `/dev` could start a sandboxed server.
+
+**Checks (after dfce6ed):**
+- typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 71ms`; app:build `✓ built in 75ms`.
+- npm test twice: `Test Files 240 passed (240)` · `Tests 1620 passed | 7 skipped (1627)` (42.06s, 42.17s).
+- app:test `9 passed (39.6s)`.
+- verification-loop clean.
+
+**New manual check:** `cd ~/ai-term && npm run build && node dist/cli/index.js`. In a JS project:
+1. `/settings` → `y` on.
+2. `/dev-cmd npm run dev` (with a Vite or Next project).
+3. Select an agent with a worktree and run `/dev`; the popup shows the sandbox line; press `y`.
+4. Open the URL in your browser, and the card shows `▶ dev :4100`.
+5. `/dev`, then `x`, stops it.
 
 ## Part E: v0.9.1 queue (D55, off by default) — done
 Commits: 9dd9a37 (RED) / a763dd1; tried end to end f01b52b; review 621402e (RED) / 855adc0.
