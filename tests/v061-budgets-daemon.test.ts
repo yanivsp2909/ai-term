@@ -9,7 +9,7 @@ import { SessionManager } from '../src/daemon/session-manager.js';
 import { UsageService } from '../src/daemon/usage-service.js';
 import { KeyStore } from '../src/daemon/keys.js';
 import * as engines from '../src/daemon/engines.js';
-import { HttpReporter, reporterEnv } from '../src/agent/report.js';
+import { HttpReporter, reporterEnv, readAgentSecrets } from '../src/agent/report.js';
 
 // v0.6.1 through the real daemon: the budget route (B25) and cost per task (D55), as the agent and the CLIs report them.
 const SECRET = 'AITERMCANARY-b25-0123456789abcdef', ENDPOINT = 'https://narvis-resource.openai.azure.com/openai/v1';
@@ -73,7 +73,7 @@ it('cost per task: an agent\'s own usage adds up on its record, priced from the 
   const d = await daemon(), a = await agent(d);
   // Posted as the agent's reporter posts it, without its one-second client timeout (full-suite load can exceed it).
   const env = d.spawned.at(-1)?.env ?? {}, time = String(Date.now() * 1e6), point = (type: string, value: number) => ({ asInt: String(value), startTimeUnixNano: time, timeUnixNano: time, attributes: [{ key: 'type', value: { stringValue: type } }, { key: 'model', value: { stringValue: 'gpt-6.1-sol' } }] });
-  const posted = await fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/metrics`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': env.AITERM_USAGE_TOKEN ?? '' }, body: JSON.stringify({ resourceMetrics: [{ scopeMetrics: [{ metrics: [{ name: 'ai_term.token.usage', sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [point('input', 1000), point('cacheRead', 200), point('output', 300)] } }] }] }] }) });
+  const posted = await fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/metrics`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': readAgentSecrets(env).AITERM_USAGE_TOKEN ?? '' }, body: JSON.stringify({ resourceMetrics: [{ scopeMetrics: [{ metrics: [{ name: 'ai_term.token.usage', sum: { aggregationTemporality: 1, isMonotonic: true, dataPoints: [point('input', 1000), point('cacheRead', 200), point('output', 300)] } }] }] }] }) });
   expect(posted.status).toBe(200);
   await expect.poll(() => d.manager.get(a.session.id).taskUsage?.tokens, { timeout: 4000 }).toBe(1500);
   expect(d.manager.get(a.session.id).taskUsage?.costUsd).toBeCloseTo(d.usage.summary().today.costUsd, 10);

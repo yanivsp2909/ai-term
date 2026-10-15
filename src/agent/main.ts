@@ -13,7 +13,7 @@ import { loadInstructions } from './instructions.js';
 import { makeModel as makeProviderModel } from './provider.js';
 import type { FoundryWire } from './providers/foundry.js';
 import type { AgentFacts } from '../shared/agent-facts.js';
-import { HttpReporter, reporterEnv } from './report.js';
+import { HttpReporter, readAgentSecrets, reporterEnv } from './report.js';
 import { Screen } from './screen.js';
 import { findRipgrep } from './tools.js';
 import { Transcript } from './transcript.js';
@@ -44,9 +44,10 @@ export function parseAgentArgs(args: readonly string[]): AgentArgs {
 
 // The key and credentials are copied out of the environment and deleted from it before anything else runs, so nothing
 // this process starts later can inherit them (bash gets buildBashEnv's allowlist on top of that).
+// Gate: they come from the daemon's 0600 secrets file, read and deleted here (never from the env a `ps -E` shows).
 export function takeSecrets(env: NodeJS.ProcessEnv): { key: string | null; endpoint: string | null; reporter: ReturnType<typeof reporterEnv> } {
-  const key = env.AITERM_AGENT_KEY, endpoint = env.AITERM_AGENT_ENDPOINT, reporter = reporterEnv(env);
-  for (const name of ['AITERM_AGENT_KEY', 'AITERM_AGENT_ENDPOINT', 'AITERM_STATUS_TOKEN', 'AITERM_STATUS_PORT', 'AITERM_USAGE_TOKEN']) delete env[name];
+  const all = { ...env, ...readAgentSecrets(env, true) }, key = all.AITERM_AGENT_KEY, endpoint = all.AITERM_AGENT_ENDPOINT, reporter = reporterEnv({ ...all, AITERM_AGENT_SECRETS: '' });
+  for (const name of ['AITERM_AGENT_KEY', 'AITERM_AGENT_ENDPOINT', 'AITERM_STATUS_TOKEN', 'AITERM_STATUS_PORT', 'AITERM_USAGE_TOKEN', 'AITERM_AGENT_SECRETS']) delete env[name];
   return { key: isSecret(key) ? key : null, endpoint: isEndpoint(endpoint) || isLocalEndpoint(endpoint) ? endpoint : null, reporter };
 }
 
@@ -63,6 +64,9 @@ export interface AgentTerminal {
   stderr: NodeJS.WritableStream;
 }
 export async function runAgent(args: readonly string[], terminal: AgentTerminal = { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr }, env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  // AI Term's folder (not a secret): every bash command is kept out of it.
+  const aiTermHome = env.AITERM_HOME && isAbsolute(env.AITERM_HOME) && !env.AITERM_HOME.includes('\0') ? env.AITERM_HOME : null;
+  delete env.AITERM_HOME;
   const secrets = takeSecrets(env);
   let parsed: AgentArgs;
   try { parsed = parseAgentArgs(args); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof AgentUsageError ? error.message : 'invalid arguments'}\n`); return 2; }
@@ -96,7 +100,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, ...(aiTermHome ? { bashSandbox: { home: aiTermHome } } : {}), extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
       quit: () => { restore(); void transcript.close().then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);

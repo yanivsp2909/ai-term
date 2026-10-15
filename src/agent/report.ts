@@ -2,6 +2,7 @@ import { isKeyProvider, isValidModelId, validateExtensionCatalog, validateExtens
 import type { KeyProvider, ModelPrice } from '../shared/protocol.js';
 import type { ExtensionAccess } from '../shared/extensions.js';
 import { request } from 'node:http';
+import { closeSync, constants, fstatSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { mcpAccess } from '../client/mcp.js';
 import type { McpAccess, McpRequest } from '../shared/mcp.js';
@@ -20,8 +21,28 @@ export interface ReporterEnv { port: number; status: string; usage?: string }
 // catalog also expands multibyte metadata. Keep a bounded response that fits both reader-approved results.
 const REQUEST_TIMEOUT_MS = 1000, FACTS_MAX_BYTES = 2 * 1024 * 1024;
 
-export function reporterEnv(env: NodeJS.ProcessEnv): ReporterEnv | null {
-  const port = Number(env.AITERM_STATUS_PORT), status = env.AITERM_STATUS_TOKEN, usage = env.AITERM_USAGE_TOKEN;
+// The secrets file the daemon wrote for this agent (AITERM_AGENT_SECRETS, env.ts splitAgentSecrets): read without following a
+// link, ours, small; {} when there is none (an env from before it, or a test). deleteIt: the agent's own start removes it.
+export function readAgentSecrets(env: NodeJS.ProcessEnv, deleteIt = false): Record<string, string> {
+  const path = env.AITERM_AGENT_SECRETS;
+  if (!path || !path.startsWith('/') || path.includes('\0')) return {};
+  let fd: number;
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { return {}; }
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 64 * 1024) return {};
+    const parsed: unknown = JSON.parse(readFileSync(fd, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && /^AITERM_[A-Z_]+$/.test(entry[0])));
+  } catch { return {}; }
+  finally {
+    closeSync(fd);
+    // Gone already is fine; anything else is said (the daemon removes the file within a minute anyway).
+    if (deleteIt) try { unlinkSync(path); } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) process.emitWarning('AI Term: the agent secrets file could not be removed now; AI Term removes it within a minute'); }
+  }
+}
+export function reporterEnv(base: NodeJS.ProcessEnv): ReporterEnv | null {
+  const env = { ...base, ...readAgentSecrets(base) }, port = Number(env.AITERM_STATUS_PORT), status = env.AITERM_STATUS_TOKEN, usage = env.AITERM_USAGE_TOKEN;
   if (!Number.isInteger(port) || port < 1 || port > 65535 || !status || !/^[a-f0-9]{64}$/.test(status)) return null;
   return { port, status, ...(usage && /^[a-f0-9]{64}$/.test(usage) ? { usage } : {}) };
 }

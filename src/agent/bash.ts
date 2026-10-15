@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { constants } from 'node:fs';
+import { access, realpath } from 'node:fs/promises';
+import { SANDBOX_EXEC, SandboxPathError, sandboxPath } from '../daemon/test-sandbox.js';
 import { visible } from './display.js';
 import { isFsError } from '../shared/paths.js';
 import { ToolError } from './tools.js';
@@ -8,7 +11,25 @@ export const BASH_MAX_COMMAND_BYTES = 16 * 1024;
 export const BASH_DEFAULT_TIMEOUT_MS = 120_000, BASH_MAX_TIMEOUT_MS = 600_000, BASH_OUTPUT_MAX_BYTES = 64 * 1024;
 const KILL_GRACE_MS = 1000;
 export interface BashResult { exitCode: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean; interrupted: boolean; cut: boolean; stopFailed: boolean }
-export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal }
+// sandbox: AI Term's own folder (~/.ai-term). Gate (Yaniv): on macOS a command runs under sandbox-exec with a profile that
+// lets it do what you could, except read or write that folder (its settings, budgets, keys' metadata, other agents'
+// files; the agent's own worktree in it stays open) or connect to AI Term's sockets there. Without sandbox-exec (another
+// OS) it runs as before.
+export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string } }
+export function bashProfile(home: string, cwd: string): string {
+  const own = cwd === home || cwd.startsWith(`${home}/`) ? [`(allow file-read-data file-read-xattr file-write* (subpath "${sandboxPath(cwd)}"))`, `(allow network-outbound (remote unix-socket (subpath "${sandboxPath(cwd)}")))`] : [];
+  return ['(version 1)', '(allow default)', `(deny file-read-data file-read-xattr file-write* (subpath "${sandboxPath(home)}"))`, `(deny network-outbound (remote unix-socket (subpath "${sandboxPath(home)}")))`, ...own, ''].join('\n');
+}
+// The argv that runs a command line: sandboxed when it can be; a folder no profile can hold is refused, never run bare.
+async function bashArgv(command: string, options: BashOptions): Promise<[string, string[]]> {
+  const plain: [string, string[]] = ['/bin/sh', ['-c', command]];
+  if (!options.sandbox || process.platform !== 'darwin') return plain;
+  try { await access(SANDBOX_EXEC, constants.X_OK); } catch { return plain; }
+  const [home, cwd] = await Promise.all([realpath(options.sandbox.home).catch(() => options.sandbox?.home ?? ''), realpath(options.cwd)]);
+  let profile: string;
+  try { profile = bashProfile(home, cwd); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a folder with quotes, parentheses or control characters in its path"); throw error; }
+  return [SANDBOX_EXEC, ['-p', profile, '--', '/bin/sh', '-c', command]];
+}
 
 // The bash tool runs the model's command line as one argv element of /bin/sh -c: running that line *is* the tool, and it is
 // the one shell AI Term starts (S8). It gets its own process group so a timeout or Esc stops everything it started, a
@@ -20,10 +41,11 @@ export function killAllBash(): number {
   for (const pid of running) { try { process.kill(-pid, 'SIGKILL'); count++; } catch (error) { if (!isFsError(error, 'ESRCH')) count++; } }
   return count;
 }
-export function runBash(command: string, options: BashOptions): Promise<BashResult> {
+export async function runBash(command: string, options: BashOptions): Promise<BashResult> {
   const timeoutMs = Math.min(BASH_MAX_TIMEOUT_MS, Math.max(1000, options.timeoutMs ?? BASH_DEFAULT_TIMEOUT_MS)), maxBytes = options.maxBytes ?? BASH_OUTPUT_MAX_BYTES;
+  const [program, args] = await bashArgv(command, options);
   return new Promise((resolve, reject) => {
-    const child = spawn('/bin/sh', ['-c', command], { cwd: options.cwd, env: options.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(program, args, { cwd: options.cwd, env: options.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [], err: Buffer[] = [];
     if (child.pid !== undefined) running.add(child.pid);
     let outBytes = 0, errBytes = 0, cut = false, timedOut = false, interrupted = false, settled = false, stopFailed = false;

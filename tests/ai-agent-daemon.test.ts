@@ -9,7 +9,7 @@ import { SessionManager } from '../src/daemon/session-manager.js';
 import { UsageService } from '../src/daemon/usage-service.js';
 import { KeyStore } from '../src/daemon/keys.js';
 import * as engines from '../src/daemon/engines.js';
-import { HttpReporter, reporterEnv } from '../src/agent/report.js';
+import { HttpReporter, readAgentSecrets, reporterEnv } from '../src/agent/report.js';
 import { parseAgentArgs } from '../src/agent/main.js';
 import { DaemonServer } from '../src/daemon/server.js';
 import { Connection } from '../src/client/connection.js';
@@ -54,7 +54,8 @@ it('a Foundry key starts AI Term\'s agent: Ask by default, tested deployments on
   expect(run.args).toEqual(['/opt/ai-term/dist/cli/index.js', 'agent', '--provider=foundry', '--model=gpt-6.1-sol', '--models=gpt-6.1-sol,gpt-6-luna,kimi-k3', '--theme=slate', `--transcript=${transcript}`, '--ask', '--', 'edit README']);
   expect(parseAgentArgs(run.args.slice(2))).toMatchObject({ model: 'gpt-6.1-sol', permission: 'ask', theme: 'slate', firstMessage: 'edit README' });
   expect((await stat(join(d.root, 'sessions', session.id))).mode & 0o777).toBe(0o700);
-  expect(run.env.AITERM_AGENT_KEY).toBe(SECRET); expect(run.env.AITERM_AGENT_ENDPOINT).toBe(ENDPOINT);
+  // Gate: the key and endpoint reach the agent in its 0600 secrets file, never in its env.
+  expect(run.env.AITERM_AGENT_KEY).toBeUndefined(); expect(readAgentSecrets(run.env)).toMatchObject({ AITERM_AGENT_KEY: SECRET, AITERM_AGENT_ENDPOINT: ENDPOINT });
   expect(run.env.OPENAI_API_KEY).toBeUndefined(); expect(run.env.AITERM_FOUNDRY_KEY).toBeUndefined();
   expect(run.args.join(' ')).not.toContain(SECRET);
   expect(await readFile(d.paths.state, 'utf8')).not.toContain(SECRET); expect(JSON.stringify(d.manager.list())).not.toContain(SECRET);
@@ -83,7 +84,7 @@ it('Anthropic and OpenAI keys start AI Term\'s agent on their fixed hosts: no en
     const run = d.spawned.at(-1);
     expect(run?.args.slice(1, 4)).toEqual(['agent', `--provider=${provider}`, `--model=${model}`]);
     expect(run?.args.find(a => a.startsWith('--models='))?.split('=')[1]?.split(',')).toContain(model);
-    expect(run?.env.AITERM_AGENT_KEY).toBe(secret); expect(run?.env).not.toHaveProperty('AITERM_AGENT_ENDPOINT');
+    expect(readAgentSecrets(run?.env ?? {}).AITERM_AGENT_KEY).toBe(secret); expect(readAgentSecrets(run?.env ?? {})).not.toHaveProperty('AITERM_AGENT_ENDPOINT');
     expect(run?.env).not.toHaveProperty(provider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY');
     // A /model before anything is picked (the CLI default) has no model to run on AI Term's agent.
     await expect(d.manager.create({ engine: 'ai-term', model: null, auth: { kind: 'key', keyId: key.id }, cwd: d.root, permission: 'ask' })).rejects.toThrow('Pick a model for AI Term agent');
@@ -112,7 +113,7 @@ it('status and usage from the agent\'s reporter reach the card, the last reply a
   expect(d.usage.summary().today.providers).toEqual([expect.objectContaining({ provider: 'foundry', tokens: 1500, cachedTokens: 200 })]);
   expect(reporter.failures).toBe(0);
   // Another engine's path refuses this credential (S12: each status credential reaches only its own engine's route).
-  const wrong = await fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/status/claude`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': env.AITERM_STATUS_TOKEN ?? '' }, body: JSON.stringify({ hook_event_name: 'Stop' }) });
+  const wrong = await fetch(`http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/status/claude`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': (readAgentSecrets(env).AITERM_STATUS_TOKEN ?? '') }, body: JSON.stringify({ hook_event_name: 'Stop' }) });
   expect(wrong.status).toBe(204); expect(d.manager.get(session.id).statusDetail).toBe('turn failed: rate_limit');
   await d.manager.stop(session.id); await d.manager.remove(session.id);
   await expect(stat(join(d.root, 'sessions', session.id, 'transcript.jsonl'))).rejects.toThrow();
@@ -144,7 +145,7 @@ it('the facts route answers a live agent about its own models only: wire, price 
   for (const model of ['broken', 'not-a-deployment']) expect(await reporter.facts(model)).toBeNull();
   // Refusals are 204 with no body: another engine's credential, an Origin, a wrong Host.
   const url = `http://127.0.0.1:${env.AITERM_STATUS_PORT}/v1/agent/ai-term`, body = JSON.stringify({ model: 'gpt-6.1-sol' });
-  for (const headers of [{ 'x-ai-term-session': 'f'.repeat(64) }, { 'x-ai-term-session': env.AITERM_STATUS_TOKEN ?? '', origin: 'https://evil.example' }] as Record<string, string>[]) {
+  for (const headers of [{ 'x-ai-term-session': 'f'.repeat(64) }, { 'x-ai-term-session': (readAgentSecrets(env).AITERM_STATUS_TOKEN ?? ''), origin: 'https://evil.example' }] as Record<string, string>[]) {
     const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body });
     expect(res.status).toBe(204); expect(await res.text()).toBe('');
   }

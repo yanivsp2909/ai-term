@@ -15,6 +15,13 @@ import { cleanNote, HANDOFF_OUTPUT_TOKENS, handoffInstructions, handoffMessage, 
 import { engineLabel } from '../shared/models.js';
 import priceData from '../../data/usage-prices.json' with {type:'json'};
 const PRICES=priceData as PriceSnapshot;
+const AGENT_SECRETS_TTL_MS=60_000;
+// Created new (never over a link or an old file), 0600, inside the agent's private session folder.
+function writeAgentSecrets(file:string,secrets:Record<string,string>):void{
+    try{unlinkSync(file);}catch(error){if(!isFsError(error,'ENOENT'))throw error;}
+    const fd=openSync(file,fsConstants.O_WRONLY|fsConstants.O_CREAT|fsConstants.O_EXCL|fsConstants.O_NOFOLLOW,0o600);
+    try{writeSync(fd,JSON.stringify(secrets));}finally{closeSync(fd);}
+}
 import {parseClaudeStatus} from './claude-status.js';
 import {parseCodexStatus,codexTitle,isCodexApproval,type CodexRun} from './codex-status.js';
 import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
@@ -52,7 +59,7 @@ import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror, type MirrorSignal } from './mirror.js';
 import { electronNodeNeeded } from '../shared/runtime-paths.js';
-import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv,buildTestEnv } from './env.js';
+import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv,buildTestEnv,splitAgentSecrets } from './env.js';
 import { KeyStore, KeyError, type FoundryBinding } from './keys.js';
 import { CLI_KEY_PROVIDERS, isBoundProvider, isLocalEndpoint, testedModels } from '../shared/providers.js';
 import { checkEngine } from './engines.js';
@@ -64,8 +71,8 @@ import { parseLimit } from './limit-detect.js';
 import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
 import { link, lstat, open, unlink } from 'node:fs/promises';
-import { constants } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, constants, constants as fsConstants, openSync, unlinkSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { MAX_RECORD_COST_USD, validatePriceOverrides } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
@@ -418,7 +425,11 @@ export class SessionManager extends EventEmitter {
                 live.agentModels=models;
                 const command={node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})};
                 const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
-                recipe={executable:built.executable,args:built.args,env:buildAgentEnv(process.env,{secret,endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry})};
+                const file=join(dirname(transcript),'agent-secrets.json'),split=splitAgentSecrets(buildAgentEnv(process.env,{secret,endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry}),file,this.paths.root);
+                writeAgentSecrets(file,split.secrets);
+                // An agent that never started leaves no secret behind for long.
+                setTimeout(()=>{try{unlinkSync(file);}catch(error){if(!isFsError(error,'ENOENT'))this.log.error('Agent secrets file could not be removed');}},AGENT_SECRETS_TTL_MS).unref();
+                recipe={executable:built.executable,args:built.args,env:split.env};
                 try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
             };
                 // Ollama has no key: nothing is read from the Keychain for it.

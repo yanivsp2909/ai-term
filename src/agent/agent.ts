@@ -46,6 +46,8 @@ export interface AgentOptions {
   // Streamed model text: a key split across deltas is still caught (display.ts). Without one, each delta is redacted alone.
   redactStream?: () => StreamRedactor;
   bashEnv: Record<string, string>; rg: string | null; maxSteps?: number;
+  // AI Term's own folder, kept out of reach of every bash command (bash.ts).
+  bashSandbox?: { home: string };
   extensions?: ExtensionAccess; models?: readonly string[]; makeModel?(id: string): Promise<LanguageModel>;
   limits?: RunLimits; child?: boolean;
   mcp?:McpAccess; mcpSession?:{allowed:Set<string>;schemas:Set<string>};
@@ -186,7 +188,7 @@ export class Agent {
     const timeout = (seconds?: number) => Math.min(BASH_MAX_TIMEOUT_MS, Math.max(1000, (seconds ?? BASH_DEFAULT_TIMEOUT_MS / 1000) * 1000));
     const bash = this.run<{ command: string; timeoutSeconds?: number }>('bash', i => i.command.split('\n')[0] ?? '', async (i, signal) => {
       const ms = timeout(i.timeoutSeconds);
-      return bashReport(await runBash(checkCommand(i.command), { cwd: this.options.root, env: this.options.bashEnv, timeoutMs: ms, signal }), ms);
+      return bashReport(await runBash(checkCommand(i.command), { cwd: this.options.root, env: this.options.bashEnv, timeoutMs: ms, signal, ...(this.options.bashSandbox ? { sandbox: this.options.bashSandbox } : {}) }), ms);
     }, async i => bashPreview(checkCommand(i.command), timeout(i.timeoutSeconds)));
     const skill = this.run<{name:string}>('skill', i=>i.name, async i=>(await this.extension(i.name,'skill')).body);
     const task = this.run<{name:string;prompt:string}>('task', i=>i.name, async (i,signal)=>this.subagent(i.name,i.prompt,signal), async i=>this.taskPreview(i.name,i.prompt), true);

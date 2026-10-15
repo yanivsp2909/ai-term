@@ -145,3 +145,14 @@ export function buildTestEnv(base:NodeJS.ProcessEnv):Record<string,string>{
     for(const name of Object.keys(result))if(/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AITERM|AI_TERM/i.test(name)||/sk-/.test(result[name]??''))delete result[name];
     return {...result,CI:'1',NO_COLOR:'1',FORCE_COLOR:'0',TERM:'dumb',PAGER:'cat',GIT_PAGER:'cat',GIT_TERMINAL_PROMPT:'0'};
 }
+
+// Gate (Yaniv): a process's starting environment stays readable to every program of the same user (`ps -E`), so the key
+// and the receiver credentials never go in the agent's env: they move into a 0600 file the agent reads and deletes before
+// anything else runs (agent/main.ts takeSecrets). Only its path, the receiver port and AI Term's folder stay in the env.
+export const AGENT_SECRET_VARS=['AITERM_AGENT_KEY','AITERM_AGENT_ENDPOINT','AITERM_STATUS_TOKEN','AITERM_USAGE_TOKEN'] as const;
+export function splitAgentSecrets(env:Record<string,string>,file:string,home:string):{env:Record<string,string>;secrets:Record<string,string>}{
+    if(!absolute(file)||!absolute(home))throw new Error('Invalid agent secrets path');
+    const rest:Record<string,string>={},secrets:Record<string,string>={};
+    for(const [name,value]of Object.entries(env))if((AGENT_SECRET_VARS as readonly string[]).includes(name))secrets[name]=value;else rest[name]=value;
+    return {env:{...rest,AITERM_AGENT_SECRETS:file,AITERM_HOME:home},secrets};
+}
