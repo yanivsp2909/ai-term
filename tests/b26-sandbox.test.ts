@@ -39,7 +39,7 @@ it('the profile is built from the exact paths: deny by default, writes only in t
     expect(text).toContain(`"/Users/me/${name}"`);
   }
   // The agent's own worktree lives inside ~/.ai-term: it alone is readable again after the deny.
-  expect(text.indexOf(`(allow file-read-data file-read-xattr (subpath "${spec.worktree}"))`)).toBeGreaterThan(text.indexOf('(deny file-read-data'));
+  expect(text.indexOf(`(allow file-read-data file-read-xattr (subpath "${spec.worktree}") (subpath "${spec.temp}"))`)).toBeGreaterThan(text.indexOf('(deny file-read-data'));
   expect(text).not.toContain('remote ip');
   expect(sandboxProfile({ ...spec, loopback: true })).toContain('(allow network-outbound (remote ip "localhost:*"))');
 });
@@ -50,11 +50,11 @@ it('refuses any path with quotes, parentheses, backslashes or control characters
   expect(() => sandboxProfile({ ...spec, private: ['/ok', '/no"t'] })).toThrow(SandboxPathError);
 });
 
-it('reads a sandbox denial from the output: what it was, plainly (a key folder\'s path alone: reading or writing it); a failure inside its own folders is not one', () => {
+it('reads a sandbox denial from the output: what it was, plainly (the path alone: it may have been a read or a write); a failure inside its own folders is not one', () => {
   const box = { worktree: '/private/var/w/tree', temp: '/private/var/w/tmp', home: '/Users/me', private: ['/Users/me/.ai-term'] };
   expect(sandboxDenial("Error: EPERM: operation not permitted, open '/Users/me/.ssh/id_test'", box)).toBe('~/.ssh/id_test');
-  expect(sandboxDenial('touch: /Users/me/pwned: Operation not permitted', box)).toBe('write ~/pwned');
-  expect(sandboxDenial('sh: /etc/hosts.new: Operation not permitted', box)).toBe('write /etc/hosts.new');
+  expect(sandboxDenial('touch: /Users/me/pwned: Operation not permitted', box)).toBe('~/pwned');
+  expect(sandboxDenial('sh: /etc/hosts.new: Operation not permitted', box)).toBe('/etc/hosts.new');
   expect(sandboxDenial('Error: connect EPERM 127.0.0.1:8080 - Local (0.0.0.0:0)', box)).toBe('network');
   expect(sandboxDenial('curl: (6) Could not resolve host: example.com', box)).toBe('network');
   expect(sandboxDenial('    s.connect(("10.0.0.1", 80))\nPermissionError: [Errno 1] Operation not permitted', box)).toBe('network');
@@ -81,7 +81,7 @@ it.skipIf(!MAC)('macOS (skipped elsewhere: sandbox-exec is macOS only): a sandbo
   try {
     const box = await prepareSandbox(tree, { home, private: [join(home, '.ai-term')], loopback: false });
     const outcome = await runTests(['./probe.sh'], tree, { ...buildTestEnv(process.env), HOME: home, ...box.env }, { timeoutMs: 20_000, sandbox: box });
-    expect(outcome).toEqual({ state: 'blocked', what: 'write ~/pwned' });
+    expect(outcome).toEqual({ state: 'blocked', what: '~/pwned' });
     await expect(stat(join(home, 'pwned'))).rejects.toThrow();
     expect(await readFile(join(tree, 'stolen.txt'), 'utf8')).toBe('');
     expect(await readFile(join(tree, 'other.txt'), 'utf8')).toBe('');

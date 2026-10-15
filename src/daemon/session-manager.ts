@@ -24,7 +24,7 @@ import { isFsError, type Paths } from '../shared/paths.js';
 import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord, type CliEngine } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
-import { GitError, isWorktreeTop, runGit } from './git.js';
+import { GitError, isWorktreeTop, repoCommonDir, runGit } from './git.js';
 import { worktreeDiff, worktreeStat } from './diff.js';
 import type { AgentDiff } from '../shared/diff.js';
 import { fitExport, redactExportMeta, transcriptFor } from './session-export.js';
@@ -1022,8 +1022,11 @@ export class SessionManager extends EventEmitter {
     private async sandboxFor(path:string,repo:string|undefined):Promise<PreparedSandbox|null>{
         let loopback=false;
         if(repo)try{loopback=(await new SettingsStore(this.paths.root).get()).testLoopback?.includes(await projectRepo(repo))===true;}catch{this.log.error('Settings unreadable; tests run without 127.0.0.1');}
+        // The repository's git folder stays readable (a worktree's .git file points into it); the rest of home doesn't.
+        let gitDir:string|undefined;
+        if(repo)try{gitDir=await repoCommonDir(repo);}catch{this.log.error('Test sandbox: the repository\'s git folder is unknown; git inside tests may fail');}
         let box:PreparedSandbox;
-        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,program:SessionManager.sandboxExec});}
+        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,program:SessionManager.sandboxExec,env:buildTestEnv(process.env),readable:gitDir?[gitDir]:[]});}
         catch(error){this.log.error(error instanceof SandboxPathError?'Test sandbox: a path can\'t go into a profile; tests ask first':'Test sandbox: its temp folder could not be made; tests ask first');return null;}
         if(await sandboxReady(box.profile,box.program))return box;
         this.log.error('Test sandbox unavailable; tests ask first');
