@@ -21,15 +21,17 @@ export function handoffInstructions(target: CliEngine): string {
 }
 export function handoffPrompt(target: CliEngine, screen: string): string {
   // v0.6 gate: secrets on the screen (a printed .env, a bearer header) never go to the provider that writes the note.
-  const tail = redactSecrets(screen.length > HANDOFF_SOURCE_CHARS ? screen.slice(screen.length - HANDOFF_SOURCE_CHARS) : screen);
+  // Redacted before the cut, so a secret (or a private key's BEGIN line) split by the 48k edge is still recognised.
+  const clean = redactSecrets(screen), tail = clean.length > HANDOFF_SOURCE_CHARS ? clean.slice(clean.length - HANDOFF_SOURCE_CHARS) : clean;
   return `${handoffInstructions(target)}\n\nThe agent's terminal, most recent last:\n<terminal>\n${tail}\n</terminal>`;
 }
 // The note goes into the new CLI's argv (which `ps` shows), so secrets are redacted first; and no escapes, C0/C1 controls, bidi overrides, BOM or line/paragraph separators,
 // only text, new lines and tabs (whatever wrote it: a provider, or the agent's own last reply). ZWJ, ZWNJ, emoji tag
 // characters and LRM/RLM stay: emoji sequences and Persian, Arabic and Indic text need them.
 export function cleanNote(text: string): string {
+  // Controls go first, so a secret split by one is whole again when it is redacted.
   // eslint-disable-next-line no-control-regex -- removing terminal controls is the point.
-  return redactSecrets(stripVTControlCharacters(text)).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2028\u2029]/g, '').trim();
+  return redactSecrets(stripVTControlCharacters(text).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2028\u2029]/g, '')).trim();
 }
 // The new agent's first message: the cleaned note, cut on a character boundary to fit, under a fixed header.
 export function handoffMessage(from: string, summary: string): string {
