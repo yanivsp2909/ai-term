@@ -48,6 +48,8 @@ import { HandoffAsk, handoffDone, handoffRequest } from './handoff-ask.js';
 import { DiffView } from './diff-view.js';
 import { UndoAsk } from './undo-ask.js';
 import { TestAsk } from './test-ask.js';
+import { ReviewAsk, reviewResultLines } from './review-ask.js';
+import { validateReviewPlan, validateReviewResult, type ReviewResult } from '../../shared/review.js';
 import { parseTestCommand, testCommandText, validateProjectTestCommand, validateTestPlan } from '../../shared/test-run.js';
 import { MergeAsk } from './merge-ask.js';
 import { validateMergePlan, validatePrPlan } from '../../shared/merge.js';
@@ -90,7 +92,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk;
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -385,7 +387,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -582,6 +584,7 @@ export class Homepage {
     if (command==='/merge'||command==='/pr') { await this.mergeCommand(command==='/pr'?'pr':'merge',argument); return; }
     if (command==='/test-cmd') { await this.testCmdCommand(argument); return; }
     if (command==='/test') { await this.testCommand(argument); return; }
+    if (command==='/review') { await this.reviewCommand(argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
@@ -723,6 +726,43 @@ export class Homepage {
       catch(error){this.showNote(`tests stopped: ${error instanceof Error?error.message:'request failed'}`);}
     });});
     this.popup=ask;this.draw(true);
+  }
+  // v0.7.4 /review [agent] [show] and /review budget <usd>: the D49 ask (models, prices), ⏎ reviews; show reopens the last.
+  private async reviewCommand(argument:string):Promise<void>{
+    const words=argument.split(' ').filter(Boolean);
+    if(words[0]==='budget'&&words.length<=2){
+      const usd=Number(words[1]);
+      if(!words[1]||!Number.isFinite(usd)||usd<0.01||usd>1000){this.showNote('/review budget <dollars a day for auto-review, 0.01–1000>');return;}
+      try{validateSettings((await this.connection.request({kind:'settings.set',patch:{autoReviewDailyUsd:usd}})).settings);this.showNote(`✓ auto-review budget: $${usd.toFixed(2)} a day · /settings q turns auto-review on or off`);}
+      catch(error){this.showNote(error instanceof Error?error.message:'Auto-review budget could not be saved');}
+      return;
+    }
+    const show=words.at(-1)==='show';if(show)words.pop();
+    const session=this.namedOrSelected(words.join(' '),'/review');if(!session)return;
+    if(show){
+      try{this.openReviewResult(validateReviewResult((await this.connection.request({kind:'sessions.lastReview',sessionId:session.id})).review));}
+      catch(error){this.showNote(error instanceof Error?error.message:'Review unavailable');}
+      return;
+    }
+    let plan:import('../../shared/review.js').ReviewPlan;
+    try{plan=validateReviewPlan((await this.connection.request({kind:'sessions.reviewPlan',sessionId:session.id})).reviewPlan);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Review unavailable');return;}
+    if(this.popup){this.showNote('review plan ready · close the open popup and run /review again');return;}
+    const ask:ReviewAsk=new ReviewAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},model=>{this.enqueue(async()=>{
+      this.showNote(`◐ reviewing ${session.title} with ${model.model}`);
+      let result:ReviewResult;
+      try{result=validateReviewResult((await this.connection.request({kind:'sessions.review',sessionId:session.id,keyId:model.keyId,model:model.model,fingerprint:plan.fingerprint})).review);}
+      catch(error){this.showNote(`review stopped: ${error instanceof Error?error.message:'request failed'}`);return;}
+      this.showNote(`✓ reviewed ${session.title} · /review ${session.title} show reopens it`);
+      this.openReviewResult(result);
+    });});
+    this.popup=ask;this.draw(true);
+  }
+  private openReviewResult(result:ReviewResult):void{
+    // A popup opened meanwhile stays; the note says how to get the review back.
+    if(this.popup){this.showNote(`review ready · /review ${result.title} show opens it`);return;}
+    const panel:TextPanel=new TextPanel(`Review · ${result.title} · ${result.model}`,()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
+    panel.set(reviewResultLines(result));this.popup=panel;this.draw(true);
   }
   // v0.7.2 /undo [agent] and /redo [agent]: the plan (what changes) first; y restores, n or Esc keeps everything.
   private async undoCommand(redo:boolean,name:string):Promise<void>{

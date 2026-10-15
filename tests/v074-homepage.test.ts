@@ -73,13 +73,13 @@ it('/test shows the command, the folder and the changed setup files; y runs exac
 it('/review lists the models with their price ranges; ↓ ⏎ runs the one picked; the result opens in a popup and lands on the card', async () => {
   const keyId = randomUUID();
   const plan = { title: 'fixer', files: 2, added: 3, removed: 1, cut: false, inputTokens: { low: 8000, high: 12000 }, outputTokens: { low: 200, high: 3000 }, selected: 0, fingerprint: fp,
-    models: [{ keyId, provider: 'openai', keyLabel: 'o', last4: 'oooo', model: 'gpt-6.1-mini', priceUsd: { low: 0.002, high: 0.0048 } }, { keyId, provider: 'anthropic', keyLabel: 'work', last4: 'aaaa', model: 'claude-sonnet-5', priceUsd: { low: 0.027, high: 0.081 } }] };
+    models: [{ keyId, provider: 'openai' as const, keyLabel: 'o', last4: 'oooo', model: 'gpt-6.1-mini', priceUsd: { low: 0.002, high: 0.0048 } }, { keyId, provider: 'anthropic' as const, keyLabel: 'work', last4: 'aaaa', model: 'claude-sonnet-5', priceUsd: { low: 0.027, high: 0.081 } }] };
   const result = { title: 'fixer', model: 'claude-sonnet-5', text: 'HIGH: login.ts:1 the key is hard-coded\nLOW: login.ts:1 naming', counts: { high: 1, medium: 0, low: 1 }, inputTokens: 9000, outputTokens: 400, costUsd: 0.033 };
   const h = await open(body => body.kind === 'sessions.reviewPlan' ? { reviewPlan: plan } : body.kind === 'sessions.review' ? { review: result } : {});
   try {
     h.type('/review fixer\r');
     await shows(h.tty, 'Review fixer · 2 files +3 −1'); await shows(h.tty, 'gpt-6.1-mini · key ····oooo · $0.0020–$0.0048'); await shows(h.tty, 'claude-sonnet-5 · key ····aaaa · $0.03–$0.08');
-    await shows(h.tty, 'estimated 8k–12k in · 200–3k out');
+    await shows(h.tty, 'estimated 8.0K–12.0K in · 200–3.0K out');
     h.type('\u001b[B'); h.type('\r');
     await vi.waitFor(() => expect(h.requests).toContainEqual({ kind: 'sessions.review', sessionId: fixer.id, keyId, model: 'claude-sonnet-5', fingerprint: fp }));
     await shows(h.tty, 'HIGH: login.ts:1 the key is hard-coded'); await shows(h.tty, 'Review · fixer · claude-sonnet-5');

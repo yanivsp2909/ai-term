@@ -10,6 +10,7 @@ import { validateSessionExport } from './session-export.js';
 import { validateUndoPlan } from './checkpoints.js';
 import { validateMergePlan, validatePrPlan } from './merge.js';
 import { isTestCommand, validateProjectTestCommand, validateTestPlan, validateTestResult } from './test-run.js';
+import { validateReviewPlan, validateReviewResult, validateReviewState } from './review.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
     // eslint-disable-next-line no-useless-escape
@@ -148,8 +149,10 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['sessionId','lastReply'];if(!isUUID(v.sessionId)||v.lastReply!==undefined&&typeof v.lastReply!=='boolean')throw new ValidationError('Invalid session UUID');break;
         case 'sessions.diff': case 'sessions.export':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
-        case 'sessions.testPlan':
+        case 'sessions.testPlan': case 'sessions.reviewPlan': case 'sessions.lastReview':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.review':
+            fields=['sessionId','keyId','model','fingerprint'];if(!isUUID(v.sessionId)||!isUUID(v.keyId)||typeof v.model!=='string'||!isValidModelId(v.model)||typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint))throw new ValidationError('Invalid review request');break;
         case 'sessions.test':
             fields=['sessionId','fingerprint'];if(!isUUID(v.sessionId)||typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint))throw new ValidationError('Invalid test request');break;
         case 'project.testCommand':
@@ -215,6 +218,8 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.undoPlan!==undefined)validateUndoPlan(v.undoPlan);
     if(v.mergePlan!==undefined)validateMergePlan(v.mergePlan);
     if(v.testPlan!==undefined)validateTestPlan(v.testPlan);
+    if(v.reviewPlan!==undefined)validateReviewPlan(v.reviewPlan);
+    if(v.review!==undefined)validateReviewResult(v.review);
     if(v.testCommand!==undefined)validateProjectTestCommand(v.testCommand);
     if(v.prPlan!==undefined)validatePrPlan(v.prPlan);
     if(v.merged!==undefined&&(!v.merged||typeof v.merged!=='object'||Object.keys(v.merged).length!==1||typeof (v.merged as {commit?:unknown}).commit!=='string'||!/^[0-9a-f]{40,64}$/.test((v.merged as {commit:string}).commit)))throw new ValidationError('Invalid merge result');
@@ -288,7 +293,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -308,6 +313,10 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.checkpoints!==undefined&&typeof v.checkpoints!=='boolean')throw new ValidationError('Invalid checkpoints setting');
     if(v.secretScan!==undefined&&typeof v.secretScan!=='boolean')throw new ValidationError('Invalid secret scan setting');
     if(v.autoTest!==undefined&&typeof v.autoTest!=='boolean')throw new ValidationError('Invalid auto-test setting');
+    if(v.autoReview!==undefined&&typeof v.autoReview!=='boolean')throw new ValidationError('Invalid auto-review setting');
+    if(v.autoReviewDailyUsd!==undefined&&(typeof v.autoReviewDailyUsd!=='number'||!Number.isFinite(v.autoReviewDailyUsd)||v.autoReviewDailyUsd<0.01||v.autoReviewDailyUsd>1000))throw new ValidationError('Invalid auto-review budget');
+    // Set by the daemon when you pick a model in /review (auto-review uses it).
+    if(v.reviewModel!==undefined&&(!isRecord(v.reviewModel)||Object.keys(v.reviewModel).length!==2||!isUUID(v.reviewModel.keyId)||typeof v.reviewModel.model!=='string'||!isValidModelId(v.reviewModel.model)))throw new ValidationError('Invalid review model');
     // v0.7.4: set by the daemon only (project.setTestCommand), one argument list per repository.
     if(v.testCommands!==undefined&&(!isRecord(v.testCommands)||Object.keys(v.testCommands).length>50||Object.entries(v.testCommands).some(([repo,command])=>['__proto__','prototype','constructor'].includes(repo)||!isAbsolute(repo)||repo.includes('\0')||repo.length>1024||!isTestCommand(command))))throw new ValidationError('Invalid test commands');
     if(v.handoff!==undefined&&typeof v.handoff!=='boolean')throw new ValidationError('Invalid handoff setting');
@@ -344,9 +353,10 @@ export function validateSession(value: unknown): import('./protocol.js').Session
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || !(s.ctxPercent===null||isShare(s.ctxPercent)) || s.lastActivity!==undefined&&s.lastActivity!==null&&!isActivity(s.lastActivity) ||
-        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit) || s.diffStat!==undefined&&!isDiffStat(s.diffStat) || s.tests!==undefined&&!isTestResult(s.tests)) throw new ValidationError('Invalid daemon session');
+        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit) || s.diffStat!==undefined&&!isDiffStat(s.diffStat) || s.tests!==undefined&&!isTestResult(s.tests) || s.review!==undefined&&!isReviewState(s.review)) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }
+function isReviewState(value: unknown): boolean { try { validateReviewState(value); return true; } catch { return false; } }
 function isTestResult(value: unknown): boolean { try { validateTestResult(value); return true; } catch { return false; } }
 function isLimit(value: unknown): boolean { return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 && 'resets' in value && (value.resets === null || typeof value.resets === 'string' && /^\d{2}:\d{2}$/.test(value.resets)); }
 function isTaskUsage(value: unknown): boolean {

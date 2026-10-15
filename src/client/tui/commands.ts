@@ -25,6 +25,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/export',description:'Save a session as one HTML file (keys removed)',argumentHint:()=>'[agent] [folder]',current:c=>c.selectedTitle??''},
  {name:'/merge',description:'Merge an agent\'s branch into your checkout (asks first; secret scan)',argumentHint:()=>'[agent] [rebase]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/pr',description:'Push an agent\'s branch and open a pull request with gh (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
+ {name:'/review',description:'One reviewer pass on an agent\'s diff by a keyed model you pick (spends tokens; asks first)',argumentHint:()=>'[agent] [show] | budget <usd>',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/test',description:'Run the project\'s tests in an agent\'s worktree (asks first; the card shows the result)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/test-cmd',description:'The project\'s test command, run when an agent finishes (none clears it)',argumentHint:()=>'[<command> | none]',current:none},
  {name:'/undo',description:'Restore an agent\'s worktree to its previous checkpoint (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},

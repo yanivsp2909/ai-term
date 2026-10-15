@@ -36,10 +36,10 @@ export function handoffPlan(source: string, engine: CliEngine, screen: string, w
   return { source, engine, writer: kind, inputTokens: { low, high }, outputTokens: output, priceUsd: price, subscription: !writer && subscription };
 }
 export interface Summary { text: string; inputTokens: number | null; outputTokens: number | null }
-export type Summarize = (writer: KeyedWriter, secret: string, endpoint: string | null, prompt: string, signal: AbortSignal) => Promise<Summary>;
+export type Summarize = (writer: KeyedWriter, secret: string, endpoint: string | null, prompt: string, signal: AbortSignal, maxOutputTokens?: number) => Promise<Summary>;
 // One request (no retry: a retried request could be billed twice against one hold), bounded output, the provider's own counts; the fetch is guarded to the key's own endpoint (S16, B12).
-export const summarizeWithKey: Summarize = async (writer, secret, endpoint, prompt, signal) => {
+export const summarizeWithKey: Summarize = async (writer, secret, endpoint, prompt, signal, maxOutputTokens = HANDOFF_OUTPUT_TOKENS) => {
   const model = makeModel({ provider: writer.key.provider, model: writer.model, key: secret, endpoint, ...(writer.wire ? { wire: writer.wire } : {}) });
-  const result = await generateText({ model, prompt, maxOutputTokens: HANDOFF_OUTPUT_TOKENS, abortSignal: signal, maxRetries: 0 });
+  const result = await generateText({ model, prompt, maxOutputTokens, abortSignal: signal, maxRetries: 0 });
   return { text: result.text, inputTokens: result.usage.inputTokens ?? null, outputTokens: result.usage.outputTokens ?? null };
 };

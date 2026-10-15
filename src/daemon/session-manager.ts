@@ -11,7 +11,7 @@ import { catalogModels } from '../shared/model-catalog.js';
 import { DEFAULT_AGENT_CAPS, type AgentFacts } from '../shared/agent-facts.js';
 import { findPrice, findLimits, deploymentAlias, estimateCost, type PriceSnapshot } from './usage-prices.js';
 import { cheapestWriter, handoffPlan, summarizeWithKey, type Summarize } from './handoff.js';
-import { cleanNote, handoffInstructions, handoffMessage, handoffPrompt, type HandoffPlan, type HandoffSummary, type HandoffWriter } from '../shared/handoff.js';
+import { cleanNote, HANDOFF_OUTPUT_TOKENS, handoffInstructions, handoffMessage, handoffPrompt, type HandoffPlan, type HandoffSummary, type HandoffWriter } from '../shared/handoff.js';
 import { engineLabel } from '../shared/models.js';
 import priceData from '../../data/usage-prices.json' with {type:'json'};
 const PRICES=priceData as PriceSnapshot;
@@ -33,6 +33,10 @@ import type { UndoPlan } from '../shared/checkpoints.js';
 import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
 import { changedTestConfig, runTests, testFingerprint, TestRunError, projectRepo } from './test-run.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
+import { AutoReviewLedger, ReviewError, reviewModelView, reviewWriters } from './review.js';
+import { countFindings, diffForReview, REVIEW_OUTPUT_TOKENS, reviewPrompt, reviewText, type ReviewPlan, type ReviewResult } from '../shared/review.js';
+import { estimateTokens } from '../agent/limits.js';
+import { createHash } from 'node:crypto';
 import type { MergePlan, PrPlan } from '../shared/merge.js';
 import { EXPORT_TEXT_CHARS, type SessionExport } from '../shared/session-export.js';
 import { redactSecrets } from '../shared/redact.js';
@@ -625,34 +629,41 @@ export class SessionManager extends EventEmitter {
     }
     // One request to the cheapest keyed model, held against the budgets like an agent's request (B25) and counted in Usage.
     private async keyedSummary(id:string,live:Live,engine:CliEngine,screen:string,writer:import('./handoff.js').KeyedWriter,settings:Settings):Promise<{text:string;summary:HandoffSummary}>{
-        const plan=handoffPlan(live.info.title,engine,screen,writer,false),worst=plan.priceUsd?.high??0,usage=this.usage?.summary();
+        const plan=handoffPlan(live.info.title,engine,screen,writer,false),worst=plan.priceUsd?.high??0;
         this.lastHandoffWorst=worst;
-        // No ledger, no budget check: a keyed summary is never sent unchecked (v0.6 gate).
+        return this.keyedRequest(id,writer,handoffPrompt(engine,screen),{worst,maxOutput:HANDOFF_OUTPUT_TOKENS,what:'handoff'},settings);
+    }
+    // One request on a saved key for a job (a handoff note, a review): held against the budgets at its worst case first,
+    // then settled with the provider's own counts. Only fixed words ever leave; the provider's error text never does.
+    private async keyedRequest(id:string,writer:import('./handoff.js').KeyedWriter,prompt:string,job:{worst:number;maxOutput:number;what:'handoff'|'review'},settings:Settings):Promise<{text:string;summary:HandoffSummary}>{
+        // A review may read an agent that has exited (whose own holds the ledger already closed): it holds under its own id.
+        const {worst,what}=job,usage=this.usage?.summary(),label=what==='handoff'?'Handoff summary':'Review',holder=what==='review'?randomUUID():id;
+        // No ledger, no budget check: a keyed request is never sent unchecked (v0.6 gate).
         if(!this.ledger)throw new Error('Budget check unavailable; try again');
-        const held=this.ledger.reserve({sessionId:id,provider:writer.key.provider,model:writer.model,amountUsd:worst},{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
-        if('refused' in held)throw new Error(held.refused.budget==='unavailable'?'Budget check unavailable; try again':`The handoff would pass your ${held.refused.budget} budget`);
+        const held=this.ledger.reserve({sessionId:holder,provider:writer.key.provider,model:writer.model,amountUsd:worst},{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
+        if('refused' in held)throw new Error(held.refused.budget==='unavailable'?'Budget check unavailable; try again':`The ${what} would pass your ${held.refused.budget} budget`);
         const grant=held.grant.id,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),HANDOFF_SUMMARY_MS);
-        const settle=(worstCase:boolean):Promise<unknown>=>grant?this.ledger?.settle(id,grant,worstCase).catch(()=>{this.log.error('Budget reservation could not be booked');})??Promise.resolve():Promise.resolve();
+        const settle=(worstCase:boolean):Promise<unknown>=>grant?this.ledger?.settle(holder,grant,worstCase).catch(()=>{this.log.error('Budget reservation could not be booked');})??Promise.resolve():Promise.resolve();
         let result:import('./handoff.js').Summary;
         try{
             result=await this.keys.withSecret(writer.key.id,(secret,binding)=>{
                 // B12: a Foundry key goes only to its Keychain-bound endpoint and deployments.
                 if(writer.key.provider==='foundry'&&(!binding||!binding.deployments.includes(writer.model)))throw new KeyError('Foundry key details changed outside AI Term; add the key again');
-                return this.handoffWriter.summarize(writer,secret,writer.key.provider==='foundry'?binding?.endpoint??null:null,handoffPrompt(engine,screen),controller.signal);
+                return this.handoffWriter.summarize(writer,secret,writer.key.provider==='foundry'?binding?.endpoint??null:null,prompt,controller.signal,job.maxOutput);
             });
         }catch(error){
             await settle(true);
             if(error instanceof KeyError)throw error;
-            this.log.error('Handoff summary request failed');
+            this.log.error(`${label} request failed`);
             // eslint-disable-next-line preserve-caught-error -- provider errors may carry anything the provider sent; only fixed words leave.
-            throw new Error('The handoff summary request failed');
+            throw new Error(what==='handoff'?'The handoff summary request failed':'The review request failed');
         }finally{clearTimeout(timer);}
         // The agent exited meanwhile: its hold was already booked at the worst case, so the real usage isn't added on top.
         const stillHeld=grant!==null&&this.ledger?.holds(grant)===true;
         if(result.inputTokens===null||result.outputTokens===null||grant!==null&&!stillHeld){await settle(true);return {text:result.text,summary:{inputTokens:result.inputTokens??0,outputTokens:result.outputTokens??0,costUsd:worst}};}
         const costUsd=estimateCost(writer.price,result.inputTokens,result.outputTokens);
         try{await this.usage?.job({ts:new Date().toISOString(),sessionId:id,provider:writer.key.provider,model:writer.model,inputTokens:result.inputTokens,outputTokens:result.outputTokens,costUsd,costSource:'price-table'});await settle(false);}
-        catch{this.log.error('Handoff summary usage could not be recorded; counted at its worst case');await settle(true);}
+        catch{this.log.error(`${label} usage could not be recorded; counted at its worst case`);await settle(true);}
         return {text:result.text,summary:{inputTokens:result.inputTokens,outputTokens:result.outputTokens,costUsd}};
     }
     // No key: the agent writes its own note as its next reply (sent like /send), read from its last reply when that turn
@@ -711,6 +722,7 @@ export class SessionManager extends EventEmitter {
         // Working again: the last count and test result are stale until the next finished turn; a test run still going stops.
         if(next.status==='running'&&live.info.diffStat){delete live.info.diffStat;live.diffStatSeq=(live.diffStatSeq??0)+1;}
         if(next.status==='running')this.cancelTests(live.info.id,false);
+        if(next.status==='running'&&live.info.review&&live.info.review.state!=='running')delete live.info.review;
         this.event({kind:'session.updated',session:{...live.info}});live.outputClock?.sent();
         // Notifications listen here; a listener failure must never stop status from applying.
         try{this.emit('statusChanged',{...live.info},previous,next,live.attached);}catch{this.log.error('Status listener failed');}
@@ -969,6 +981,8 @@ export class SessionManager extends EventEmitter {
     async afterTurn(id:string):Promise<void>{
         const live=this.sessions.get(id);if(!live||live.info.status!=='done')return;
         let settings:Settings;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; auto-test skipped');return;}
+        // Auto-review (off by default) reads the diff before the tests run (they may write files into the worktree).
+        if(settings.autoReview===true&&settings.reviewModel)await this.autoReview(live,settings,settings.reviewModel);
         if(settings.autoTest===false)return;
         try{
             const target=await this.testTarget(live);if(!target)return;
@@ -1010,6 +1024,77 @@ export class SessionManager extends EventEmitter {
     cancelTests(id:string,keep=false):void{
         this.testRuns.get(id)?.abort();this.testRuns.delete(id);
         const live=this.sessions.get(id);if(!keep&&live?.info.tests)this.setTests(live,undefined);
+    }
+    // v0.7.4 /review: the diff as the reviewer will read it, the token range and the models you may pick (D49 asks with
+    // this); the fingerprint is the reviewed text's, so ⏎ reviews exactly the diff the ask described.
+    private reviewResults=new Map<string,ReviewResult>();
+    private reviewing=new Set<string>();
+    private reviewedDiff=new Map<string,string>();
+    private autoReviews?:AutoReviewLedger;
+    private async reviewInput(id:string):Promise<{live:Live;prompt:string;fingerprint:string;plan:Omit<ReviewPlan,'models'|'selected'>;writers:import('./handoff.js').KeyedWriter[];settings:Settings}>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        this.undoIdle(live);
+        const diff=await this.diff(id);
+        if(!diff.files.length)throw new ReviewError('The diff is empty; nothing to review');
+        const text=diffForReview(diff),prompt=reviewPrompt(text),tokens=estimateTokens(prompt),settings=await new SettingsStore(this.paths.root).get();
+        const plan={title:live.info.title,files:diff.files.length,added:diff.added,removed:diff.removed,cut:diff.capped||text.includes('(the diff is cut here:'),
+            inputTokens:{low:Math.round(tokens*0.8),high:Math.round(tokens*1.25)},outputTokens:{low:200,high:REVIEW_OUTPUT_TOKENS},fingerprint:createHash('sha256').update(text).digest('hex')};
+        return {live,prompt,fingerprint:plan.fingerprint,plan,writers:reviewWriters(await this.keys.list(),settings,this.handoffWriter.prices),settings};
+    }
+    async reviewPlan(id:string):Promise<ReviewPlan>{
+        const {plan,writers,settings}=await this.reviewInput(id);
+        if(!writers.length)throw new ReviewError('No priced model among your keys · add an API key in /settings');
+        const last=settings.reviewModel,selected=Math.max(0,writers.findIndex(w=>w.key.id===last?.keyId&&w.model===last.model));
+        return {...plan,models:writers.map(w=>reviewModelView(w,plan.inputTokens,plan.outputTokens)),selected};
+    }
+    async review(id:string,keyId:string,model:string,fingerprint:string,auto=false):Promise<ReviewResult>{
+        const {live,prompt,plan,writers,settings}=await this.reviewInput(id);
+        if(plan.fingerprint!==fingerprint)throw new ReviewError('The diff changed since it was shown; run /review again');
+        const writer=writers.find(w=>w.key.id===keyId&&w.model===model);
+        if(!writer)throw new ReviewError('Pick one of the models /review offered');
+        if(this.reviewing.has(id))throw new ReviewError('A review of this agent is already running');
+        const worst=reviewModelView(writer,plan.inputTokens,plan.outputTokens).priceUsd.high,before=live.info.review;
+        this.reviewing.add(id);this.setReview(live,{state:'running'});
+        let written:{text:string;summary:HandoffSummary};
+        try{written=await this.keyedRequest(id,writer,prompt,{worst,maxOutput:REVIEW_OUTPUT_TOKENS,what:'review'},settings);}
+        catch(error){
+            // Refused before anything was sent (a budget, the key): the card keeps what it showed. A failed request says so.
+            this.setReview(live,error instanceof Error&&error.message==='The review request failed'?{state:'failed'}:before);
+            throw error;
+        }finally{this.reviewing.delete(id);}
+        const text=reviewText(written.text),counts=countFindings(text);
+        const result:ReviewResult={title:live.info.title,model:writer.model,text,counts,inputTokens:written.summary.inputTokens,outputTokens:written.summary.outputTokens,costUsd:written.summary.costUsd};
+        this.reviewResults.set(id,result);this.reviewedDiff.set(id,fingerprint);
+        this.setReview(live,{state:'done',...counts,...(auto?{auto:true as const}:{})});
+        // The model you picked is the default next time, and the one auto-review uses.
+        if(!auto)await new SettingsStore(this.paths.root).update(async current=>({...current,reviewModel:{keyId,model}})).catch(()=>{this.log.error('Review model could not be saved as the default');});
+        return result;
+    }
+    async lastReview(id:string):Promise<ReviewResult>{
+        const result=this.reviewResults.get(id);if(!result)throw new ReviewError('No review yet for this agent · /review <agent>');
+        return result;
+    }
+    private setReview(live:Live,review:SessionInfo['review']|undefined):void{
+        if(review)live.info.review=review;else delete live.info.review;
+        if(this.sessions.get(live.info.id)!==live)return;
+        this.event({kind:'session.updated',session:{...live.info}});void this.persist();
+    }
+    // Auto-review (D55, off): the model last picked in /review, once per new diff, while today's auto-reviews fit their
+    // own daily budget (the usual budgets apply too). A skip or a failure is logged; the agent goes on.
+    private async autoReview(live:Live,settings:Settings,pick:{keyId:string;model:string}):Promise<void>{
+        const id=live.info.id;
+        try{
+            const plan=await this.reviewPlan(id);
+            if(this.reviewedDiff.get(id)===plan.fingerprint)return;
+            const model=plan.models.find(m=>m.keyId===pick.keyId&&m.model===pick.model);
+            if(!model){this.log.error('Auto-review skipped: its model is no longer offered; pick one with /review');return;}
+            const ledger=this.autoReviews??=new AutoReviewLedger(this.paths.root),worst=model.priceUsd.high;
+            if(!await ledger.take(worst,settings.autoReviewDailyUsd??1)){this.log.error("Auto-review skipped: today's auto-review budget is used");return;}
+            let spent=worst;
+            try{spent=(await this.review(id,pick.keyId,pick.model,plan.fingerprint,true)).costUsd??worst;}
+            finally{await ledger.settle(worst,spent);}
+        }catch(error){this.log.error(`Auto-review skipped (${error instanceof ReviewError||error instanceof CheckpointError?error.message:'unexpected error'})`);}
     }
     // v0.7.1 /export: the session's screen text (its end, ~1 MiB) and, for AI Term's own agent, its transcript, all redacted.
     async exportSession(id:string):Promise<SessionExport>{
