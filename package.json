@@ -40,10 +40,13 @@
     "electron@44.7.2": true
   },
   "dependencies": {
+    "@ai-sdk/amazon-bedrock": "5.0.115",
     "@ai-sdk/anthropic": "4.0.79",
     "@ai-sdk/azure": "4.0.101",
+    "@ai-sdk/google-vertex": "5.0.111",
     "@ai-sdk/mcp": "2.0.74",
     "@ai-sdk/openai": "4.0.93",
+    "@ai-sdk/openai-compatible": "3.0.68",
     "@napi-rs/keyring": "2.1.1",
     "@playwright/test": "^1.64.1",
     "@xterm/addon-fit": "^0.11.0",
