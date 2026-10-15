@@ -36,11 +36,12 @@ export class CredentialsPanel {
  async load():Promise<void>{this.busy=true;this.actions.changed();
   // Independent requests: one failing must not blank the others or show engines as missing.
   const failures:string[]=[];
-  try{this.lspFound=await serversFound(this.lspPath);}catch(error){failures.push(reason(error,'Language servers unavailable'));}
   try{this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}catch(error){failures.push(reason(error,'Keys unavailable'));}
   try{const status=await this.actions.request({kind:'engines.status'});this.engines=status.engines;this.notifier=status.notifier;}catch(error){failures.push(reason(error,'Engine status unavailable'));}
   try{const result=await this.actions.request({kind:'settings.get',refreshNotifications:true});this.settings=result.settings;this.notificationPermission=result.notificationPermission??'unknown';}catch(error){failures.push(reason(error,'Settings unavailable'));}
-  this.message=failures.join(' · ');this.busy=false;this.actions.changed();}
+  this.message=failures.join(' · ');this.busy=false;this.actions.changed();
+  // The diagnostics row's servers: a PATH scan load() never waits for, so nothing queued behind the popup does either.
+  void serversFound(this.lspPath).then(found=>{this.lspFound=found;},(error:unknown)=>{this.message=[this.message,reason(error,'Language servers unavailable')].filter(Boolean).join(' · ');}).then(()=>{if(!this.disposed)this.actions.changed();});}
  private capsText():string{const caps=this.settings?.agentCaps??DEFAULT_AGENT_CAPS;return `${caps.turns===null?'no turn cap':`${caps.turns} turns`} · ${caps.spendUsd===null?'no spend cap':`$${caps.spendUsd.toFixed(2)}`}`;}
  // With a filter typed, the first match is selected, so ⏎ right after typing picks it rather than clearing the mapping.
  private filteredChoice():number{return this.mapping?.filter&&this.catalogRows().length>1?1:0;}
