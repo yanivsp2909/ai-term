@@ -51,3 +51,8 @@ it('MEDIUM (TS review): paths, long identifiers and fixtures are not "high-entro
   expect(scanPatch(add('tests/fixtures/data.json', '"blob": "aZ3kP9qL2mX7vB4nR8tY1wE6uI0oS5dF"'))).toEqual([]);
   expect(scanPatch(add('src/a.ts', 'client: "aZ3kP9qL2mX7vB4nR8tY1wE6uI0oS5dF"')).map(h => h.kind)).toEqual(['high-entropy string']);
 });
+
+it('LOW (fix review): a key pasted into a lockfile is still found by its pattern (only the entropy check skips lockfiles)', () => {
+  const text = 'diff --git a/x/yarn.lock b/x/yarn.lock\n--- a/x/yarn.lock\n+++ b/x/yarn.lock\n@@ -0,0 +1 @@\n+aws AKIAIOSFODNN7EXAMPLE\n';
+  expect(scanPatch(text).map(h => h.kind)).toEqual(['AWS access key']);
+});

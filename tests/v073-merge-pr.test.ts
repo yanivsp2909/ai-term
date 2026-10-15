@@ -170,3 +170,17 @@ it('MEDIUM (security review): core.worktree in the shared config can\'t move the
   expect(await readFile(join(repo, 'feature.ts'), 'utf8')).toBe('x\n');
   await expect(access(join(elsewhere, 'feature.ts'))).rejects.toThrow();
 });
+
+// ---- Part E fix review ----
+it('HIGH (fix review): your own credential helpers, URL-scoped ones included, still answer a push; a git:// origin is refused', async () => {
+  const { temp, repo, m, agent, tree } = await setup();
+  const { pushGuardArgs } = await import('../src/daemon/merge.js');
+  await writeFile(join(temp, 'gitconfig'), '[user]\n\tname = Yaniv\n\temail = yaniv@example.invalid\n[credential "https://github.com"]\n\thelper = scoped-helper\n[credential]\n\thelper = plain-helper\n\tuseHttpPath = true\n');
+  const args = await pushGuardArgs({ globalConfig: join(temp, 'gitconfig'), env: { PATH: '/usr/bin:/bin', HOME: temp } });
+  const pairs = args.filter((_, i) => args[i - 1] === '-c');
+  expect(pairs.indexOf('credential.helper=')).toBeLessThan(pairs.indexOf('credential.https://github.com.helper=scoped-helper'));
+  expect(pairs).toEqual(expect.arrayContaining(['credential.helper=plain-helper', 'credential.usehttppath=true', 'core.gitProxy=', 'push.recurseSubmodules=no', 'push.gpgSign=false']));
+  await work(tree, 'f.ts', 'x\n');
+  await git(repo, 'remote', 'set-url', '--', 'origin', 'git://127.0.0.1:9/x.git');
+  await expect(m.prPlan(agent.id)).rejects.toThrow('This remote uses the git:// protocol; push it yourself');
+});
