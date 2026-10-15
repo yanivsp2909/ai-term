@@ -96,14 +96,16 @@ it('after a named agent finishes, its waiting items start; one that ends with an
   const root = await temp(), listeners: ((session: { title: string }, previous: { status: string }, next: { status: string }) => void)[] = [];
   const create = vi.fn(async () => ({ id: randomUUID() }));
   const manager = { create, on: (event: string, listener: never) => { if (event === 'statusChanged') listeners.push(listener); }, list: () => [], setQueueLimit: vi.fn() };
-  const queue = new QueueService(root, manager as never, { error: vi.fn(), info: vi.fn() }, () => new Date(), async () => true);
+  // A fixed noon: the stop time 23:59 must be within 12 hours whatever the hour this runs at (it failed near midnight).
+  const queue = new QueueService(root, manager as never, { error: vi.fn(), info: vi.fn() }, () => new Date(2026, 9, 15, 12, 0), async () => true);
   await queue.load();
   await queue.add({ trigger: { kind: 'after', agent: 'fixer' }, limit: { until: '23:59' }, request: request() });
   await queue.add({ trigger: { kind: 'after', agent: 'broken' }, limit: { until: '23:59' }, request: request() });
   listeners.forEach(listener => listener({ title: 'fixer' }, { status: 'working' }, { status: 'done' }));
   listeners.forEach(listener => listener({ title: 'broken' }, { status: 'working' }, { status: 'error' }));
-  await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-  await vi.waitFor(() => expect(queue.list().map(item => item.state)).toEqual(['started', 'failed']));
+  // Each start saves queue.json first; a loaded machine needs more than the default second.
+  await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+  await vi.waitFor(() => expect(queue.list().map(item => item.state)).toEqual(['started', 'failed']), { timeout: 10_000 });
   expect(queue.list()[1]?.note).toBe('broken ended with an error, so this one didn\'t start');
   expect(manager.setQueueLimit).toHaveBeenCalledWith(expect.any(String), { until: '23:59' }, expect.any(Function));
 });
