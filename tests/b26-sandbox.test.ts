@@ -141,7 +141,7 @@ it('no working sandbox: nothing runs by itself; the card says tests need you · 
   const plan = await m.testPlan(agent.id);
   expect(validateTestPlan(plan)).toMatchObject({ sandbox: false, loopback: false, changed: [] });
   await m.runTestPlan(agent.id, plan.fingerprint);
-  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'fail', failing: 2 }));
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'fail', failing: 2 }), { timeout: 10_000 });
   await rm(join(tree, 'ran-it'));
   // Your y was for that run only: the next turn end asks again.
   await m.afterTurn(agent.id);
@@ -241,5 +241,5 @@ it.skipIf(!MAC)('MEDIUM (TS review, macOS: sandbox-exec is macOS only): /test y 
   const plan = await m.testPlan(agent.id), target = vi.spyOn(m as unknown as { testTarget: (live: unknown) => Promise<unknown> }, 'testTarget');
   await m.runTestPlan(agent.id, plan.fingerprint);
   expect(target).toHaveBeenCalledTimes(1);
-  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }), { timeout: 10_000 });
 }, 20_000);

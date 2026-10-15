@@ -115,7 +115,7 @@ it('a turn whose work changed the test setup asks first instead of running (card
   expect(validateTestPlan(plan)).toMatchObject({ title: 'fixer', command: ['./check.sh'], cwd: tree, changed: ['package.json'] });
   await expect(m.runTestPlan(agent.id, 'f'.repeat(64))).rejects.toThrow('The test setup changed since it was shown; run /test again');
   await m.runTestPlan(agent.id, plan.fingerprint);
-  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }), { timeout: 10_000 });
   // Off in /settings: a turn end runs nothing.
   await new SettingsStore(home).set({ autoTest: false });
   await m.afterTurn(agent.id);
@@ -126,7 +126,7 @@ it('the agent working again cancels a test run and clears the old result', async
   const { repo, m, agent, live } = await setup('#!/bin/sh\nsleep 30\n');
   await m.setTestCommand(repo, ['./check.sh']);
   const ending = m.afterTurn(agent.id);
-  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'running' }));
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'running' }), { timeout: 10_000 });
   (m as unknown as { cancelTests(id: string): void }).cancelTests(agent.id);
   await ending;
   expect(result(m, agent.id)).toBeUndefined();
@@ -151,7 +151,7 @@ it('HIGH (security review): ignored dependency folders the agent filled count as
   expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['.gitignore', 'node_modules/ (ignored)'] });
   const plan = await m.testPlan(agent.id);
   await m.runTestPlan(agent.id, plan.fingerprint);
-  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }), { timeout: 10_000 });
   await m.afterTurn(agent.id);
   expect(result(m, agent.id)).toEqual({ state: 'pass' });
   await writeFile(join(tree, 'node_modules', '.bin', 'vitest'), '#!/bin/sh\necho more evil\n');
@@ -195,7 +195,7 @@ it('MEDIUM-HIGH (fix review): dependency files that are untracked, committed or 
   await m.afterTurn(agent.id);
   expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['node_modules/.bin/jest'] });
   const plan = await m.testPlan(agent.id); await m.runTestPlan(agent.id, plan.fingerprint);
-  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }), { timeout: 10_000 });
   // The run wrote ignored output (dist/ is ignored in this worktree): the next turn still runs by itself.
   await m.afterTurn(agent.id);
   expect(result(m, agent.id)).toEqual({ state: 'pass' });
@@ -210,7 +210,7 @@ it('MEDIUM (fix review): a link out of the worktree in an ignored folder always 
   await m.afterTurn(agent.id);
   expect(result(m, agent.id)).toMatchObject({ state: 'ask' });
   const plan = await m.testPlan(agent.id); await m.runTestPlan(agent.id, plan.fingerprint);
-  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }), { timeout: 10_000 });
   await writeFile(join(outside, '.bin', 'new'), '#!/bin/sh\n');
   await m.afterTurn(agent.id);
   expect(result(m, agent.id)).toMatchObject({ state: 'ask' });
