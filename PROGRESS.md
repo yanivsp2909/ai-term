@@ -1,6 +1,45 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: see the handover commit after 7d8cccf (Part A, B29)
+Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A (B29, D56/D57 pinned) done · B v0.8.1 Linux next
+Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64); no Linux or Windows machine here (Docker/colima are installed but not running, and starting them would download a VM image, which the limits rule out), so Linux and Windows run for real only in GitHub Actions (Part D).
+
+| Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
+|---|---|---|---|
+| A B29, pin D56/D57 | done | this push | review: 0 / 2 fixed / 1 fixed + 3 explained / 3 explained |
+
+**The prompt was cut off:** it ends inside Part E ("times passed while the"), and Part F (v0.9.2 dev servers per worktree) has no text at all. Part E will follow the visible text and the safer reading of the cut sentence; Part F can't be built from no spec, so the run stops before it.
+
+## Part A: B29 and D56/D57 pinned — done
+Commits: 38909fa (RED) / 5558a19; review 626d7b0 (RED) / 6841798; ux-copy 7d8cccf.
+- **B29:** in the macOS agent bash sandbox, `(deny file-write* …)` now covers, last in the profile:
+  - **Files:** `~/.zshrc`, `~/.zshenv`, `~/.zprofile`, `~/.zlogin`, `~/.zlogout`, `~/.bashrc`, `~/.bash_profile`, `~/.bash_login`, `~/.bash_logout`, `~/.profile`, `~/.gitconfig`, `~/.claude.json`, and zsh's files under `$ZDOTDIR`.
+  - **Folders:** `~/.config/fish`, `~/Library/LaunchAgents`, `~/.ssh`, `~/.config/git`, `~/.claude`, `~/.codex`, plus Linux's `~/.config/autostart`, `~/.config/systemd/user` and `~/.config/environment.d` for Part B.
+  - **Paths:** each under home as given and its real path, at link targets (dangling ones too).
+  - **Parents:** a literal deny on `~/.config`, `~/.config/systemd` and `~/Library`, so they can't be renamed or swapped for a link. Their other contents stay writable.
+  - **The blocked line:** a refused write ends the tool's output with `✗ blocked by sandbox: ~/<path> · agent commands can't change startup files, login items, ~/.ssh, git's global settings, or Claude Code's, Codex's or AI Term's own files`.
+  - **Tested on macOS:** a test per spot, and replace, remove and link attempts. Work in its own folder and elsewhere in home goes on, and git, node, npm and python3 run under the real home.
+- **D56, D57:** Pinned (Yaniv, 2026-10-15) in docs/architecture.md (§12.18, §12.19, decisions log).
+- **Fresh review (security-reviewer, typescript-reviewer):**
+  - HIGH fixed: renaming `~/.config` or `~/Library` and putting a link in their place led `~/.config/git/config` (or LaunchAgents) somewhere no rule named, and git would then run a planted `core.fsmonitor` outside the sandbox.
+  - HIGH fixed: with a home folder that is a link, a protected folder that didn't exist yet wasn't protected at its real path; `realpath` failures other than ENOENT fell back silently (now they refuse the command).
+  - MEDIUM fixed: the blocked line missed relative (`cd ~ && echo >> .zshrc`) and differently cased (`~/.ZSHRC`) paths.
+  - **Explained, not changed:**
+    - Other places that run later aren't in the list: `~/.local/bin` or `~/bin` ahead on `PATH`, editor and tmux configs, `~/.npmrc`, `defaults write` to Terminal's settings (through cfprefsd), `launchctl submit`. B29's list is the prompt's (plus a few of the same kind); closing all of them needs a deny-by-default bash sandbox, which would break much of what Don't ask is for.
+    - The model could print a fake `Operation not permitted` line and get a misleading blocked note: it only misleads itself.
+    - A dotfile link whose target has a quote or parenthesis refuses every bash command, with a message that says so.
+    - Hard links to a startup file are refused by the sandbox (checked by the reviewer).
+- **Checks (after 7d8cccf):**
+  - typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 37ms`; app:build `✓ built in 56ms`.
+  - npm test twice: `Test Files 231 passed (231)` · `Tests 1527 passed | 2 skipped (1529)` (30.65s, 30.69s).
+  - app:test `9 passed (38.4s)`.
+  - verification-loop: no `sk-` literals, no console.log in src outside the CLI.
+- **New manual check:** `cd ~/ai-term && npm run build && node dist/cli/index.js`. Start AI Term's agent with a key in Don't ask, ask it to run `echo x >> ~/.zshrc`, and it shows `✗ blocked by sandbox: ~/.zshrc`; your `~/.zshrc` is unchanged.
+
+# Run 2026-10-15 (2) (v0.7 fixes and gate)
+
+## Run (2) checkpoint
 Last commit: see the handover commit after fe7fb28 (Part B, v0.7 release gate)
 Roadmap step: run 2026-10-15 (2), Claude Code, Opus 5.5: A (B26, B27, B28) done · B v0.7 release gate done, **v0.7 closed**
 Branch: main, pushed after each part. Started at d3aeb15 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64) with `/usr/bin/sandbox-exec` present, so the real sandboxes were tested here, not only their profiles.
