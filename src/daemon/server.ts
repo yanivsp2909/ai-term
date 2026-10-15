@@ -27,8 +27,9 @@ import { REVIEW_ERRORS } from './review.js';
 import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
 import { DIRECT_HOSTS } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
-import { currentAgentSandbox, AGENT_SANDBOX_ERRORS } from './agent-sandbox.js';
+import { currentAgentSandbox, dontAskNote, AGENT_SANDBOX_ERRORS } from './agent-sandbox.js';
 import { CLI_LAUNCH_ERRORS } from './win-launch.js';
+import { QUEUE_ERRORS, type QueueService } from './queue.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
     socket: Socket;
@@ -54,6 +55,12 @@ export class DaemonServer {
     private pipe: PipeInfo | undefined;
     // Set by main.ts: a daemon.stop request shuts the daemon down the way SIGTERM does.
     onStop: (() => void) | undefined;
+    private queue: QueueService | undefined;
+    // v0.9.1: the queue's requests, and its changes sent to every client.
+    setQueue(queue: QueueService): void {
+        this.queue = queue;
+        queue.on('changed', (items: import('../shared/queue.js').QueueItem[]) => { for (const peer of this.peers) if (peer.hello) this.control(peer, { kind: 'queue.updated', queue: items }); });
+    }
     private readonly sampler: SystemSampler;
     private closed = false;
     constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService, private readonly notifier?:{state():NotifierState;permission?():NotificationAuthorization;refreshPermission?():Promise<NotificationAuthorization>}, private readonly activate=activateTerminal) {
@@ -230,6 +237,14 @@ export class DaemonServer {
                         return testDirect(provider,DIRECT_HOSTS[provider],key.deployments??[],secret);
                     });
                     await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
+                }
+                case 'queue.list': case 'queue.add': case 'queue.remove': {
+                    const queue = this.queue; if (!queue) throw new Error(QUEUE_ERRORS[2]);
+                    // Don't ask for AI Term's agent only where its bash can be sandboxed, said now rather than at start time.
+                    if (request.kind === 'queue.add' && request.request.engine === 'ai-term' && request.request.permission === 'dontAsk') { const note = dontAskNote(await currentAgentSandbox()); if (note) throw new Error(note); }
+                    if (request.kind === 'queue.add') await queue.add({ trigger: request.trigger, limit: request.limit, request: request.request });
+                    if (request.kind === 'queue.remove') await queue.remove(request.itemId);
+                    this.control(peer, { id: request.id, ok: true, queue: queue.list() }); break;
                 }
                 case 'daemon.stop':
                     // Answered first: the daemon then shuts down as it does on SIGTERM (main.ts), pipe file and all.
@@ -428,7 +443,7 @@ export class DaemonServer {
                 'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
                 // AI Term's agent (v0.4.1–v0.4.2).
                 'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh",'Pick a model for AI Term agent','Unknown catalog model',
-                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,
+                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,...QUEUE_ERRORS,
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',

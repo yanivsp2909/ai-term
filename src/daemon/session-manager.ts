@@ -43,6 +43,7 @@ import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
 import { currentAgentSandbox, dontAskNote } from './agent-sandbox.js';
 import { windowsRecipe, windowsShell } from './win-launch.js';
 import { pathInside } from '../shared/path-inside.js';
+import { limitCaps, overLimit, stopDelayMs, type QueueLimit } from '../shared/queue.js';
 import { prepareSandbox, sandboxReady, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, forkTitle, type ForkPlan, type ForkTarget } from '../shared/fork.js';
@@ -83,6 +84,8 @@ export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry alrea
     'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
     'Agent does not accept pasted lines','Agent is printing too fast to check','Agent is running a tool','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
+    // v0.9.1: a queued agent's limit and how to tell the queue it was stopped at it.
+    queueLimit?: QueueLimit; queueStop?: (note: string) => void; queueStopping?: boolean;
     approvedSetup?: string;
     checkpointFailed?: boolean; // gate: the last turn's checkpoint failed, so /undo says so instead of "no checkpoint" // v0.7.4: the test setup you ran with /test; later turns with the same setup run without asking
     firstMessage?: string; // v0.7.4 /fork: what it was started with (memory only: a prompt is never written to disk here)
@@ -546,6 +549,14 @@ export class SessionManager extends EventEmitter {
         if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind' in raw)return new ExtensionService(new SettingsStore(this.paths.root)).query(raw as Record<string,unknown>);
         return this.agentFacts(id,raw);
     }
+    // v0.9.1 queue: AI Term's agent takes the item's turns and $ as its caps (agentFacts); a CLI on a key stops at its $
+    // (addTask); a CLI on your subscription stops at its time.
+    setQueueLimit(id:string,limit:QueueLimit,onStop:(note:string)=>void):void{
+        const live=this.sessions.get(id);if(!live)return;
+        live.queueLimit=limit;live.queueStop=onStop;
+        if(limit.until){const until=limit.until;setTimeout(()=>{const current=this.sessions.get(id);if(current!==live||['exited','error'].includes(live.info.status))return;
+            void this.stop(id).then(()=>onStop(`stopped at its stop time (${until})`),()=>{this.log.error('Queued agent could not be stopped at its stop time');onStop('its stop time came but it could not be stopped');});},stopDelayMs(until,new Date())).unref();}
+    }
     async agentFacts(id:string,raw:unknown):Promise<AgentFacts|null>{
         const live=this.sessions.get(id);
         if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status)||!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).length!==1)return null;
@@ -559,7 +570,7 @@ export class SessionManager extends EventEmitter {
         if(yours!==(live.info.priceYours===true)){if(yours)live.info.priceYours=true;else delete live.info.priceYours;this.event({kind:'session.updated',session:{...live.info}});void this.persist();}
         return {model,wire:key.provider==='foundry'?deploymentWire(key.lastTest?.find(r=>r.model===model)):null,context:limits.context??null,output:limits.output??null,price,
             spent:{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0},budgets:{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},
-            caps:settings.agentCaps??DEFAULT_AGENT_CAPS,contextWarning:settings.contextWarning!==false,reserved:this.ledger?.reserved()??0};
+            caps:live.queueLimit?limitCaps(live.queueLimit,settings.agentCaps??DEFAULT_AGENT_CAPS):settings.agentCaps??DEFAULT_AGENT_CAPS,contextWarning:settings.contextWarning!==false,reserved:this.ledger?.reserved()??0};
     }
     // B28, at a price pause: {kind:'price.info', model} → the key's provider and the catalog's closest model (a guess you
     // check); {kind:'price.set', model, price} and {kind:'price.map', model, catalog} → {saved:true}. Only a live AI Term
@@ -759,6 +770,12 @@ export class SessionManager extends EventEmitter {
         const before=live.info.taskUsage,next:TaskUsage={tokens:Math.min(Number.MAX_SAFE_INTEGER,(before?.tokens??0)+tokens),costUsd:cost===undefined?before?.costUsd??null:(before?.costUsd??0)+(cost??0)};
         if(before?.unknownPrice||cost===null)next.unknownPrice=true;
         live.info.taskUsage=next;
+        // v0.9.1: a queued CLI on a key stops at its $ budget (or at once when its spend can't be priced).
+        const limit=live.queueLimit;
+        if(limit&&live.info.engine!=='ai-term'&&!live.queueStopping&&overLimit(limit,next)){
+            live.queueStopping=true;const note=next.unknownPrice||next.costUsd===null?"stopped: its spend can't be priced, so its $ budget can't be held":`stopped at its $${(limit.usd??0).toFixed(2)} budget`;
+            void this.stop(id).then(()=>live.queueStop?.(note),()=>{this.log.error('Queued agent could not be stopped at its limit');live.queueStop?.('its limit was reached but it could not be stopped');});
+        }
         // A CLI can report 120 records a minute: the card and state.json follow at most once a second. While stopping,
         // no timer: shutdown's last write saves it.
         if(this.closing){this.taskDirty=true;return;}

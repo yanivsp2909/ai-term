@@ -25,6 +25,7 @@ import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import {MAX_COPY_BYTES, MAX_SEND_BYTES, MAX_FIND_CHARS, MAX_FIND_RESULTS, FIND_LINE_CHARS, type FindMatch, type Request, type SuccessResponse } from './protocol.js';
+import { validateQueue, validateQueueAdd } from './queue.js';
 export class ValidationError extends Error {
     readonly code = 'INVALID_REQUEST';
 }
@@ -91,7 +92,17 @@ export async function validateRequest(value: unknown): Promise<Request> {
                 throw new ValidationError('Invalid hello');
             break;
         case 'daemon.stop':
+        case 'queue.list':
             fields = [];
+            break;
+        // v0.9.1 queue: the daemon checks the agent's folder again when it starts, like any start.
+        case 'queue.add':
+            fields = ['trigger', 'limit', 'request'];
+            validateQueueAdd(v);
+            break;
+        case 'queue.remove':
+            fields = ['itemId'];
+            if (!isUUID(v.itemId)) throw new ValidationError('Invalid queue item');
             break;
         case 'settings.get':
             if(v.refreshNotifications!==undefined&&typeof v.refreshNotifications!=='boolean')throw new ValidationError('Invalid notification refresh');
@@ -233,6 +244,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.diff!==undefined)validateAgentDiff(v.diff);
     if(v.exportData!==undefined)validateSessionExport(v.exportData);
     if(v.undoPlan!==undefined)validateUndoPlan(v.undoPlan);
+    if(v.queue!==undefined)validateQueue(v.queue);
     if(v.mergePlan!==undefined)validateMergePlan(v.mergePlan);
     if(v.testPlan!==undefined)validateTestPlan(v.testPlan);
     if(v.reviewPlan!==undefined)validateReviewPlan(v.reviewPlan);
@@ -313,7 +325,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -332,6 +344,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.taskCost!==undefined&&typeof v.taskCost!=='boolean')throw new ValidationError('Invalid task cost setting');
     if(v.checkpoints!==undefined&&typeof v.checkpoints!=='boolean')throw new ValidationError('Invalid checkpoints setting');
     if(v.secretScan!==undefined&&typeof v.secretScan!=='boolean')throw new ValidationError('Invalid secret scan setting');
+    if(v.queue!==undefined&&typeof v.queue!=='boolean')throw new ValidationError('Invalid queue setting');
     if(v.autoTest!==undefined&&typeof v.autoTest!=='boolean')throw new ValidationError('Invalid auto-test setting');
     if(v.autoReview!==undefined&&typeof v.autoReview!=='boolean')throw new ValidationError('Invalid auto-review setting');
     if(v.autoReviewDailyUsd!==undefined&&(typeof v.autoReviewDailyUsd!=='number'||!Number.isFinite(v.autoReviewDailyUsd)||v.autoReviewDailyUsd<0.01||v.autoReviewDailyUsd>1000))throw new ValidationError('Invalid auto-review budget');

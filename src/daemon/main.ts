@@ -8,6 +8,7 @@ import { DaemonServer } from './server.js';
 import { Notifier, notifierAppPath, notificationsSetting, launchNotifySend } from './notifier.js';
 import { systemTool } from '../shared/executable.js';
 import { warmAgentSandbox } from './agent-sandbox.js';
+import { QueueService } from './queue.js';
 import { GIT } from './git-path.js';
 import { ClickReceiver, CLICK_SOCKET } from './click-receiver.js';
 import { TerminalLauncher } from './terminal-launch.js';
@@ -34,6 +35,9 @@ export async function runDaemon(entry?:string): Promise<void> {
         : new Notifier(null, log, notificationsSetting(paths.root), launchNotifySend, undefined, undefined, undefined, { platform: process.platform, notifySend: process.platform === 'linux' ? await systemTool('notify-send') : null });
     const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage,notifier);
     manager.on('statusChanged', (session: SessionInfo, previous: StatusState, next: StatusState, attached: boolean) => notifier.transition(session, previous, next, attached));
+    // v0.9.1 queue (D55, off by default): starts through the same create() as a manual start.
+    const queue = new QueueService(paths.root, { create: request => manager.create({ ...request }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop) }, log);
+    server.setQueue(queue);
     // Notification clicks: select the agent in an open homepage, otherwise open Terminal inside it (D43).
     const launcher = entry && mac ? new TerminalLauncher(paths.root, { node: process.execPath, entry, ...(entry.endsWith('.ts') ? { loader: createRequire(import.meta.url).resolve('tsx') } : {}) }, log) : null;
     const clicks = new ClickReceiver(join(paths.run, CLICK_SOCKET), {
@@ -58,7 +62,7 @@ export async function runDaemon(entry?:string): Promise<void> {
             process.exitCode = 1;
         }
         try {
-            for(const cleanup of [()=>clicks.close(),()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close()]) {
+            for(const cleanup of [()=>clicks.close(),()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close(),()=>queue.close()]) {
                 try{await cleanup();}catch{try{log.error('Shutdown cleanup failed');}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
             }
         } finally {
@@ -81,6 +85,7 @@ export async function runDaemon(entry?:string): Promise<void> {
         // B27: old price records keyed by model id alone move to their one provider (nothing is lost either way).
         try { await migratePrices(paths.root); } catch { log.error('Price records could not be migrated; they keep applying as before'); }
         await manager.load();
+        try { await queue.load(); queue.start(); } catch { log.error('Queue unreadable; queued agents are not started'); }
         if (!closing)
             await server.listen();
         // Clicks are optional: a failure here is logged and AI Term runs on without click-through.

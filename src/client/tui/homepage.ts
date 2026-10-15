@@ -67,6 +67,8 @@ import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.j
 import { openFolder, OpenError, type FolderApp } from './open-folder.js';
 import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-command.js';
 import { sep } from 'node:path';
+import { QueueForm, QueuePanel } from './queue-panel.js';
+import { validateQueue } from '../../shared/queue.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
@@ -95,7 +97,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm;
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -335,6 +337,7 @@ export class Homepage {
     if (event.kind === 'paste') {
       // A paste never reaches the worktree question: deleting work needs the branch name typed.
       if(this.popup instanceof ExtensionsPanel){if(!event.tooLong)this.popup.paste(event.text);this.draw(true);return;}
+      if(this.popup instanceof QueueForm){if(!event.tooLong)this.popup.type(event.text);this.draw(true);return;}
       if(this.helpOffset!==null||this.cleanIds||this.worktreeUi||this.popup)return;
       if(event.tooLong&&!this.box&&this.field.text.startsWith('/send ')){this.pasteNote=SEND_TOO_LONG;this.draw(true);return;}
       if(event.tooLong){if(this.box?.kind==='start')this.box.messageNote=FIRST_MESSAGE_TOO_LONG;else this.pasteNote=FIRST_MESSAGE_TOO_LONG;this.draw(true);return;}
@@ -354,7 +357,7 @@ export class Homepage {
     }
     if(this.helpOffset!==null){if(event.key==='escape')this.helpOffset=null;else{const page=Math.max(1,this.size().rows-8),delta=event.key==='up'?-1:event.key==='down'?1:event.key==='page-up'?-page:event.key==='page-down'?page:0;this.helpOffset=Math.max(0,Math.min(Math.max(0,wrapHelpLines(helpLines(this.commandContext()),Math.min(this.size().cols,110)-6).length-page),this.helpOffset+delta));}this.draw(true);return;}
     if(this.worktreeUi){const ui=this.worktreeUi;this.enqueue(()=>ui.key(event.key));return;}
-    if(this.popup){const popup=this.popup;if(popup instanceof ExtensionsPanel)this.enqueue(()=>popup.key(event.key));else popup.key(event.key);this.draw(true);return;}
+    if(this.popup){const popup=this.popup;if(popup instanceof ExtensionsPanel)this.enqueue(()=>popup.key(event.key));else popup.key(popup instanceof QueueForm&&event.key==='space'?' ':event.key);this.draw(true);return;}
     if(this.cleanIds){
       const ids=this.cleanIds;
       if(event.key==='y'){this.cleanIds=null;this.enqueue(async()=>{
@@ -588,6 +591,7 @@ export class Homepage {
     if (command==='/merge'||command==='/pr') { await this.mergeCommand(command==='/pr'?'pr':'merge',argument); return; }
     if (command==='/test-cmd') { await this.testCmdCommand(argument); return; }
     if (command==='/test') { await this.testCommand(argument); return; }
+    if (command==='/queue') { await this.queueCommand(argument); return; }
     if (command==='/review') { await this.reviewCommand(argument); return; }
     if (command==='/fork') { await this.forkCommand(argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
@@ -726,6 +730,26 @@ export class Homepage {
       if(!argument)this.showNote(result.command?`test command for ${result.repo}: ${testCommandText(result.command)}`:`no test command for ${result.repo} · /test-cmd <command>`);
       else this.showNote(result.command?`✓ test command for ${result.repo}: ${testCommandText(result.command)} · runs when an agent finishes`:`✓ no test command for ${result.repo}`);
     }catch(error){this.showNote(error instanceof Error?error.message:'Test command unavailable');}
+  }
+  // v0.9.1 /queue lists the queue; /queue add opens the start box, whose ⏎ then asks when it starts and its limit.
+  private async queueCommand(argument:string):Promise<void>{
+    if(argument&&argument!=='add'){this.showNote('/queue or /queue add');return;}
+    let enabled:boolean;
+    try{enabled=(await this.connection.request({kind:'settings.get'})).settings?.queue===true;}catch{this.showNote('Settings unavailable');return;}
+    if(argument==='add'){if(!enabled){this.showNote('the queue is off · turn it on in /settings (b)');return;}this.openBox('start');if(this.box)this.box.queue=true;this.draw(true);return;}
+    if(this.popup){this.showNote('close the open popup first');return;}
+    const panel:QueuePanel=new QueuePanel(()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},async id=>{await this.connection.request({kind:'queue.remove',itemId:id});},enabled);
+    this.popup=panel;this.draw(true);
+    try{panel.set(validateQueue((await this.connection.request({kind:'queue.list'})).queue));}catch(error){this.showNote(error instanceof Error?error.message:'Queue unavailable');}
+  }
+  private openQueueForm(b:AgentBox):void{
+    const request={engine:b.engine,model:b.model,auth:b.auth??{kind:'account' as const},cwd:b.cwd,permission:b.permission,effort:b.effort??null,...(b.message?{firstMessage:b.message}:{}),...(b.useWorktree!==undefined?{useWorktree:b.useWorktree}:{})};
+    const agents=sortSessions(this.sessions).filter(s=>s.engine!=='shell'&&!['exited','error'].includes(s.status)).map(s=>s.title);
+    const form:QueueForm=new QueueForm(request,agents,()=>this.draw(true),()=>{if(this.popup===form)this.popup=undefined;this.draw(true);},async(trigger,limit)=>{
+      try{await this.connection.request({kind:'queue.add',trigger,limit,request});}catch(error){return error instanceof Error?error.message:'not queued';}
+      if(this.popup===form)this.popup=undefined;this.box=undefined;this.field.text='';this.showNote('✓ queued · /queue lists it');return null;
+    });
+    this.popup=form;this.draw(true);
   }
   // v0.7.4 /test [agent]: the plan first (command, folder, changed setup files); y runs it, the card shows the result.
   private async testCommand(name:string):Promise<void>{
@@ -1096,6 +1120,7 @@ export class Homepage {
           this.draw(true); return;
         }
         if (b.checking || b.error) return;
+        if (b.queue) { this.openQueueForm(b); return; }
         try {
           const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message,...(b.useWorktree!==undefined?{useWorktree:b.useWorktree}:{})});
           const session = validateSession(result.session); this.sessions = [session,...this.sessions.filter(s => s.id !== session.id)]; this.selectedId = session.id;
@@ -1174,6 +1199,7 @@ export class Homepage {
   };
   private onEvent = (value: unknown) => {
     if (value && typeof value === 'object' && 'kind' in value) {
+      if (value.kind === 'queue.updated' && 'queue' in value) { try { const items=validateQueue(value.queue); if(this.popup instanceof QueuePanel)this.popup.set(items); this.draw(true); } catch { this.showNote('Queue update unreadable'); } return; }
       if (value.kind === 'daemon.warning' && 'text' in value && typeof value.text === 'string') { this.warning = warningText(redact(warningText(value.text))); this.draw(true); return; }
       if (value.kind === 'daemon.warningCleared') { this.warning = ''; this.draw(true); return; }
       if (value.kind === 'daemon.notice' && 'text' in value && typeof value.text === 'string') { this.showNote(warningText(redact(warningText(value.text)))); return; }

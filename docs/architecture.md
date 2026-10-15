@@ -909,6 +909,29 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
   - **Client:** a client whose daemon doesn't say whether Don't ask is possible offers Ask only.
   - **Persistence list:** adds `~/.bash_aliases`, oh-my-zsh's `custom` and `~/.local/share/dbus-1/services`.
 
+### 12.23 v0.9.1 queue (2026-10-15; D55, off by default)
+The prompt's text for this part was cut off at "times passed while the". Everything after that is the safer reading, noted in PROGRESS.md.
+- **Types:** `src/shared/queue.ts` has `QueueItem {id, createdAt, trigger, limit, request, state, sessionId?, note?}`.
+  - **Triggers:** `after <title>` or `at HH:MM`, with `due` set at add time to the next local occurrence.
+  - **Limits:** what each engine needs comes from `limitFields`. AI Term's agent needs `turns` and `usd`, a key CLI `usd`, a subscription CLI `until`.
+  - **Requests:** the start box's create fields.
+  - **Validators:** `validateQueueAdd` and `validateQueue`.
+- **Service:** `QueueService` (`src/daemon/queue.ts`) keeps `<root>/queue.json` (`atomicWrite`, 0600; `readState` reads it).
+  - **On load:** an `at` item whose due time has passed becomes `missed` and never starts by itself.
+  - **Ticks:** every 15 s, and only when `settings.queue === true`.
+  - **After triggers:** `statusChanged` to `done` or `exited` starts the `after` items for that title. `error` marks them failed with why.
+  - **Starting:** `launch` marks an item `started` before `manager.create(request)`, the same path as a manual start. A failure becomes the item's note and is never retried. At most 20 items.
+- **Limits** (`SessionManager.setQueueLimit`):
+  - **AI Term's agent:** `agentFacts` returns `limitCaps` as its caps.
+  - **Key CLI:** `addTask` stops the session at `overLimit` (cost ≥ budget, or an unpriceable spend).
+  - **Subscription CLI:** a timer stops the session at `until`.
+  - **Notes:** the item's note says which limit stopped it.
+- **Protocol:** `queue.list`, `queue.add` and `queue.remove` (`QUEUE_ERRORS`), plus the event `queue.updated`. Don't ask for AI Term's agent is refused at add time where no sandbox exists.
+- **Client:**
+  - **`/queue`** opens `QueuePanel` (`queueLines`; Don't ask and failures in red; `x` removes).
+  - **`/queue add`** opens the start box as "Queue a new agent". Its ⏎ opens `QueueForm`: `after <agent>` or `at HH:MM`, then the limit, parsed by `parseTrigger` and `parseLimit`.
+  - **`/settings` b** turns the queue on or off.
+
 ## 13. Decisions log
 
 Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless he objects.

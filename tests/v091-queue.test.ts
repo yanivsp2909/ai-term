@@ -62,13 +62,15 @@ it('the queue survives a restart; a time that passed while AI Term was off is ma
 
 it('a due item starts exactly like a manual start; a failed start shows on the item and never retries; with the queue off nothing fires', async () => {
   const root = await temp();
-  let on = false;
+  let on = true;
   const create = vi.fn(async () => { throw new Error('codex not found in PATH'); });
   const manager = { create, on: vi.fn(), list: () => [], setQueueLimit: vi.fn() };
   let clock = new Date(2026, 9, 15, 20, 0);
   const queue = new QueueService(root, manager as never, { error: vi.fn(), info: vi.fn() }, () => clock, async () => on);
   await queue.load();
   await queue.add({ trigger: { kind: 'at', time: '20:30' }, limit: { until: '22:00' }, request: request() });
+  on = false;
+  await expect(queue.add({ trigger: { kind: 'at', time: '20:30' }, limit: { until: '22:00' }, request: request() })).rejects.toThrow('The queue is off');
   clock = new Date(2026, 9, 15, 20, 31);
   await queue.tick();
   expect(create).not.toHaveBeenCalled();
@@ -103,7 +105,7 @@ it('after a named agent finishes, its waiting items start; one that ends with an
   await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1));
   await vi.waitFor(() => expect(queue.list().map(item => item.state)).toEqual(['started', 'failed']));
   expect(queue.list()[1]?.note).toBe('broken ended with an error, so this one didn\'t start');
-  expect(manager.setQueueLimit).toHaveBeenCalledWith(expect.any(String), { until: '23:59' });
+  expect(manager.setQueueLimit).toHaveBeenCalledWith(expect.any(String), { until: '23:59' }, expect.any(Function));
 });
 
 it('limits hold: AI Term\'s agent runs with the item\'s turns and $ as its caps; a key CLI stops at its $ (or at once when its cost is unknown); a subscription CLI stops at its time', async () => {
