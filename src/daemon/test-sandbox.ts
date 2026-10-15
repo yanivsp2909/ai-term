@@ -18,6 +18,11 @@ export const SECRET_PATHS: readonly string[] = ['.ssh', '.aws', '.gnupg', '.netr
   '.git-credentials', '.config/git/credentials', '.config/gcloud', '.azure', '.pypirc', '.gem/credentials', '.cargo/credentials', '.cargo/credentials.toml', '.terraform.d',
   // Credential files inside toolchain folders that stay readable (Part A review).
   '.m2/settings.xml', '.m2/settings-security.xml', '.gradle/gradle.properties', '.gradle/init.d', '.config/mise/config.toml', '.bunfig.toml', '.pub-cache/credentials.json'];
+// B29: places under your home that run later, outside any sandbox: shell startup files, login items, SSH and git's global
+// config, Claude Code's and Codex's folders. The agent's bash may not write them, even in Don't ask. Linux's autostart
+// and systemd user units are the same kind of place.
+export const PERSISTENCE_FILES: readonly string[] = ['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout', '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.profile', '.gitconfig', '.claude.json'];
+export const PERSISTENCE_DIRS: readonly string[] = ['.config/fish', 'Library/LaunchAgents', '.ssh', '.config/git', '.claude', '.codex', '.config/autostart', '.config/systemd/user', '.config/environment.d'];
 // hidden: folders whose contents tests can't read (your home, /Volumes, /tmp, the user temp area); readable: what inside
 // them stays open (the toolchains tests run, the repository's git folder). Key folders and private stay closed either way.
 export interface SandboxSpec { worktree: string; temp: string; home: string; private: readonly string[]; loopback: boolean; hidden?: readonly string[]; readable?: readonly string[] }
