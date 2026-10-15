@@ -13,8 +13,9 @@ it('budget form accepts only nonnegative USD limits with empty values meaning no
  const form=new BudgetForm({daily:null,weekly:null,monthly:null});form.paste('10');form.key('down');form.paste('-1');expect(()=>form.values()).toThrow();form.key('backspace');form.key('backspace');expect(form.values()).toEqual({daily:10,weekly:null,monthly:null});
 });
 it('deployment price form validates model id and numeric input output per million',()=>{
- const form=new PriceForm();form.paste('test');form.key('down');form.paste('2');form.key('down');form.paste('10');expect(form.values()).toEqual({model:'test',price:{input:2,output:10}});
- const bad=new PriceForm();bad.paste('-bad');expect(()=>bad.values()).toThrow();
+ // B27: row 0 is the provider (Foundry first with no keys); the model id is the next row.
+ const form=new PriceForm();form.key('down');form.paste('test');form.key('down');form.paste('2');form.key('down');form.paste('10');expect(form.values()).toEqual({provider:'foundry',model:'test',price:{input:2,output:10}});
+ const bad=new PriceForm();bad.key('down');bad.paste('-bad');expect(()=>bad.values()).toThrow();
 });
 it('Usage rendering is confined to its panel at the 100-column breakpoint',()=>{
  const theme=createTheme('graphite'),frame=renderHomepage({cols:100,rows:30,sessions:[],selectedId:null,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0,usage:{today:period,week:period,month:period},budgets:{daily:10,weekly:20,monthly:30}},theme);

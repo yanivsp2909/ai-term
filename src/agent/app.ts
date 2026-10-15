@@ -5,7 +5,9 @@ import { isAbsolute, resolve } from 'node:path';
 import type { LanguageModel } from 'ai';
 import { KeyReader, type KeyEvent } from './key-reader.js';
 import type { Screen } from './screen.js';
-import type { Agent, AgentIO, AgentPermission, ToolName } from './agent.js';
+import type { Agent, AgentIO, AgentPermission, PauseActions, ToolName } from './agent.js';
+import type { ModelPrice } from '../shared/protocol.js';
+import { catalogIds } from '../shared/model-catalog.js';
 import { loadInstructions } from './instructions.js';
 import { killAllBash } from './bash.js';
 import { visible } from './display.js';
@@ -20,7 +22,17 @@ export interface AppOptions {
   quit(): void;
 }
 const QUIT_WINDOW_MS = 3000;
-const HELP = ['/mcp [add|remove <name>]   manage MCP servers; a allows a prompted tool for this session', '/skills · /agents   browse Skills, Agents, Commands and MCP; Space toggles, Enter reads', '/name [arguments]   run an enabled extension command', '/model [id]   switch to another model of this key', '/caps [turns N|off] [spend N|off]   show or change this run\'s caps', '/clear        forget the conversation (frees the context)', '/compact      summarize older turns into one note to cut context (asks first with a price range)', '/cd <folder>  work in another folder (AGENTS.md is read again)', '/exit         quit (Ctrl+C twice also quits)', 'Esc interrupts a turn · Ctrl+K kills the request and every running command at once · y / n answer an approval · ⏎ goes on at a limit pause · a message sent during a turn waits for it to end'];
+type Paused = { resolve(go: boolean): void; text: string; actions?: PauseActions; mode: null | { kind: 'price'; buffer: string } | { kind: 'map'; filter: string; index: number }; saving: boolean };
+const usd = (n: number) => `$${n === 0 || n >= 0.01 ? n.toFixed(2) : String(n)}`;
+// "input / output" or "input / output / cache read", USD per 1M tokens; every number typed (no empty field becomes 0).
+function parsePrice(text: string): ModelPrice | null {
+  const parts = text.trim().split(/\s*\/\s*|\s+/).filter(Boolean);
+  if (parts.length < 2 || parts.length > 3 || !parts.every(part => /^\d+(?:\.\d+)?$/.test(part))) return null;
+  const [input, output, cacheRead] = parts.map(Number);
+  if ([input, output, cacheRead].some(n => n !== undefined && (!Number.isFinite(n) || n > 1e9)) || input === undefined || output === undefined) return null;
+  return { input, output, ...(cacheRead === undefined ? {} : { cacheRead }) };
+}
+const HELP = ['/mcp [add|remove <name>]   manage MCP servers; a allows a prompted tool for this session', '/skills · /agents   browse Skills, Agents, Commands and MCP; Space toggles, Enter reads', '/name [arguments]   run an enabled extension command', '/model [id]   switch to another model of this key', '/caps [turns N|off] [spend N|off]   show or change this run\'s caps', '/clear        forget the conversation (frees the context)', '/compact      summarize older turns into one note to cut context (asks first with a price range)', '/cd <folder>  work in another folder (AGENTS.md is read again)', '/exit         quit (Ctrl+C twice also quits)', 'Esc interrupts a turn · Ctrl+K kills the request and every running command at once · y / n answer an approval · at a limit pause ⏎ goes on or checks again, Esc stops; with no price known, p sets one and m marks a Foundry deployment · a message sent during a turn waits for it to end'];
 
 // One controller per agent process: it owns the prompt, the queue of messages typed during a turn, the approval in
 // progress and the quit gesture. The agent turn itself lives in agent.ts.
@@ -31,7 +43,7 @@ export class AgentApp implements AgentIO {
   private queued: string[] = [];
   private turn: AbortController | null = null;
   private approval: { resolve(allowed: boolean): void; title: string; pages: string[][]; page: number; job:boolean;session?:()=>void } | null = null;
-  private paused: { resolve(go: boolean): void } | null = null;
+  private paused: Paused | null = null;
   private quitArmedAt = 0;
   private closed = false;
   private popup?: ExtensionsPanel;
@@ -44,14 +56,14 @@ export class AgentApp implements AgentIO {
   toolStart(tool: ToolName, summary: string): void { this.options.screen.toolStart(tool, summary); }
   toolEnd(tool: ToolName, outcome: 'ok' | 'denied' | 'failed', summary: string): void { this.options.screen.toolEnd(tool, outcome, summary); }
   note(text: string, tone: 'info' | 'warn' | 'error' = 'info'): void { this.options.screen.note(text, tone); }
-  pause(text: string, signal: AbortSignal): Promise<boolean> {
+  pause(text: string, signal: AbortSignal, actions?: PauseActions): Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
     this.options.screen.pause(text);
     return new Promise(resolvePromise => {
       const finish = (go: boolean) => { if (!this.paused) return; this.paused = null; signal.removeEventListener('abort', onAbort); this.options.screen.resumed(go); resolvePromise(go); };
       const onAbort = () => finish(false);
       signal.addEventListener('abort', onAbort, { once: true });
-      this.paused = { resolve: finish };
+      this.paused = { resolve: finish, text, ...(actions ? { actions } : {}), mode: null, saving: false };
     });
   }
   async approveMcp(request:{title:string;body:string},signal:AbortSignal):Promise<'allow'|'deny'|'session'>{let session=false;const allowed=await this.approve(request,signal,false,()=>{session=true;});return allowed?(session?'session':'allow'):'deny';}
@@ -84,12 +96,7 @@ export class AgentApp implements AgentIO {
     this.quitArmedAt = 0;
     if (event.kind === 'ctrl-k') { this.kill(); return; }
     if(this.popup){const panel=this.popup;const key=event.kind==='text'?event.text:event.kind; if(event.kind==='paste')panel.paste(event.text);else this.popupQueue=this.popupQueue.then(()=>panel.key(key));return;}
-    if (this.paused) {
-      // Only a typed ⏎ goes on past a limit; a paste never does.
-      if (event.kind === 'enter') this.paused.resolve(true);
-      else if (event.kind === 'escape') { this.paused.resolve(false); this.turn?.abort(); }
-      return;
-    }
+    if (this.paused) { this.pauseKey(this.paused, event); return; }
     if (this.approval) {
       // Only a typed key answers; a paste never does. y counts once every page of what runs has been on screen.
       const approval = this.approval, last = approval.page === approval.pages.length - 1;
@@ -111,6 +118,64 @@ export class AgentApp implements AgentIO {
       this.submit(message); return;
     }
     if (!this.running) this.options.screen.prompt(this.buffer);
+  }
+  // At a pause: only a typed ⏎ goes on past a limit (a paste never does), Esc stops. B28, at a price pause: p opens your
+  // price (the guess prefilled), m (Foundry) the catalog models to mark the deployment as; saving one checks again.
+  private pauseKey(paused: Paused, event: KeyEvent): void {
+    if (paused.saving) return;
+    const screen = this.options.screen, mode = paused.mode, actions = paused.actions;
+    if (!mode) {
+      if (event.kind === 'enter') paused.resolve(true);
+      else if (event.kind === 'escape') { paused.resolve(false); this.turn?.abort(); }
+      else if (event.kind === 'text' && event.text === 'p' && actions?.price) {
+        const guess = actions.price.guess?.price;
+        paused.mode = { kind: 'price', buffer: guess ? [guess.input, guess.output, ...(guess.cacheRead === undefined ? [] : [guess.cacheRead])].join(' / ') : '' };
+        screen.ask(`price for ${actions.price.model} · USD per 1M tokens · input / output / cache read`);
+        screen.hint(actions.price.guess ? `guess, check it: ${actions.price.guess.model} · ⏎ saves it as your price · Esc back` : 'no guess: type each price; 0 counts only typed · ⏎ saves · Esc back');
+        screen.prompt(paused.mode.buffer);
+      } else if (event.kind === 'text' && event.text === 'm' && actions?.map) {
+        paused.mode = { kind: 'map', filter: '', index: 0 };
+        screen.ask(`which catalog model is ${actions.map.model}? type to narrow · ↑↓ · ⏎ marks it · Esc back`);
+        screen.prompt(this.mapLine(paused.mode));
+      }
+      return;
+    }
+    if (event.kind === 'escape') { paused.mode = null; screen.pause(paused.text); return; }
+    if (mode.kind === 'price') {
+      if (event.kind === 'text' || event.kind === 'paste') mode.buffer = (mode.buffer + event.text.replace(/[\r\n]/g, '')).slice(0, 80);
+      else if (event.kind === 'backspace') mode.buffer = mode.buffer.slice(0, -1);
+      else if (event.kind === 'enter' && actions?.price) {
+        const price = parsePrice(mode.buffer), save = actions.price, model = save.model;
+        if (!price) { screen.note('type input / output per 1M (cache read optional), like 0.6 / 2.5', 'error'); screen.prompt(mode.buffer); return; }
+        this.saveAt(paused, save.save(price), `your price for ${model}: ${usd(price.input)} in / ${usd(price.output)} out${price.cacheRead === undefined ? '' : ` / ${usd(price.cacheRead)} cache read`} per 1M`);
+        return;
+      }
+      screen.prompt(mode.buffer); return;
+    }
+    const matches = this.catalogMatches(mode.filter);
+    if (event.kind === 'text' || event.kind === 'paste') { mode.filter = (mode.filter + event.text.replace(/[\r\n]/g, '')).slice(0, 80); mode.index = 0; }
+    else if (event.kind === 'backspace') { mode.filter = mode.filter.slice(0, -1); mode.index = 0; }
+    else if (event.kind === 'up' || event.kind === 'down') mode.index = Math.max(0, Math.min(matches.length - 1, mode.index + (event.kind === 'up' ? -1 : 1)));
+    else if (event.kind === 'enter' && actions?.map) {
+      const choice = matches[mode.index];
+      if (!choice) { screen.note('no catalog model matches · Backspace widens it', 'error'); screen.prompt(this.mapLine(mode)); return; }
+      this.saveAt(paused, actions.map.save(choice), `${actions.map.model} is ${choice} · its price and context come from it`);
+      return;
+    }
+    screen.prompt(this.mapLine(mode));
+  }
+  private catalogMatches(filter: string): string[] { const f = filter.toLowerCase(); return catalogIds().filter(id => id.toLowerCase().includes(f)); }
+  private mapLine(mode: { filter: string; index: number }): string { const matches = this.catalogMatches(mode.filter), choice = matches[mode.index]; return choice ? `${mode.filter} → ${choice} (${mode.index + 1} of ${matches.length})` : `${mode.filter} → no catalog model matches`; }
+  // Saved: the pause ends and the check runs again with the new price. Not saved: the pause stays, saying so.
+  private saveAt(paused: Paused, saving: Promise<boolean>, done: string): void {
+    paused.saving = true;
+    void saving.then(ok => ok, () => false).then(ok => {
+      paused.saving = false;
+      if (this.paused !== paused) return;
+      if (ok) { this.options.screen.note(`✓ ${done}`); paused.resolve(true); return; }
+      this.options.screen.note("AI Term didn't save it (a price may already be set) · /settings p · Esc back", 'error');
+      if (paused.mode) this.options.screen.prompt(paused.mode.kind === 'price' ? paused.mode.buffer : this.mapLine(paused.mode));
+    });
   }
   private quitKey(): void {
     const now = Date.now();

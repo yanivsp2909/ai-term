@@ -91,6 +91,7 @@ export interface SessionInfo {
     diffStat?:import('./diff.js').DiffStat; // v0.7.1: its worktree's changes since it started, counted when it finished a turn.
     tests?:import('./test-run.js').TestResult; // v0.7.4: the project's test command, run in its worktree when it finished a turn.
     review?:import('./review.js').ReviewState; // v0.7.4: the last /review (or auto-review) of its diff.
+    priceYours?:true; // B28: AI Term's agent runs on a price you typed (/settings p, or p at a pause), $0 included.
 }
 // v0.6.1 cost per task (D55): tokens always; dollars for API-key sessions only (null on a subscription, which bills
 // against the plan). unknownPrice: some of it had no price, so the dollars are a lower bound.

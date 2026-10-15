@@ -7,9 +7,9 @@ import { writeClaudeSettings,claudeStatusLine } from './claude-settings.js';
 import { agentTranscript,removeSessionFiles } from './session-files.js';
 import {parseAgentStatus} from './agent-status.js';
 import { AGENT_PROVIDERS, engineTitle, keyEngine, deploymentWire } from '../shared/models.js';
-import { catalogModels } from '../shared/model-catalog.js';
+import { catalogIds, catalogModels } from '../shared/model-catalog.js';
 import { DEFAULT_AGENT_CAPS, type AgentFacts } from '../shared/agent-facts.js';
-import { findPrice, findLimits, deploymentAlias, estimateCost, type PriceSnapshot } from './usage-prices.js';
+import { closestCatalogModel, findPrice, findLimits, deploymentAlias, estimateCost, type PriceSnapshot } from './usage-prices.js';
 import { cheapestWriter, handoffPlan, summarizeWithKey, type Summarize } from './handoff.js';
 import { cleanNote, HANDOFF_OUTPUT_TOKENS, handoffInstructions, handoffMessage, handoffPrompt, type HandoffPlan, type HandoffSummary, type HandoffWriter } from '../shared/handoff.js';
 import { engineLabel } from '../shared/models.js';
@@ -31,7 +31,7 @@ import { fitExport, redactExportMeta, transcriptFor } from './session-export.js'
 import { applyUndo, CheckpointError, dropCheckpoints, listCheckpoints, snapshot, undoPlan, type CheckpointContext } from './checkpoints.js';
 import type { UndoPlan } from '../shared/checkpoints.js';
 import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
-import { overridesFor } from '../shared/prices.js';
+import { isYourPrice, MAX_PRICES, overridesFor, priceCount, PRICED_BY_YOU } from '../shared/prices.js';
 import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
 import { prepareSandbox, sandboxReady, SANDBOX_EXEC, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
@@ -66,7 +66,7 @@ import { homedir } from 'node:os';
 import { link, lstat, open, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
-import { MAX_RECORD_COST_USD } from '../shared/validate.js';
+import { MAX_RECORD_COST_USD, validatePriceOverrides } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
 export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry already starting','Worktree in use by a running agent','Its worktree is gone','Its folder is gone',
@@ -516,6 +516,7 @@ export class SessionManager extends EventEmitter {
         if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status))return null;
         if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind'in raw&&typeof raw.kind==='string'&&raw.kind.startsWith('mcp.'))return this.mcp.query(id,raw);
         if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind'in raw&&typeof raw.kind==='string'&&raw.kind.startsWith('budget.'))return this.budgetQuery(id,raw as Record<string,unknown>);
+        if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind'in raw&&typeof raw.kind==='string'&&raw.kind.startsWith('price.'))return this.priceQuery(id,raw as Record<string,unknown>);
         if(raw&&typeof raw==='object'&&!Array.isArray(raw)&&'kind' in raw)return new ExtensionService(new SettingsStore(this.paths.root)).query(raw as Record<string,unknown>);
         return this.agentFacts(id,raw);
     }
@@ -527,9 +528,38 @@ export class SessionManager extends EventEmitter {
         const key=await this.keys.view(live.info.auth.keyId),settings=await new SettingsStore(this.paths.root).get();
         const alias=key.provider==='foundry'?deploymentAlias(settings,model):undefined,overrides=overridesFor(settings,key.provider);
         const price=findPrice(PRICES,key.provider,model,overrides,alias)??null,limits=findLimits(PRICES,key.provider,model,alias),usage=this.usage?.summary();
+        // B28: the card says `price: yours` while the price in use is one you typed (a $0 one included).
+        const yours=price!==null&&isYourPrice(settings,key.provider,model);
+        if(yours!==(live.info.priceYours===true)){if(yours)live.info.priceYours=true;else delete live.info.priceYours;this.event({kind:'session.updated',session:{...live.info}});void this.persist();}
         return {model,wire:key.provider==='foundry'?deploymentWire(key.lastTest?.find(r=>r.model===model)):null,context:limits.context??null,output:limits.output??null,price,
             spent:{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0},budgets:{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},
             caps:settings.agentCaps??DEFAULT_AGENT_CAPS,contextWarning:settings.contextWarning!==false,reserved:this.ledger?.reserved()??0};
+    }
+    // B28, at a price pause: {kind:'price.info', model} → the key's provider and the catalog's closest model (a guess you
+    // check); {kind:'price.set', model, price} and {kind:'price.map', model, catalog} → {saved:true}. Only a live AI Term
+    // agent, for its own model, and only while that model has no price: an agent never changes a price (you do, in
+    // /settings p). Anything else gets no answer (204).
+    private async priceQuery(id:string,raw:Record<string,unknown>):Promise<unknown>{
+        const live=this.sessions.get(id),keys=Object.keys(raw).sort().join(','),model=raw.model;
+        if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status)||typeof model!=='string'||!live.agentModels?.includes(model))return null;
+        const key=await this.keys.view(live.info.auth.keyId),store=new SettingsStore(this.paths.root);
+        const unpriced=(settings:Settings)=>findPrice(PRICES,key.provider,model,overridesFor(settings,key.provider),key.provider==='foundry'?deploymentAlias(settings,model):undefined)===undefined;
+        if(raw.kind==='price.info'&&keys==='kind,model')return {provider:key.provider,guess:unpriced(await store.get())?closestCatalogModel(PRICES,key.provider,model):null};
+        if(raw.kind==='price.set'&&keys==='kind,model,price'){
+            if(!PRICED_BY_YOU.includes(key.provider))return null;
+            try{validatePriceOverrides({[model]:raw.price});}catch{return null;}
+            const price=raw.price as import('../shared/protocol.js').ModelPrice;let saved=false;
+            await store.update(async settings=>{if(!unpriced(settings)||priceCount(settings)>=MAX_PRICES)return settings;saved=true;const current=settings.providerPrices??{};return {...settings,providerPrices:{...current,[key.provider]:{...current[key.provider],[model]:{input:price.input,output:price.output,...(price.cacheRead===undefined?{}:{cacheRead:price.cacheRead})}}}};});
+            if(saved)this.log.info('A price for an AI Term agent\'s model was set at its pause');
+            return saved?{saved:true}:null;
+        }
+        if(raw.kind==='price.map'&&keys==='catalog,kind,model'){
+            if(key.provider!=='foundry'||typeof raw.catalog!=='string'||!catalogIds().includes(raw.catalog))return null;
+            const catalog=raw.catalog;let saved=false;
+            await store.update(async settings=>{if(!unpriced(settings))return settings;saved=true;return {...settings,deploymentModels:{...settings.deploymentModels,[model]:catalog}};});
+            return saved?{saved:true}:null;
+        }
+        return null;
     }
     // B25: {kind:'budget.reserve', model, amountUsd} → a grant or a refusal; {kind:'budget.settle', id, worstCase} → settled.
     // Only a live AI Term agent, for a model it may use; anything else gets no answer (204), so its request isn't sent.

@@ -11,7 +11,8 @@ import type { StreamRedactor } from './display.js';
 import { systemPrompt, type Instructions } from './instructions.js';
 import type { Reporter } from './report.js';
 import type { Transcript } from './transcript.js';
-import { RunLimits, maxOutputTokens, requestCost, estimateTokens, refusalPause, NOT_ANSWERING } from './limits.js';
+import { RunLimits, maxOutputTokens, requestCost, estimateTokens, refusalPause, pricePauseText, NOT_ANSWERING, type Pause } from './limits.js';
+import type { ModelPrice } from '../shared/protocol.js';
 import type { AgentFacts } from '../shared/agent-facts.js';
 import { COMPACT_OUTPUT_LOW, COMPACT_OUTPUT_TOKENS, compactedHistory, compactPrompt, KEEP_TURNS, splitHistory } from './compact.js';
 
@@ -27,8 +28,15 @@ export interface AgentIO {
   confirmJob?(request: {title:string;body:string}, signal:AbortSignal):Promise<boolean>;
   approveMcp?(request:{title:string;body:string},signal:AbortSignal):Promise<'allow'|'deny'|'session'>;
   note(text: string, tone?: 'info' | 'warn' | 'error'): void;
-  // A limit pause: resolves true to go on (a typed ⏎), false to stop (Esc, a kill, or the turn ending).
-  pause(text: string, signal: AbortSignal): Promise<boolean>;
+  // A limit pause: resolves true to go on (a typed ⏎, or a price saved with p or m), false to stop (Esc, a kill, or the
+  // turn ending).
+  pause(text: string, signal: AbortSignal, actions?: PauseActions): Promise<boolean>;
+}
+// B28: what a price pause offers besides ⏎ and Esc: p (your price for this model, the catalog's closest model as a guess to
+// check) and, for a Foundry deployment, m (which catalog model it is). save resolves false when nothing was saved.
+export interface PauseActions {
+  price?: { model: string; guess: { model: string; price: ModelPrice } | null; save(price: ModelPrice): Promise<boolean> };
+  map?: { model: string; save(catalog: string): Promise<boolean> };
 }
 export interface AgentOptions {
   root: string; permission: AgentPermission; model: LanguageModel; modelId: string; instructions: Instructions;
@@ -398,11 +406,21 @@ export class Agent {
       if (!pause) { this.limits.turns++; return { facts, grant: null }; }
       refusals = 0;
       await reporter.status({ event: 'paused' });
-      const go = await io.pause(pause.text, controller.signal);
+      const { text, actions } = await this.pauseActions(pause);
+      const go = await io.pause(text, controller.signal, actions);
       await reporter.status({ event: 'answered' });
       if (!go) { controller.abort(); throw new Error('stopped'); }
       pause.onContinue?.();
     }
+  }
+  // B28: a price pause asks the daemon for the key's provider and a guess, so the pause offers p (and m on Foundry).
+  private async pauseActions(pause: Pause): Promise<{ text: string; actions?: PauseActions }> {
+    const { reporter } = this.options, ask = pause.price;
+    if (!ask || !reporter.setPrice) return { text: pause.text };
+    const info = await reporter.priceInfo?.(ask.model) ?? null, model = ask.model;
+    const actions: PauseActions = { price: { model, guess: info?.guess ?? null, save: price => reporter.setPrice?.(model, price) ?? Promise.resolve(false) } };
+    if (info?.provider === 'foundry' && reporter.mapModel) actions.map = { model, save: catalog => reporter.mapModel?.(model, catalog) ?? Promise.resolve(false) };
+    return { text: pricePauseText(model, info?.provider ?? null, ask.budgets, ask.modelMax), actions };
   }
   // Context % for the card and the bar, and the warning once per crossing of 85% (D55, /settings can turn it off).
   private context(input: number, facts: AgentFacts | null): void {

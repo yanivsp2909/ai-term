@@ -1,4 +1,5 @@
-import { validateExtensionCatalog, validateExtensionFile } from '../shared/validate.js';
+import { isKeyProvider, isValidModelId, validateExtensionCatalog, validateExtensionFile } from '../shared/validate.js';
+import type { KeyProvider, ModelPrice } from '../shared/protocol.js';
 import type { ExtensionAccess } from '../shared/extensions.js';
 import { request } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -33,6 +34,27 @@ export interface Reporter {
   // settlement once the request is over. Absent only on test reporters with no daemon behind them.
   reserve?(model: string, amountUsd: number): Promise<BudgetAnswer | null>;
   settle?(id: string, worstCase: boolean | Promise<boolean>): Promise<void>;
+  // B28, at a price pause: the key's provider and the catalog's closest model (a guess for you to check); your price for
+  // this model (only while it has none); which catalog model a Foundry deployment is. false: not saved.
+  priceInfo?(model: string): Promise<PriceInfo | null>;
+  setPrice?(model: string, price: ModelPrice): Promise<boolean>;
+  mapModel?(model: string, catalog: string): Promise<boolean>;
+}
+export interface PriceInfo { provider: KeyProvider; guess: { model: string; price: ModelPrice } | null }
+const PRICE_KEYS = ['input', 'output', 'cacheRead'];
+function parsePrice(v: unknown): ModelPrice | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const p = v as Record<string, unknown>, n = (x: unknown) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= 1e9;
+  return Object.keys(p).every(k => PRICE_KEYS.includes(k)) && n(p.input) && n(p.output) && (p.cacheRead === undefined || n(p.cacheRead)) ? p as unknown as ModelPrice : null;
+}
+export function parsePriceInfo(v: unknown): PriceInfo | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const info = v as Record<string, unknown>, guess = info.guess as Record<string, unknown> | null | undefined;
+  if (Object.keys(info).length !== 2 || typeof info.provider !== 'string' || !isKeyProvider(info.provider)) return null;
+  if (guess === null) return { provider: info.provider, guess: null };
+  if (!guess || typeof guess !== 'object' || Object.keys(guess).length !== 2 || typeof guess.model !== 'string' || !isValidModelId(guess.model)) return null;
+  const price = parsePrice(guess.price);
+  return price ? { provider: info.provider, guess: { model: guess.model, price } } : null;
 }
 
 // Requests go one at a time: the receiver numbers them in arrival order, so overlapping requests could reorder a turn.
@@ -87,6 +109,9 @@ export class HttpReporter implements Reporter, ExtensionAccess {
   async settle(id: string, worstCase: boolean | Promise<boolean>): Promise<void> {
     await this.query(Promise.resolve(worstCase).then(worst => ({ kind: 'budget.settle', id, worstCase: worst })));
   }
+  async priceInfo(model: string): Promise<PriceInfo | null> { return parsePriceInfo(await this.query({ kind: 'price.info', model })); }
+  async setPrice(model: string, price: ModelPrice): Promise<boolean> { const answer = await this.query({ kind: 'price.set', model, price }); return !!answer && typeof answer === 'object' && 'saved' in answer && answer.saved === true; }
+  async mapModel(model: string, catalog: string): Promise<boolean> { const answer = await this.query({ kind: 'price.map', model, catalog }); return !!answer && typeof answer === 'object' && 'saved' in answer && answer.saved === true; }
   async list(cwd: string) { const v=await this.query({kind:'extensions.list',cwd}); return validateExtensionCatalog(v && typeof v==='object' && 'extensions' in v ? v.extensions : null); }
   async read(cwd: string, extensionId: string) { const v=await this.query({kind:'extensions.read',cwd,extensionId}); return validateExtensionFile(v && typeof v==='object' && 'extension' in v ? v.extension : null); }
   async toggle(cwd: string, extensionId: string, enabled: boolean) { const v=await this.query({kind:'extensions.toggle',cwd,extensionId,enabled}); return validateExtensionCatalog(v && typeof v==='object' && 'extensions' in v ? v.extensions : null); }

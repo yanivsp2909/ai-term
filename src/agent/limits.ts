@@ -1,5 +1,5 @@
 import type { AgentCaps, AgentFacts, BudgetRefusal } from '../shared/agent-facts.js';
-import type { ModelPrice } from '../shared/protocol.js';
+import type { KeyProvider, ModelPrice } from '../shared/protocol.js';
 import { estimateCost } from '../daemon/usage-prices.js';
 
 // D49/D53: AI Term's agent checks before every model request (a "turn" here: one request, a reply or a tool round) that it
@@ -15,7 +15,16 @@ export function estimateTokens(text: string): number {
   for (const char of text) { if ((char.codePointAt(0) ?? 0) < 0x80) ascii++; else other++; }
   return Math.ceil(ascii / CHARS_PER_TOKEN) + other;
 }
-export interface Pause { text: string; onContinue?: () => void }
+// price: the model has no known price (B28); the pause then also offers p (your price) and, for a Foundry deployment, m.
+export interface Pause { text: string; onContinue?: () => void; price?: { model: string; budgets: boolean; modelMax: number } }
+// B28: what the price pause offers. With a budget it waits for a price (⏎ checks again; never a way to run outside it); with
+// only this run's spend cap, ⏎ may go on without one. provider: the key's, once the daemon said it (m is Foundry's alone).
+export function pricePauseText(model: string, provider: KeyProvider | null, budgets: boolean, modelMax: number): string {
+  const ways = `p sets its price${provider === 'foundry' ? ' · m marks which catalog model it is' : ''}`;
+  return budgets
+    ? `no price known for ${model}, so your budgets can't count it · ${ways} · ⏎ checks again · Esc stops`
+    : `no price known for ${model}, so what it spends is not counted in this run's spend cap · ${ways} · ⏎ goes on for this model this run (at most ${modelMax.toLocaleString('en-US')} output tokens a request) · Esc stops`;
+}
 const usd = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 export const NOT_ANSWERING = "AI Term isn't answering, so budgets and caps can't be checked · ⏎ asks again · Esc stops";
 const BUDGET_LABEL = { daily: 'today', weekly: 'this week', monthly: 'this month' } as const;
@@ -75,9 +84,9 @@ export class RunLimits {
       // A budget is a promise across agents and days: an unpriced model would spend outside it (v0.6 gate), so with any
       // budget set it waits for a price (⏎ checks again). A spend cap alone is this run's, so you may go on without it.
       if (facts.budgets.daily !== null || facts.budgets.weekly !== null || facts.budgets.monthly !== null)
-        return { text: `no price known for ${facts.model}, so your budgets can't count it · set its price in /settings (p, or m for a Foundry deployment), then ⏎ checks again · Esc stops` };
+        return { text: pricePauseText(facts.model, null, true, modelMax), price: { model: facts.model, budgets: true, modelMax } };
       if (!limited || this.unpriced.has(facts.model)) return null;
-      return { text: `no price known for ${facts.model}, so what it spends is not counted in this run's spend cap · set its price in /settings (p, or m for a Foundry deployment), or ⏎ goes on for this model this run (at most ${modelMax.toLocaleString('en-US')} output tokens a request) · Esc stops`, onContinue: () => { this.unpriced.add(facts.model); } };
+      return { text: pricePauseText(facts.model, null, false, modelMax), price: { model: facts.model, budgets: false, modelMax }, onContinue: () => { this.unpriced.add(facts.model); } };
     }
     const price = facts.price, input = worstCase(price, inputTokens, 0), extra = this.ledger ? facts.reserved : this.unreported + this.reserved;
     const rooms: { room: number; pause: () => Pause }[] = [];

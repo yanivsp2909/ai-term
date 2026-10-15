@@ -49,3 +49,19 @@ export function findLimits(snapshot:PriceSnapshot,provider:KeyProvider,model:str
  for(const table of tables){const entry=snapshot.limits?.[table];if(entry&&Object.hasOwn(entry,id))return {...entry[id]};}
  return {};
 }
+// B28: a starting point for the price you type at a pause (shown as `guess, check it`; it is never used on its own). The
+// catalog's closest model: the one with the most words that are all words of the id (after any `vendor/` and `:tag`),
+// the key's own provider's table first. Ollama has no catalog; a one-word catalog id under four letters never matches.
+const idWords = (id: string) => (id.toLowerCase().split('/').at(-1) ?? '').replace(/:.*$/, '').match(/[a-z0-9]+/g) ?? [];
+export function closestCatalogModel(snapshot: PriceSnapshot, provider: KeyProvider, model: string): { model: string; price: ModelPrice } | null {
+ if (provider === 'ollama') return null;
+ const mine = new Set(idWords(model)), first = TABLE_OF[provider];
+ const tables: CatalogTable[] = [...(first ? [first] : []), 'azure', 'openai', 'anthropic', ...(Object.values(TABLE_OF) as CatalogTable[]).filter(table => table !== first)];
+ let best: { model: string; price: ModelPrice; size: number } | null = null;
+ for (const table of tables) for (const [id, price] of Object.entries(snapshot.providers[table as keyof PriceSnapshot['providers']] ?? {})) {
+  const theirs = idWords(id);
+  if (/:free$/.test(id) || theirs.length === 0 || theirs.length === 1 && (theirs[0]?.length ?? 0) < 4 || !theirs.every(word => mine.has(word))) continue;
+  if (!best || theirs.length > best.size) best = { model: id, price: { ...price }, size: theirs.length };
+ }
+ return best ? { model: best.model, price: best.price } : null;
+}

@@ -77,7 +77,7 @@ export function taskCostText(usage: TaskUsage | undefined): string | null {
   if (!usage) return null;
   if (usage.costUsd === null) return usage.tokens > 0 ? `${compactTokens(usage.tokens)} tok` : null;
   if (usage.costUsd === 0 && usage.tokens === 0) return null;
-  const dollars = usage.costUsd < 0.005 ? '<$0.01' : `$${usage.costUsd.toFixed(2)}`;
+  const dollars = usage.costUsd > 0 && usage.costUsd < 0.005 ? '<$0.01' : `$${usage.costUsd.toFixed(2)}`;
   return dollars + (usage.unknownPrice ? '+?' : '');
 }
 export function cardText(session: SessionInfo, now: number, width: number, options: { contextWarning?: boolean; taskCost?: boolean } = {}): CardText {
@@ -92,7 +92,8 @@ export function cardText(session: SessionInfo, now: number, width: number, optio
   const ctxText = percent === null ? null : [`ctx ${percent}`, percent].find(text => textWidth(model) + CTX_GAP + text.length <= width) ?? null;
   const ctx = ctxText ? { text: ctxText, color: (session.ctxPercent ?? 0) >= CTX_WARN ? 'status-waiting' as const : 'ink-3' as const } : null;
   const login = session.auth.kind === 'key' ? (session.auth.provider === 'ollama' ? keyAuthLabel('ollama', '') : `API key ····${session.auth.last4}`) : shell ? '' : session.auth.profile ? ownLoginLabel(session.authMethod).replace(/^own login/, `account ${session.auth.profile}`) : ownLoginLabel(session.authMethod), cost = options.taskCost === false ? null : taskCostText(session.taskUsage);
-  const auth = cost && login ? `${login} · ${cost}` : login;
+  // B28: dollars from a price you typed say so (a $0 price included).
+  const priced = cost && session.priceYours ? `${cost} · price: yours` : cost, auth = priced && login ? `${login} · ${priced}` : login;
   if (shell) return { status, model, ctx, activity: null, auth, line3: session.statusDetail === word ? word : `${word} · ${session.statusDetail}` };
   if(session.worktreeNote)return {status,model,ctx,activity:null,auth,line3:session.worktreeNote};
   const act = narrow ? null : (options.contextWarning !== false ? contextWarning(session) : null) ?? activity(session, now), joined = act && auth ? `${act.text} · ${auth}` : null;
