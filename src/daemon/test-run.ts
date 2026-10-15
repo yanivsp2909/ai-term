@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import type { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, readlink, realpath } from 'node:fs/promises';
@@ -8,7 +9,7 @@ import { diffPath } from '../shared/diff.js';
 import { failingCount, isDependencyPath, isTestCommand, isTestConfig } from '../shared/test-run.js';
 import { ProcessTree } from './process-tree.js';
 import { killGroup } from '../shared/kill-tree.js';
-import { windowsTestCommand } from './win-launch.js';
+import { CliLaunchError, windowsTestCommand } from './win-launch.js';
 import { sandboxDenial, type PreparedSandbox } from './test-sandbox.js';
 import { diffNameStatus, GitError, insideWorktree, isolatedGitDir, repoCommonDir, repoTopLevel, runGit, untrackedFiles } from './git.js';
 import { sep } from 'node:path';
@@ -29,14 +30,14 @@ const SANDBOX_REFUSED = /^sandbox-exec: /m, BWRAP_REFUSED = /^bwrap: /m;
 export function runTests(command: readonly string[], cwd: string, env: Record<string, string>, options: TestRunOptions = {}): Promise<TestOutcome> {
   if (!isTestCommand(command)) return Promise.resolve({ state: 'error' });
   // Windows (v0.8.2): `npm test` is npm.cmd, which only cmd.exe could run; it becomes node + npm's script (win-launch.ts).
-  if (process.platform === 'win32' && !options.resolved) return windowsTestCommand(command, env.PATH ?? env.Path ?? '').then(resolved => runTests(resolved, cwd, env, { ...options, resolved: true }), () => { options.log?.("Test run: Windows can't run this test command without cmd.exe (a .bat, or a .cmd that isn't npm's)"); return { state: 'error' as const }; });
+  if (process.platform === 'win32' && !options.resolved) return windowsTestCommand(command, env.PATH ?? env.Path ?? '').then(resolved => runTests(resolved, cwd, env, { ...options, resolved: true }), (error: unknown) => { options.log?.(`Test run: ${error instanceof CliLaunchError ? error.message : 'its command could not be looked up'}`); return { state: 'error' as const }; });
   const box = options.sandbox, argv = box ? [...box.prefix, ...command] : [...command];
   const [program, ...args] = argv;
   return new Promise(resolve => {
     let tail = Buffer.alloc(0), total = 0, ended: 'timeout' | 'cancelled' | 'capped' | null = null, settled = false;
     // spawn throws at once for some programs (Windows refuses a .bat or .cmd without a shell): the tests couldn't start.
-    let child: ChildProcessWithoutNullStreams;
-    try { child = spawn(program ?? '', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true }); child.stdin.end(); }
+    let child: ChildProcessByStdio<null, Readable, Readable>;
+    try { child = spawn(program ?? '', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true, windowsHide: true }); }
     catch { options.log?.('Test run: its command could not be started'); resolve({ state: 'error' }); return; }
     // Windows has no ps; taskkill /T stops the run's whole tree instead (kill-tree.ts).
     const tree = child.pid === undefined || process.platform === 'win32' ? null : new ProcessTree(child.pid, options.log);

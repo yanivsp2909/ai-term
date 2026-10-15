@@ -166,7 +166,10 @@ async function prepareLinux(worktree: string, temp: string, options: { home: str
     const hidden = (await existing([realHome, '/home', '/root', '/tmp', '/var/tmp', '/run', '/media', '/mnt'])).filter(found => found.info.isDirectory()).map(found => found.path);
     let dropped = false;
     const usable = (paths: readonly string[]) => paths.filter(path => { try { bwrapPath(path); return true; } catch { dropped = true; return false; } });
-    const readable = usable([...new Set((await existing([...toolchainPaths(options.home, options.env ?? {}), ...toolchainPaths(realHome, options.env ?? {}), ...options.readable ?? []])).map(found => found.path))]);
+    // PATH folders under a hidden root that isn't your home (Linuxbrew's /home/linuxbrew, NixOS's /run/current-system)
+    // come back read-only too (gate), with their parent when they are a bin folder.
+    const elsewhere = (options.env?.PATH ?? '').split(':').filter(entry => isAbsolute(entry) && normalize(entry) === entry && !entry.startsWith(`${realHome}/`) && ['/home/', '/run/', '/root/'].some(root => entry.startsWith(root))).map(entry => entry.endsWith('/bin') ? dirname(entry) : entry);
+    const readable = usable([...new Set((await existing([...toolchainPaths(options.home, options.env ?? {}), ...toolchainPaths(realHome, options.env ?? {}), ...elsewhere, ...options.readable ?? []])).map(found => found.path))]);
     const secrets = await existing([...SECRET_PATHS.map(name => join(options.home, name)), ...options.private]);
     if (dropped) options.log?.('Test sandbox: a folder with control characters in its path stays closed to tests');
     const tree = await realpath(worktree);

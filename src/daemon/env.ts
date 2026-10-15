@@ -131,6 +131,10 @@ export function buildAgentEnv(base:NodeJS.ProcessEnv,agent:{secret:string|null;e
     if(agent.entry.endsWith('.ts'))result.TSX_TSCONFIG_PATH=sourceTsconfig(agent.entry);
     Object.assign(result,agent.status?buildStatusEnv(agent.status):{},agent.secret!==null?{AITERM_AGENT_KEY:agent.secret}:{},agent.endpoint?{AITERM_AGENT_ENDPOINT:agent.endpoint}:{});
     if(agent.usage){validTelemetry(agent.usage);result.AITERM_USAGE_TOKEN=agent.usage.credential;}
+    // The bash sandbox protects zsh's startup files under ZDOTDIR, the config places under XDG_CONFIG_HOME and hides the
+    // runtime folder; the bash env never carries them, so they reach the agent here, plain absolute paths only (gate).
+    for(const [name,value] of [['AITERM_ZDOTDIR',base.ZDOTDIR],['AITERM_XDG_CONFIG_HOME',base.XDG_CONFIG_HOME],['AITERM_XDG_RUNTIME_DIR',base.XDG_RUNTIME_DIR]] as const)
+        if(typeof value==='string'&&absolute(value)&&!/[\p{C}]/u.test(value))result[name]=value;
     return result;
 }
 // The env of every command the agent's bash tool runs: an allowlist, so no API key, no AI Term credential and nothing the

@@ -49,22 +49,32 @@ export function bwrapTestArgs(spec: BwrapTestSpec): string[] {
 //   doesn't exist yet can then be "created" only in that tmpfs, which vanishes with the command; so does anything new
 //   at those levels.
 export interface ShadowEntry { path: string; kind: 'dir' | 'file' | 'link' | 'shadowed'; target?: string; readOnly: boolean }
-// pinned: each folder between a rebuilt one (or /) and a read-only place, bound onto itself so it is a mount point and
-// can't be renamed: renaming ~/work/proj and copying it back would otherwise leave a writable .git/hooks at the old path
-// (security review); macOS denies by path, which renames can't dodge.
-export interface BwrapBashSpec { aiTermHome: string; cwd: string; runtime: string | readonly string[] | null; shadows: readonly { dir: string; entries: readonly ShadowEntry[] }[]; readOnly: readonly string[]; pinned?: readonly string[] }
+// pinned: each folder between a rebuilt one (or /) and a read-only place, a rebuilt folder or AI Term's folder, bound onto
+// itself so it is a mount point and can't be renamed: renaming ~/work/proj and copying it back would otherwise leave a
+// writable .git/hooks at the old path (reviews; macOS denies the same renames by path, bash.ts ancestorLiterals). Pins and
+// rebuilt folders are mounted shallowest first, so a pin lands after the folder holding it is rebuilt and before what it
+// holds is.
+// hide: sockets and their folders in /tmp that would reach your session (gate): an X11 display (keystrokes into your
+// terminal), a D-Bus bus started by dbus-launch (Secret Service: every saved key), ssh-agent, tmux. A folder becomes an
+// empty tmpfs, a socket or file /dev/null.
+export interface BwrapBashSpec { aiTermHome: string; cwd: string; runtime: string | readonly string[] | null; shadows: readonly { dir: string; entries: readonly ShadowEntry[] }[]; readOnly: readonly string[]; pinned?: readonly string[]; hide?: readonly { path: string; dir: boolean }[] }
 export function bwrapBashArgs(spec: BwrapBashSpec): string[] {
-  const p = bwrapPath, home = p(spec.aiTermHome), cwd = p(spec.cwd);
+  const p = bwrapPath, home = p(spec.aiTermHome), cwd = p(spec.cwd), depth = (path: string) => path.split('/').length;
   const entry = (e: ShadowEntry): string[] => e.kind === 'shadowed' ? [] : e.kind === 'link' ? ['--symlink', e.target ?? '', p(e.path)] : [e.readOnly ? '--ro-bind' : '--bind', p(e.path), p(e.path)];
+  const layered = [...spec.shadows.map(shadow => ({ at: depth(shadow.dir), args: ['--tmpfs', p(shadow.dir), ...shadow.entries.flatMap(entry)] })), ...(spec.pinned ?? []).map(path => ({ at: depth(path), args: ['--bind', p(path), p(path)] }))]
+    .sort((a, b) => a.at - b.at);
   return ['--die-with-parent', '--new-session', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try', '--unshare-user-try',
     '--bind', '/', '/', '--dev', '/dev', '--proc', '/proc',
-    ...spec.shadows.flatMap(shadow => ['--tmpfs', p(shadow.dir), ...shadow.entries.flatMap(entry)]),
+    ...layered.flatMap(step => step.args),
     ...(typeof spec.runtime === 'string' ? [spec.runtime] : spec.runtime ?? []).flatMap(path => ['--tmpfs', p(path)]),
+    ...(spec.hide ?? []).flatMap(({ path, dir }) => dir ? ['--tmpfs', p(path)] : ['--ro-bind', '/dev/null', p(path)]),
     '--tmpfs', home, ...cwd.startsWith(`${home}/`) ? ['--bind', cwd, cwd] : [],
-    ...(spec.pinned ?? []).flatMap(path => ['--bind', p(path), p(path)]),
     ...spec.readOnly.flatMap(path => ['--ro-bind', p(path), p(path)]),
     '--chdir', cwd];
 }
+// Home entries that reach your session without being in a runtime folder: the D-Bus address file and X11/ICE cookies.
+const SESSION_FILES = new Set(['.dbus', '.Xauthority', '.ICEauthority']);
+const SESSION_TMP = /^(?:\.X11-unix|\.ICE-unix|\.?dbus-.*|ssh-.*|tmux-\d+)$/;
 
 // A rebuilt folder holds at most this many entries: past it the command is refused rather than run with a home half put
 // back (or an argv too long to start).
@@ -76,11 +86,15 @@ const missing = <T>(fallback: T) => (error: unknown): T => { if (isFsError(error
 // repository's hooks and config). Nothing else is created on disk.
 // lstat: a test's stand-in. An entry that can't be looked at (a dead network mount: ENOTCONN, EIO) is left out of the
 // rebuilt folder rather than refusing every command (TS review); left out, it is simply not there inside.
-export async function bashSandboxPlan(options: { user: string; aiTermHome: string; cwd: string; protect: readonly string[]; runtime: string | readonly string[] | null; lstat?: (path: string) => Promise<Stats> }): Promise<BwrapBashSpec> {
+// shell: ZDOTDIR and XDG_CONFIG_HOME from AI Term's own env (gate); tmp: /tmp unless a test says otherwise.
+export async function bashSandboxPlan(options: { user: string; aiTermHome: string; cwd: string; protect: readonly string[]; runtime: string | readonly string[] | null; lstat?: (path: string) => Promise<Stats>; shell?: { zdotdir?: string; configHome?: string }; tmp?: string }): Promise<BwrapBashSpec> {
   const look = options.lstat ?? ((path: string) => lstat(path));
   const user = await realpath(options.user).catch(missing(options.user));
   const aiTermHome = await realpath(options.aiTermHome).catch(missing(options.aiTermHome)), cwd = await realpath(options.cwd);
-  const files = PERSISTENCE_FILES.map(name => join(user, name)), dirs = PERSISTENCE_DIRS.map(name => join(user, name)), places = new Set([...files, ...dirs]);
+  const absolute = (path: string | undefined): path is string => !!path && isAbsolute(path) && normalize(path) === path;
+  const zdot = absolute(options.shell?.zdotdir) ? ['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout'].map(name => join(options.shell?.zdotdir ?? '', name)) : [];
+  const config = absolute(options.shell?.configHome) ? ['git', 'fish', 'autostart', 'systemd/user', 'environment.d', 'plasma-workspace/env', 'autostart-scripts', 'i3', 'sway', 'hypr', 'openbox'].map(name => join(options.shell?.configHome ?? '', name)) : [];
+  const files = [...PERSISTENCE_FILES.map(name => join(user, name)), ...zdot], dirs = [...PERSISTENCE_DIRS.map(name => join(user, name)), ...config], places = new Set([...files, ...dirs]);
   // Each existing folder between home and a protected place, by its real path (a ~/.config that is a link is rebuilt
   // where it leads, so the protected places under it are covered whichever way they are reached).
   // real folder → the home path it stands for, so its entries are matched against the protected places by that path.
@@ -104,7 +118,7 @@ export async function bashSandboxPlan(options: { user: string; aiTermHome: strin
     const entries: ShadowEntry[] = [];
     for (const name of names) {
       const path = join(dir, name);
-      if (path === aiTermHome) continue;
+      if (path === aiTermHome || logical === user && SESSION_FILES.has(name)) continue;
       let info: Stats;
       try { info = await look(path); } catch { continue; }
       const isPlace = places.has(join(logical, name));
@@ -124,21 +138,27 @@ export async function bashSandboxPlan(options: { user: string; aiTermHome: strin
   for (const dir of options.protect) for (const name of ['hooks', 'config']) {
     const path = await realpath(join(dir, name)).catch(missing(null)); if (path) readOnly.add(path);
   }
-  // Ancestors to pin: below the deepest rebuilt folder holding the place (its entries are mount points already), or
-  // below / when none holds it; a folder that holds a rebuilt one or AI Term's folder is left alone (pinning it would
-  // cover them).
+  // Ancestors to pin: below the deepest rebuilt folder holding the place (its entries are mount points already), or below
+  // / when none holds it; for read-only places, rebuilt folders reached through a link, and AI Term's own folder (gate).
   const rebuilt = [...shadowDirs.keys()], inside = (path: string, root: string) => path === root || path.startsWith(`${root}/`);
   const pinned = new Set<string>();
-  for (const place of readOnly) {
+  for (const place of [...readOnly, ...rebuilt.filter(dir => dir !== user), aiTermHome]) {
     const top = rebuilt.filter(dir => inside(place, dir) && dir !== place).sort((a, b) => b.length - a.length)[0];
     const below = top ? place.slice(top.length + 1).split('/') : place.split('/').filter(Boolean);
     for (let depth = top ? 2 : 1; depth < below.length; depth++) {
       const folder = top ? join(top, ...below.slice(0, depth)) : `/${below.slice(0, depth).join('/')}`;
-      if (rebuilt.some(dir => dir !== folder && inside(dir, folder)) || inside(aiTermHome, folder)) continue;
+      if (rebuilt.includes(folder) || inside(user, folder)) continue;
       pinned.add(folder);
     }
   }
-  return { aiTermHome, cwd, runtime: options.runtime, shadows, readOnly: [...readOnly], pinned: [...pinned].sort((a, b) => a.split('/').length - b.split('/').length) };
+  // /tmp's session sockets (X11, dbus-launch, ssh-agent, tmux), hidden by name; a /tmp that can't be listed hides nothing more.
+  const tmp = options.tmp ?? '/tmp', hide: { path: string; dir: boolean }[] = [];
+  for (const name of await readdir(tmp).catch(missing([] as string[]))) {
+    if (!SESSION_TMP.test(name)) continue;
+    const info = await lstat(join(tmp, name)).catch(missing(null));
+    if (info && !info.isSymbolicLink()) hide.push({ path: join(tmp, name), dir: info.isDirectory() });
+  }
+  return { aiTermHome, cwd, runtime: options.runtime, shadows, readOnly: [...readOnly], pinned: [...pinned].sort((a, b) => a.split('/').length - b.split('/').length), hide };
 }
 // The session's runtime folders (D-Bus, the keyring's control socket, ssh-agent): XDG_RUNTIME_DIR from AI Term's own
 // environment (the bash env never has it) and the usual /run/user/<uid>, each by its real path, when they exist.

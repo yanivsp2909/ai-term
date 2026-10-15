@@ -47,7 +47,7 @@ export interface AgentOptions {
   redactStream?: () => StreamRedactor;
   bashEnv: Record<string, string>; rg: string | null; maxSteps?: number;
   // AI Term's own folder, kept out of reach of every bash command (bash.ts).
-  bashSandbox?: { home: string; protect?: readonly string[]; require?: boolean };
+  bashSandbox?: { home: string; protect?: readonly string[]; require?: boolean; shell?: import('./bash.js').ShellDirs };
   extensions?: ExtensionAccess; models?: readonly string[]; makeModel?(id: string): Promise<LanguageModel>;
   limits?: RunLimits; child?: boolean;
   mcp?:McpAccess; mcpSession?:{allowed:Set<string>;schemas:Set<string>};

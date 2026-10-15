@@ -68,7 +68,9 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   // AI Term's folder (not a secret): every bash command is kept out of it.
   const aiTermHome = env.AITERM_HOME && isAbsolute(env.AITERM_HOME) && !env.AITERM_HOME.includes('\0') ? env.AITERM_HOME : null;
   const gitCommon = env.AITERM_GIT_COMMON && isAbsolute(env.AITERM_GIT_COMMON) && !env.AITERM_GIT_COMMON.includes('\0') ? env.AITERM_GIT_COMMON : null;
-  delete env.AITERM_HOME; delete env.AITERM_GIT_COMMON;
+  const shellDir = (name: string) => { const value = env[name]; return value && isAbsolute(value) && !value.includes('\0') ? value : undefined; };
+  const shell = { zdotdir: shellDir('AITERM_ZDOTDIR'), configHome: shellDir('AITERM_XDG_CONFIG_HOME'), runtime: shellDir('AITERM_XDG_RUNTIME_DIR') };
+  delete env.AITERM_HOME; delete env.AITERM_GIT_COMMON; delete env.AITERM_ZDOTDIR; delete env.AITERM_XDG_CONFIG_HOME; delete env.AITERM_XDG_RUNTIME_DIR;
   const secrets = takeSecrets(env);
   let parsed: AgentArgs;
   try { parsed = parseAgentArgs(args); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof AgentUsageError ? error.message : 'invalid arguments'}\n`); return 2; }
@@ -102,7 +104,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox: { home: aiTermHome ?? join(homedir(), '.ai-term'), require: parsed.permission === 'dontAsk', ...(gitCommon ? { protect: [gitCommon] } : {}) }, extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox: { home: aiTermHome ?? join(homedir(), '.ai-term'), require: parsed.permission === 'dontAsk', shell: Object.fromEntries(Object.entries(shell).filter(([, value]) => value !== undefined)), ...(gitCommon ? { protect: [gitCommon] } : {}) }, extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
       quit: () => { restore(); void transcript.close().then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);

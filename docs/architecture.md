@@ -795,7 +795,7 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
 
 ### 12.19 v0.7 release gate (2026-10-15) — v0.7 closed
 - **Agent secrets off the env (D57).** A process's starting environment is readable to the same user (`ps -E`), so `splitAgentSecrets` (`src/daemon/env.ts`) moves `AITERM_AGENT_KEY`, `AITERM_AGENT_ENDPOINT`, `AITERM_STATUS_TOKEN` and `AITERM_USAGE_TOKEN` into `<root>/sessions/<id>/agent-secrets.json` (new file, `O_EXCL|O_NOFOLLOW`, 0600, in the 0700 session folder; the daemon unlinks it after 60 s). The env keeps `AITERM_AGENT_SECRETS` (its path), `AITERM_STATUS_PORT` and `AITERM_HOME`. `takeSecrets` (`src/agent/main.ts`) reads it with `readAgentSecrets(env, true)` (no link, owner, 0600, ≤ 64 KiB) and deletes it before anything else runs.
-- **Agent bash sandbox (D57).** `bashArgv` (`src/agent/bash.ts`) runs each command as `sandbox-exec -p <bashProfile> -- /bin/sh -c <command>` on macOS: `(allow default)`, then deny `file-read-data`, `file-read-xattr` and `file-write*` under `AITERM_HOME` and unix-socket connects there, then reopen the agent's own folder when it lies strictly inside; `(deny mach-priv-task-port)` and `(deny process-info* (target others))` stop debugger attach and reading other processes (the agent's and daemon's memory hold the key and credentials); the repository's common git dir (`AITERM_GIT_COMMON`) gets its `hooks/` and `config` write-protected. A folder no profile can hold refuses the command; no `sandbox-exec` (another OS) runs it as before. This keeps a hijacked agent from changing settings, prices or budgets, or calling the daemon as the agent or as you. **B29 (2026-10-15):** the profile ends with `(deny file-write* …)` for `PERSISTENCE_FILES` (`src/daemon/test-sandbox.ts`: zsh, bash and sh startup files, `.gitconfig`, `.claude.json`; zsh's also under `$ZDOTDIR`) and `PERSISTENCE_DIRS` (`.config/fish`, `Library/LaunchAgents`, `.ssh`, `.config/git`, `.claude`, `.codex`, and Linux's autostart, systemd user and environment.d folders), each by its path and its link target (`persistencePaths`; under home as given and its real path; a dangling link's target too), plus a `literal` deny on the folders between home and them (`~/.config`, `~/.config/systemd`, `~/Library`) so they can't be renamed, removed or swapped for a link (their other contents stay writable). A refused write there (or in `AITERM_HOME`) is read back from the output by `blockedPlace` and appended to the tool result as `✗ blocked by sandbox: ~/<path> · …`. Other writes in your home stay allowed, as Don't ask intends.
+- **Agent bash sandbox (D57).** `bashArgv` (`src/agent/bash.ts`) runs each command as `sandbox-exec -p <bashProfile> -- /bin/sh -c <command>` on macOS: `(allow default)`, then deny `file-read-data`, `file-read-xattr` and `file-write*` under `AITERM_HOME` and unix-socket connects there, then reopen the agent's own folder when it lies strictly inside; `(deny mach-priv-task-port)` and `(deny process-info* (target others))` stop debugger attach and reading other processes (the agent's and daemon's memory hold the key and credentials); the repository's common git dir (`AITERM_GIT_COMMON`) gets its `hooks/` and `config` write-protected. A folder no profile can hold refuses the command. Without `sandbox-exec`, Ask runs it plainly and says so in the result, while Don't ask refuses (v0.8.1, `require`). This keeps a hijacked agent from changing settings, prices or budgets, or calling the daemon as the agent or as you. **B29 (2026-10-15):** the profile ends with `(deny file-write* …)` for `PERSISTENCE_FILES` (`src/daemon/sandbox-places.ts`, re-exported by `test-sandbox.ts`: zsh, bash and sh startup files, `.gitconfig`, `.claude.json`; zsh's also under `$ZDOTDIR`) and `PERSISTENCE_DIRS` (`.config/fish`, `Library/LaunchAgents`, `.ssh`, `.config/git`, `.claude`, `.codex`, and Linux's autostart, systemd user and environment.d folders), each by its path and its link target (`persistencePaths`; under home as given and its real path; a dangling link's target too), plus a `literal` deny on the folders between home and them (`~/.config`, `~/.config/systemd`, `~/Library`) so they can't be renamed, removed or swapped for a link (their other contents stay writable). A refused write there (or in `AITERM_HOME`) is read back from the output by `blockedPlace` and appended to the tool result as `✗ blocked by sandbox: ~/<path> · …`. Other writes in your home stay allowed, as Don't ask intends.
 - **Gate fixes.**
   - `/review` sends a secret-looking file's name only and drops scan-flagged lines (`diffForReview`).
   - `/pr` reads `remote get-url --push --all` and refuses more than one URL; it masks a URL password for the client and pins `gh pr create --repo host/owner/repo` (`githubRepo`).
@@ -819,7 +819,7 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
     - **Mounts:** `--ro-bind / /`, `--dev`, `--proc`. Then `--tmpfs` over home, `/home`, `/root`, `/tmp`, `/var/tmp`, `/run` (sockets aren't stopped by a network namespace), `/media` and `/mnt`.
     - **Reopened:** `--ro-bind` for toolchains and the git dir. Key folders stay hidden (`--tmpfs`, or `/dev/null` for a file).
     - **Writable:** `--bind` the worktree and the temp folder only, and `--chdir` into the worktree.
-    - **Use:** `PreparedSandbox.prefix` is the argv before the test command. `sandboxReady` runs it with `/bin/true`. A `bwrap:` failure (exit 1) is `nosandbox`. `EROFS` and `ENETUNREACH` read as `blocked`.
+    - **Use:** `PreparedSandbox.prefix` is the argv before the test command. `sandboxReady` runs it with `/bin/sh -c :`. A `bwrap:` failure (exit 1) is `nosandbox`. `EROFS` and `ENETUNREACH` read as `blocked`.
   - **Agent bash (`bwrapBashArgs` + `bashSandboxPlan`, used by `linuxArgv` in `src/agent/bash.ts`):**
     - **Flags:** `--unshare-pid` with its own `/proc` (no attaching to the agent or the daemon), plus ipc, uts, cgroup and user. The network is shared.
     - **Writable:** `--bind / /` (allow by default).
@@ -850,7 +850,7 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
 ### 12.21 v0.8.2 Windows (2026-10-15)
 - **Folder and files.**
   - **Review fixes:** see below.
-  - **The folder:** `privateDirectory` on win32 (`src/shared/paths.ts`, `src/shared/win-acl.ts`) runs `icacls <root> /inheritance:r /grant:r *<SID>:(OI)(CI)F /q`. The SID comes from `whoami /user /fo csv /nh`, validated. The folder is read back with a fixed PowerShell script whose path arrives in `AITERM_ACL_PATH`, never in the text. The owner and every entry must be that SID, or start fails. Subfolders inherit it, and the check runs once per process.
+  - **The folder:** `privateDirectory` on win32 (`src/shared/paths.ts`, `src/shared/win-acl.ts`) runs `icacls <root> /inheritance:r /grant:r *<SID>:(OI)(CI)F /q`. The SID comes from `whoami /user /fo csv /nh`, validated. The folder is read back with a fixed PowerShell script whose paths arrive in `AITERM_ACL_PATHS`, never in the text. The owner and every entry must be that SID, or start fails. Subfolders inherit it. Only the daemon verifies, once per start: the root and each folder in it.
   - **Files:** `ownedByMe` and `privateMode` (`src/shared/owner.ts`) answer true on win32, because `stat` has no owner there and invented modes; the folder ACL is the check.
   - **Paths:** `isSafeAbsolutePath(…, 'win32')` accepts `X:\…` and refuses `\\?\`, `\\.\`, `C:x` and `.`/`..` parts.
 - **Pipe.**
@@ -887,6 +887,27 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
   - Clipboard: `clip.exe` with a UTF-16 BOM. `/open`: Explorer (its exit 1 is success).
   - Notifications: none.
   - Desktop: NSIS, unsigned; `runtimePaths` accepts `resources\app`.
+
+### 12.22 v0.8 release gate (2026-10-15) — v0.8 closed
+- **Reviewers.** Four fresh-context reviewers that hadn't seen the code: security-reviewer (sockets, pipe and ACL, keys, Ask only), security-bounty-hunter (bubblewrap, `.cmd` launchers), silent-failure-hunter (all v0.8) and engineering:code-review (the gate diff `ff1b7c1..HEAD`). Before them, one GitHub Actions run on ubuntu-latest and windows-latest. Yaniv then removed the workflow: no cloud CI, everything runs on this Mac.
+- **macOS.** `ancestorLiterals` adds a `literal` write-deny for every folder above a protected place, a dotfile link's target, the repository's `.git` and `AITERM_HOME`. Home and the folders above it are left out; you can't rename those anyway. The code review reproduced the rename bypass end to end.
+- **Shell folders.** `buildAgentEnv` passes `AITERM_ZDOTDIR`, `AITERM_XDG_CONFIG_HOME` and `AITERM_XDG_RUNTIME_DIR` (absolute only). The agent reads and deletes them, and `persistencePaths`/`bashSandboxPlan` protect zsh's files and the config places there; `runtimeDirs` hides that runtime folder.
+- **Linux bash.**
+  - **Pins:** rebuilt folders reached through a link, and `AITERM_HOME`, are pinned too. Pins and rebuilt folders are mounted shallowest first.
+  - **Session sockets:** `/tmp`'s X11, `dbus-launch`, ssh-agent and tmux sockets are hidden (`hide`). So are `~/.dbus`, `~/.Xauthority` and `~/.ICEauthority`.
+  - **Probe:** a failed probe is tried again at the next command (`probeCacheMs`).
+  - **Notice:** an Ask command that ran without a sandbox says so in its result (`unsandboxed`).
+- **Linux tests.** `PATH` folders under `/home`, `/run` or `/root` outside your home (Linuxbrew, NixOS) come back read-only.
+- **Windows.**
+  - **Bare names:** `windowsTestCommand` refuses a program not on PATH, for tests and MCP alike (Windows searches the child's folder first).
+  - **Validators:** test plans and project settings take Windows paths.
+  - **Pipe proof:** a failed proof removes the pipe file only when the lock's PID is dead, and an unreadable pipe file names itself.
+  - **Startup:** the daemon's output goes to its log, and a daemon that exits during start is reported after a second.
+  - **Other:** settings saves no longer fsync a folder; the ACL tools get PowerShell's module path; a missing Git for Windows is logged.
+- **Everywhere.**
+  - **Keychain:** a failure logs which call failed and its error kind (`vaultFailed`).
+  - **Client:** a client whose daemon doesn't say whether Don't ask is possible offers Ask only.
+  - **Persistence list:** adds `~/.bash_aliases`, oh-my-zsh's `custom` and `~/.local/share/dbus-1/services`.
 
 ## 13. Decisions log
 

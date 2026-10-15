@@ -9,7 +9,10 @@ import { win32 } from 'node:path';
 export class CliLaunchError extends Error {}
 const NOT_NPM = "This CLI's .cmd launcher isn't npm's, so AI Term won't run it through cmd.exe; reinstall it with npm or its own installer";
 const UNREADABLE = "AI Term couldn't read this CLI's .cmd launcher";
-export const CLI_LAUNCH_ERRORS: readonly string[] = [NOT_NPM, UNREADABLE];
+// Windows looks for a bare name in the child's folder first, which is the agent's worktree (gate): a program that isn't
+// on PATH is refused, never run by name.
+const NOT_ON_PATH = "This command isn't on PATH, so AI Term won't look for it in the agent's folder";
+export const CLI_LAUNCH_ERRORS: readonly string[] = [NOT_NPM, UNREADABLE, NOT_ON_PATH];
 // npm's launcher ends with: "%_prog%"  "%dp0%\node_modules\<package>\<script>" %*
 const SHIM_LINE = /"%_prog%"\s+"%dp0%\\([^"%]+)"\s+%\*\s*$/m;
 // npm's and npx's own launchers (npm.cmd, npx.cmd) name their script in a SET line instead; a package that ships a native
@@ -83,7 +86,7 @@ export async function windowsTestCommand(command: readonly string[], path: strin
     }
     if (found) break;
   }
-  if (!found) return [...command];
+  if (!found) throw new CliLaunchError(NOT_ON_PATH);
   const recipe = await windowsRecipe({ executable: found, args }, path);
   return [recipe.executable, ...recipe.args];
 }

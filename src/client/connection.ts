@@ -1,7 +1,7 @@
 import { createConnection, type Socket } from 'node:net';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { open, lstat } from 'node:fs/promises';
+import { open, lstat, readFile } from 'node:fs/promises';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
@@ -12,13 +12,21 @@ import { preparePaths, isFsError } from '../shared/paths.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, PROTOCOL_VERSION, MAX_COPY_BYTES, COPY_CHUNK_BYTES, type SessionText, type Request, type SuccessResponse } from '../shared/protocol.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 import { ownedByMe } from '../shared/owner.js';
-import { proofValid, readPipe, removeStalePipe } from '../daemon/pipe-server.js';
+import { pipeFile, proofValid, readPipe, removeStalePipe } from '../daemon/pipe-server.js';
 export type RequestBody = Request extends infer R ? R extends Request ? Omit<R, 'id'> : never : never;
 export class DaemonRequestError extends Error {}
 // How long a client waits for a daemon it started. Windows: the daemon checks its folder's ACL (PowerShell) before it
 // listens, which can take seconds on a cold start (review).
 export function daemonStartDeadline(platform: NodeJS.Platform = process.platform): number { return platform === 'win32' ? 20_000 : 3000; }
 export const UNPROVEN_DAEMON = "The process on AI Term's pipe couldn't prove it is your daemon; its pipe file was removed, run ai again";
+const UNPROVEN_LIVE = "The process on AI Term's pipe couldn't prove it is your daemon, and AI Term's daemon is still running: stop it (ai daemon stop, or end it in Task Manager), then run ai again";
+// Whether the PID in the daemon's lock is a live process (Windows: no signals, kill 0 only checks).
+async function lockedDaemonAlive(pidFile: string): Promise<boolean> {
+    let text: string;
+    try { text = (await readFile(pidFile, 'utf8')).trim(); } catch (error) { if (isFsError(error, 'ENOENT')) return false; throw error; }
+    if (!/^[1-9][0-9]{0,9}$/.test(text)) return false;
+    try { process.kill(Number(text), 0); return true; } catch (error) { return !isFsError(error, 'ESRCH'); }
+}
 // Source mode: a bare `--import tsx` resolves from the caller's folder, and tsx reads that folder's tsconfig.json. The absolute
 // loader and AI Term's own folder (two levels above src/cli/index.ts) keep both inside AI Term.
 // AppImage (v0.8.1, TS review): the app runs from a temporary mount that goes when it quits, and the daemon outlives it.
@@ -150,7 +158,13 @@ export class Connection extends EventEmitter {
         let token: string | undefined;
         const attempt = async () => {
             let address = paths.socket;
-            if (process.platform === 'win32') { const pipe = await readPipe(paths.socket); address = pipe.name; token = pipe.token; }
+            if (process.platform === 'win32') {
+                // An unreadable pipe file says which file it is, rather than an error that leads nowhere (gate).
+                let pipe;
+                try { pipe = await readPipe(paths.socket); }
+                catch (error) { if (isFsError(error, 'ENOENT')) throw error; throw new Error(`AI Term's pipe file is unreadable; delete ${pipeFile(paths.socket)} and run ai again`, { cause: error }); }
+                address = pipe.name; token = pipe.token;
+            }
             else {
                 const stat = await lstat(paths.socket);
                 if (!stat.isSocket() || stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o600)
@@ -167,7 +181,7 @@ export class Connection extends EventEmitter {
                 throw error;
             if (options.autoStart === false)
                 throw error;
-            let startupError: Error | undefined;
+            let startupError: Error | undefined, exited: { code: number | null; at: number } | undefined;
             const file = await open(paths.log, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
             try {
                 const stat = await file.stat();
@@ -175,8 +189,11 @@ export class Connection extends EventEmitter {
                     throw new Error('Unsafe daemon log', { cause: error });
                 await file.chmod(0o600);
                 const command = daemonCommand(options.entry);
-                const child = spawn(command.file ?? process.execPath, command.args, { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, AI_TERM_HOME: paths.root }, ...(command.cwd ? { cwd: command.cwd } : {}) });
+                // The daemon's own output goes to its log, so a failure before it can log (its folder's checks, a lock it
+                // can't take) is there to read; and a daemon that exits during start is reported at once (gate).
+                const child = spawn(command.file ?? process.execPath, command.args, { detached: true, stdio: ['ignore', file.fd, file.fd], windowsHide: true, env: { ...process.env, AI_TERM_HOME: paths.root }, ...(command.cwd ? { cwd: command.cwd } : {}) });
                 child.on('error', error => { startupError = error; });
+                child.on('exit', code => { exited = { code, at: Date.now() }; });
                 child.unref();
             }
             finally {
@@ -186,6 +203,9 @@ export class Connection extends EventEmitter {
             while (true) {
                 if (startupError)
                     throw startupError;
+                // Another start may have won the race and be about to answer: a second's grace, then the exit is the answer.
+                if (exited && Date.now() - exited.at > 1000)
+                    throw new Error(`Daemon stopped during start (exit ${exited.code ?? 'by a signal'}); see ${paths.log}`, { cause: error });
                 try {
                     socket = await attempt();
                     break;
@@ -206,7 +226,12 @@ export class Connection extends EventEmitter {
         }
         catch (error) {
             connection.close();
-            if (error instanceof Error && error.message === UNPROVEN_DAEMON) await removeStalePipe(paths.socket);
+            // The pipe file goes only when its daemon's lock says it is gone; a live daemon that couldn't prove itself (an
+            // older one, say) keeps its file, so nothing starts a second daemon beside it (gate).
+            if (error instanceof Error && error.message === UNPROVEN_DAEMON) {
+                if (await lockedDaemonAlive(paths.pid)) throw new Error(UNPROVEN_LIVE, { cause: error });
+                await removeStalePipe(paths.socket);
+            }
             throw error;
         }
     }

@@ -70,6 +70,9 @@ export class KeyStore extends EventEmitter {
   }return await use(values);}finally{for(const name of Object.keys(values))delete values[name];}
  }
  async view(id:string):Promise<KeyView>{if(!isUUID(id))throw new KeyError('Invalid key id');const key=(await this.list()).find(k=>k.id===id);if(!key)throw new KeyError('Key not found');return key;}
+ // The key store's own failure, by kind only (its message could carry anything): the user sees the fixed line, the log
+ // says which call failed and how (gate: every cause looked like a missing keyring).
+ private vaultFailed(call:string,error:unknown):void{const code=error instanceof Error&&'code' in error&&typeof error.code==='string'&&/^[A-Za-z_]{1,32}$/.test(error.code)?error.code:error instanceof Error?error.constructor.name.slice(0,32):'unknown';this.log.error(`Keychain ${call} failed (${code})`);}
  private serial<T>(work:()=>Promise<T>):Promise<T>{const next=this.queue.then(work);this.queue=next.then(()=>undefined,()=>undefined);return next;}
  async add(request:{provider:KeyProvider;label:string;secret?:string;endpoint?:string;deployments?:string[]}):Promise<KeyView>{
   if(request.provider==='ollama')return this.addLocal(request);
@@ -85,7 +88,7 @@ export class KeyStore extends EventEmitter {
   const account=`${key.provider}:${key.id}`;
   return this.serial(async()=>{
    const stored=isBoundProvider(key.provider)?foundryEntry(secret,{endpoint:key.endpoint??'',deployments:key.deployments??[]}):secret;
-   try{await this.vault.write(account,stored);}catch{throw new KeyError(NOT_SAVED,{cause:new Error('Keychain write failed')});}
+   try{await this.vault.write(account,stored);}catch(error){this.vaultFailed('write',error);throw new KeyError(NOT_SAVED,{cause:new Error('Keychain write failed')});}
    try{await this.settings.update(async settings=>{const keys=Array.isArray(settings.keys)?settings.keys.map(validateKeyView):[];if(keys.length>=100)throw new Error('Too many keys');return {...settings,keys:[...keys,key]};});}
    catch{try{await this.vault.remove(account);}catch{
     // The account names a provider and a UUID, never the secret: without it the orphaned entry can't be found.
@@ -114,13 +117,13 @@ export class KeyStore extends EventEmitter {
    return updated;
   });
  }
- async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);if(key.provider!=='ollama')try{await this.vault.remove(`${key.provider}:${id}`);}catch{throw new KeyError(NOT_REMOVED,{cause:new Error('Keychain remove failed')});}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
- async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');if(provider==='ollama')return false;try{return await this.vault.read(`${provider}:${id}`)!==null;}catch{throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}}
+ async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);if(key.provider!=='ollama')try{await this.vault.remove(`${key.provider}:${id}`);}catch(error){this.vaultFailed('remove',error);throw new KeyError(NOT_REMOVED,{cause:new Error('Keychain remove failed')});}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
+ async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');if(provider==='ollama')return false;try{return await this.vault.read(`${provider}:${id}`)!==null;}catch(error){this.vaultFailed('read',error);throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}}
  // For a Foundry key, use receives the Keychain-bound endpoint and deployments; callers must send the secret only there.
  async withSecret<T>(id:string,use:(secret:string,binding:FoundryBinding|null)=>T|Promise<T>):Promise<T>{
   const key=await this.view(id);let secret:string|null;
   if(key.provider==='ollama')throw new KeyError(OLLAMA_NO_KEY);
-  try{secret=await this.vault.read(`${key.provider}:${id}`);}catch{throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}
+  try{secret=await this.vault.read(`${key.provider}:${id}`);}catch(error){this.vaultFailed('read',error);throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}
   if(!secret)throw new KeyError('Key is missing from the OS keychain');
   let binding:FoundryBinding|null=null;
   if(isBoundProvider(key.provider)){

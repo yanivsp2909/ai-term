@@ -1,4 +1,5 @@
 import { stripVTControlCharacters } from 'node:util';
+import { isAbsolute } from 'node:path';
 
 // v0.7.4 auto-test (D55, on). A project's test command is an argument list, never a shell line: typed once with
 // /test-cmd, kept per repository in settings, run in an agent's worktree when it finishes a turn.
@@ -92,17 +93,17 @@ export function validateTestResult(value: unknown): TestResult {
 }
 export function validateTestPlan(value: unknown): TestPlan {
   const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-  if (!p || !exact(p, ['title', 'command', 'cwd', 'changed', 'fingerprint', 'sandbox', 'loopback']) || typeof p.sandbox !== 'boolean' || typeof p.loopback !== 'boolean' || typeof p.title !== 'string' || [...p.title].length > 60 || CONTROL.test(p.title) || !isTestCommand(p.command) || !isPath(p.cwd) || !String(p.cwd).startsWith('/')
+  if (!p || !exact(p, ['title', 'command', 'cwd', 'changed', 'fingerprint', 'sandbox', 'loopback']) || typeof p.sandbox !== 'boolean' || typeof p.loopback !== 'boolean' || typeof p.title !== 'string' || [...p.title].length > 60 || CONTROL.test(p.title) || !isTestCommand(p.command) || !isPath(p.cwd) || !isAbsolute(String(p.cwd))
     || !isChanged(p.changed) || typeof p.fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(p.fingerprint)) throw new Error('Invalid test plan');
   return p as unknown as TestPlan;
 }
 export function validateProjectTestCommand(value: unknown): ProjectTestCommand {
   const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-  if (!p || !exact(p, ['repo', 'command']) || !isPath(p.repo) || !String(p.repo).startsWith('/') || !(p.command === null || isTestCommand(p.command))) throw new Error('Invalid test command');
+  if (!p || !exact(p, ['repo', 'command']) || !isPath(p.repo) || !isAbsolute(String(p.repo)) || !(p.command === null || isTestCommand(p.command))) throw new Error('Invalid test command');
   return p as unknown as ProjectTestCommand;
 }
 export function validateProjectTestLoopback(value: unknown): ProjectTestLoopback {
   const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-  if (!p || !exact(p, ['repo', 'loopback']) || !isPath(p.repo) || !String(p.repo).startsWith('/') || typeof p.loopback !== 'boolean') throw new Error('Invalid test loopback');
+  if (!p || !exact(p, ['repo', 'loopback']) || !isPath(p.repo) || !isAbsolute(String(p.repo)) || typeof p.loopback !== 'boolean') throw new Error('Invalid test loopback');
   return p as unknown as ProjectTestLoopback;
 }

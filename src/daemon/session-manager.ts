@@ -1051,6 +1051,8 @@ export class SessionManager extends EventEmitter {
     // The run's sandbox, or null when this Mac can't give one (not macOS, no sandbox-exec, a path no profile can hold, or a
     // profile the system refuses): then nothing runs by itself. The caller disposes what it gets.
     private async sandboxFor(path:string,repo:string|undefined):Promise<PreparedSandbox|null>{
+        // Windows has no sandbox: said as it is, not as a path that couldn't go into a profile (gate).
+        if(process.platform==='win32'){this.log.error('Test sandbox: Windows has none; tests ask first');return null;}
         let loopback=false;
         if(repo)try{loopback=(await new SettingsStore(this.paths.root).get()).testLoopback?.includes(await projectRepo(repo))===true;}catch{this.log.error('Settings unreadable; tests run without 127.0.0.1');}
         // The repository's git folder stays readable (a worktree's .git file points into it); the rest of home doesn't.

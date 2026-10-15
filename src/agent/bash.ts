@@ -18,7 +18,7 @@ export const BASH_MAX_COMMAND_BYTES = 16 * 1024;
 export const BASH_DEFAULT_TIMEOUT_MS = 120_000, BASH_MAX_TIMEOUT_MS = 600_000, BASH_OUTPUT_MAX_BYTES = 64 * 1024;
 const KILL_GRACE_MS = 1000;
 // blocked: a protected place the sandbox refused, as ~/path (B29), so the agent reads why rather than a bare EPERM.
-export interface BashResult { exitCode: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean; interrupted: boolean; cut: boolean; stopFailed: boolean; blocked?: string }
+export interface BashResult { exitCode: number | null; signal: string | null; stdout: string; stderr: string; timedOut: boolean; interrupted: boolean; cut: boolean; stopFailed: boolean; blocked?: string; unsandboxed?: string }
 // sandbox: AI Term's own folder (~/.ai-term). Gate (Yaniv): on macOS a command runs under sandbox-exec with a profile that
 // lets it do what you could, except read or write that folder (its settings, budgets, keys' metadata, other agents'
 // files; the agent's own worktree in it stays open) or connect to AI Term's sockets there. Without sandbox-exec (another
@@ -30,7 +30,7 @@ export interface BashResult { exitCode: number | null; signal: string | null; st
 // require: Don't ask (v0.8.1). A command never runs without its sandbox then: no sandbox-exec, no bubblewrap or another
 // system refuses it. In Ask you approve each command, so it runs as before where no sandbox exists.
 // platform, linux: process.platform and the real bubblewrap, unless a test says otherwise.
-export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string; protect?: readonly string[]; user?: string; require?: boolean; platform?: NodeJS.Platform; linux?: { bwrap: string | null; ready: () => Promise<boolean> } } }
+export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string; protect?: readonly string[]; user?: string; require?: boolean; platform?: NodeJS.Platform; linux?: { bwrap: string | null; ready: () => Promise<boolean> }; shell?: ShellDirs } }
 // Real paths (link targets included) of the places in PERSISTENCE_FILES and PERSISTENCE_DIRS; parents: the folders
 // between your home and them (~/.config, ~/Library), which may not be renamed, removed or replaced by a link (security
 // review: a ~/.config swapped for a link would lead ~/.config/git somewhere no rule names). Their other contents stay open.
@@ -55,14 +55,28 @@ async function withTarget(path: string): Promise<string[]> {
 }
 // Each place under your home as given and as its real path (the sandbox matches real paths, and home may be a link).
 // ZDOTDIR moves zsh's startup files, so they are protected there too.
-export async function persistencePaths(user: string, env: Readonly<Record<string, string | undefined>> = {}): Promise<Persistence> {
+// shell: the daemon's ZDOTDIR and XDG_CONFIG_HOME, handed to the agent apart from the bash env (gate: the bash env never
+// carries them, so reading them there protected nothing).
+export interface ShellDirs { zdotdir?: string; configHome?: string; runtime?: string }
+const CONFIG_PLACES = ['git', 'fish', 'autostart', 'systemd/user', 'environment.d', 'plasma-workspace/env', 'autostart-scripts', 'i3', 'sway', 'hypr', 'openbox'];
+export async function persistencePaths(user: string, env: Readonly<Record<string, string | undefined>> = {}, shell: ShellDirs = {}): Promise<Persistence> {
   const real = await realpath(user).catch((error: unknown) => { if (isFsError(error, 'ENOENT')) return user; throw error; });
   const homes = [...new Set([user, real])];
-  const zdot = env.ZDOTDIR && isAbsolute(env.ZDOTDIR) ? ['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout'].map(name => join(normalize(env.ZDOTDIR ?? '/'), name)) : [];
+  const zdotdir = shell.zdotdir ?? env.ZDOTDIR, configHome = shell.configHome;
+  const zdot = zdotdir && isAbsolute(zdotdir) ? ['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout'].map(name => join(normalize(zdotdir), name)) : [];
+  const config = configHome && isAbsolute(configHome) ? CONFIG_PLACES.map(name => join(normalize(configHome), name)) : [];
   const all = async (paths: readonly string[]) => [...new Set((await Promise.all(paths.map(withTarget))).flat())];
   const under = (names: readonly string[]) => homes.flatMap(home => names.map(name => join(home, name)));
   const parents = [...new Set([...PERSISTENCE_FILES, ...PERSISTENCE_DIRS].flatMap(name => name.split('/').slice(0, -1).map((_, at, parts) => parts.slice(0, at + 1).join('/'))))];
-  return { files: await all([...under(PERSISTENCE_FILES), ...zdot]), dirs: await all(under(PERSISTENCE_DIRS)), parents: under(parents) };
+  return { files: await all([...under(PERSISTENCE_FILES), ...zdot]), dirs: await all([...under(PERSISTENCE_DIRS), ...config]), parents: under(parents) };
+}
+// macOS (gate, reproduced): every folder above a protected place may not be renamed either, or renaming it and putting a
+// copy back leaves a writable file at the protected path's old place (a dotfile link's target, .git/hooks, AI Term's
+// folder). Home and the folders above it are left out: you can't rename those anyway.
+export function ancestorLiterals(paths: readonly string[], user: string): string[] {
+  const found = new Set<string>();
+  for (const path of paths) for (let parent = dirname(path); parent !== dirname(parent); parent = dirname(parent)) if (!(user === parent || user.startsWith(`${parent}/`))) found.add(parent);
+  return [...found];
 }
 // The protected place a refusal names, as ~/path; null when the output names none (the command's own error then stands).
 // A name may be relative to wherever the command had gone (`cd ~ && echo >> .zshrc`): it is tried from the folder and from
@@ -84,23 +98,29 @@ export function blockedPlace(output: string, cwd: string, user: string, guarded:
 }
 // The argv that runs a command line: sandboxed when it can be; a folder no profile can hold is refused, never run bare.
 // guard: what a refusal is read against afterwards.
-interface Argv { program: string; args: string[]; guard?: { user: string; cwd: string; places: Persistence & { home: string } } }
+// unsandboxed: why an Ask command ran without a sandbox, reported with its result (gate: it was silent).
+interface Argv { program: string; args: string[]; guard?: { user: string; cwd: string; places: Persistence & { home: string } }; unsandboxed?: string }
 async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
   const plain: Argv = { program: '/bin/sh', args: ['-c', command] };
   const platform = options.sandbox?.platform ?? process.platform, required = options.sandbox?.require === true;
-  if (platform === 'win32') { if (required) throw new ToolError("bash can't run in don't ask without a sandbox: Windows has none AI Term can use"); return windowsArgv(command); }
+  if (platform === 'win32') { if (required) throw new ToolError("bash can't run in don't ask without a sandbox: Windows has none AI Term can use"); return { ...await windowsArgv(command), ...options.sandbox ? { unsandboxed: 'Windows has none AI Term can use' } : {} }; }
   if (!options.sandbox) return plain;
-  const without = (why: string): Argv => { if (required) throw new ToolError(`bash can't run in don't ask without a sandbox: ${why}`); return plain; };
+  const without = (why: string): Argv => { if (required) throw new ToolError(`bash can't run in don't ask without a sandbox: ${why}`); return { ...plain, unsandboxed: why }; };
   if (platform === 'linux') return linuxArgv(command, options, without);
   if (platform !== 'darwin') return without('this system has none AI Term can use');
   try { await access(SANDBOX_EXEC, constants.X_OK); } catch { return without("macOS's sandbox-exec is missing"); }
   const user = options.sandbox.user ?? homedir();
   const missing = (fallback: string) => (error: unknown) => { if (isFsError(error, 'ENOENT')) return fallback; throw error; };
   let home: string, cwd: string, realUser: string, persistence: Persistence;
-  try { [home, cwd, realUser, persistence] = await Promise.all([realpath(options.sandbox.home).catch(missing(options.sandbox.home)), realpath(options.cwd), realpath(user).catch(missing(user)), persistencePaths(user, options.env)]); }
+  let protect: string[];
+  try {
+    [home, cwd, realUser, persistence] = await Promise.all([realpath(options.sandbox.home).catch(missing(options.sandbox.home)), realpath(options.cwd), realpath(user).catch(missing(user)), persistencePaths(user, options.env, options.sandbox.shell)]);
+    protect = await Promise.all((options.sandbox.protect ?? []).map(dir => realpath(dir).catch(missing(dir))));
+  }
   catch { throw new ToolError("bash can't run here: AI Term couldn't check the folders its sandbox protects"); }
+  persistence = { ...persistence, parents: [...new Set([...persistence.parents ?? [], ...ancestorLiterals([...persistence.files, ...persistence.dirs, ...protect, home], realUser), ...ancestorLiterals([...persistence.files, ...persistence.dirs, ...protect, home], user)])] };
   let profile: string;
-  try { profile = bashProfile(home, cwd, await Promise.all((options.sandbox.protect ?? []).map(dir => realpath(dir).catch(missing(dir)))), persistence); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a path with quotes, parentheses or control characters (this folder, or where one of your dotfile links leads)"); throw error; }
+  try { profile = bashProfile(home, cwd, protect, persistence); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a path with quotes, parentheses or control characters (this folder, or where one of your dotfile links leads)"); throw error; }
   return { program: SANDBOX_EXEC, args: ['-p', profile, '--', '/bin/sh', '-c', command], guard: { user: realUser, cwd, places: { ...persistence, home } } };
 }
 
@@ -115,10 +135,16 @@ async function windowsArgv(command: string): Promise<Argv> {
 // file system, or busy for a folder that was rebuilt or pinned. Where bubblewrap can't start (user namespaces off, a
 // container) or its plan can't be made, Ask runs the command you approved as before and Don't ask refuses (TS review).
 // The probe is looked at once per agent: bash commands don't wait on it again.
+// A probe that worked is kept for the agent's life; one that failed is tried again at the next command (gate: a passing
+// hiccup kept Don't ask refusing until restart).
+export function probeCacheMs(ok: boolean): number { return ok ? Infinity : 0; }
 let linuxReady: Promise<boolean> | null = null;
-const probeLinux = (bwrap: string): Promise<boolean> => linuxReady ??= new Promise(done => {
-  execFile(bwrap, [...BWRAP_PROBE], { timeout: 10_000, env: { PATH: '/usr/bin:/bin' } }, error => done(!error));
-});
+const probeLinux = (bwrap: string): Promise<boolean> => {
+  const probe = linuxReady ?? new Promise<boolean>(done => { execFile(bwrap, [...BWRAP_PROBE], { timeout: 10_000, env: { PATH: '/usr/bin:/bin' } }, error => done(!error)); });
+  linuxReady = probe;
+  void probe.then(ok => { if (probeCacheMs(ok) === 0 && linuxReady === probe) linuxReady = null; });
+  return probe;
+};
 async function linuxArgv(command: string, options: BashOptions, without: (why: string) => Argv): Promise<Argv> {
   const sandbox = options.sandbox; if (!sandbox) return without('no sandbox was asked for');
   const bwrap = sandbox.linux ? sandbox.linux.bwrap : await findBwrap();
@@ -127,7 +153,8 @@ async function linuxArgv(command: string, options: BashOptions, without: (why: s
   const user = sandbox.user ?? homedir();
   let spec: BwrapBashSpec, persistence: Persistence, args: string[];
   try {
-    [spec, persistence] = await Promise.all([bashSandboxPlan({ user, aiTermHome: sandbox.home, cwd: options.cwd, protect: sandbox.protect ?? [], runtime: await runtimeDirs({ ...process.env, ...options.env.XDG_RUNTIME_DIR ? { XDG_RUNTIME_DIR: options.env.XDG_RUNTIME_DIR } : {} }) }), persistencePaths(user, options.env)]);
+    const runtime = await runtimeDirs({ ...process.env, ...sandbox.shell?.runtime ? { XDG_RUNTIME_DIR: sandbox.shell.runtime } : {} });
+    [spec, persistence] = await Promise.all([bashSandboxPlan({ user, aiTermHome: sandbox.home, cwd: options.cwd, protect: sandbox.protect ?? [], runtime, ...sandbox.shell ? { shell: sandbox.shell } : {} }), persistencePaths(user, options.env, sandbox.shell)]);
     args = bwrapBashArgs(spec);
   } catch (error) {
     return without(error instanceof ShadowError ? error.message.replace(/^bash can't run here: /, '') : error instanceof SandboxPathError ? 'a path it protects has control characters' : "AI Term couldn't check the folders its sandbox protects");
@@ -148,7 +175,7 @@ export function killAllBash(): number {
 }
 export async function runBash(command: string, options: BashOptions): Promise<BashResult> {
   const timeoutMs = Math.min(BASH_MAX_TIMEOUT_MS, Math.max(1000, options.timeoutMs ?? BASH_DEFAULT_TIMEOUT_MS)), maxBytes = options.maxBytes ?? BASH_OUTPUT_MAX_BYTES;
-  const { program, args, guard } = await bashArgv(command, options);
+  const { program, args, guard, unsandboxed } = await bashArgv(command, options);
   return new Promise((resolve, reject) => {
     const child = spawn(program, args, { cwd: options.cwd, env: options.env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [], err: Buffer[] = [];
@@ -178,7 +205,7 @@ export async function runBash(command: string, options: BashOptions): Promise<Ba
       if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', onAbort);
       const stdout = Buffer.concat(out).toString('utf8'), stderr = Buffer.concat(err).toString('utf8');
       const blocked = guard ? blockedPlace(`${stderr}\n${stdout}`, guard.cwd, guard.user, guard.places) : null;
-      resolve({ exitCode: code, signal, stdout, stderr, timedOut, interrupted, cut, stopFailed, ...blocked ? { blocked } : {} });
+      resolve({ exitCode: code, signal, stdout, stderr, timedOut, interrupted, cut, stopFailed, ...blocked ? { blocked } : {}, ...unsandboxed ? { unsandboxed } : {} });
     });
   });
 }
@@ -190,6 +217,7 @@ export function bashReport(result: BashResult, timeoutMs: number): string {
   if (result.stdout) parts.push(`stdout:\n${result.stdout}`);
   if (result.stderr) parts.push(`stderr:\n${result.stderr}`);
   if (result.stopFailed) parts.push('(some processes it started could not be stopped)');
+  if (result.unsandboxed) parts.push(`(ran without a sandbox: ${result.unsandboxed})`);
   if (result.blocked) parts.push(`✗ blocked by sandbox: ${result.blocked} · agent commands can't change startup files, login items, ~/.ssh, git's global settings, or Claude Code's, Codex's or AI Term's own files`);
   if (result.cut) parts.push(`(output cut at ${BASH_OUTPUT_MAX_BYTES} bytes per stream)`);
   return parts.join('\n');

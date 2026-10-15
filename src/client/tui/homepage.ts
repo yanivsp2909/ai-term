@@ -979,7 +979,7 @@ export class Homepage {
   }
   private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission)||!modeValues(engine,this.agentSandbox.dontAsk).includes(this.permission))this.permission='ask';}
   // engines.status also says whether AI Term's agent may run in Don't ask here (v0.8.1).
-  private async loadEngines():Promise<EnginesStatus|undefined>{const status=await this.connection.request({kind:'engines.status'});this.agentSandbox=status.agentSandbox??{dontAsk:true};this.engines=status.engines;return status.engines;}
+  private async loadEngines():Promise<EnginesStatus|undefined>{const status=await this.connection.request({kind:'engines.status'});this.agentSandbox=status.agentSandbox??{dontAsk:false,note:"don't ask needs a newer daemon · ai daemon stop, then ai"};this.engines=status.engines;return status.engines;}
   private async checkSelectedEngine(): Promise<void> {
     const box = this.box; if (!box) return;
     box.checking = true; box.error = ''; this.draw(true);

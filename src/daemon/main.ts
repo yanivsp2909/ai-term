@@ -8,6 +8,7 @@ import { DaemonServer } from './server.js';
 import { Notifier, notifierAppPath, notificationsSetting, launchNotifySend } from './notifier.js';
 import { systemTool } from '../shared/executable.js';
 import { warmAgentSandbox } from './agent-sandbox.js';
+import { GIT } from './git-path.js';
 import { ClickReceiver, CLICK_SOCKET } from './click-receiver.js';
 import { TerminalLauncher } from './terminal-launch.js';
 import { createRequire } from 'node:module';
@@ -73,6 +74,8 @@ export async function runDaemon(entry?:string): Promise<void> {
     manager.on('fatal', (error: unknown) => { void shutdown(error); });
     try {
         warmAgentSandbox();
+        // Windows without Git for Windows: worktrees, diffs and checkpoints say "git check failed"; the log says why (gate).
+        if (process.platform === 'win32' && !GIT) log.error('Git for Windows was not found; worktrees and other git features are off');
         notifier.start();
         await usage.start();
         // B27: old price records keyed by model id alone move to their one provider (nothing is lost either way).
