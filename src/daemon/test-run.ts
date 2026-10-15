@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, open, readdir, realpath } from 'node:fs/promises';
+import { lstat, open, readdir, readlink, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { failingCount, isDependencyPath, isTestCommand, isTestConfig } from '../shared/test-run.js';
@@ -74,36 +74,49 @@ export function runTests(command: readonly string[], cwd: string, env: Record<st
 // private git dir (git.ts), so the agent's repository config can't run anything meanwhile. The fingerprint covers the
 // command, the folder, each changed file's content and every ignored entry's names, sizes and times; a run you approved
 // with /test lets later turns run while it stays the same.
-export interface TestSetup { changed: string[]; fingerprint: string }
+// unverifiable: part of it can't be checked (a link out of the worktree, a tree too large): it always asks.
+export interface TestSetup { changed: string[]; fingerprint: string; unverifiable: boolean }
 const WALK_LIMIT = 200_000;
 export async function testSetup(path: string, base: string, repo: string | undefined, command: readonly string[]): Promise<TestSetup> {
   const git = await isolatedGitDir(path, base, repo ? { repo } : {});
   let configs: string[], ignored: string[];
   try {
     const names = [...(await diffNameStatus(path, base, git)).flatMap(entry => entry.from ? [entry.from, entry.path] : [entry.path]), ...await untrackedFiles(path, git)];
-    configs = [...new Set(names.filter(name => isTestConfig(name, command)))].sort();
+    // Setup files, and anything in a dependency folder git does see (untracked or even committed).
+    configs = [...new Set(names.filter(name => isTestConfig(name, command) || isDependencyPath(name)))].sort();
     const listed = (await runGit(path, [...git.args, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z', '--'], 'Git check failed', { maxBuffer: 16 * 1024 * 1024 })).split('\0').filter(Boolean);
     if (listed.some(name => !insideWorktree(name.replace(/\/$/, '')))) throw new GitError('Git check failed');
-    ignored = listed.filter(name => isDependencyPath(name.replace(/\/$/, '')) || isTestConfig(name.replace(/\/$/, ''), command)).sort();
+    // Every ignored entry: a fresh worktree has none, and tools run code from build folders too (dist/, target/,
+    // __pycache__/). A run's own output stays approved (see the session manager), so this asks only after the agent's turns.
+    ignored = listed.sort();
   } finally { await git.dispose(); }
-  const digest = ignored.length ? await walkDigest(path, ignored) : 'none';
-  const fingerprint = createHash('sha256').update(await testFingerprint(command, path, configs)).update('\0').update(digest ?? randomUUID()).digest('hex');
-  return { changed: [...configs, ...ignored.map(name => `${name} (ignored)`)], fingerprint };
+  const walked = ignored.length ? await walkDigest(path, ignored) : { digest: 'none', unverifiable: false };
+  const fingerprint = createHash('sha256').update(await testFingerprint(command, path, configs)).update('\0').update(walked.digest).digest('hex');
+  return { changed: [...configs, ...ignored.map(name => `${name} (ignored)`)], fingerprint, unverifiable: walked.unverifiable };
 }
-// Names, kinds, sizes and change times of everything under the entries, without following links; null past WALK_LIMIT
-// entries (then every turn asks: nothing too large to check runs unasked).
-async function walkDigest(root: string, entries: readonly string[]): Promise<string | null> {
-  const hash = createHash('sha256'), queue = entries.map(entry => entry.replace(/\/$/, ''));
-  let seen = 0;
-  while (queue.length) {
-    const relative = queue.shift() ?? '';
+// Names, kinds, sizes and change times of everything under the entries, without following links. A link is hashed by
+// its target when that stays inside the worktree; one that leads out makes the setup unverifiable, like a tree past
+// WALK_LIMIT entries or WALK_MS: then every turn asks (nothing too large or out of reach to check runs unasked).
+const WALK_MS = 10_000;
+async function walkDigest(root: string, entries: readonly string[]): Promise<{ digest: string; unverifiable: boolean }> {
+  const hash = createHash('sha256'), queue = entries.map(entry => entry.replace(/\/$/, '')), top = await realpath(root), deadline = Date.now() + WALK_MS;
+  let unverifiable = false;
+  for (let next = 0; next < queue.length; next++) {
+    if (next >= WALK_LIMIT || Date.now() > deadline) return { digest: `too large after ${next} entries`, unverifiable: true };
+    const relative = queue[next] ?? '', path = join(root, relative);
     let info;
-    try { info = await lstat(join(root, relative)); } catch (error) { if (isFsError(error, 'ENOENT')) { hash.update(`${relative}\0gone\n`); continue; } throw error; }
-    if (++seen > WALK_LIMIT) return null;
+    try { info = await lstat(path); } catch (error) { if (isFsError(error, 'ENOENT')) { hash.update(`${relative}\0gone\n`); continue; } throw error; }
     hash.update(`${relative}\0${info.mode}\0${info.size}\0${info.mtimeMs}\0${info.ctimeMs}\n`);
-    if (info.isDirectory()) for (const name of (await readdir(join(root, relative))).sort()) queue.push(`${relative}/${name}`);
+    if (info.isSymbolicLink()) {
+      let target: string;
+      try { target = await realpath(path); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ELOOP')) { hash.update('dangling\n'); continue; } throw error; }
+      hash.update(`→${await readlink(path)}\n`);
+      if (target !== top && !target.startsWith(top + '/')) unverifiable = true;
+      continue;
+    }
+    if (info.isDirectory()) for (const name of (await readdir(path)).sort()) queue.push(`${relative}/${name}`);
   }
-  return hash.digest('hex');
+  return { digest: hash.digest('hex'), unverifiable };
 }
 // What /test showed: the command, the folder, and each changed setup file's name and content (a file the agent edits after
 // you saw the plan changes the fingerprint, so y never runs a setup you didn't see).

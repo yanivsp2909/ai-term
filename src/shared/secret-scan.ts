@@ -1,4 +1,4 @@
-import { SECRET_PATTERNS, isSecretName, isSecretValue } from './redact.js';
+import { SECRET_PATTERNS, isSecretName, isSecretValue, isUrlPassword } from './redact.js';
 
 // v0.7.3 secret scan (D55, on): before a merge or a PR, the lines an agent's branch adds are checked against the
 // redaction patterns (src/shared/redact.ts) plus an entropy check for long random-looking values in code. A hit says
@@ -39,6 +39,7 @@ export function scanLine(text: string, fixture = false): { kind: string; length:
     pattern.lastIndex = 0;
     for (const match of text.matchAll(pattern)) {
       if (name === 'secret assignment' && !(isSecretName(match[2] ?? '') && isSecretValue(match[4] ?? ''))) continue;
+      if (name === 'URL password' && !isUrlPassword(match[3] ?? '')) continue;
       if (name === 'authorization header' && !(/[0-9]/.test(match[0]) && /[A-Za-z]/.test(match[0].slice(7)))) continue;
       return { kind: name, length: match[0].length };
     }

@@ -21,11 +21,16 @@ export function isSecretValue(raw: string): boolean {
   if (!value || /[\s(){}]|^\$|^process\.env\./.test(value) || NOT_SECRET.has(value.toLowerCase())) return false;
   return quoted ? value.length >= 4 : value.length >= 12 || value.length >= 4 && /[0-9]|[^A-Za-z]/.test(value);
 }
+// A URL password that looks real: not a template (${VAR}, %s, <password>, $TOKEN) or a placeholder word.
+const PLACEHOLDERS = new Set(['password', 'pass', 'passwd', 'pwd', 'secret', 'changeme', 'example', 'user', 'username', 'xxx', 'xxxx', 'token', 'test', 'postgres', 'root', 'admin']);
+export function isUrlPassword(password: string): boolean {
+  return password.length >= 6 && !/[${}%<>]/.test(password) && !PLACEHOLDERS.has(password.toLowerCase()) && !/^x+$/i.test(password);
+}
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
   // A private key block, or its start when the text is cut before the end marker.
   { name: 'private key', pattern: /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|$)/g, replace: whole },
   // v0.7.4: a password inside a URL (postgres://user:pass@host, https://user:pass@host): only the password goes.
-  { name: 'URL password', pattern: /\b([a-z][a-z0-9+.-]{1,20}:\/\/)([^\s:@/'"`]{1,128}):([^\s@/'"`]{1,256})@/gi, replace: (_match, scheme = '', user = '') => `${scheme}${user}:${REDACTED}@` },
+  { name: 'URL password', pattern: /\b([a-z][a-z0-9+.-]{1,20}:\/\/)([^\s:@/'"`]{1,128}):([^\s@/'"`]{1,256})@/gi, replace: (match, scheme = '', user = '', password = '') => isUrlPassword(password) ? `${scheme}${user}:${REDACTED}@` : match },
   { name: 'npm token', pattern: /\bnpm_[A-Za-z0-9]{36}\b/g, replace: whole },
   { name: 'Stripe key', pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,247}/g, replace: whole },
   // NAME=value, NAME: value, "name": "value". The name is at most 64 characters, the separator on one line.

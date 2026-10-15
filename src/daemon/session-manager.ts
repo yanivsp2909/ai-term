@@ -1006,12 +1006,13 @@ export class SessionManager extends EventEmitter {
             const setup=await testSetup(target.path,target.base,target.repo,target.command);
             // The agent went back to work (or away) while this was checked: its next turn end decides.
             if(live.info.status!=='done'||this.sessions.get(id)!==live)return;
-            if(setup.changed.length&&setup.fingerprint!==live.approvedSetup){this.setTests(live,{state:'ask',changed:setup.changed.slice(0,MAX_TEST_CHANGED)});return;}
-            await this.startTests(live,target.command,target.path);
+            if(setup.changed.length&&(setup.unverifiable||setup.fingerprint!==live.approvedSetup)){this.setTests(live,{state:'ask',changed:setup.changed.slice(0,MAX_TEST_CHANGED)});return;}
+            await this.startTests(live,target.command,target.path,setup.unverifiable?undefined:target);
         }catch{this.log.error('Auto-test skipped; git could not read the worktree');}
         finally{this.turnEnds.delete(id);}
     }
-    async testPlan(id:string):Promise<TestPlan>{
+    async testPlan(id:string):Promise<TestPlan>{return (await this.testPlanSetup(id)).plan;}
+    private async testPlanSetup(id:string):Promise<{plan:TestPlan;unverifiable:boolean}>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         this.undoIdle(live);
@@ -1021,17 +1022,21 @@ export class SessionManager extends EventEmitter {
         if(!target)throw new TestRunError('No test command for this project · /test-cmd <command>');
         let setup:import('./test-run.js').TestSetup;
         try{setup=await testSetup(target.path,target.base,target.repo,target.command);}catch(error){this.log.error('Test plan: git could not read the worktree');throw new TestRunError('Tests unavailable; git could not read the worktree',{cause:error});}
-        return {title:live.info.title,command:target.command,cwd:target.path,changed:setup.changed.slice(0,MAX_TEST_CHANGED),fingerprint:setup.fingerprint};
+        return {plan:{title:live.info.title,command:target.command,cwd:target.path,changed:setup.changed.slice(0,MAX_TEST_CHANGED),fingerprint:setup.fingerprint},unverifiable:setup.unverifiable};
     }
     // Runs exactly what /test showed; the result arrives on the card.
     async runTestPlan(id:string,fingerprint:string):Promise<void>{
-        const plan=await this.testPlan(id),live=this.sessions.get(id);
+        const {plan,unverifiable}=await this.testPlanSetup(id),live=this.sessions.get(id);
         if(!live||plan.fingerprint!==fingerprint)throw new TestRunError('The test setup changed since it was shown; run /test again');
-        // You approved this setup: later turns that leave it as it is run without asking again.
-        live.approvedSetup=fingerprint;
-        void this.startTests(live,plan.command,plan.cwd);
+        // You approved this setup: later turns that leave it as it is run without asking again (unless part of it can't be
+        // checked, like a link out of the worktree: then every turn asks).
+        live.approvedSetup=unverifiable?undefined:fingerprint;
+        const target=unverifiable?null:await this.testTarget(live);
+        void this.startTests(live,plan.command,plan.cwd,target??undefined);
     }
-    private async startTests(live:Live,command:string[],cwd:string):Promise<void>{
+    // target: given when the run started from a setup you approved (or one with nothing to ask about); what the run itself
+    // wrote (build output, caches) then becomes the approved setup, so the next turn asks only about the agent's changes.
+    private async startTests(live:Live,command:string[],cwd:string,target?:{path:string;base:string;repo?:string;command:string[]}):Promise<void>{
         this.cancelTests(live.info.id,false);
         const controller=new AbortController();this.testRuns.set(live.info.id,controller);
         this.setTests(live,{state:'running'});
@@ -1042,6 +1047,7 @@ export class SessionManager extends EventEmitter {
         // Cancelled: the agent works again (or went away); its result is cleared there.
         if(outcome.state==='cancelled'||controller.signal.aborted)return;
         if(outcome.state==='error')this.log.error('Test command could not start');
+        if(target)try{const after=await testSetup(target.path,target.base,target.repo,target.command);live.approvedSetup=after.unverifiable?undefined:after.fingerprint;}catch{this.log.error('Test setup unreadable after the run; the next turn asks');live.approvedSetup=undefined;}
         this.setTests(live,outcome);
     }
     // keep: a result already shown stays (the agent was removed or the daemon stops); else it is cleared with the run.
