@@ -180,3 +180,43 @@ it('LOW (gate, code review): a fork of an agent whose name ends in an emoji keep
   expect(title).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   expect(forkTitle('fixer')).toBe('fixer fork');
 });
+
+// ---- third batch: quiet failures (silent-failure-hunter) ----
+it('MEDIUM (gate, silent failures): /compact never keeps a summary the output limit cut off', async () => {
+  const { Agent } = await import('../src/agent/agent.js');
+  const { Transcript } = await import('../src/agent/transcript.js');
+  const { buildBashEnv } = await import('../src/daemon/env.js');
+  const { MockLanguageModelV4, convertArrayToReadableStream } = await import('ai/test');
+  const { stubFacts } = await import('./fixtures/agent-facts.js');
+  const step = (text: string, reason: 'stop' | 'length') => ({ stream: convertArrayToReadableStream([{ type: 'stream-start' as const, warnings: [] }, { type: 'text-start' as const, id: 't' }, { type: 'text-delta' as const, id: 't', delta: text }, { type: 'text-end' as const, id: 't' }, { type: 'finish' as const, finishReason: { unified: reason, raw: undefined }, usage: { inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: undefined }, outputTokens: { total: 5, text: 5, reasoning: 0 } } }]) });
+  const model = new MockLanguageModelV4({ doStream: [step('one', 'stop'), step('two', 'stop'), step('three', 'stop'), step('four', 'stop'), step('## Summary\nWe fixed log', 'length')] });
+  const notes: string[] = [], root = await realpath(await mkdtemp(join(tmpdir(), 'ai-gate-compact-'))); roots.push(root);
+  const reporter = { status: async () => {}, usage: async () => true, facts: async () => stubFacts({ price: { input: 1, output: 1 } }), reserve: async () => ({ grant: { id: 'g' } }), settle: async () => {} };
+  const agent = new Agent({ root, permission: 'ask', model, modelId: 'm1', instructions: { text: '', files: [], notes: [] }, reporter, transcript: new Transcript(null, t => t, () => {}), io: { text() {}, toolStart() {}, toolEnd() {}, approve: async () => true, note: (t: string) => { notes.push(t); }, pause: async () => false }, redact: t => t, bashEnv: buildBashEnv(process.env), rg: null });
+  for (const message of ['a', 'b', 'c', 'd']) await agent.turn(message, new AbortController().signal);
+  const before = JSON.stringify(agent.history);
+  expect(await agent.compact(new AbortController().signal)).toBe('failed');
+  expect(JSON.stringify(agent.history)).toBe(before);
+  expect(notes.at(-1)).toBe('compact failed: the summary was cut off at its length limit; the conversation is unchanged');
+});
+
+it('MEDIUM (gate, silent failures): after a checkpoint failed, /undo says so instead of "no checkpoint"', async () => {
+  const { CHECKPOINT_ERRORS } = await import('../src/daemon/checkpoints.js');
+  const { m, agent } = await repoSetup();
+  vi.spyOn(m as unknown as { checkpointContext: (id: string) => Promise<unknown> }, 'checkpointContext').mockRejectedValueOnce(Object.assign(new Error('disk full'), { code: 'ENOSPC' }));
+  await m.checkpointTurn(agent.id);
+  const message = 'No checkpoint to go back to; the last checkpoint failed (AI Term\'s log says why)';
+  expect(CHECKPOINT_ERRORS).toContain(message);
+  await expect(m.undoPlan(agent.id, 'undo')).rejects.toThrow(message);
+});
+
+it('MEDIUM (gate, silent failures): a file the diff can\'t read says why', async () => {
+  const { worktreeDiff } = await import('../src/daemon/diff.js');
+  const { repo, tree } = await repoSetup();
+  await writeFile(join(tree, 'locked.txt'), 'secret-ish\n'); await run('/bin/chmod', ['000', join(tree, 'locked.txt')]);
+  try {
+    const base = (await git(tree, 'rev-parse', 'HEAD')).stdout.trim();
+    const body = await worktreeDiff(tree, base, repo);
+    expect(body.files.find(file => file.path === 'locked.txt')?.lines).toEqual(['+(unreadable: no permission)']);
+  } finally { await run('/bin/chmod', ['644', join(tree, 'locked.txt')]); }
+});
