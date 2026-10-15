@@ -72,3 +72,39 @@ it('B29: a refusal that isn\'t a persistence spot reads as the command\'s own er
   const report = bashReport({ exitCode: 1, signal: null, stdout: '', stderr: 'sh: /etc/hosts: Permission denied\n', timedOut: false, interrupted: false, cut: false, stopFailed: false }, 10_000);
   expect(report).not.toContain('blocked by sandbox');
 });
+
+// Part A review (security-reviewer, typescript-reviewer, fresh context): each failed before its fix.
+it.skipIf(!MAC)('HIGH (security review): ~/.config or ~/Library can\'t be swapped for a link that leads the protected folders elsewhere', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-b29-parent-'))); roots.push(root);
+  const home = join(root, 'home'), aiTerm = join(home, '.ai-term'), folder = join(aiTerm, 'w');
+  await mkdir(folder, { recursive: true }); await mkdir(join(home, '.config', 'git'), { recursive: true }); await mkdir(join(home, 'Library', 'LaunchAgents'), { recursive: true });
+  await writeFile(join(home, '.config', 'git', 'config'), '[core]\n');
+  const env = { ...buildBashEnv(process.env), HOME: home }, sandbox = { home: aiTerm, user: home };
+  const swap = await runBash(`mkdir -p evil/git && printf '[core]\\n\\tfsmonitor = evil\\n' > evil/git/config; mv ~/.config ~/c2; ln -s "${folder}/evil" ~/.config.new && mv ~/.config.new ~/.config; mv ~/Library ~/L2; rm -rf ~/.config; true`, { cwd: folder, env, sandbox });
+  expect(swap.exitCode).toBe(0);
+  expect(await readFile(join(home, '.config', 'git', 'config'), 'utf8')).toBe('[core]\n');
+  expect((await stat(join(home, 'Library', 'LaunchAgents'))).isDirectory()).toBe(true);
+  // Other folders under ~/.config stay writable.
+  const own = await runBash('mkdir -p ~/.config/mytool && echo ok > ~/.config/mytool/x', { cwd: folder, env, sandbox });
+  expect(own.exitCode).toBe(0);
+}, 30_000);
+
+it.skipIf(!MAC)('HIGH (TS review): with a home folder that is a link, a protected folder that doesn\'t exist yet is still protected; a dangling dotfile link is protected at its target', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-b29-home-'))); roots.push(root);
+  const real = join(root, 'real'), home = join(root, 'linked'), aiTerm = join(real, '.ai-term'), folder = join(aiTerm, 'w');
+  await mkdir(folder, { recursive: true }); await symlink(real, home); await mkdir(join(real, 'dotfiles'));
+  await symlink(join(real, 'dotfiles', 'zprofile'), join(real, '.zprofile'));
+  const result = await runBash('mkdir -p ~/.config/fish && echo evil > ~/.config/fish/config.fish; echo evil > ~/.zprofile; true', { cwd: folder, env: { ...buildBashEnv(process.env), HOME: home }, sandbox: { home: aiTerm, user: home } });
+  expect(result.exitCode).toBe(0);
+  await expect(stat(join(real, '.config', 'fish'))).rejects.toThrow();
+  await expect(stat(join(real, 'dotfiles', 'zprofile'))).rejects.toThrow();
+}, 30_000);
+
+it('MEDIUM (both reviews): the blocked line names a relative or differently cased path too', async () => {
+  const { blockedPlace } = await import('../src/agent/bash.js');
+  const places = { files: ['/Users/me/.zshrc', '/Users/me/.gitconfig'], dirs: ['/Users/me/.ssh'], home: '/Users/me/.ai-term' };
+  expect(blockedPlace('sh: .zshrc: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBe('~/.zshrc');
+  expect(blockedPlace('touch: .ssh/config: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBe('~/.ssh/config');
+  expect(blockedPlace('sh: /Users/me/.ZSHRC: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBe('~/.ZSHRC');
+  expect(blockedPlace('sh: notes.txt: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBeNull();
+});
