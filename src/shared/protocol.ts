@@ -27,7 +27,8 @@ export type EngineCheckError = 'Engine executable check failed' | 'Engine versio
 export type ProviderFailureReason = 'Provider request timed out' | 'Provider connection failed' | 'Provider reply too large' | 'Provider request failed';
 export interface EngineStatus { installed: boolean; path: string | null; version: string | null; loggedIn: boolean | null; authMethod: AuthMethod; error?: EngineCheckError }
 export interface EnginesStatus { claudeCode: EngineStatus; codex: EngineStatus }
-export type KeyProvider = 'anthropic' | 'foundry' | 'openai';
+// v0.6.5 adds xAI, Moonshot, Z.ai, OpenRouter, Bedrock, Vertex (express) and Ollama (local, no key): src/shared/providers.ts.
+export type KeyProvider = 'anthropic' | 'foundry' | 'openai' | 'xai' | 'moonshot' | 'zai' | 'openrouter' | 'bedrock' | 'vertex' | 'ollama';
 // 'ready': the Responses API answered. 'chat': only Chat Completions did (v0.4.2; older saved results say 'not a chat model'),
 // which AI Term's agent can use and Codex can't (D30).
 export interface DeploymentTest { model: string; status: 'ready' | 'chat' | 'not a chat model' | 'error'; httpStatus?: number; errorCode?: string; reason?: ProviderFailureReason }
@@ -117,7 +118,8 @@ export type Request = {
 } | {
     kind: 'engines.status';
 } | { kind: 'keys.list' }
-  | { kind: 'keys.add'; provider: KeyProvider; label: string; secret: string; endpoint?: string; deployments?: string[] }
+  // secret is absent only for Ollama, which has no key; deployments are the model ids for every provider but Anthropic and OpenAI.
+  | { kind: 'keys.add'; provider: KeyProvider; label: string; secret?: string; endpoint?: string; deployments?: string[] }
   | { kind: 'keys.remove' | 'keys.test'; keyId: string }
   | { kind: 'keys.scanEnvFile'; path: string }
   | { kind: 'keys.importEnv'; path: string; names: string[] }

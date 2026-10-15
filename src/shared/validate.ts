@@ -4,6 +4,7 @@ import { isHandoffWriter } from './handoff.js';
 import { MCP_MAX_SERVERS, MCP_MAX_TOOLS, mcpTokens, type McpConfig, type McpServer, type McpCatalog, type McpRequest } from './mcp.js';
 import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DESCRIPTION_CHARS, catalogTokens, type ExtensionCatalog, type ExtensionFile } from './extensions.js';
 import { isAgentCaps } from './agent-facts.js';
+import { PROVIDER_LABELS, isBedrockEndpoint, isDirectProvider, isLocalEndpoint } from './providers.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
     // eslint-disable-next-line no-useless-escape
@@ -96,7 +97,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'keys.list': fields=[]; break;
         case 'keys.add':
             fields=['provider','label','secret','endpoint','deployments'];
-            if (!isKeyProvider(v.provider) || !isTitle(v.label) || !isSecret(v.secret) || v.endpoint !== undefined && !isEndpoint(v.endpoint) || v.deployments !== undefined && !isDeployments(v.deployments) || v.provider === 'foundry' && (!isEndpoint(v.endpoint) || !isDeployments(v.deployments) || !v.deployments.length)) throw new ValidationError('Invalid key details');
+            if (!isKeyProvider(v.provider) || !isTitle(v.label) || !keyPlaceValid(v.provider, v.provider === 'ollama' ? v.secret === undefined : isSecret(v.secret), v.endpoint, v.deployments, true)) throw new ValidationError('Invalid key details');
             break;
         case 'keys.remove': case 'keys.test':
             fields=['keyId']; if (!isUUID(v.keyId)) throw new ValidationError('Invalid key id'); break;
@@ -333,7 +334,19 @@ export function validateSystemStats(value: unknown): import('./protocol.js').Sys
 }
 
 export const ENV_KEY_NAMES: Record<string, import('./protocol.js').KeyProvider> = {ANTHROPIC_API_KEY:'anthropic',OPENAI_API_KEY:'openai',AZURE_OPENAI_API_KEY:'foundry',AITERM_FOUNDRY_KEY:'foundry'};
-export function isKeyProvider(v:unknown): v is import('./protocol.js').KeyProvider {return v==='anthropic'||v==='foundry'||v==='openai';}
+export function isKeyProvider(v:unknown): v is import('./protocol.js').KeyProvider {return typeof v==='string'&&Object.hasOwn(PROVIDER_LABELS,v);}
+// Where a key may go and what it must carry, per provider (v0.6.5): Foundry and Bedrock an endpoint of their own shape
+// plus models, the fixed-host providers models and no endpoint at all, Ollama a local endpoint and no secret. adding:
+// a new key must name its models (Ollama's come from its listing later).
+function keyPlaceValid(provider:import('./protocol.js').KeyProvider,secretValid:boolean,endpoint:unknown,deployments:unknown,adding:boolean):boolean{
+    if(!secretValid||deployments!==undefined&&!isDeployments(deployments))return false;
+    const models=isDeployments(deployments)&&deployments.length>0;
+    if(provider==='ollama')return isLocalEndpoint(endpoint);
+    if(provider==='bedrock')return isBedrockEndpoint(endpoint)&&models;
+    if(provider==='foundry')return isEndpoint(endpoint)&&models;
+    if(isDirectProvider(provider))return endpoint===undefined&&(models||!adding&&deployments===undefined);
+    return endpoint===undefined||isEndpoint(endpoint);
+}
 export function isSecret(v:unknown): v is string {return typeof v==='string' && v.length>0 && v.length<=512 && !/[\s\p{C}]/u.test(v);}
 export function isEndpoint(v:unknown): v is string {
     if(typeof v!=='string'||v.length>2048||/[\s"'\\\p{C}]/u.test(v))return false;
@@ -354,7 +367,7 @@ export function validateDeploymentTests(v:unknown):import('./protocol.js').Deplo
 export function validateKeyView(v:unknown):import('./protocol.js').KeyView {
     if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid key metadata');
     const k=v as Record<string,unknown>;
-    if(Object.keys(k).some(n=>!['id','provider','label','last4','endpoint','deployments','lastTest'].includes(n))||!isUUID(k.id)||!isKeyProvider(k.provider)||!isTitle(k.label)||typeof k.last4!=='string'||k.last4.length>4||/[\p{C}]/u.test(k.last4)||k.endpoint!==undefined&&!isEndpoint(k.endpoint)||k.deployments!==undefined&&!isDeployments(k.deployments))throw new ValidationError('Invalid key metadata');
+    if(Object.keys(k).some(n=>!['id','provider','label','last4','endpoint','deployments','lastTest'].includes(n))||!isUUID(k.id)||!isKeyProvider(k.provider)||!isTitle(k.label)||typeof k.last4!=='string'||k.last4.length>4||/[\p{C}]/u.test(k.last4)||k.provider!=='foundry'&&!keyPlaceValid(k.provider,true,k.endpoint,k.deployments,false)||k.provider==='foundry'&&(k.endpoint!==undefined&&!isEndpoint(k.endpoint)||k.deployments!==undefined&&!isDeployments(k.deployments)))throw new ValidationError('Invalid key metadata');
     if(k.provider==='foundry'&&(!isEndpoint(k.endpoint)||!isDeployments(k.deployments)||!k.deployments.length))throw new ValidationError('Invalid Foundry metadata');
     if(k.lastTest!==undefined)validateDeploymentTests(k.lastTest);
     return k as unknown as import('./protocol.js').KeyView;

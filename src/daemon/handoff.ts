@@ -13,6 +13,9 @@ export interface KeyedWriter { key: KeyView; model: string; price: ModelPrice; w
 export function cheapestWriter(keys: readonly KeyView[], settings: Pick<Settings, 'priceOverrides' | 'deploymentModels'>, prices: PriceSnapshot): KeyedWriter | null {
   let best: KeyedWriter | null = null;
   for (const key of keys) {
+    // Only the providers this one-shot request was reviewed for (v0.6.3); a v0.6.5 provider (or Ollama, free but slow to
+    // load a model) is never picked by itself to read an agent's screen.
+    if (key.provider !== 'foundry' && key.provider !== 'anthropic' && key.provider !== 'openai') continue;
     const models = key.provider === 'foundry' ? (key.deployments ?? []).filter(model => deploymentWire(key.lastTest?.find(r => r.model === model)) !== null) : Object.keys(prices.providers[key.provider] ?? {}).filter(isChatCatalogId);
     for (const model of models) {
       const price = findPrice(prices, key.provider, model, settings.priceOverrides ?? {}, key.provider === 'foundry' ? deploymentAlias(settings, model) : undefined);

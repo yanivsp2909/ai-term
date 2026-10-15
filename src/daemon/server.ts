@@ -16,6 +16,9 @@ import { UsageService } from './usage-service.js';
 import { enginesStatus } from './engines.js';
 import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
+import { testDirect } from './providers/direct.js';
+import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
+import { DIRECT_HOSTS } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
@@ -195,10 +198,21 @@ export class DaemonServer {
                 case 'keys.scanEnvFile': this.control(peer,{id:request.id,ok:true,found:await this.keys.scanEnvFile(request.path)}); break;
                 case 'keys.importEnv': this.control(peer,{id:request.id,ok:true,keys:await this.keys.importEnv(request.path,request.names)}); break;
                 case 'keys.test': {
-                    const key=await this.keys.view(request.keyId);
-                    if(key.provider!=='foundry'||!key.endpoint||!key.deployments)throw new KeyError('Only Foundry keys have deployment tests');
-                    // Only the Keychain-bound endpoint and deployments, never settings.json's copy (B12).
-                    const results=await this.keys.withSecret(key.id,(secret,binding)=>{if(!binding)throw new KeyError('Only Foundry keys have deployment tests');return testFoundry(binding.endpoint,binding.deployments,secret);});
+                    const key=await this.keys.view(request.keyId),provider=key.provider;
+                    // Ollama: the local server's own list is the check; it has no key to send anywhere.
+                    if(provider==='ollama'){
+                        let models:string[];
+                        try{models=await listOllama(key.endpoint??'');}catch(error){throw new KeyError(error instanceof OllamaError?error.message:'Ollama did not answer');}
+                        const saved=await this.keys.saveModels(key.id,models);this.control(peer,{id:request.id,ok:true,results:saved.lastTest??[]});break;
+                    }
+                    if(provider==='anthropic'||provider==='openai'||!key.deployments)throw new KeyError('Only Foundry keys have deployment tests');
+                    // Only the Keychain-bound endpoint and deployments, never settings.json's copy (B12); the fixed-host
+                    // providers' hosts come from code (v0.6.5).
+                    const results=await this.keys.withSecret(key.id,(secret,binding)=>{
+                        if(provider==='foundry'){if(!binding)throw new KeyError('Only Foundry keys have deployment tests');return testFoundry(binding.endpoint,binding.deployments,secret);}
+                        if(provider==='bedrock'){if(!binding)throw new KeyError('Bedrock key details changed outside AI Term; add the key again');return testDirect('bedrock',binding.endpoint,binding.deployments,secret);}
+                        return testDirect(provider,DIRECT_HOSTS[provider],key.deployments??[],secret);
+                    });
                     await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
                 }
                 case 'engines.status':
@@ -340,7 +354,7 @@ export class DaemonServer {
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
-                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS
+                'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,'Model must pass its test first',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS
             ]);
             const message = error instanceof Error && (fixed.has(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.

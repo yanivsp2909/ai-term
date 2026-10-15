@@ -32,7 +32,8 @@ import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror, type MirrorSignal } from './mirror.js';
 import { electronNodeNeeded } from '../shared/runtime-paths.js';
 import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv } from './env.js';
-import { KeyStore, KeyError } from './keys.js';
+import { KeyStore, KeyError, type FoundryBinding } from './keys.js';
+import { CLI_KEY_PROVIDERS, isBoundProvider, isLocalEndpoint, testedModels } from '../shared/providers.js';
 import { checkEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
@@ -305,8 +306,10 @@ export class SessionManager extends EventEmitter {
             if(!AGENT_PROVIDERS.includes(key.provider))throw new KeyError("AI Term agent can't use this key yet");
             // Foundry: deployments whose test found a wire (Responses or Chat Completions, D30). Anthropic and OpenAI: the
             // catalog's chat models, plus a valid model id typed in /model.
-            const models=key.provider==='foundry'?(key.deployments??[]).filter(model=>deploymentWire(key.lastTest?.find(r=>r.model===model))!==null):[...new Set([...catalogModels(key.provider),...(agent.model?[agent.model]:[])])];
-            if(!agent.model||!models.includes(agent.model))throw new KeyError(key.provider==='foundry'?'Foundry deployment must pass its test first':'Pick a model for AI Term agent');
+            // v0.6.5 providers: the key's own models whose tiny test request (Ollama: its listing) succeeded.
+            const catalog=key.provider==='anthropic'||key.provider==='openai'?key.provider:null;
+            const models=key.provider==='foundry'?(key.deployments??[]).filter(model=>deploymentWire(key.lastTest?.find(r=>r.model===model))!==null):catalog?[...new Set([...catalogModels(catalog),...(agent.model?[agent.model]:[])])]:testedModels(key);
+            if(!agent.model||!models.includes(agent.model))throw new KeyError(key.provider==='foundry'?'Foundry deployment must pass its test first':catalog?'Pick a model for AI Term agent':'Model must pass its test first');
             agentKey={view:key,models};authMethod='api-key';
             recipe={executable:process.execPath,args:[],env:{}};
         } else if (agent) {
@@ -317,7 +320,8 @@ export class SessionManager extends EventEmitter {
             authMethod = status.authMethod;
             if(agent.auth.kind==='key'){
                 const key=await this.keys.view(agent.auth.keyId);
-                if(engine==='claude-code'&&key.provider!=='anthropic'||engine==='codex'&&key.provider==='anthropic')throw new KeyError('Key provider does not match engine');
+                // Routing already sends every other provider to AI Term's agent; this is the second guard (v0.6.5).
+                if(!CLI_KEY_PROVIDERS.includes(key.provider)||engine==='claude-code'&&key.provider!=='anthropic'||engine==='codex'&&key.provider==='anthropic')throw new KeyError('Key provider does not match engine');
                 if(key.provider==='foundry'&&(!agent.model||!key.deployments?.includes(agent.model)||!key.lastTest?.some(r=>r.model===agent.model&&r.status==='ready')))throw new KeyError('Foundry deployment must pass its test first');
                 authMethod='api-key';
                 recipe={executable:status.path,args:buildArgs({...agent,...argvRequest,engine,...(key.provider==='foundry'?{foundryEndpoint:key.endpoint}:{}),...(key.provider==='openai'?{openaiKey:true}:{})}),env:{}};
@@ -371,16 +375,21 @@ export class SessionManager extends EventEmitter {
                 Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
             }
             const transcript=agent?.engine==='ai-term'?await agentTranscript(this.paths.root,info.id):null;
-            if(agent?.engine==='ai-term'&&agent.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
-                // B12: only the Keychain's bound endpoint and deployments decide where the key goes and which models it may run.
-                const foundry=agentKey?.view.provider==='foundry',model=agent.model,models=(agentKey?.models??[]).filter(id=>!foundry||binding?.deployments.includes(id));
-                if(foundry&&!binding||!model||!models.includes(model)||!transcript||!agentKey)throw new KeyError('Foundry key details changed outside AI Term; add the key again');
+            if(agent?.engine==='ai-term'&&agent.auth.kind==='key'){const spawnAgent=(secret:string|null,binding:FoundryBinding|null)=>{
+                // B12: only the Keychain's bound endpoint and deployments decide where the key goes and which models it may run
+                // (Foundry, Bedrock). Fixed-host providers' hosts are in the agent's code; Ollama's endpoint is local only.
+                const provider=agentKey?.view.provider,bound=provider!==undefined&&isBoundProvider(provider),model=agent.model,models=(agentKey?.models??[]).filter(id=>!bound||binding?.deployments.includes(id));
+                if(bound&&!binding||!model||!models.includes(model)||!transcript||!agentKey)throw new KeyError(provider==='bedrock'?'Bedrock key details changed outside AI Term; add the key again':'Foundry key details changed outside AI Term; add the key again');
+                const endpoint=bound&&binding?binding.endpoint:provider==='ollama'&&isLocalEndpoint(agentKey.view.endpoint)?agentKey.view.endpoint:null;
                 live.agentModels=models;
                 const command={node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})};
                 const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
-                recipe={executable:built.executable,args:built.args,env:buildAgentEnv(process.env,{secret,endpoint:foundry&&binding?binding.endpoint:null,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry})};
+                recipe={executable:built.executable,args:built.args,env:buildAgentEnv(process.env,{secret,endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry})};
                 try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
-            });
+            };
+                // Ollama has no key: nothing is read from the Keychain for it.
+                if(agentKey?.view.provider==='ollama')spawnAgent(null,null);else await this.keys.withSecret(agent.auth.keyId,spawnAgent);
+            }
             else if(agent&&cliEngine&&agent.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
                 // B12: argv was built from settings.json's copy; the secret goes only to the endpoint bound to it in the Keychain.
                 if(keyView?.provider==='foundry'&&(!binding||!recipe.args.includes(`model_providers.aiterm_foundry.base_url="${binding.endpoint}"`)||!agent.model||!binding.deployments.includes(agent.model)))throw new KeyError('Foundry key details changed outside AI Term; add the key again');
@@ -460,7 +469,7 @@ export class SessionManager extends EventEmitter {
         if(request.auth.kind!=='key'||request.login||request.engine==='ai-term')return request;
         let keysRunOn:Settings['keysRunOn'];
         try{keysRunOn=(await new SettingsStore(this.paths.root).get()).keysRunOn;}catch{this.log.error('Settings unreadable; keys run on AI Term agent');}
-        if(keysRunOn==='cli')return request;
+        // keyEngine applies the fallback, except for a provider no CLI can run (v0.6.5), which always starts AI Term's agent.
         const key=await this.keys.view(request.auth.keyId);
         if(keyEngine(key.provider,keysRunOn)!=='ai-term')return request;
         // AI Term's agent takes no effort level in v0.4.1, and has no Claude-only modes.

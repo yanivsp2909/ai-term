@@ -98,7 +98,8 @@ it('a Foundry session never spawns with an endpoint that is not the one bound to
     // Repointed only while argv is built, restored before the secret is read: the argv endpoint must still match the binding.
     await edit(s.root, k => { k.endpoint = ENDPOINT; });
     const real = s.keys.view.bind(s.keys);
-    vi.spyOn(s.keys, 'view').mockImplementationOnce(async id => ({ ...(await real(id)), endpoint: ATTACKER }));
+    // v0.6.5: routing reads the key first (its provider decides whether a CLI may run it), then argv is built from it.
+    vi.spyOn(s.keys, 'view').mockImplementationOnce(async id => ({ ...(await real(id)), endpoint: ATTACKER })).mockImplementationOnce(async id => ({ ...(await real(id)), endpoint: ATTACKER }));
     await expect(manager.create(request)).rejects.toThrow(CHANGED);
     expect(spawn).not.toHaveBeenCalled();
   } finally { await manager.shutdown(); }

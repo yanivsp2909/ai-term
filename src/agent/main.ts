@@ -2,7 +2,8 @@ import { realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { AGENT_ASK_FLAG, AGENT_DONT_ASK_FLAG, buildBashEnv } from '../daemon/env.js';
 import { killAllBash } from './bash.js';
-import { isEndpoint, isSecret, isThemeName, isValidModelId } from '../shared/validate.js';
+import { isEndpoint, isKeyProvider, isSecret, isThemeName, isValidModelId } from '../shared/validate.js';
+import { isLocalEndpoint } from '../shared/providers.js';
 import type { KeyProvider, ThemeName } from '../shared/protocol.js';
 import { createTheme } from '../client/tui/theme.js';
 import { Agent, type AgentPermission } from './agent.js';
@@ -26,7 +27,7 @@ export function parseAgentArgs(args: readonly string[]): AgentArgs {
     const arg = args[i] ?? '';
     if (arg === '--') { if (i !== args.length - 2) throw new AgentUsageError('Expected one message after --'); firstMessage = args[i + 1]; break; }
     const [name, value] = arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg, undefined];
-    if (name === '--provider' && (value === 'foundry' || value === 'anthropic' || value === 'openai')) provider = value;
+    if (name === '--provider' && isKeyProvider(value)) provider = value;
     else if (name === '--model' && value && isValidModelId(value)) model = value;
     else if (name === '--models' && value) { models = value.split(','); if (!models.every(isValidModelId)) throw new AgentUsageError('Invalid --models'); }
     else if (name === '--theme' && isThemeName(value)) theme = value;
@@ -46,7 +47,7 @@ export function parseAgentArgs(args: readonly string[]): AgentArgs {
 export function takeSecrets(env: NodeJS.ProcessEnv): { key: string | null; endpoint: string | null; reporter: ReturnType<typeof reporterEnv> } {
   const key = env.AITERM_AGENT_KEY, endpoint = env.AITERM_AGENT_ENDPOINT, reporter = reporterEnv(env);
   for (const name of ['AITERM_AGENT_KEY', 'AITERM_AGENT_ENDPOINT', 'AITERM_STATUS_TOKEN', 'AITERM_STATUS_PORT', 'AITERM_USAGE_TOKEN']) delete env[name];
-  return { key: isSecret(key) ? key : null, endpoint: isEndpoint(endpoint) ? endpoint : null, reporter };
+  return { key: isSecret(key) ? key : null, endpoint: isEndpoint(endpoint) || isLocalEndpoint(endpoint) ? endpoint : null, reporter };
 }
 
 // Never guessed: a Chat Completions deployment sent down the Responses API fails every request, so a wire the daemon can't
@@ -65,7 +66,9 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   const secrets = takeSecrets(env);
   let parsed: AgentArgs;
   try { parsed = parseAgentArgs(args); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof AgentUsageError ? error.message : 'invalid arguments'}\n`); return 2; }
-  if (!secrets.key || parsed.provider === 'foundry' && !secrets.endpoint) { terminal.stderr.write('ai agent runs inside AI Term: start it from the homepage with an API key.\n'); return 2; }
+  // Ollama (v0.6.5) has no key, only its local endpoint; Foundry and Bedrock need their bound endpoint.
+  const local = parsed.provider === 'ollama';
+  if (local ? secrets.key !== null || !isLocalEndpoint(secrets.endpoint) : !secrets.key || (parsed.provider === 'foundry' || parsed.provider === 'bedrock') && !secrets.endpoint) { terminal.stderr.write('ai agent runs inside AI Term: start it from the homepage with an API key.\n'); return 2; }
   // The SDK prints its warnings to the console, which here is the agent's own screen.
   (globalThis as { AI_SDK_LOG_WARNINGS?: boolean }).AI_SDK_LOG_WARNINGS = false;
   const { key, endpoint } = secrets, redact = redactor(key);

@@ -22,17 +22,22 @@ export function estimateCost(price:ModelPrice|undefined,input:number,output:numb
 // deployment itself still wins.
 export function findPrice(snapshot:PriceSnapshot,provider:KeyProvider,model:string,overrides:Record<string,ModelPrice>,alias?:string):ModelPrice|undefined{
  const own=(table:Record<string,ModelPrice>,id=model)=>Object.hasOwn(table,id)?table[id]:undefined;
- if(provider!=='foundry')return own(snapshot.providers[provider]);
+ // Ollama runs on this Mac: nothing to bill, so budgets never pause it (v0.6.5).
+ if(provider==='ollama')return {input:0,output:0,cacheRead:0};
  const override=own(overrides);
- if(!override&&alias)return own(snapshot.providers.azure,alias)??own(snapshot.providers.openai,alias)??own(snapshot.providers.anthropic,alias);
  // An explicit two-rate override applies its input rate to every input token; no cache discount is guessed.
- return override?{...override,cacheRead:override.cacheRead??override.input}:own(snapshot.providers.azure)??own(snapshot.providers.openai);
+ const overridden=override?{...override,cacheRead:override.cacheRead??override.input}:undefined;
+ if(provider==='anthropic'||provider==='openai')return own(snapshot.providers[provider]);
+ // v0.6.5 providers have no catalog prices: their override (/settings p) or unknown (`price ?`).
+ if(provider!=='foundry')return overridden;
+ if(!override&&alias)return own(snapshot.providers.azure,alias)??own(snapshot.providers.openai,alias)??own(snapshot.providers.anthropic,alias);
+ return overridden??own(snapshot.providers.azure)??own(snapshot.providers.openai);
 }
 
 // The catalog model a Foundry deployment was marked as: own keys only, so a deployment named toString has no alias.
 export function deploymentAlias(settings:Pick<Settings,'deploymentModels'>,deployment:string):string|undefined{const map=settings.deploymentModels;return map&&Object.hasOwn(map,deployment)?map[deployment]:undefined;}
 export function findLimits(snapshot:PriceSnapshot,provider:KeyProvider,model:string,alias?:string):ModelLimits{
- const id=provider==='foundry'?alias??model:model,tables=provider==='foundry'?(['azure','openai','anthropic']as const):[provider];
+ const id=provider==='foundry'?alias??model:model,tables=provider==='foundry'?(['azure','openai','anthropic']as const):provider==='anthropic'||provider==='openai'?[provider]:[];
  for(const table of tables){const entry=snapshot.limits?.[table];if(entry&&Object.hasOwn(entry,id))return {...entry[id]};}
  return {};
 }

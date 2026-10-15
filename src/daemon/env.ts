@@ -15,7 +15,8 @@ export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNod
 
 import { dirname, resolve } from 'node:path';
 import type { AgentEngine, CliEngine, Permission, Effort, ThemeName, KeyProvider } from '../shared/protocol.js';
-import { isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath, isValidModelId, isThemeName, isEndpoint, isSecret } from '../shared/validate.js';
+import { isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath, isValidModelId, isThemeName, isEndpoint, isSecret, isKeyProvider } from '../shared/validate.js';
+import { isLocalEndpoint } from '../shared/providers.js';
 export const CLAUDE_AUTH_VARS = ['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES','ANTHROPIC_PROFILE','ANTHROPIC_FEDERATION_RULE_ID','ANTHROPIC_ORGANIZATION_ID','ANTHROPIC_WORKSPACE_ID','ANTHROPIC_AWS_*','ANTHROPIC_BEDROCK_*','ANTHROPIC_VERTEX_*','ANTHROPIC_FOUNDRY_*','AWS_BEARER_TOKEN_BEDROCK','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_SIMPLE',
     // B21 (code.claude.com/docs/en/env-vars, 2026-10-13): provider switches, auth skips, auth-capable headers, host routing, mTLS.
     'CLAUDE_CODE_USE_ANTHROPIC_AWS','CLAUDE_CODE_USE_MANTLE','CLAUDE_CODE_SKIP_BEDROCK_AUTH','CLAUDE_CODE_SKIP_VERTEX_AUTH','CLAUDE_CODE_SKIP_FOUNDRY_AUTH','CLAUDE_CODE_SKIP_MANTLE_AUTH','CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH','ANTHROPIC_CUSTOM_HEADERS','CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST','CLAUDE_CODE_CLIENT_CERT','CLAUDE_CODE_CLIENT_KEY','CLAUDE_CODE_CLIENT_KEY_PASSPHRASE'] as const;
@@ -104,7 +105,7 @@ const absolute=(path:unknown):path is string=>typeof path==='string'&&path.start
 export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvider;model:string;models:readonly string[];permission:Permission;theme:ThemeName;transcript:string;firstMessage?:string}):{executable:string;args:string[]}{
     const {command}=request;
     if(!absolute(command.node)||!absolute(command.entry)||command.loader!==undefined&&!absolute(command.loader)||command.entry.endsWith('.ts')&&command.loader===undefined)throw new Error('Invalid agent command');
-    if(!['foundry','anthropic','openai'].includes(request.provider)||!isValidModelId(request.model)||!request.models.length||request.models.length>MAX_AGENT_MODELS||!request.models.every(isValidModelId)||!request.models.includes(request.model)||!isPermissionForEngine('ai-term',request.permission)||!isThemeName(request.theme)||!absolute(request.transcript)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid agent arguments');
+    if(!isKeyProvider(request.provider)||!isValidModelId(request.model)||!request.models.length||request.models.length>MAX_AGENT_MODELS||!request.models.every(isValidModelId)||!request.models.includes(request.model)||!isPermissionForEngine('ai-term',request.permission)||!isThemeName(request.theme)||!absolute(request.transcript)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid agent arguments');
     const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--provider=${request.provider}`,`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[])];
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return {executable:command.node,args};
@@ -113,14 +114,16 @@ export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvide
 // credentials, NODE_OPTIONS, npm and AI Term variables) stays out of AI Term's agent.
 const AGENT_BASE_VARS=['PATH','HOME','USER','LOGNAME','SHELL','TMPDIR','LANG','LC_ALL','LC_CTYPE'] as const;
 function pick(base:NodeJS.ProcessEnv,names:readonly string[]):Record<string,string>{const result:Record<string,string>={};for(const name of names){const value=base[name];if(typeof value==='string')result[name]=value;}return result;}
-// endpoint: the Foundry key's Keychain-bound endpoint; null for Anthropic and OpenAI, whose hosts are fixed in the agent.
-export function buildAgentEnv(base:NodeJS.ProcessEnv,agent:{secret:string;endpoint:string|null;status?:UsageTelemetry;usage?:UsageTelemetry;entry:string}):Record<string,string>{
-    if(!isSecret(agent.secret)||agent.endpoint!==null&&!isEndpoint(agent.endpoint)||!absolute(agent.entry))throw new Error('Invalid agent env');
+// endpoint: a Foundry or Bedrock key's Keychain-bound endpoint, or Ollama's local one; null for the providers whose hosts
+// are fixed in the agent. secret: null only for Ollama (v0.6.5), which has no key, and a key never goes to plain http.
+export function buildAgentEnv(base:NodeJS.ProcessEnv,agent:{secret:string|null;endpoint:string|null;status?:UsageTelemetry;usage?:UsageTelemetry;entry:string}):Record<string,string>{
+    const keyed=agent.secret!==null&&isSecret(agent.secret)&&(agent.endpoint===null||isEndpoint(agent.endpoint)),local=agent.secret===null&&isLocalEndpoint(agent.endpoint);
+    if(!keyed&&!local||!absolute(agent.entry))throw new Error('Invalid agent env');
     const result:Record<string,string>={...pick(base,AGENT_BASE_VARS),TERM:'xterm-256color',COLORTERM:'truecolor',TERM_PROGRAM:'AITerm'};
     if(!result.LANG&&!result.LC_ALL&&!result.LC_CTYPE)result.LANG='en_US.UTF-8';
     // Source mode: tsx would read tsconfig.json from the agent's folder, whose `paths` could swap AI Term's imports.
     if(agent.entry.endsWith('.ts'))result.TSX_TSCONFIG_PATH=sourceTsconfig(agent.entry);
-    Object.assign(result,agent.status?buildStatusEnv(agent.status):{},{AITERM_AGENT_KEY:agent.secret},agent.endpoint?{AITERM_AGENT_ENDPOINT:agent.endpoint}:{});
+    Object.assign(result,agent.status?buildStatusEnv(agent.status):{},agent.secret!==null?{AITERM_AGENT_KEY:agent.secret}:{},agent.endpoint?{AITERM_AGENT_ENDPOINT:agent.endpoint}:{});
     if(agent.usage){validTelemetry(agent.usage);result.AITERM_USAGE_TOKEN=agent.usage.credential;}
     return result;
 }

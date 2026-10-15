@@ -164,17 +164,17 @@ describe('Ollama listing', () => {
 });
 
 describe('protocol and metadata validation', () => {
-  const add = (body: Record<string, unknown>) => () => validateRequest({ id: 'r1', kind: 'keys.add', label: 'k', ...body });
-  it('keys.add: models for model-list providers, a bound region for Bedrock, no secret and a local endpoint for Ollama', () => {
-    expect(add({ provider: 'xai', secret: KEY, deployments: ['grok-5'] })).not.toThrow();
-    expect(add({ provider: 'xai', secret: KEY })).toThrow('Invalid key details');
-    expect(add({ provider: 'xai', secret: KEY, deployments: ['grok-5'], endpoint: 'https://evil.example/v1' })).toThrow('Invalid key details');
-    expect(add({ provider: 'bedrock', secret: KEY, deployments: ['m'], endpoint: 'https://bedrock-runtime.us-east-1.amazonaws.com' })).not.toThrow();
-    expect(add({ provider: 'bedrock', secret: KEY, deployments: ['m'], endpoint: 'https://evil.example' })).toThrow('Invalid key details');
-    expect(add({ provider: 'ollama', endpoint: 'http://127.0.0.1:11434' })).not.toThrow();
-    expect(add({ provider: 'ollama', endpoint: 'http://127.0.0.1:11434', secret: KEY })).toThrow('Invalid key details');
-    expect(add({ provider: 'ollama', endpoint: 'http://localhost:11434' })).toThrow('Invalid key details');
-    expect(add({ provider: 'anthropic' })).toThrow('Invalid key details');
+  const add = (body: Record<string, unknown>) => validateRequest({ id: '00000000-0000-4000-8000-0000000000aa', kind: 'keys.add', label: 'k', ...body });
+  it('keys.add: models for model-list providers, a bound region for Bedrock, no secret and a local endpoint for Ollama', async () => {
+    await expect(add({ provider: 'xai', secret: KEY, deployments: ['grok-5'] })).resolves.toBeTruthy();
+    await expect(add({ provider: 'xai', secret: KEY })).rejects.toThrow('Invalid key details');
+    await expect(add({ provider: 'xai', secret: KEY, deployments: ['grok-5'], endpoint: 'https://evil.example/v1' })).rejects.toThrow('Invalid key details');
+    await expect(add({ provider: 'bedrock', secret: KEY, deployments: ['m'], endpoint: 'https://bedrock-runtime.us-east-1.amazonaws.com' })).resolves.toBeTruthy();
+    await expect(add({ provider: 'bedrock', secret: KEY, deployments: ['m'], endpoint: 'https://evil.example' })).rejects.toThrow('Invalid key details');
+    await expect(add({ provider: 'ollama', endpoint: 'http://127.0.0.1:11434' })).resolves.toBeTruthy();
+    await expect(add({ provider: 'ollama', endpoint: 'http://127.0.0.1:11434', secret: KEY })).rejects.toThrow('Invalid key details');
+    await expect(add({ provider: 'ollama', endpoint: 'http://localhost:11434' })).rejects.toThrow('Invalid key details');
+    await expect(add({ provider: 'anthropic' })).rejects.toThrow('Invalid key details');
   });
   it('key metadata: local endpoints only for Ollama, no endpoint for fixed-host providers', () => {
     const base = { id: '00000000-0000-4000-8000-000000000002', label: 'k', last4: '' };
