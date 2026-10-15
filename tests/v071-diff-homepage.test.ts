@@ -72,3 +72,8 @@ it('a diff the daemon refuses shows its reason as a note', async () => {
   const { tty, home } = await open(client);
   try { type(tty, 'd'); await shows(tty, 'This agent has no worktree to diff'); } finally { await home.stop(); }
 });
+
+it('with no agent selected, d types a d (a task like "deploy" keeps its first letter)', async () => {
+  const client = new Client([]), { tty, home } = await open(client);
+  try { type(tty, 'deploy it'); await shows(tty, 'deploy it'); expect(client.requests.some(r => r.kind === 'sessions.diff')).toBe(false); } finally { await home.stop(); }
+});
