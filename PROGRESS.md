@@ -2,8 +2,49 @@
 
 ## Checkpoint
 Last commit: (see git log; this run started at 22669aa)
-Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate, C v0.7.1, D v0.7.2, E v0.7.3, F v0.7.4 in order (each section below says done or blocked).
+Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1, D v0.7.2, E v0.7.3, F v0.7.4 in order (each section below says done or blocked).
 Branch: main, pushed after each part. Started clean at 22669aa after `git pull --ff-only` (already up to date). No other agent worked in this repo.
+
+## Part B: v0.6 release gate — done, **v0.6 closed**
+Five fresh read-only reviewers on `c558cf7..HEAD` (none had seen the code written): security-reviewer (budget reservations + presets), security-reviewer (accounts + handoff), security-bounty-hunter (as a general-purpose agent told to load it: local endpoints, providers, agent output), silent-failure-hunter (all v0.6 code), engineering:code-review (as a general-purpose agent: whole gate diff). Then a fresh typescript-reviewer on the fix commit; its findings got their own failing tests and fixes. Commits: 9117b33 (RED) → 750c544 (GREEN) → a105717 (fix-review RED) → 778c3e2, plus this handover. Tests: `tests/gate-v06-release.test.ts` (20 cases).
+
+No CRITICAL or HIGH from the gate reviewers. Fixed:
+- **MEDIUM (accounts review):** the handoff ask always said "your own login" and ⏎ re-read the default account, so a handoff could start (and bill) an account you never saw. The ask names the account; ⏎ sends exactly it (`own` when none).
+- **MEDIUM (accounts review):** secrets on an agent's screen (a printed .env, bearer headers, keys) could reach the summary provider and the new CLI's argv. Redacted on the way in and out (`src/shared/redact.ts`, reused by /export and the secret scan later).
+- **MEDIUM (silent failures):** with no budget ledger wired, a keyed handoff summary went out unchecked. Refused.
+- **MEDIUM (silent failures):** reservation-file save failures and holds lost from a bad file only logged. Homepage warning (D33), cleared once a save works.
+- **MEDIUM (budgets review):** after ⏎ at "no price known", an unpriced model spent outside every budget. With a daily/weekly/monthly budget it now waits for a price; a spend cap alone still asks once per run.
+- **MEDIUM (code review, reproduced):** a grant given after the agent's 1 s timeout stayed held and was booked at exit as phantom spend (16 such leaks refused the agent for good). The agent chooses the id and cancels it; a cancel arriving first is remembered.
+- **LOW:** one failing booking stopped the ledger load (two reviewers); refusal reasons weren't logged; a grant went out before its hold was on disk; a new agent that neither started nor stopped was reported as "the old one keeps running"; labels said "own login" where a default account bills (start box, bar, presets, handoff ask); emoji titles failed the handoff plan check; `handoffTo` was lost on restart; a name reused for the other engine mixed the profiles' links; Ollama listing failures lost their class in the log.
+- **Fix review (HIGH, my own first redaction):** bare `PASSWORD=` / `TOKEN=` and JSON-quoted names passed unredacted; it would also mangle code (`max_tokens: 4096`, `sortKey`) and backtracked on long runs. Rewritten: the name must end in a secret word, the value must look like a secret, every quantifier bounded; controls are stripped first and the screen redacted before the 48k cut.
+
+Not fixed, with reasons (also in docs/architecture.md §12.13):
+- A usage record the daemon drops at its per-session cap (1,800 a minute) still releases its hold: only a looping or forging agent reaches it.
+- Another macOS user can answer on Ollama's port while Ollama is off: no key is ever sent, it is Ollama's own trust model; documented in README.
+- Text an agent prints can show a fake limit badge (display only, never switches); a prompt injected into the screen can steer the handoff note (the new agent starts in Ask).
+- Keys run on AI Term's agent when settings are unreadable (the budget-checked side, logged); price overrides shared across providers by model id; one grant for the SDK's retries; a hold re-armed while its agent waits on you (all documented before).
+- A ZWJ/ZWNJ inside a secret survives `cleanNote` (kept for emoji and scripts) and can split a pattern; minor.
+
+Prompt vs code:
+- "folders outside allowed roots" (presets): the code has no allowed-roots concept; a preset folder gets the same checks as the start box (existing absolute directory, no `..`, shown before ⏎). Reported as sound, nothing added.
+
+Checks (at 778c3e2):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0
+npm run build       ESM Build success
+npm run app:build   built
+npm run app:test    9 passed (37.8s)
+npm test (1)        Test Files 212 passed · Tests 1358 passed | 2 skipped · 21.43s
+npm test (2)        Test Files 212 passed · Tests 1358 passed | 2 skipped · 22.04s
+```
+
+Concepts introduced:
+- **Redaction:** replacing only the secret part of a line with `[redacted]`, so the rest still reads. Patterns must be strict enough not to eat ordinary code and bounded so a huge line can't stall the program (`src/shared/redact.ts`).
+- **Client-chosen ids and cancel-before-arrival:** when a request can time out, the caller names it first, so it can later say "cancel that one" even if the answer never reached it; the server remembers early cancels (`reserve`/`settle` in `src/daemon/budget-ledger.ts`, `HttpReporter.reserve`).
+- **Write before acknowledge:** the grant is sent only after the hold is saved, so a crash right after can't forget money that was promised (`flushed()`).
+
+New dependencies: none.
 
 ## Part A: v0.6.5 more providers — done
 Commits: 75f504c (RED) → 2a258e0 (GREEN) → a781e5d (UI RED) → 3f1adb8 (UI GREEN) → e81e86a (docs, copy) → review fixes a0409ef (RED) / e2da06f → built-in prices 7456539 (RED) / 4a59330, plus this handover.
