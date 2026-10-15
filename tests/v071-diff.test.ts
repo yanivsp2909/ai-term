@@ -119,3 +119,65 @@ it('a finished agent with changes says +N −M · ready to review on its card', 
   expect(cardText(done, Date.now(), 60).line3).toContain('+40 −22 · ready to review');
   expect(cardText({ ...done, diffStat: { added: 0, removed: 0, files: 0 } }, Date.now(), 60).line3).toContain('no changes · ready to review');
 });
+
+it('HIGH (found while reviewing): a clean filter named in .gitattributes and the repo config never runs during a diff', async () => {
+  const { temp, dir, base } = await repo();
+  const marker = join(temp, 'filter-ran');
+  await writeFile(join(dir, '.gitattributes'), '*.ts filter=evil\n*.md filter=evil\n');
+  await git(dir, 'config', 'filter.evil.clean', `/usr/bin/touch ${marker}; /bin/cat`); await git(dir, 'config', 'filter.evil.smudge', `/usr/bin/touch ${marker}; /bin/cat`);
+  await writeFile(join(dir, 'src', 'a.ts'), 'changed by the agent\n'); await writeFile(join(dir, 'new.md'), 'new\n');
+  const { worktreeStat } = await import('../src/daemon/diff.js');
+  await worktreeDiff(dir, base); await worktreeStat(dir, base);
+  await expect(import('node:fs/promises').then(fs => fs.access(marker))).rejects.toThrow();
+});
+
+// ---- Part C review findings (fresh typescript-reviewer and security-reviewer) ----
+it('HIGH (security review): no filter runs even when named from .git/info/attributes or core.attributesFile', async () => {
+  const { temp, dir, base } = await repo();
+  const marker = join(temp, 'ran2');
+  await mkdir(join(dir, '.git', 'info'), { recursive: true });
+  await writeFile(join(dir, '.git', 'info', 'attributes'), '*.ts filter=evil2\n');
+  await writeFile(join(temp, 'attrs'), '*.md filter=evil2\n'); await git(dir, 'config', 'core.attributesFile', join(temp, 'attrs'));
+  await git(dir, 'config', 'filter.evil2.clean', `/usr/bin/touch ${marker}; /bin/cat`); await git(dir, 'config', 'filter.evil2.process', `/usr/bin/touch ${marker}`); await git(dir, 'config', 'filter.evil2.required', 'true');
+  await writeFile(join(dir, 'src', 'a.ts'), 'changed\n'); await writeFile(join(dir, 'x.md'), 'new\n');
+  const { worktreeStat } = await import('../src/daemon/diff.js');
+  const diff = await worktreeDiff(dir, base); await worktreeStat(dir, base);
+  expect(diff.files.find(f => f.path === 'src/a.ts')?.lines).toContain('+changed');
+  await expect(import('node:fs/promises').then(fs => fs.access(marker))).rejects.toThrow();
+});
+
+it('HIGH (TS review): a file that became a symlink keeps every file\'s diff with its own file', async () => {
+  const { dir, base } = await repo();
+  await writeFile(join(dir, 'b.txt'), 'b\n'); await git(dir, 'add', '--', 'b.txt'); await git(dir, 'commit', '-m', 'b', '--');
+  const head = (await git(dir, 'rev-parse', 'HEAD')).stdout.trim();
+  await rm(join(dir, 'gone.txt')); await symlink('b.txt', join(dir, 'gone.txt'));
+  await writeFile(join(dir, 'src', 'a.ts'), 'one\ntwo\nthree\nAFTER\n');
+  const diff = await worktreeDiff(dir, head);
+  expect(diff.files.map(f => f.path)).toEqual(['gone.txt', 'src/a.ts']);
+  expect(diff.files.find(f => f.path === 'src/a.ts')?.lines).toEqual(expect.arrayContaining(['+AFTER']));
+  expect(diff.files.find(f => f.path === 'src/a.ts')?.lines.join('\n')).not.toContain('bye');
+  expect(diff.files.find(f => f.path === 'gone.txt')?.lines).toEqual(expect.arrayContaining(['-bye', '+b.txt']));
+  void base;
+});
+
+it('MEDIUM (TS review): an unreadable untracked file or an unprintable name doesn\'t break the diff', async () => {
+  const { dir, base } = await repo();
+  await writeFile(join(dir, 'locked.txt'), 'secret\n', { mode: 0o000 });
+  await writeFile(join(dir, '​'), 'zero width name\n');
+  const diff = await worktreeDiff(dir, base);
+  expect(diff.files.find(f => f.path === 'locked.txt')?.lines).toEqual(['+(unreadable)']);
+  expect(diff.files.map(f => f.path)).toContain('(unprintable name)');
+  expect(() => validateAgentDiff({ title: 't', branch: 'ai/t', base: 'b', ...diff })).not.toThrow();
+});
+
+it('MEDIUM (both reviews): untracked files past the file cap are never read, and the answer fits one frame', async () => {
+  const { dir, base } = await repo();
+  const long = 'd'.repeat(200);
+  await mkdir(join(dir, long), { recursive: true });
+  for (let i = 0; i < 620; i++) await writeFile(join(dir, long, `${'f'.repeat(40)}-${i}.txt`), 'x\n'.repeat(50));
+  const opened = vi.spyOn(await import('node:fs/promises'), 'open');
+  const diff = await worktreeDiff(dir, base);
+  expect(diff.files.length).toBeLessThanOrEqual(500); expect(diff.capped).toBe(true);
+  expect(opened.mock.calls.length).toBeLessThanOrEqual(500);
+  expect(Buffer.byteLength(JSON.stringify(diff))).toBeLessThan(2 * 1024 * 1024);
+}, 30_000);

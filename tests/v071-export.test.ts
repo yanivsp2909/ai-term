@@ -97,3 +97,21 @@ it('/export on the homepage saves the selected agent, or a named one into a give
     expect(await readFile(join(root, name ?? ''), 'utf8')).toContain('&lt;script&gt;');
   } finally { await home.stop(); }
 });
+
+// ---- Part C review findings ----
+it('MEDIUM (TS review): an export always fits one protocol frame, whatever the text', async () => {
+  const { fitExport } = await import('../src/daemon/session-export.js');
+  const huge = { ...data, text: '日本語\x1b'.repeat(400_000), transcript: Array.from({ length: 2000 }, (_, i) => ({ at: data.createdAt, kind: 'note' as const, label: 'note', text: `"\\\n${i}`.repeat(200) })) };
+  const fitted = fitExport(huge);
+  expect(Buffer.byteLength(JSON.stringify(fitted))).toBeLessThanOrEqual(3 * 1024 * 1024);
+  expect(fitted.truncated).toBe(true); expect(() => validateSessionExport(fitted)).not.toThrow();
+});
+
+it('LOW (security and TS reviews): metadata redacted, bidi controls gone from the page, a missing transcript isn\'t "capped"', async () => {
+  const html = exportHtml({ ...data, title: `deploy ${SECRET}`.slice(0, 60), text: 'ok ‮evil⁦ done', transcript: [], transcriptTruncated: false });
+  expect(html).not.toMatch(/[‪-‮⁦-⁩]/); expect(html).toContain('no transcript'); expect(html).not.toContain('capped');
+  const { redactExportMeta } = await import('../src/daemon/session-export.js');
+  expect(JSON.stringify(redactExportMeta({ ...data, title: `t ${SECRET}`, cwd: `/tmp/${SECRET}`, branch: 'ai/x', model: 'm' }))).not.toContain('EXPORTCANARY');
+  const { transcriptFor } = await import('../src/daemon/session-export.js');
+  expect(await transcriptFor(join(tmpdir(), `missing-${randomUUID()}.jsonl`))).toEqual({ entries: [], truncated: false });
+});
