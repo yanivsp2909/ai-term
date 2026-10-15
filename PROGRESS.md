@@ -1,17 +1,90 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: see the handover commit after f03f8e7 (Part C, v0.8.2 Windows)
-Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A done · B v0.8.1 Linux done · C v0.8.2 Windows done · D v0.8 release gate next
+Last commit: see the handover commit after e8fbb44 (Part D, v0.8 release gate)
+Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A done · B done · C done · D v0.8 release gate done, **v0.8 closed** · E v0.9.1 queue next
 Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64); no Linux or Windows machine here (Docker/colima are installed but not running, and starting them would download a VM image, which the limits rule out), so Linux and Windows run for real only in GitHub Actions (Part D).
 
 | Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
 |---|---|---|---|
 | A B29, pin D56/D57 | done | fb31f36 | review: 0 / 2 fixed / 1 fixed + 3 explained / 3 explained |
 | B v0.8.1 Linux | done (Linux paths first run for real in Part D's CI) | 29cc615 | review: 0 / 4 fixed / 9 fixed + 2 explained / 7 fixed + 5 explained |
-| C v0.8.2 Windows | done (Windows paths first run for real in Part D's CI) | this push | review: 0 / 6 fixed / 11 fixed + 2 explained / 4 fixed + 6 explained |
+| C v0.8.2 Windows | done | 3c4493c | review: 0 / 6 fixed / 11 fixed + 2 explained / 4 fixed + 6 explained |
+| D v0.8 release gate | done, **v0.8 closed** (no cloud CI, by Yaniv) | this push | CI run: 4 real bugs fixed; reviewers: 0 / 3 fixed / 12 fixed + 4 explained / 9 fixed + 6 explained |
 
 **The prompt was cut off:** it ends inside Part E ("times passed while the"), and Part F (v0.9.2 dev servers per worktree) has no text at all. Part E will follow the visible text and the safer reading of the cut sentence; Part F can't be built from no spec, so the run stops before it.
+
+## Part D: v0.8 release gate — done, **v0.8 closed**
+Commits:
+- **CI:** workflow ffd3c6d (added), harness fixes 8e019e9, then e05d4e2 (RED) / 80e47cd. The workflow was removed in 86a9eb0.
+- **Reviewers:** 1cac394 (RED) / 104bcf2.
+- **Yaniv's `~/.local/bin` request:** fb272a5 (RED) / e8fbb44.
+
+**Where this differs from the prompt:** the prompt asked for the gate on real Linux and Windows through GitHub Actions.
+- **One run went in both ways:** both jobs failed in `npm test` only; typecheck, lint and build passed on both.
+- **Yaniv then said:** "remove all workflow we have in the github i dont want to use them… we can just do it on this pc".
+- **So:**
+  - The workflow is disabled and deleted, and its run deleted; nothing runs in the cloud now (saved as a standing preference).
+  - Everything after it ran on this Mac.
+  - Linux and Windows are covered by the unit tests here and that one run's results.
+  - Running Linux locally needs a VM image download (colima/docker), which the limits rule out.
+
+**What the one CI run found:**
+- **Real bugs (failing test, then fix):**
+  - Windows couldn't save settings or keys (`fsync` on a folder is EPERM there).
+  - The Windows ACL check failed (PowerShell had no module path for `Get-Acl`).
+  - The git lookup couldn't be isolated in a test.
+  - A guard test now proves bubblewrap really works on CI Linux, so the sandbox tests can't silently skip.
+- **Test-harness problems, not product bugs:**
+  - Tests that assumed macOS now say so: platform pinned, or skipped elsewhere.
+  - Four worktree test files quietly started the real Codex installed on this Mac. They now use fake engines (`tests/fixtures/fake-engines.ts`).
+  - Two timing tests now wait for what they check.
+  - 138 test files have a POSIX-only harness (`/bin/sh` fakes, `/tmp`, Unix sockets, 0600 modes), listed in `tests/posix-only.ts` and skipped on Windows. tests/v082-windows.test.ts covers Windows there, including the daemon end to end over its pipe.
+- **Runner defaults:** the runner's git defaulted to `master` with no identity. Nothing to fix in AI Term; tests that need `main` set it themselves or got it from this Mac's config.
+
+**Fresh reviewers** (security-reviewer, security-bounty-hunter, silent-failure-hunter and engineering:code-review on `ff1b7c1..HEAD`, none of which had seen the code):
+- **HIGH fixed:**
+  - **macOS rename bypass (reproduced by the code review):** renaming a folder above a protected place (a dotfile link's target, the repository's `.git`, a custom AI Term folder) and copying it back planted a hook or startup line. Every such folder now gets a literal write-deny.
+  - **Linux session sockets:** agent bash could reach an X11 display (keystrokes into your terminal) or a `dbus-launch` bus (Secret Service, so every key) under `/tmp`. These, ssh-agent, tmux, `~/.dbus` and `~/.Xauthority` are now hidden.
+  - **Linux linked folders:** a rebuilt folder reached through a link had unpinned parents.
+- **MEDIUM fixed:**
+  - `$ZDOTDIR` and `$XDG_CONFIG_HOME` protection never applied, because the bash env lacked them. They now reach the agent apart from it.
+  - A Windows test or MCP command not on PATH ran by bare name from the worktree.
+  - Ask commands ran without a sandbox silently; they now say so.
+  - A failed bubblewrap probe was cached for the agent's life.
+  - Windows daemon start failures were invisible: output now goes to the log, and an exit during start is reported.
+  - A failed proof could delete a live daemon's pipe file and lead to a second daemon.
+  - An unreadable pipe file was a dead end.
+  - Keychain failures had no trace: now logged by kind.
+  - `.bash_aliases`, oh-my-zsh `custom` and D-Bus service files are protected.
+- **LOW fixed:**
+  - Windows test-plan paths.
+  - Test-run log reasons; test-run stdin back to `ignore`.
+  - Windows says "no sandbox" plainly; a missing Git for Windows is logged.
+  - Linuxbrew/NixOS toolchains in the test sandbox.
+  - A client without the daemon's sandbox answer offers Ask only.
+  - Stale docs.
+- **Explained, not changed:**
+  - **Abstract-socket D-Bus and X11** (shared network namespace) stay reachable from Linux agent bash; unsharing the network would cut off what Don't ask is for. README says so.
+  - **Codex's own sandbox:** whether it enforces `workspace-write` on native Windows, or where Linux bubblewrap/landlock is missing, needs a check by Yaniv.
+  - **Credential Manager blob limit:** about 2.5 KB, which a Foundry key with many deployments might exceed. The failure is now logged by kind.
+  - **Imported env files on Windows** have no owner check.
+  - **Windows stats** show net 0 and no per-agent CPU, rather than "n/a".
+  - **Unreadable home entries** in the Linux bash plan are left out unlogged; the agent has no daemon log, and it fails safe.
+  - **Windows PID reuse** for the delayed `taskkill`.
+
+**Yaniv during the gate:** "The main agent made `~/.local/bin` and `~/bin` read-only for AI Term's own agent… fix it". They are writable again, on macOS and Linux. A program planted in a PATH folder in home can therefore run as you later; README says so.
+
+**Checks (after e8fbb44):**
+- typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 41ms`; app:build `✓ built in 60ms`.
+- npm test, the last two runs in a row: `Test Files 234 passed (234)` · `Tests 1588 passed | 7 skipped (1595)`.
+  - Earlier runs this hour had 7, then 1, timing failures in PTY and attach tests: another app here was at 100% CPU (load average 9). Each passes alone and on a quiet run.
+- app:test `9 passed (39.1s)`.
+- verification-loop clean.
+
+**New manual checks:**
+- `cd ~/ai-term && npm run build && node dist/cli/index.js`: AI Term's agent with a key in Don't ask runs `cd ~ && mv dotfiles d2` (with a dotfiles link) and gets `Operation not permitted`; `echo x > ~/.local/bin/x` works.
+- `cd ~/ai-term && git log -1 --format=%h && gh workflow list --all`: no workflows listed.
 
 ## Part C: v0.8.2 Windows — done
 Commits: b591e30 (RED) / b677132; review ce5b0b2 (RED) / f03f8e7.
