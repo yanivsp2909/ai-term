@@ -27,8 +27,17 @@ export function parseAcl(text: string): Acl | null {
   return owner && SID.test(owner) && entries.every(entry => SID.test(entry)) ? { owner, entries: [...new Set(entries)] } : null;
 }
 const system32 = (name: string): string => `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\${name}`;
+// What whoami, icacls and PowerShell need: the system folder, its tools on PATH, PowerShell's own modules (Get-Acl lives
+// in one; without PSModulePath it isn't found, as the v0.8 CI showed) and a temp folder. Nothing else of AI Term's env.
+export function aclToolEnv(base: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const root = base.SystemRoot ?? 'C:\\Windows';
+  return { SystemRoot: root, PATH: `${root}\\System32`, PSModulePath: `${root}\\System32\\WindowsPowerShell\\v1.0\\Modules`, ...base.TEMP ? { TEMP: base.TEMP } : {}, ...base.TMP ? { TMP: base.TMP } : {} };
+}
+// Which tool failed, in fixed words (its own output can carry paths).
 const run = (file: string, args: readonly string[], env: Record<string, string> = {}): Promise<string> => new Promise((resolve, reject) => {
-  execFile(file, [...args], { timeout: 30_000, windowsHide: true, env: { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows', ...env } }, (error, stdout) => { if (error) reject(new Error('Windows ACL command failed')); else resolve(stdout); });
+  execFile(file, [...args], { timeout: 60_000, windowsHide: true, env: { ...aclToolEnv(process.env), ...env } }, (error, stdout) => {
+    if (error) reject(new Error(`Windows ACL command failed (${/whoami/i.test(file) ? 'whoami' : /icacls/i.test(file) ? 'icacls' : 'PowerShell'}${typeof error.code === 'number' ? ` exit ${error.code}` : ''})`)); else resolve(stdout);
+  });
 });
 let sid: Promise<string> | null = null;
 export function currentSid(): Promise<string> {

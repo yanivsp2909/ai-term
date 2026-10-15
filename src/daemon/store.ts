@@ -24,6 +24,8 @@ export async function atomicWrite(path: string, value: unknown): Promise<void> {
         await unlink(temporary);
         throw error;
     }
+    // Windows can't fsync a folder (EPERM; found by the v0.8 CI): NTFS keeps the rename in its own journal.
+    if (process.platform === 'win32') return;
     const folder = await open(dirname(path), constants.O_RDONLY);
     try {
         await folder.sync();

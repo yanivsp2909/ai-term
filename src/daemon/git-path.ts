@@ -7,9 +7,9 @@ const WINDOWS_GIT = ['C:\\Program Files\\Git\\cmd\\git.exe', 'C:\\Program Files 
 export function nullDevice(platform: NodeJS.Platform = process.platform): string { return platform === 'win32' ? 'NUL' : '/dev/null'; }
 // A PATH entry that can't be looked into (missing, a file, no access, a loop, a bad name) just has no git: this runs at import.
 const isFile = (path: string): boolean => { try { return statSync(path).isFile(); } catch (error) { if (error instanceof Error && 'code' in error && ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM', 'EINVAL', 'ELOOP', 'ENAMETOOLONG'].includes(String(error.code))) return false; throw error; } };
-export function gitExecutable(platform: NodeJS.Platform = process.platform, path: string = process.env.PATH ?? ''): string | null {
+export function gitExecutable(platform: NodeJS.Platform = process.platform, path: string = process.env.PATH ?? '', places: readonly string[] = WINDOWS_GIT): string | null {
   if (platform !== 'win32') return '/usr/bin/git';
-  const found = WINDOWS_GIT.find(existsSync) ?? path.split(delimiter).filter(isAbsolute).map(folder => join(folder, 'git.exe')).find(isFile);
+  const found = places.find(existsSync) ?? path.split(delimiter).filter(isAbsolute).map(folder => join(folder, 'git.exe')).find(isFile);
   return found ?? null;
 }
 // null on Windows without Git for Windows: git features then fail plainly, never through a bare git.exe that Windows would
