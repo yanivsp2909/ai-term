@@ -18,7 +18,7 @@ const PRICES=priceData as PriceSnapshot;
 import {parseClaudeStatus} from './claude-status.js';
 import {parseCodexStatus,codexTitle,isCodexApproval,type CodexRun} from './codex-status.js';
 import {initialStatus,reduceStatus,type StatusState} from './status-reducer.js';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { isFsError, type Paths } from '../shared/paths.js';
 import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord, type CliEngine } from '../shared/protocol.js';
@@ -28,7 +28,7 @@ import { GitError, isWorktreeTop } from './git.js';
 import { worktreeDiff, worktreeStat } from './diff.js';
 import type { AgentDiff } from '../shared/diff.js';
 import { fitExport, redactExportMeta, transcriptFor } from './session-export.js';
-import { applyUndo, CheckpointError, dropCheckpoints, snapshot, undoPlan } from './checkpoints.js';
+import { applyUndo, CheckpointError, dropCheckpoints, snapshot, undoPlan, type CheckpointContext } from './checkpoints.js';
 import type { UndoPlan } from '../shared/checkpoints.js';
 import { EXPORT_TEXT_CHARS, type SessionExport } from '../shared/session-export.js';
 import { redactSecrets } from '../shared/redact.js';
@@ -50,7 +50,8 @@ import { prepareProfile } from './accounts.js';
 import { parseLimit } from './limit-detect.js';
 import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
-import { lstat } from 'node:fs/promises';
+import { lstat, open } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { MAX_RECORD_COST_USD } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
@@ -832,34 +833,63 @@ export class SessionManager extends EventEmitter {
         if(!live.info.worktree||!live.info.branch?.startsWith('ai/'))throw new CheckpointError('This agent has no worktree; checkpoints need one');
         return live.info.branch.slice(3);
     }
+    // The key that signs AI Term's own checkpoint commits (another agent can write refs, not this file's contents from a
+    // sandbox): 32 random bytes in ~/.ai-term/checkpoint.key (0600), made once, read without following a symlink.
+    private checkpointKeyFile?:Promise<Buffer>;
+    private checkpointKey():Promise<Buffer>{
+        this.checkpointKeyFile??=(async()=>{
+            const path=join(this.paths.root,'checkpoint.key');
+            try{const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);try{const text=(await file.readFile('utf8')).trim();if(/^[0-9a-f]{64}$/.test(text))return Buffer.from(text,'hex');}finally{await file.close();}throw new CheckpointError('Undo unavailable; git could not read the worktree');}
+            catch(error){
+                if(!isFsError(error,'ENOENT'))throw error;
+                const key=randomBytes(32),file=await open(path,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+                try{await file.writeFile(key.toString('hex')+'\n');}finally{await file.close();}
+                return key;
+            }
+        })();
+        // A failure isn't kept: the next checkpoint tries again.
+        this.checkpointKeyFile.catch(()=>{this.checkpointKeyFile=undefined;});
+        return this.checkpointKeyFile;
+    }
+    // The repository AI Term recorded for this agent's worktree, and the signing key: what every checkpoint step is bound to.
+    async checkpointContext(id:string):Promise<CheckpointContext>{
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        this.checkpointSlug(live);
+        const repo=live.info.worktree?this.worktreeRecords.get(live.info.worktree)?.repo:undefined;
+        if(!repo)throw new CheckpointError('This agent has no worktree; checkpoints need one');
+        return {repo,key:await this.checkpointKey()};
+    }
     async checkpointTurn(id:string):Promise<void>{
         const live=this.sessions.get(id);if(!live||!live.info.worktree)return;
         let settings:Settings|null=null;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; checkpoints stay on');}
         if(settings?.checkpoints===false)return;
         await this.inCheckpointQueue(id,async()=>{
-            try{const path=live.info.worktree;if(!path||!await isWorktreeTop(path))throw new Error('not its worktree');await snapshot(path,this.checkpointSlug(live));}
+            try{const path=live.info.worktree;if(!path)return;await snapshot(path,this.checkpointSlug(live),await this.checkpointContext(id));}
             catch{this.log.error('Checkpoint failed; the agent goes on');}
         });
     }
-    // Refused while the agent works or asks you something: its next write could land between the plan and the restore.
-    private async undoTarget(id:string):Promise<{live:Live;path:string;slug:string}>{
+    // Refused while the agent works or asks you something: checked when asked, and again in the agent's queue right
+    // before the restore (a turn may have started while it waited behind a checkpoint).
+    private async undoTarget(id:string):Promise<{live:Live;path:string;slug:string;ctx:CheckpointContext}>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         let settings:Settings|null=null;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; checkpoints stay on');}
         if(settings?.checkpoints===false)throw new CheckpointError('Checkpoints are off · /settings u turns them on');
+        this.undoIdle(live);
+        const slug=this.checkpointSlug(live),path=live.info.worktree??'',ctx=await this.checkpointContext(id);
+        return {live,path,slug,ctx};
+    }
+    private undoIdle(live:Live):void{
         if(['running','starting'].includes(live.info.status))throw new CheckpointError('Stop or wait for the agent first; it is running');
         if(live.info.status==='waiting')throw new CheckpointError('Stop or wait for the agent first; it is asking');
-        const slug=this.checkpointSlug(live),path=live.info.worktree??'';
-        if(!await isWorktreeTop(path))throw new CheckpointError('Undo unavailable; git could not read the worktree');
-        return {live,path,slug};
     }
     async undoPlan(id:string,kind:'undo'|'redo'):Promise<UndoPlan>{
-        const {live,path,slug}=await this.undoTarget(id);
-        return this.inCheckpointQueue(id,()=>undoPlan(path,slug,kind,live.info.title).catch((error:unknown)=>{throw this.undoError(error);}));
+        const {live,path,slug,ctx}=await this.undoTarget(id);
+        return this.inCheckpointQueue(id,()=>undoPlan(path,slug,kind,ctx,live.info.title).catch((error:unknown)=>{throw this.undoError(error);}));
     }
     async undo(id:string,kind:'undo'|'redo',fingerprint:string):Promise<{restored:number}>{
-        const {path,slug}=await this.undoTarget(id);
-        return this.inCheckpointQueue(id,()=>applyUndo(path,slug,kind,fingerprint).catch((error:unknown)=>{throw this.undoError(error);}));
+        const {live,path,slug,ctx}=await this.undoTarget(id);
+        return this.inCheckpointQueue(id,async()=>{this.undoIdle(live);return applyUndo(path,slug,kind,fingerprint,ctx).catch((error:unknown)=>{throw this.undoError(error);});});
     }
     private undoError(error:unknown):Error{
         if(error instanceof CheckpointError)return error;
@@ -882,24 +912,24 @@ export class SessionManager extends EventEmitter {
     async diff(id:string):Promise<AgentDiff>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
-        const {path,base,label}=await this.diffTarget(live);
+        const {path,base,label,repo}=await this.diffTarget(live);
         let body;
-        try{body=await worktreeDiff(path,base);}catch(error){this.log.error(`Diff failed: ${error instanceof GitError?error.message:'unexpected error'}`);throw new Error('Diff unavailable; git could not read the worktree',{cause:error});}
+        try{body=await worktreeDiff(path,base,repo);}catch(error){this.log.error(`Diff failed: ${error instanceof GitError?error.message:'unexpected error'}`);throw new Error('Diff unavailable; git could not read the worktree',{cause:error});}
         return {title:live.info.title,branch:live.info.branch??'',base:label,...body};
     }
-    private async diffTarget(live:Live):Promise<{path:string;base:string;label:string}>{
+    private async diffTarget(live:Live):Promise<{path:string;base:string;label:string;repo?:string}>{
         const path=live.info.worktree,record=path?this.worktreeRecords.get(path):undefined;
         if(!path||!live.info.branch)throw new Error('This agent has no worktree to diff');
         const base=record?.baseCommit;
         if(!base||!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(base))throw new Error('This worktree has no recorded start to diff against');
         // The folder must still be that worktree: an agent can rewrite its .git file to point somewhere else.
         if(!await isWorktreeTop(path))throw new Error('Diff unavailable; git could not read the worktree');
-        return {path,base,label:`${record?.baseBranch??'start'} @ ${base.slice(0,7)}`};
+        return {path,base,label:`${record?.baseBranch??'start'} @ ${base.slice(0,7)}`,...(record?.repo?{repo:record.repo}:{})};
     }
     private async refreshDiffStat(live:Live):Promise<void>{
         // Only the latest count lands, and only while the agent is still listed and finished.
         const seq=live.diffStatSeq=(live.diffStatSeq??0)+1;
-        try{const {path,base}=await this.diffTarget(live),stat=await worktreeStat(path,base);if(seq!==live.diffStatSeq||this.sessions.get(live.info.id)!==live||live.info.status!=='done')return;live.info.diffStat=stat;this.event({kind:'session.updated',session:{...live.info}});void this.persist();}
+        try{const {path,base,repo}=await this.diffTarget(live),stat=await worktreeStat(path,base,repo);if(seq!==live.diffStatSeq||this.sessions.get(live.info.id)!==live||live.info.status!=='done')return;live.info.diffStat=stat;this.event({kind:'session.updated',session:{...live.info}});void this.persist();}
         catch{this.log.error('Diff stat unavailable for a finished agent');}
     }
     async stop(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
@@ -946,7 +976,7 @@ export class SessionManager extends EventEmitter {
     // v0.7.2: a worktree's checkpoints and redo go with it (after the unchanged v0.3.2 removal), from its repository.
     private async dropWorktreeCheckpoints(record:WorktreeRecord):Promise<void>{
         if(!record.repo||!record.branch.startsWith('ai/'))return;
-        try{await dropCheckpoints(record.repo,record.branch.slice(3));}catch{this.log.error('Checkpoints of a removed worktree could not be removed');}
+        try{await dropCheckpoints(record.repo,record.branch.slice(3),{repo:record.repo,key:await this.checkpointKey()});}catch{this.log.error('Checkpoints of a removed worktree could not be removed');}
     }
     async rename(id: string, title: string): Promise<SessionInfo> { if (this.closing) throw new Error('Background service is stopping'); const live = this.sessions.get(id); if (!live || !isTitle(title))
         throw new Error('Invalid session or title'); live.info.title = title; await this.persist(); this.event({ kind: 'session.updated', session: { ...live.info } }); return { ...live.info }; }

@@ -58,8 +58,9 @@ async function readUntracked(root: string, path: string): Promise<Omit<DiffFile,
 }
 // git writes an unquoted header as `diff --git a/<old> b/<new>`; a quoted one (unusual names) can't be checked this way.
 const owns = (section: Section, entry: NameStatus) => section.header.includes('"') || !section.header.startsWith('diff --git ') || section.header === `diff --git a/${entry.from ?? entry.path} b/${entry.path}`;
-export async function worktreeDiff(path: string, base: string): Promise<Body> {
-  const git = await isolatedGitDir(path, base);
+// repo: the repository AI Term recorded for the worktree (the git files inside it must lead there); absent for older records.
+export async function worktreeDiff(path: string, base: string, repo?: string): Promise<Body> {
+  const git = await isolatedGitDir(path, base, repo ? { repo } : {});
   try { return await diffWith(path, base, git); } finally { await git.dispose(); }
 }
 async function diffWith(path: string, base: string, git: IsolatedGit): Promise<Body> {
@@ -88,8 +89,8 @@ async function diffWith(path: string, base: string, git: IsolatedGit): Promise<B
   return cap(files, patch === null || names.length > room || !aligned);
 }
 // The card's `+N −M`: git's counts, plus untracked files' lines (the first 200 files; a folder or binary counts as none).
-export async function worktreeStat(path: string, base: string): Promise<DiffStat> {
-  const git = await isolatedGitDir(path, base);
+export async function worktreeStat(path: string, base: string, repo?: string): Promise<DiffStat> {
+  const git = await isolatedGitDir(path, base, repo ? { repo } : {});
   try {
     // The names first: a listed path outside the worktree refuses the count before git reads any content.
     await diffNameStatus(path, base, git);

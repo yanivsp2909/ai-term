@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFile, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
 
@@ -225,10 +226,23 @@ export function blobBytes(cwd: string, args: string[], hash: string, env: Record
     });
 }
 // common: the repository's shared git folder (refs live there); env: what a call that writes objects needs (writes).
+// A small regular file's text (64 KiB at most), or '' when it isn't one: a FIFO or a device would hang or flood a read.
+async function smallText(path: string): Promise<string> {
+    let file;
+    try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ELOOP')) return ''; throw error; }
+    try {
+        if (!(await file.stat()).isFile()) return '';
+        const buffer = Buffer.alloc(64 * 1024), { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+        return buffer.subarray(0, bytesRead).toString('utf8');
+    } finally { await file.close(); }
+}
 export interface IsolatedGit { args: string[]; common: string; env: Record<string, string>; dispose(): Promise<void> }
 // base: a commit for HEAD and the hash format (diffs); none for a snapshot. writes: new objects go straight into the
 // repository's own object store (checkpoints must outlive this folder), still without reading its config.
-export async function isolatedGitDir(path: string, base?: string, options: { writes?: boolean } = {}): Promise<IsolatedGit> {
+// repo: the repository AI Term recorded for this worktree. The worktree's own `.git` file and its admin dir's
+// `commondir` are the agent's to write, so they must lead back to exactly that repository (v0.7.2 review), or nothing
+// is read from or written to anywhere they point.
+export async function isolatedGitDir(path: string, base?: string, options: { writes?: boolean; repo?: string } = {}): Promise<IsolatedGit> {
     if (!isSafeAbsolutePath(path) || base !== undefined && !COMMIT.test(base)) throw new GitError('Git check failed');
     // Where the worktree's git data is, read from its files (no git, so no config is read): `.git` is the main repo's
     // folder, or a file `gitdir: <admin dir>` whose `commondir` names the shared repository.
@@ -239,11 +253,15 @@ export async function isolatedGitDir(path: string, base?: string, options: { wri
     else throw new GitError('Git check failed');
     const common = await readFile(join(gitDir, 'commondir'), 'utf8').then(text => resolve(gitDir, text.trim()), (error: unknown) => { if (isFsError(error, 'ENOENT')) return gitDir; throw error; });
     if (!isSafeAbsolutePath(gitDir) || !isSafeAbsolutePath(common)) throw new GitError('Git check failed');
+    if (options.repo !== undefined) {
+        const expected = await realpath(join(options.repo, '.git')), real = await realpath(common);
+        if (real !== expected || gitDir !== dotGit && dirname(await realpath(gitDir)) !== join(expected, 'worktrees')) throw new GitError('Git check failed');
+    }
     const temp = await mkdtemp(join(tmpdir(), 'ai-term-diff-'));
     try {
         await mkdir(join(temp, 'objects', 'info'), { recursive: true }); await mkdir(join(temp, 'refs'));
         // The hash format: from the base, else from the repository's config, read as text (git never reads it here).
-        const sha256 = base ? base.length === 64 : /objectformat\s*=\s*sha256/i.test(await readFile(join(common, 'config'), 'utf8').catch(() => ''));
+        const sha256 = base ? base.length === 64 : /objectformat\s*=\s*sha256/i.test(await smallText(join(common, 'config')));
         await writeFile(join(temp, 'config'), `[core]\n\trepositoryformatversion = ${sha256 ? 1 : 0}\n\tbare = false\n${sha256 ? '[extensions]\n\tobjectformat = sha256\n' : ''}`, { mode: 0o600 });
         await writeFile(join(temp, 'HEAD'), base ? `${base}\n` : 'ref: refs/heads/ai-term-snapshot\n', { mode: 0o600 });
         // The repository's own ignore list (info/exclude) is plain text, copied so a snapshot skips what git status skips.
