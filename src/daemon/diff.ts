@@ -1,25 +1,28 @@
 import { constants } from 'node:fs';
-import { lstat, open } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { lstat, open, realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, join } from 'node:path';
 import { DIFF_FILE_LINES, DIFF_LINE_CHARS, DIFF_MAX_FILES, DIFF_MAX_LINES, diffLine, diffPath, type AgentDiff, type DiffFile, type DiffStat, type DiffStatus } from '../shared/diff.js';
 import { isFsError } from '../shared/paths.js';
-import { diffNameStatus, diffNumstat, diffPatch, GitError, untrackedFiles } from './git.js';
+import { diffNameStatus, diffNumstat, diffPatch, GitError, untrackedFiles, type NameStatus } from './git.js';
 
 // v0.7.1: an agent's worktree against the commit it started from: committed and uncommitted work from git's own diff,
 // untracked (not ignored) files read here as all-added. Text only: every line goes through diffLine; the totals keep
 // counting past the caps, and `capped` says something was cut.
 const UNTRACKED_READ = 256 * 1024;
 // What is shown stays well inside one 4 MiB protocol frame (JSON escaping can double a line).
-const SHOWN_BYTES = 1536 * 1024;
+const SHOWN_BYTES = 1024 * 1024;
 const STATUS: Record<string, DiffStatus> = { A: 'added', M: 'modified', T: 'modified', D: 'deleted', R: 'renamed', C: 'added' };
 type Body = Pick<AgentDiff, 'files' | 'added' | 'removed' | 'capped'>;
 
 // Split git's unified diff into one section per file, in git's order (the same order --name-status lists them).
-function sections(patch: string): { lines: string[]; binary: boolean }[] {
-  const out: { lines: string[]; binary: boolean }[] = [];
-  let current: { lines: string[]; binary: boolean; inHunk: boolean } | null = null;
+// header: git's own section line, used to check that each section belongs to the file it is paired with.
+interface Section { header: string; lines: string[]; binary: boolean }
+function sections(patch: string): Section[] {
+  const out: Section[] = [];
+  let current: (Section & { inHunk: boolean }) | null = null;
   for (const line of patch.split('\n')) {
-    if (line.startsWith('diff --git ')) { current = { lines: [], binary: false, inHunk: false }; out.push(current); continue; }
+    // A merge conflict shows as a combined diff (diff --cc): still one section.
+    if (line.startsWith('diff --git ') || line.startsWith('diff --cc ') || line.startsWith('diff --combined ')) { current = { header: line, lines: [], binary: false, inHunk: false }; out.push(current); continue; }
     if (!current) continue;
     if (line.startsWith('@@')) current.inHunk = true;
     if (!current.inHunk) { if (line.startsWith('Binary files ') || line === 'GIT binary patch') current.binary = true; continue; }
@@ -31,8 +34,15 @@ function sections(patch: string): { lines: string[]; binary: boolean }[] {
 async function untracked(root: string, name: string): Promise<Omit<DiffFile, 'path' | 'status'>> {
   if (isAbsolute(name) || name.split('/').includes('..')) return { added: 0, removed: 0, lines: ['+(not shown)'] };
   const path = join(root, name);
+  // Unreadable is shown as such: one file (mode 000, a race, too many open files) never breaks the whole diff.
+  try { return await readUntracked(root, path); } catch { return { added: 0, removed: 0, lines: ['+(unreadable)'] }; }
+}
+async function readUntracked(root: string, path: string): Promise<Omit<DiffFile, 'path' | 'status'>> {
   let info;
   try { info = await lstat(path); } catch (error) { if (isFsError(error, 'ENOENT')) return { added: 0, removed: 0, lines: ['+(gone)'] }; throw error; }
+  // O_NOFOLLOW guards the last part of the path only: a folder on the way that became a symlink would lead outside.
+  const folder = await realpath(dirname(path)), top = await realpath(root);
+  if (folder !== top && !folder.startsWith(top + '/')) return { added: 0, removed: 0, lines: ['+(not shown)'] };
   if (info.isSymbolicLink()) return { added: 1, removed: 0, lines: ['+→ symlink (not followed)'] };
   if (info.isDirectory()) return { added: 0, removed: 0, lines: ['+(a folder with its own git repository, not shown)'] };
   if (!info.isFile()) return { added: 0, removed: 0, lines: ['+(not a regular file)'] };
@@ -46,18 +56,32 @@ async function untracked(root: string, name: string): Promise<Omit<DiffFile, 'pa
     return { added: lines.length, removed: 0, lines: lines.map(line => `+${line}`), ...(more ? { cut: true as const } : {}) };
   } finally { await file.close(); }
 }
+// git writes an unquoted header as `diff --git a/<old> b/<new>`; a quoted one (unusual names) can't be checked this way.
+const owns = (section: Section, entry: NameStatus) => section.header.includes('"') || !section.header.startsWith('diff --git ') || section.header === `diff --git a/${entry.from ?? entry.path} b/${entry.path}`;
 export async function worktreeDiff(path: string, base: string): Promise<Body> {
   const listed = await diffNameStatus(path, base);
   let patch: string | null;
   try { patch = await diffPatch(path, base); } catch (error) { if (error instanceof GitError && error.message === 'Diff too large') patch = null; else throw error; }
   const parts = patch === null ? [] : sections(patch), files: DiffFile[] = [];
-  listed.forEach((entry, i) => {
-    const part = parts[i], lines = part?.lines ?? (patch === null ? ['(too large to show)'] : []);
+  let next = 0, aligned = true;
+  for (const entry of listed) {
+    // A type change (a file that became a symlink) is one name-status entry but two sections: removed, then added.
+    const own = aligned ? parts.slice(next, next + (entry.code === 'T' ? 2 : 1)) : [];
+    if (aligned && own.some(section => !owns(section, entry))) aligned = false;
+    if (aligned) next += own.length;
+    const shown = aligned ? own : [], lines = shown.length ? shown.flatMap(section => section.lines) : patch === null ? ['(too large to show)'] : aligned ? [] : ['(diff not shown)'];
     const added = lines.filter(line => line.startsWith('+')).length, removed = lines.filter(line => line.startsWith('-')).length;
-    files.push({ path: diffPath(entry.path), status: STATUS[entry.code] ?? 'modified', ...(entry.from ? { from: diffPath(entry.from) } : {}), added, removed, lines, ...(part?.binary ? { binary: true as const, lines: ['(binary file, not shown)'] } : {}) });
-  });
-  for (const name of await untrackedFiles(path)) files.push({ path: diffPath(name), status: 'untracked', ...(await untracked(path, name)) });
-  return cap(files, patch === null);
+    files.push({ path: diffPath(entry.path), status: STATUS[entry.code] ?? 'modified', ...(entry.from ? { from: diffPath(entry.from) } : {}), added, removed, lines, ...(shown.some(section => section.binary) ? { binary: true as const, lines: ['(binary file, not shown)'] } : {}) });
+  }
+  // Untracked files past the file cap are counted as cut, never opened; reading stops once the line cap is reached.
+  const names = await untrackedFiles(path), room = Math.max(0, DIFF_MAX_FILES - files.length);
+  let read = 0;
+  for (const name of names.slice(0, room)) {
+    if (read >= DIFF_MAX_LINES) { files.push({ path: diffPath(name), status: 'untracked', added: 0, removed: 0, lines: [], cut: true }); continue; }
+    const file = await untracked(path, name); read += file.lines.length;
+    files.push({ path: diffPath(name), status: 'untracked', ...file });
+  }
+  return cap(files, patch === null || names.length > room || !aligned);
 }
 // The card's `+N −M`: git's counts, plus untracked files' lines (the first 200 files; a folder or binary counts as none).
 export async function worktreeStat(path: string, base: string): Promise<DiffStat> {
@@ -70,6 +94,8 @@ function cap(all: DiffFile[], tooLarge: boolean): Body {
   let shown = 0, bytes = 0, capped = tooLarge || all.length > DIFF_MAX_FILES;
   const files = all.slice(0, DIFF_MAX_FILES).map(file => {
     const room = Math.max(0, Math.min(DIFF_FILE_LINES, DIFF_MAX_LINES - shown)), lines: string[] = [];
+    // Names count too: 500 long paths alone could otherwise fill a frame.
+    bytes += Buffer.byteLength(file.path) + Buffer.byteLength(file.from ?? '') + 64;
     for (const raw of file.lines.slice(0, room)) { const line = diffLine(raw); bytes += Buffer.byteLength(line) + 4; if (bytes > SHOWN_BYTES) break; lines.push(line); }
     const cut = file.cut || file.lines.length > lines.length;
     shown += lines.length; if (cut) capped = true;

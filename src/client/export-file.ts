@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { open, realpath, stat } from 'node:fs/promises';
+import { open, realpath, stat, unlink } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 
@@ -21,8 +21,10 @@ export async function saveExport(html: string, options: { title: string; now: Da
     let file;
     try { file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
     catch (error) { if (isFsError(error, 'EEXIST')) continue; throw new ExportError('Export could not be saved'); }
-    try { await file.writeFile(html, 'utf8'); } catch { await file.close(); throw new ExportError('Export could not be saved'); }
-    await file.close();
+    // A file that couldn't be written fully is removed again: no half page is left behind. The save already failed
+    // and says so; a second failure while cleaning up can't add anything the message doesn't.
+    try { await file.writeFile(html, 'utf8'); await file.close(); }
+    catch { await file.close().catch(() => undefined); await unlink(path).catch(() => undefined); throw new ExportError('Export could not be saved'); }
     return path;
   }
   throw new ExportError('Export could not be saved; too many exports with this name');

@@ -6,7 +6,7 @@ import { isFsError } from '../shared/paths.js';
 import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
 
 export class GitError extends Error {
-    constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed' | 'Not a git repo' | 'Diff too large') { super(message); }
+    constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed' | 'Not a git repo' | 'Diff too large' | 'Unsafe filter config') { super(message); }
 }
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // An explicit env prevents inherited GIT_DIR/GIT_WORK_TREE, hooks and routing from targeting a different checkout.
@@ -205,10 +205,27 @@ export async function forceDeleteBranch(repo: string, branch: string): Promise<v
 // v0.7.1 diff (read-only). A repo's config could name an external diff or textconv command, so both are off; colour and
 // submodules too. The base is a commit id checked here, and --end-of-options keeps it from ever reading as an option.
 const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--no-color', '--find-renames', '--ignore-submodules=all'];
+// Comparing the working tree runs any clean filter its attributes name, a command from the repo's config (which an
+// agent may write). So attributes are read from the empty tree, no attributes file is read, and every filter driver
+// the config defines is emptied for this call: whatever .git/info/attributes says, there is nothing left to run.
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+async function neutral(path: string): Promise<string[]> {
+    let names: string;
+    // Exit 1 means no filter is configured at all.
+    try { names = await run(path, ['config', '--name-only', '--get-regexp', '^filter\\.']); } catch (error) { if (error instanceof GitError && error.message === 'Git check failed') names = ''; else throw error; }
+    const drivers = new Set<string>();
+    for (const name of names.split('\n').filter(Boolean)) {
+        const driver = name.slice('filter.'.length, name.lastIndexOf('.'));
+        // A -c key can't carry '=' or anything git would read differently: such a driver can't be emptied, so no diff.
+        if (!/^[A-Za-z0-9._-]{1,128}$/.test(driver)) throw new GitError('Unsafe filter config');
+        drivers.add(driver);
+    }
+    return [`--attr-source=${EMPTY_TREE}`, '-c', 'core.attributesFile=/dev/null', ...[...drivers].flatMap(d => ['-c', `filter.${d}.clean=`, '-c', `filter.${d}.smudge=`, '-c', `filter.${d}.process=`, '-c', `filter.${d}.required=false`])];
+}
 export interface NameStatus { code: string; path: string; from?: string }
 export async function diffNameStatus(path: string, base: string): Promise<NameStatus[]> {
     if (!COMMIT.test(base)) throw new GitError('Git check failed');
-    const fields = (await run(path, ['diff', ...DIFF_FLAGS, '--name-status', '-z', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: BIG })).split('\0'), out: NameStatus[] = [];
+    const fields = (await run(path, [...await neutral(path), 'diff', ...DIFF_FLAGS, '--name-status', '-z', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: BIG })).split('\0'), out: NameStatus[] = [];
     // R and C carry a score and two names (old, then new); the rest one name.
     for (let i = 0; i < fields.length - 1;) {
         const code = fields[i] ?? '', two = /^[RC]/.test(code), first = fields[i + 1] ?? '', second = two ? fields[i + 2] ?? '' : '';
@@ -221,12 +238,12 @@ export async function diffNameStatus(path: string, base: string): Promise<NameSt
 // The unified diff itself, capped at 32 MiB of git output (larger: 'Diff too large', and only the file list is shown).
 export async function diffPatch(path: string, base: string): Promise<string> {
     if (!COMMIT.test(base)) throw new GitError('Git check failed');
-    return run(path, ['diff', ...DIFF_FLAGS, '--unified=3', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: 32 * 1024 * 1024, timeout: 30_000 });
+    return run(path, [...await neutral(path), 'diff', ...DIFF_FLAGS, '--unified=3', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: 32 * 1024 * 1024, timeout: 30_000 });
 }
 export async function diffNumstat(path: string, base: string): Promise<{ added: number; removed: number; files: number }> {
     if (!COMMIT.test(base)) throw new GitError('Git check failed');
     const stat = { added: 0, removed: 0, files: 0 };
-    for (const line of (await run(path, ['diff', ...DIFF_FLAGS, '--numstat', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: BIG })).split('\n')) {
+    for (const line of (await run(path, [...await neutral(path), 'diff', ...DIFF_FLAGS, '--numstat', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: BIG })).split('\n')) {
         const match = line.match(/^(\d+|-)\t(\d+|-)\t/);
         if (!match) continue;
         stat.files++; stat.added += Number(match[1]) || 0; stat.removed += Number(match[2]) || 0;
@@ -235,6 +252,6 @@ export async function diffNumstat(path: string, base: string): Promise<{ added: 
 }
 // Untracked files that aren't ignored (the repo's own ignore rules; no global ones, GIT_CONFIG_GLOBAL is /dev/null).
 export async function untrackedFiles(path: string): Promise<string[]> {
-    return (await run(path, ['ls-files', '--others', '--exclude-standard', '-z', '--'], 'Git check failed', { maxBuffer: BIG })).split('\0').filter(Boolean);
+    return (await run(path, [...await neutral(path), 'ls-files', '--others', '--exclude-standard', '-z', '--'], 'Git check failed', { maxBuffer: BIG })).split('\0').filter(Boolean);
 }
 export async function isWorktreeTop(path: string): Promise<boolean> { return (await identity(path).catch(() => null))?.top === path; }

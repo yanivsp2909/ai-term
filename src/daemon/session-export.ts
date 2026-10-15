@@ -1,7 +1,8 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { redactSecrets } from '../shared/redact.js';
-import { EXPORT_ENTRY_CHARS, EXPORT_MAX_ENTRIES, EXPORT_TRANSCRIPT_CHARS, type ExportEntry } from '../shared/session-export.js';
+import { EXPORT_ENTRY_CHARS, EXPORT_MAX_ENTRIES, EXPORT_TRANSCRIPT_CHARS, type ExportEntry, type SessionExport } from '../shared/session-export.js';
+import { isFsError } from '../shared/paths.js';
 
 // v0.7.1 /export: AI Term's agent writes its transcript (src/agent/transcript.ts) into the daemon's private session
 // folder. It is read here only, through no symlink, at most 8 MiB, one JSON object per line; a line that isn't one is
@@ -45,4 +46,23 @@ export async function readTranscript(path: string): Promise<{ entries: ExportEnt
     entries.push(next); chars += next.text.length;
   }
   return { entries, truncated };
+}
+
+// No transcript file yet (the agent never wrote one) is an empty conversation, not a capped one.
+export async function transcriptFor(path: string): Promise<{ entries: ExportEntry[]; truncated: boolean }> {
+  try { return await readTranscript(path); } catch (error) { if (isFsError(error, 'ENOENT')) return { entries: [], truncated: false }; throw error; }
+}
+// Names the agent chose (its title, branch) and paths can carry a secret too.
+export function redactExportMeta(data: SessionExport): SessionExport {
+  return { ...data, title: redactSecrets(data.title), cwd: redactSecrets(data.cwd), ...(data.branch ? { branch: redactSecrets(data.branch) } : {}), model: data.model === null ? null : redactSecrets(data.model) };
+}
+// The answer is one protocol frame (4 MiB): sized by its JSON bytes, not characters (escapes and CJK grow it). The
+// screen text keeps its end, then the conversation drops entries from its end, until it fits 3 MiB.
+const FRAME_BUDGET = 3 * 1024 * 1024;
+export function fitExport(data: SessionExport): SessionExport {
+  let out = data;
+  const size = () => Buffer.byteLength(JSON.stringify(out));
+  while (size() > FRAME_BUDGET && out.text.length > 0) out = { ...out, text: out.text.slice(Math.ceil(out.text.length / 4)), truncated: true };
+  while (size() > FRAME_BUDGET && out.transcript?.length) out = { ...out, transcript: out.transcript.slice(0, Math.floor(out.transcript.length * 3 / 4)), transcriptTruncated: true };
+  return out;
 }

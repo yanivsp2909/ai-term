@@ -17,7 +17,8 @@ export function diffLine(text: string): string {
   return [...clean].length > DIFF_LINE_CHARS ? [...clean].slice(0, DIFF_LINE_CHARS).join('') + '…' : clean;
 }
 // A path as git printed it, shown as text: no controls, no escapes, bounded.
-export function diffPath(path: string): string { return [...diffLine(path)].slice(0, DIFF_PATH_CHARS).join(''); }
+// A name of nothing printable (only controls or zero-width characters) still gets a visible row.
+export function diffPath(path: string): string { return [...diffLine(path)].slice(0, DIFF_PATH_CHARS).join('').trim() || '(unprintable name)'; }
 
 const STATUSES: readonly DiffStatus[] = ['added', 'modified', 'deleted', 'renamed', 'untracked'];
 // eslint-disable-next-line no-control-regex -- refusing controls is the point.

@@ -5,7 +5,10 @@ import { createTheme } from './theme.js';
 // v0.7.1 /export: one self-contained HTML page. Everything from the session is escaped text; no script, no link, no
 // outside request (a Content-Security-Policy says so too). Colors come from the design tokens through the theme module:
 // graphite for dark, light for light, by the reader's system setting.
-const escape = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+// Controls (but new lines and tabs) and bidi overrides go first: reordered text could make the page say something the
+// session didn't (Trojan Source); then HTML escaping.
+// eslint-disable-next-line no-control-regex -- removing controls is the point.
+const escape = (text: string) => text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069\u061c\u200e\u200f]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 function palette(name: 'graphite' | 'light'): string {
   const c = createTheme(name).colors;
   return `--bg:${c.bg};--surface:${c.surface};--line:${c.line};--ink:${c.ink};--ink-2:${c['ink-2']};--ink-3:${c['ink-3']};--accent:${c.accent};`;

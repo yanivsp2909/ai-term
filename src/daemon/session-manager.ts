@@ -27,7 +27,7 @@ import { SettingsStore } from './settings.js';
 import { GitError, isWorktreeTop } from './git.js';
 import { worktreeDiff, worktreeStat } from './diff.js';
 import type { AgentDiff } from '../shared/diff.js';
-import { readTranscript } from './session-export.js';
+import { fitExport, redactExportMeta, transcriptFor } from './session-export.js';
 import { EXPORT_TEXT_CHARS, type SessionExport } from '../shared/session-export.js';
 import { redactSecrets } from '../shared/redact.js';
 import { prepareWorktree, serialize } from './worktrees.js';
@@ -57,6 +57,7 @@ export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry alrea
     'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
     'Agent does not accept pasted lines','Agent is printing too fast to check','Agent is running a tool','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
+    diffStatSeq?: number; // v0.7.1: which diff-stat count is the latest (a stale one never lands)
     info: SessionInfo;
     host?: PtyHost;
     mirror: Mirror;
@@ -696,6 +697,8 @@ export class SessionManager extends EventEmitter {
         Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
         // v0.7.1: a finished turn counts what the worktree changed for the card (`+N −M · ready to review`).
         if(next.status==='done'&&previous.status!=='done'&&live.info.worktree)void this.refreshDiffStat(live);
+        // Working again: the last count is stale until the next finished turn.
+        if(next.status==='running'&&live.info.diffStat){delete live.info.diffStat;live.diffStatSeq=(live.diffStatSeq??0)+1;}
         this.event({kind:'session.updated',session:{...live.info}});live.outputClock?.sent();
         // Notifications listen here; a listener failure must never stop status from applying.
         try{this.emit('statusChanged',{...live.info},previous,next,live.attached);}catch{this.log.error('Status listener failed');}
@@ -818,11 +821,11 @@ export class SessionManager extends EventEmitter {
         const info=live.info,clean=redactSecrets(text.text),cutText=clean.length>EXPORT_TEXT_CHARS;
         let transcript:SessionExport['transcript']=null,transcriptTruncated:boolean|undefined;
         if(info.engine==='ai-term'){
-            try{const read=await readTranscript(await agentTranscript(this.paths.root,id));transcript=read.entries;transcriptTruncated=read.truncated;}
-            catch(error){if(!isFsError(error,'ENOENT')){this.log.error('Export: the agent transcript could not be read');}transcript=[];transcriptTruncated=true;}
+            try{const read=await transcriptFor(await agentTranscript(this.paths.root,id));transcript=read.entries;transcriptTruncated=read.truncated;}
+            catch{this.log.error('Export: the agent transcript could not be read');transcript=[];transcriptTruncated=true;}
         }
-        return {title:info.title,engine:info.engine,model:info.model,cwd:info.cwd,...(info.branch?{branch:info.branch}:{}),createdAt:info.createdAt,exportedAt:new Date().toISOString(),
-            text:cutText?clean.slice(clean.length-EXPORT_TEXT_CHARS):clean,truncated:text.truncated||cutText,transcript,...(transcriptTruncated!==undefined?{transcriptTruncated}:{})};
+        return fitExport(redactExportMeta({title:info.title,engine:info.engine,model:info.model,cwd:info.cwd,...(info.branch?{branch:info.branch}:{}),createdAt:info.createdAt,exportedAt:new Date().toISOString(),
+            text:cutText?clean.slice(clean.length-EXPORT_TEXT_CHARS):clean,truncated:text.truncated||cutText,transcript,...(transcriptTruncated!==undefined?{transcriptTruncated}:{})}));
     }
     // v0.7.1 d and /diff: the agent's worktree against the commit it started from. Read-only; text only (src/daemon/diff.ts).
     async diff(id:string):Promise<AgentDiff>{
@@ -843,7 +846,9 @@ export class SessionManager extends EventEmitter {
         return {path,base,label:`${record?.baseBranch??'start'} @ ${base.slice(0,7)}`};
     }
     private async refreshDiffStat(live:Live):Promise<void>{
-        try{const {path,base}=await this.diffTarget(live),stat=await worktreeStat(path,base);live.info.diffStat=stat;this.event({kind:'session.updated',session:{...live.info}});void this.persist();}
+        // Only the latest count lands, and only while the agent is still listed and finished.
+        const seq=live.diffStatSeq=(live.diffStatSeq??0)+1;
+        try{const {path,base}=await this.diffTarget(live),stat=await worktreeStat(path,base);if(seq!==live.diffStatSeq||this.sessions.get(live.info.id)!==live||live.info.status!=='done')return;live.info.diffStat=stat;this.event({kind:'session.updated',session:{...live.info}});void this.persist();}
         catch{this.log.error('Diff stat unavailable for a finished agent');}
     }
     async stop(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
