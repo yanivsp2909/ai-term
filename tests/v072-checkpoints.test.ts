@@ -225,3 +225,50 @@ it('MEDIUM (security review): a worktree whose git files point at another reposi
   await expect(snapshot(tree, 'fixer', ctx)).rejects.toThrow();
   expect((await git(victim, 'for-each-ref')).stdout).toBe('');
 });
+
+// ---- Part D fix review ----
+it('MEDIUM (fix review): a restore that changes nothing leaves the redo stack and cursor as they were', async () => {
+  const { tree, ctx } = await fixture();
+  await writeFile(join(tree, 'f.txt'), '1\n'); await snapshot(tree, 'fixer', ctx);
+  await mkdir(join(tree, 'ro')); await writeFile(join(tree, 'ro', 'x.txt'), 'x\n'); await snapshot(tree, 'fixer', ctx);
+  const { chmod } = await import('node:fs/promises'); await chmod(join(tree, 'ro'), 0o500);
+  try {
+    const plan = await undoPlan(tree, 'fixer', 'undo', ctx);
+    await expect(applyUndo(tree, 'fixer', 'undo', plan.fingerprint, ctx)).rejects.toThrow('Nothing was restored; the worktree could not be written');
+    await expect(undoPlan(tree, 'fixer', 'redo', ctx)).rejects.toThrow('Nothing to redo');
+  } finally { await chmod(join(tree, 'ro'), 0o700); }
+});
+
+it('LOW-MEDIUM (fix review): a manual edit after /undo, then /undo, goes back to where the undo went, not forward', async () => {
+  const { tree, ctx } = await fixture();
+  for (const v of ['1', '2', '3']) { await writeFile(join(tree, 'f.txt'), `${v}\n`); await snapshot(tree, 'fixer', ctx); }
+  let plan = await undoPlan(tree, 'fixer', 'undo', ctx); await applyUndo(tree, 'fixer', 'undo', plan.fingerprint, ctx);
+  await writeFile(join(tree, 'f.txt'), 'edited\n');
+  plan = await undoPlan(tree, 'fixer', 'undo', ctx);
+  expect(plan.target).toBe(2);
+});
+
+it('LOW (fix review): an ignored file at a path the checkpoint would restore is never replaced', async () => {
+  const { tree, ctx } = await fixture();
+  await writeFile(join(tree, 'secret.env'), 'old\n'); await snapshot(tree, 'fixer', ctx);
+  await rm(join(tree, 'secret.env')); await writeFile(join(tree, '.gitignore'), '*.log\nsecret.env\n'); await snapshot(tree, 'fixer', ctx);
+  await writeFile(join(tree, 'secret.env'), 'precious\n');
+  await expect(undoPlan(tree, 'fixer', 'undo', ctx)).rejects.toThrow('An ignored file is where the checkpoint has one; nothing was restored');
+  expect(await readFile(join(tree, 'secret.env'), 'utf8')).toBe('precious\n');
+});
+
+it('LOW (fix review): a leftover restore folder never enters a checkpoint; a worktree path that became a symlink is refused', async () => {
+  const { temp, tree, ctx } = await fixture();
+  await mkdir(join(tree, '.ai-term-restore-abcdef123456')); await writeFile(join(tree, '.ai-term-restore-abcdef123456', '0'), 'stale\n');
+  await writeFile(join(tree, 'y.txt'), 'y\n');
+  const made = await snapshot(tree, 'fixer', ctx);
+  expect((await git(tree, 'ls-tree', '-r', '--name-only', made?.commit ?? '', '--')).stdout).not.toContain('.ai-term-restore');
+  const link = join(temp, 'link'); await symlink(tree, link);
+  await expect(snapshot(link, 'fixer', ctx)).rejects.toThrow();
+});
+
+it('LOW (fix review): checkpoints of an earlier worktree with the same name are not this one\'s', async () => {
+  const { tree, ctx } = await fixture();
+  await writeFile(join(tree, 'z.txt'), 'z\n'); await snapshot(tree, 'fixer', { ...ctx, scope: 'earlier worktree' });
+  expect(await listCheckpoints(tree, 'fixer', { ...ctx, scope: 'this worktree' })).toEqual([]);
+});
