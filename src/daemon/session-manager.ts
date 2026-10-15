@@ -27,6 +27,9 @@ import { SettingsStore } from './settings.js';
 import { GitError, isWorktreeTop } from './git.js';
 import { worktreeDiff, worktreeStat } from './diff.js';
 import type { AgentDiff } from '../shared/diff.js';
+import { readTranscript } from './session-export.js';
+import { EXPORT_TEXT_CHARS, type SessionExport } from '../shared/session-export.js';
+import { redactSecrets } from '../shared/redact.js';
 import { prepareWorktree, serialize } from './worktrees.js';
 import { checkWorktree, deleteWorktree, unrecordedFolders, WorktreeError } from './worktree-removal.js';
 import { atomicWrite, keepCopy, moveAside, readState, StateLoadError } from './store.js';
@@ -808,6 +811,18 @@ export class SessionManager extends EventEmitter {
             }
             return {sessionId:id,...live.mirror.plainText()};
         });
+    }
+    // v0.7.1 /export: the session's screen text (its end, ~1 MiB) and, for AI Term's own agent, its transcript, all redacted.
+    async exportSession(id:string):Promise<SessionExport>{
+        const text=await this.text(id),live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        const info=live.info,clean=redactSecrets(text.text),cutText=clean.length>EXPORT_TEXT_CHARS;
+        let transcript:SessionExport['transcript']=null,transcriptTruncated:boolean|undefined;
+        if(info.engine==='ai-term'){
+            try{const read=await readTranscript(await agentTranscript(this.paths.root,id));transcript=read.entries;transcriptTruncated=read.truncated;}
+            catch(error){if(!isFsError(error,'ENOENT')){this.log.error('Export: the agent transcript could not be read');}transcript=[];transcriptTruncated=true;}
+        }
+        return {title:info.title,engine:info.engine,model:info.model,cwd:info.cwd,...(info.branch?{branch:info.branch}:{}),createdAt:info.createdAt,exportedAt:new Date().toISOString(),
+            text:cutText?clean.slice(clean.length-EXPORT_TEXT_CHARS):clean,truncated:text.truncated||cutText,transcript,...(transcriptTruncated!==undefined?{transcriptTruncated}:{})};
     }
     // v0.7.1 d and /diff: the agent's worktree against the commit it started from. Read-only; text only (src/daemon/diff.ts).
     async diff(id:string):Promise<AgentDiff>{

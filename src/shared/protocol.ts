@@ -137,6 +137,9 @@ export type Request = {
     // v0.7.1: the agent's worktree against the commit it started from, as text (d, /diff).
     kind:'sessions.diff'; sessionId:string;
 } | {
+    // v0.7.1 /export: the session's text (and AI Term agent transcript), redacted, for one HTML file the client saves.
+    kind:'sessions.export'; sessionId:string;
+} | {
     kind:'sessions.text'; sessionId:string; lastReply?:boolean;
 } | {
     kind:'sessions.send'; sessionId:string; text:string;
@@ -201,6 +204,7 @@ export interface SuccessResponse {
     keys?: KeyView[];
     key?: KeyView;
     diff?: import('./diff.js').AgentDiff;
+    exportData?: import('./session-export.js').SessionExport;
     results?: DeploymentTest[];
     found?: {name:string;provider:KeyProvider}[];
     sessions?: SessionInfo[];

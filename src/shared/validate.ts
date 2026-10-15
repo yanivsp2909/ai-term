@@ -6,6 +6,7 @@ import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DES
 import { isAgentCaps } from './agent-facts.js';
 import { PROVIDER_LABELS, isBedrockEndpoint, isDirectProvider, isLocalEndpoint } from './providers.js';
 import { isDiffStat, validateAgentDiff } from './diff.js';
+import { validateSessionExport } from './session-export.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
     // eslint-disable-next-line no-useless-escape
@@ -142,7 +143,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             break;
         case 'sessions.text':
             fields=['sessionId','lastReply'];if(!isUUID(v.sessionId)||v.lastReply!==undefined&&typeof v.lastReply!=='boolean')throw new ValidationError('Invalid session UUID');break;
-        case 'sessions.diff':
+        case 'sessions.diff': case 'sessions.export':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
         case 'sessions.send':
             fields=['sessionId','text'];if(!isUUID(v.sessionId)||!isSendText(v.text))throw new ValidationError('Invalid send request');break;
@@ -191,6 +192,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
     if(v.copy!==undefined)validateSessionText(v.copy);
     if(v.diff!==undefined)validateAgentDiff(v.diff);
+    if(v.exportData!==undefined)validateSessionExport(v.exportData);
     if(v.usage!==undefined)validateUsageSummary(v.usage);
     if(v.usageDiagnostics!==undefined)validateUsageDiagnostics(v.usageDiagnostics);
     if(v.key!==undefined)validateKeyView(v.key);

@@ -256,6 +256,9 @@ export class DaemonServer {
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
+                case 'sessions.export':
+                    this.control(peer,{id:request.id,ok:true,exportData:await this.manager.exportSession(request.sessionId)});
+                    break;
                 case 'sessions.diff':
                     this.control(peer,{id:request.id,ok:true,diff:await this.manager.diff(request.sessionId)});
                     break;

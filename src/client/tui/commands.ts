@@ -22,6 +22,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/resume',description:'Continue the selected finished agent',current:c=>c.selectedTitle??''},
  {name:'/retry',description:'Restart the selected finished agent fresh',current:c=>c.selectedTitle??''},
  {name:'/diff',description:'What an agent changed in its worktree (d on a card)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
+ {name:'/export',description:'Save a session as one HTML file (keys removed)',argumentHint:()=>'[agent] [folder]',current:c=>c.selectedTitle??''},
  {name:'/send',description:'Send text to a running agent',argumentHint:()=>'<agent> <text>',values:c=>c.agents??[],current:none},
  {name:'/find',description:'Search every agent\'s screen and scrollback',argumentHint:()=>'<text>',current:none},
  {name:'/open',description:'Open the selected agent\'s folder in Finder',argumentHint:()=>'[code]',values:()=>['code'],current:c=>c.selectedTitle??''},

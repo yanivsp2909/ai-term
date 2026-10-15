@@ -46,6 +46,9 @@ import { usageDetailLines } from './usage-details.js';
 import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
 import { HandoffAsk, handoffDone, handoffRequest } from './handoff-ask.js';
 import { DiffView } from './diff-view.js';
+import { exportHtml } from './export-html.js';
+import { saveExport } from '../export-file.js';
+import { validateSessionExport } from '../../shared/session-export.js';
 import { validateAgentDiff } from '../../shared/diff.js';
 import { accountAuthLabel, parseAccountCommand, parseHandoffTarget } from './accounts.js';
 import { OWN_ACCOUNT, type AccountProfile } from '../../shared/accounts.js';
@@ -564,6 +567,7 @@ export class Homepage {
     if (command==='/preset') { await this.presetCommand(text); return; }
     if (command==='/handoff') { await this.handoffCommand(argument); return; }
     if (command==='/diff') { await this.diffCommand(argument); return; }
+    if (command==='/export') { await this.exportCommand(argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
@@ -626,6 +630,20 @@ export class Homepage {
     if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}
     const session=named[0];if(!session){this.showNote(`no agent named ${name}`);return;}
     await this.openDiff(session);
+  }
+  // v0.7.1 /export [agent] [folder]: one HTML file of the session (screen text, and the conversation for AI Term's agent),
+  // redacted by the daemon, saved to ~/Downloads or the folder given (a last word starting with / or ~).
+  private async exportCommand(argument:string):Promise<void>{
+    const words=argument.split(' ').filter(Boolean),last=words.at(-1),folder=last&&(last.startsWith('/')||last.startsWith('~'))?words.pop():undefined,name=words.join(' ');
+    let session:SessionInfo|undefined;
+    if(name){const named=this.sessions.filter(s=>s.title===name);if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}session=named[0];if(!session){this.showNote(`no agent named ${name}`);return;}}
+    else{session=this.sessions.find(s=>s.id===this.selectedId);if(!session){this.showNote('select an agent, then /export');return;}}
+    this.showNote(`◐ exporting ${session.title}`);
+    try{
+      const data=validateSessionExport((await this.connection.request({kind:'sessions.export',sessionId:session.id})).exportData);
+      const path=await saveExport(exportHtml(data),{title:data.title,now:new Date(),home:homedir(),...(folder?{folder}:{})});
+      this.showNote(`✓ exported ${session.title} → ${path} · keys and tokens removed`);
+    }catch(error){this.showNote(`export failed: ${error instanceof Error?error.message:'request failed'}`);}
   }
   // The review queue's popup (v0.7.1): m merges (v0.7.3), x discards through the v0.3.2 removal flow, Esc keeps it for later.
   private async openDiff(session:SessionInfo):Promise<void>{
