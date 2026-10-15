@@ -2,8 +2,53 @@
 
 ## Checkpoint
 Last commit: (see git log; this run started at 22669aa)
-Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1, D v0.7.2, E v0.7.3, F v0.7.4 in order (each section below says done or blocked).
+Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1 done · D v0.7.2, E v0.7.3, F v0.7.4 in order (each section below says done or blocked).
 Branch: main, pushed after each part. Started clean at 22669aa after `git pull --ff-only` (already up to date). No other agent worked in this repo.
+
+## Part C: v0.7.1 diff view, review queue, export — done
+Commits: 0fe0246 / fe1e6c3 (RED) → 13c98f8 (diff GREEN) → 228adfa (RED) → 1a1e45d (export GREEN) → d8a59da (review RED) → bc254d3 → ec2d6cd (RED) → 4f6d79c → 2dfdb20 (fix-review RED) → e9e9a58 → second fix review RED → its fix, plus this handover.
+
+What works:
+- **`d` on a card or `/diff [agent]`:** a read-only popup of the agent's worktree against the commit it started from: committed + uncommitted + untracked (not ignored). Files left (`A/M/D/R/U` and `+N −M`), unified diff right with design.md's tints; ↑↓ files, PgUp/PgDn, Esc. Text only (escapes and controls removed in the daemon and checked again in the client); caps 4,000 lines a file, 20,000 in all, 500 files, ~1 MiB, 400 characters a line, with notes. A name two agents share is refused like /send. With no agent selected, `d` types a `d`.
+- **Safe git:** every diff call runs against a private temporary git dir (minimal config, the repo's objects via alternates, a copy of the worktree's index, attributes from the empty tree), so nothing in the repo's config, `info/` or `.gitattributes` can make AI Term run a command; untracked files are read by the daemon itself without following symlinks (also checked for a symlinked parent folder), FIFOs and devices skipped, 256 KiB each.
+- **Review queue:** a finished turn counts the worktree's changes once; the card reads `+N −M · ready to review` (or `no changes · …`), cleared when the agent works again. In the popup: `m` merge (says it arrives with /merge, v0.7.3), `x` discard through the v0.3.2 removal flow (exited agents; a running one is asked to be stopped first), Esc later.
+- **`/export [agent] [folder]`:** one self-contained HTML file: screen text (last ~1 MB) and, for AI Term's agent, the conversation; every string and the title, folder and branch redacted (`src/shared/redact.ts`); controls and bidi overrides removed; no script, link or outside request (CSP); colors from the tokens. Saved to `~/Downloads` or the folder given (full path or `~/…`), 0600, never over another file (`-2`…), never through a symlink, no half file on failure. The daemon's answer always fits one frame (the larger part is trimmed first).
+
+Prompt vs code:
+- "Review queue: finished agents with changes show `to review` (already in counts)": the counts already said it; the card now also shows design.md's `+N −M · ready to review`, which needed the daemon to count changes when a turn finishes.
+- "`m` merge (Part E)": in this part `m` only says it arrives with /merge; Part E wires it.
+- design.md was silent on the diff popup layout and the export page: the calmer options were taken (Help-like surface popup with a file column; a plain monospace page).
+
+Findings (fresh typescript-reviewer and security-reviewer on 3b89375..1a1e45d; a security fix review on bc254d3; a second one on e9e9a58):
+- **HIGH (found while reviewing, then security review):** a clean filter named in `.gitattributes` / `info/attributes` / `core.attributesFile` plus the repo config ran a command during a diff (the card count runs it by itself when a turn ends). First fix (emptying every configured driver) → **HIGH (fix review):** a check-then-diff race let a swapped config win. Final fix: the private git dir; a FIFO `include.path` test proves the repo config is never read.
+- **MEDIUM (second fix review):** repos with a split index failed every diff (the shared index file wasn't copied); a crafted index entry such as `../secret` made git show a file outside the worktree. Fixed: `sharedindex.*` is copied; any listed path that is absolute or has a `..` or `.git` segment refuses the diff before any content is read. Not fixed (LOW): the private config doesn't carry `core.ignorecase` / `autocrlf` (a case-only rename on APFS shows as modified + untracked); the repo's `info/exclude` isn't read (more untracked files may show); assume-unchanged / skip-worktree entries in an agent-written index can hide a change, as in plain git.
+- **HIGH (TS review):** a file that became a symlink (one name-status entry, two patch sections) shifted every later file's diff onto the wrong file. Fixed: type changes take two sections, and each section's header is checked against its file.
+- **MEDIUM:** one unreadable untracked file failed the whole diff and the card count; a name of only invisible characters made the client refuse the whole diff; untracked files were all read before the 500-file cap and path bytes didn't count toward the frame; an export could pass the 4 MiB frame (escapes, CJK). All fixed.
+- **LOW:** a symlinked parent folder could show a file outside the worktree (same user); export metadata wasn't redacted; bidi controls reached the HTML; a missing transcript read as "capped"; a failed save could leave a half file; a stale `+N −M` stayed while the agent worked again; two counts could land out of order; the export trimmed the screen before a larger transcript. All fixed. **Found by the desktop smoke test:** `d` as the first letter of a task (no agent selected) was swallowed; now typed.
+- Not fixed, with reasons:
+  - The **worktree removal flow's `git status`** (v0.3.2, `changes()` in git.ts) still runs with the repo's config, so the same filter trick applies when you check or delete a worktree. The prompt said not to touch the deletion logic; recommended next step: run its status through `isolatedGitDir` too.
+  - A diff larger than 32 MiB of git output shows the file list with no per-file counts (the card's numstat still counts).
+  - The session's own key is not scrubbed by exact value in exports: reading it from the Keychain only to scrub would break the key rule (read only to spawn or test); the agent already redacts its key in its screen and transcript.
+  - A same-user process that finds the private git dir in time could write into it (D35).
+  - The realpath check and the open of an untracked file are two steps (Node has no openat); the result only appears in your own popup.
+
+Checks (at the last Part C fix):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0
+npm run build       ok
+npm run app:build   ok
+npm run app:test    9 passed (37.7s)
+npm test (1)        Test Files 215 passed · Tests 1387 passed | 2 skipped · 22.72s
+npm test (2)        Test Files 215 passed · Tests 1387 passed | 2 skipped · 22.50s
+```
+
+Concepts introduced:
+- **Unified diff:** git's text form of a change: `@@` hunk headers, then lines starting with space (same), `-` (removed) and `+` (added) (`src/daemon/diff.ts` splits it per file).
+- **git clean filters and attributes:** a repo can tell git to pipe file contents through a command before comparing them; that command comes from config, so reading an untrusted repo's working tree with git can run code. A private git dir with `alternates` lets git see the same objects without any of the repo's config (`isolatedGitDir` in `src/daemon/git.ts`).
+- **Content-Security-Policy:** a line in an HTML page telling the browser what it may load or run; `default-src 'none'` means nothing at all, so the exported page can't fetch or execute anything (`src/client/tui/export-html.ts`).
+
+New dependencies: none.
 
 ## Part B: v0.6 release gate — done, **v0.6 closed**
 Five fresh read-only reviewers on `c558cf7..HEAD` (none had seen the code written): security-reviewer (budget reservations + presets), security-reviewer (accounts + handoff), security-bounty-hunter (as a general-purpose agent told to load it: local endpoints, providers, agent output), silent-failure-hunter (all v0.6 code), engineering:code-review (as a general-purpose agent: whole gate diff). Then a fresh typescript-reviewer on the fix commit; its findings got their own failing tests and fixes. Commits: 9117b33 (RED) → 750c544 (GREEN) → a105717 (fix-review RED) → 778c3e2, plus this handover. Tests: `tests/gate-v06-release.test.ts` (20 cases).

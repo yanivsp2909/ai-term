@@ -91,6 +91,8 @@ async function diffWith(path: string, base: string, git: IsolatedGit): Promise<B
 export async function worktreeStat(path: string, base: string): Promise<DiffStat> {
   const git = await isolatedGitDir(path, base);
   try {
+    // The names first: a listed path outside the worktree refuses the count before git reads any content.
+    await diffNameStatus(path, base, git);
     const stat = await diffNumstat(path, base, git), names = await untrackedFiles(path, git);
     for (const name of names.slice(0, 200)) stat.added += (await untracked(path, name)).added;
     return { ...stat, files: stat.files + names.length };

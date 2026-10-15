@@ -234,10 +234,15 @@ export async function isolatedGitDir(path: string, base: string): Promise<Isolat
         // The index tells git which files are tracked (and lets it skip unchanged ones); only a regular file is copied.
         const index = join(gitDir, 'index');
         try { if ((await lstat(index)).isFile()) await copyFile(index, join(temp, 'index')); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+        // A split index keeps most entries in sharedindex.<hash> beside it (core.splitIndex, feature.manyFiles).
+        for (const name of await readdir(gitDir)) if (/^sharedindex\.[0-9a-f]{40,64}$/.test(name) && (await lstat(join(gitDir, name))).isFile()) await copyFile(join(gitDir, name), join(temp, name));
     } catch (error) { await rm(temp, { recursive: true, force: true }); throw error; }
     return { args: [`--git-dir=${temp}`, `--work-tree=${path}`, `--attr-source=${EMPTY_TREE}`, '-c', 'core.attributesFile=/dev/null'], dispose: () => rm(temp, { recursive: true, force: true }) };
 }
 export interface NameStatus { code: string; path: string; from?: string }
+// The agent can write its own index, and git doesn't check names when it loads one: an entry named ../x would make the
+// diff show a file outside the worktree. Every name git lists must stay inside, or nothing is shown at all.
+export function insideWorktree(name: string): boolean { return !!name && !isAbsolute(name) && !name.split('/').some(part => part === '..' || part.toLowerCase() === '.git'); }
 export async function diffNameStatus(path: string, base: string, git: IsolatedGit): Promise<NameStatus[]> {
     if (!COMMIT.test(base)) throw new GitError('Git check failed');
     const fields = (await run(path, [...git.args, 'diff', ...DIFF_FLAGS, '--name-status', '-z', '--end-of-options', base, '--'], 'Git check failed', { maxBuffer: BIG })).split('\0'), out: NameStatus[] = [];
@@ -245,7 +250,9 @@ export async function diffNameStatus(path: string, base: string, git: IsolatedGi
     for (let i = 0; i < fields.length - 1;) {
         const code = fields[i] ?? '', two = /^[RC]/.test(code), first = fields[i + 1] ?? '', second = two ? fields[i + 2] ?? '' : '';
         if (!code) break;
-        out.push(two ? { code: code[0] ?? 'M', path: second, from: first } : { code: code[0] ?? 'M', path: first });
+        const entry = two ? { code: code[0] ?? 'M', path: second, from: first } : { code: code[0] ?? 'M', path: first };
+        if (!insideWorktree(entry.path) || entry.from !== undefined && !insideWorktree(entry.from)) throw new GitError('Git check failed');
+        out.push(entry);
         i += two ? 3 : 2;
     }
     return out;
@@ -267,6 +274,8 @@ export async function diffNumstat(path: string, base: string, git: IsolatedGit):
 }
 // Untracked files that aren't ignored (the repo's own ignore rules; no global ones, GIT_CONFIG_GLOBAL is /dev/null).
 export async function untrackedFiles(path: string, git: IsolatedGit): Promise<string[]> {
-    return (await run(path, [...git.args, 'ls-files', '--others', '--exclude-standard', '-z', '--'], 'Git check failed', { maxBuffer: BIG })).split('\0').filter(Boolean);
+    const names = (await run(path, [...git.args, 'ls-files', '--others', '--exclude-standard', '-z', '--'], 'Git check failed', { maxBuffer: BIG })).split('\0').filter(Boolean);
+    if (names.some(name => !insideWorktree(name))) throw new GitError('Git check failed');
+    return names;
 }
 export async function isWorktreeTop(path: string): Promise<boolean> { return (await identity(path).catch(() => null))?.top === path; }
