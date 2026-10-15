@@ -1,4 +1,6 @@
-import { createMCPClient, type MCPClient, type MCPTransport, type ListToolsResult } from '@ai-sdk/mcp';
+import type { MCPClient, MCPTransport, ListToolsResult } from '@ai-sdk/mcp';
+// Loaded on use (v0.9.3 performance pass), like the AI SDK in handoff.ts.
+async function createMCPClient(config: import('@ai-sdk/mcp').MCPClientConfig & { experimental_events?: { adapter?: never } }): Promise<MCPClient> { const { createMCPClient: create } = await import('@ai-sdk/mcp'); const client: MCPClient = await create(config); return client; }
 import { tmpdir } from 'node:os';
 import { McpStdio } from './stdio.js';
 import type { KeyStore } from '../keys.js';

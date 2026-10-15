@@ -110,6 +110,10 @@ interface Live {
     queuedBytes:number;
     paused:boolean;
     attached:boolean;
+    // v0.9.3 performance pass: an attached session's output goes to its client before the mirror's write (xterm calls
+    // back from a timer, ~1.2 ms of typing echo). Only while nothing is queued for the client and no attach is pending,
+    // so the order of bytes never changes and a new owner's snapshot holds everything it isn't sent.
+    attaching?:number; pendingEmits?:number;
     clientPaused:boolean;
     // A hook or run-state signal has arrived (not just a context report): the agent is past its startup dialogs.
     reported?:boolean;
@@ -477,9 +481,11 @@ export class SessionManager extends EventEmitter {
                 if(live.mirrorFailed)return;
                 const bytes=Buffer.byteLength(data);live.queuedBytes+=bytes;
                 this.updatePause(live);
+                const direct=live.attached&&!live.attaching&&!live.pendingEmits,chunk=Buffer.from(data);
+                if(direct)this.emit('ownerOutput',info.id,chunk);else live.pendingEmits=(live.pendingEmits??0)+1;
                 live.output = live.output.then(async () => {
                     if(live.mirrorFailed)return;
-                    await live.mirror.write(data);
+                    try{await live.mirror.write(data);}finally{if(!direct)live.pendingEmits=(live.pendingEmits??1)-1;}
                     this.scheduleLimitCheck(live);
                     info.lastOutputAt = new Date().toISOString();
                     if (info.status === 'starting'&&(!live.statusState||live.statusState.status==='starting')) {
@@ -492,7 +498,7 @@ export class SessionManager extends EventEmitter {
                         this.event({ kind: 'session.updated', session: { ...info } });
                         live.outputClock?.sent();
                     } else live.outputClock?.output();
-                    this.emit('output', info.id, Buffer.from(data));
+                    this.emit('output', info.id, chunk, direct);
                 }).catch(async () => {
                     if(live.mirrorFailed)return;
                     live.mirrorFailed=true;this.usage?.revoke(info.id);live.outputClock?.dispose();
@@ -1440,7 +1446,8 @@ export class SessionManager extends EventEmitter {
     }
     async attach(id:string,cols:number,rows:number,publish:(snapshot:string,size:{cols:number;rows:number},modes:TerminalModes)=>void):Promise<void> {
         const live=this.sessions.get(id);if(!live||!isSize(cols,rows)||this.closing)throw new Error('Invalid attach');
-        const task=live.output.then(()=>{
+        live.attaching=(live.attaching??0)+1;
+        const task=live.output.finally(()=>{live.attaching=(live.attaching??1)-1;}).then(()=>{
             if(this.closing||this.sessions.get(id)!==live)throw new Error('Session unavailable');
             live.mirror.resize(cols,rows);live.host?.resize(cols,rows);
             const snapshot=live.mirror.snapshot();

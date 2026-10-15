@@ -80,7 +80,15 @@ def quit_homepage(client, term):
 def run_build(build, rounds_out):
     entry = str(pathlib.Path(build) / 'dist/cli/index.js')
     with tempfile.TemporaryDirectory(prefix='ai-term-perf-') as root:
-        env = {'PATH': '/usr/bin:/bin:/opt/homebrew/bin', 'HOME': root, 'AI_TERM_HOME': root, 'SHELL': '/bin/sh',
+        # Stand-ins for the claude and codex CLIs: the homepage's engine check runs their version and login status, ~0.1 s
+        # each here as on a real Mac, without touching a real CLI or its login.
+        fake = pathlib.Path(root, 'fake-bin')
+        fake.mkdir()
+        for name, answer in (('claude', '{"loggedIn":true,"authMethod":"claude.ai"}'), ('codex', 'Logged in using ChatGPT')):
+            path = fake / name
+            path.write_text(f"#!/bin/sh\nsleep 0.1\ncase \"$1\" in --version) echo '{name} 9.9.9' ;; *) echo '{answer}' ;; esac\n")
+            path.chmod(0o755)
+        env = {'PATH': f'{fake}:/usr/bin:/bin:/opt/homebrew/bin', 'HOME': root, 'AI_TERM_HOME': root, 'SHELL': '/bin/sh',
                'TERM': 'xterm-256color', 'COLORTERM': 'truecolor', 'LANG': 'en_US.UTF-8'}
         daemon = subprocess.Popen([NODE, entry, 'daemon'], cwd=build, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:

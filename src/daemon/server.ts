@@ -74,9 +74,16 @@ export class DaemonServer {
         manager.on('event', (event: SessionEvent) => { for (const peer of this.peers)
             if (peer.hello)
                 this.control(peer, event); });
-        manager.on('output', (id: string, data: Buffer) => {
+        // Sent before the mirror's write, to the attached client only (session-manager decides when that keeps the order).
+        manager.on('ownerOutput', (id: string, data: Buffer) => {
+            const peer=this.owners.get(id);if(!peer)return;
+            peer.socket.write(encodeData(2,id,data));
+            if(peer.socket.writableLength>1024*1024)this.manager.clientBackpressure(id,true);
+        });
+        manager.on('output', (id: string, data: Buffer, ownerHasIt = false) => {
             for (const peer of this.peers) {
                 if(this.owners.get(id)===peer){
+                    if(ownerHasIt)continue;
                     peer.socket.write(encodeData(2,id,data));
                     if(peer.socket.writableLength>1024*1024)this.manager.clientBackpressure(id,true);
                     continue;

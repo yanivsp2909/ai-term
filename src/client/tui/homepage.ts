@@ -195,10 +195,15 @@ export class Homepage {
       const result = await this.connection.request({ kind: 'sessions.list' });
       if (!Array.isArray(result.sessions)) throw new Error('Missing daemon sessions');
       this.sessions = result.sessions.map(validateSession); this.selectedId = sortSessions(this.sessions)[0]?.id ?? null;
-      const engines=await this.loadEngines();
-      this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];
+      // The agents first (v0.9.3 performance pass): the engine check runs each CLI's version and login status, ~0.2 s, so
+      // it no longer holds back the first frame; only the no-login-anywhere check below waits for it.
+      this.draw(true);await this.updatePreview(true);
+      const [engines,keys]=await Promise.all([this.loadEngines(),this.connection.request({kind:'keys.list'})]);
+      this.keys=keys.keys??[];
+      if(this.ended)return;
       if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length)await this.openCredentials('login');
-      this.draw(true);await this.updatePreview(true);await this.subscribeStats(true);await this.subscribeUsage(true);
+      else this.draw(true);
+      await this.subscribeStats(true);await this.subscribeUsage(true);
       // Notification clicks select agents here while this homepage is open. An older daemon refuses the request;
       // its clicks then open a new Terminal window instead, which is all this homepage needs to know.
       await this.connection.request({ kind: 'clicks.subscribe', on: true, ...(this.terminal?{terminal:this.terminal}:{}) }).catch((error: unknown) => { if (!(error instanceof DaemonRequestError)) throw error; });

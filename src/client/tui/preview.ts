@@ -14,6 +14,11 @@ export class Preview {
   private queuedBytes = 0;
   private scrollCount = 0;
   private clearScrollback = false;
+  // v0.9.3 performance pass: the last cells, reused until the screen, scroll, selection, size or theme changes (they were
+  // rebuilt, a regex per cell, on every homepage draw up to 30 a second).
+  private version = 0;
+  private cached: { theme: Theme; cols: number; rows: number; version: number; frame: Frame } | null = null;
+  private touch(): void { this.version++; this.changed(); }
   constructor(cols: number, rows: number, private readonly changed: () => void) {
     this.terminal = new headless.Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
     useUnicode11(this.terminal);
@@ -41,7 +46,7 @@ export class Preview {
       if (this.terminal.buffer.active !== buffer || this.clearScrollback) this.follow();
       if (this.anchor !== null) this.newCount += this.scrollCount - oldScroll;
       this.selection = null;
-      this.changed();
+      this.touch();
     }).finally(() => { this.queuedBytes -= Buffer.byteLength(data); });
     this.queue = task; return task;
   }
@@ -51,7 +56,7 @@ export class Preview {
     this.anchor?.dispose();
     this.anchor = top === base ? null : this.terminal.registerMarker(top - base - this.terminal.buffer.active.cursorY) ?? null;
     if (top === base) this.newCount = 0;
-    this.selection = null; this.changed();
+    this.selection = null; this.touch();
   }
   // /find: bring a hit into view, a third of the way down. `fromEnd` counts rows up from the buffer's last row when the
   // daemon searched (this buffer holds a different amount of scrollback, but its bottom is the same); an agent that
@@ -67,9 +72,9 @@ export class Preview {
     }
     this.scroll(Math.max(0, row - Math.floor(this.terminal.rows / 3)) - this.top);
   }
-  follow(): void { this.anchor?.dispose(); this.anchor = null; this.newCount = 0; this.selection = null; this.changed(); }
-  select(start: Point, end: Point): void { this.selection = { start: { ...start, y: start.y + this.top }, end: { ...end, y: end.y + this.top } }; this.changed(); }
-  clearSelection(): void { this.selection = null; this.changed(); }
+  follow(): void { this.anchor?.dispose(); this.anchor = null; this.newCount = 0; this.selection = null; this.touch(); }
+  select(start: Point, end: Point): void { this.selection = { start: { ...start, y: start.y + this.top }, end: { ...end, y: end.y + this.top } }; this.touch(); }
+  clearSelection(): void { this.selection = null; this.touch(); }
   private bounds(): { start: Point; end: Point } | null {
     if (!this.selection) return null;
     const { start, end } = this.selection;
@@ -85,6 +90,13 @@ export class Preview {
     return lines.join('\n');
   }
   cells(theme: Theme, cols: number, rows: number): Frame {
+    const cached = this.cached;
+    if (cached && cached.theme === theme && cached.cols === cols && cached.rows === rows && cached.version === this.version) return cached.frame;
+    const frame = this.build(theme, cols, rows);
+    this.cached = { theme, cols, rows, version: this.version, frame };
+    return frame;
+  }
+  private build(theme: Theme, cols: number, rows: number): Frame {
     const bounds = this.bounds();
     return Array.from({ length: rows }, (_, y) => {
       const absoluteY = this.top + y, line = this.terminal.buffer.active.getLine(absoluteY);
@@ -97,6 +109,6 @@ export class Preview {
       });
     });
   }
-  resize(cols: number, rows: number): void { this.terminal.resize(cols, rows); this.follow(); }
+  resize(cols: number, rows: number): void { this.terminal.resize(cols, rows); this.version++; this.follow(); }
   dispose(): void { this.disposed = true; this.terminal.dispose(); }
 }
