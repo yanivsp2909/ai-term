@@ -1,9 +1,153 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: (see git log; this run started at 22669aa)
-Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1 done · D v0.7.2 done · E v0.7.3 done · F v0.7.4 in order (each section below says done or blocked).
+Last commit: a38d00e fix: Part F fix review (the handover commit follows it; this run started at 22669aa)
+Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1 done · D v0.7.2 done · E v0.7.3 done · F v0.7.4 done. All six parts done; nothing blocked.
 Branch: main, pushed after each part. Started clean at 22669aa after `git pull --ff-only` (already up to date). No other agent worked in this repo.
+
+Run summary (2026-10-15):
+| Part | Result | Pushed at | Findings fixed (CRITICAL / HIGH / MEDIUM / LOW) |
+|---|---|---|---|
+| A v0.6.5 providers | done | c33418f | 0 / 0 / 0 / 3 |
+| B v0.6 gate | done, **v0.6 closed** | 3b89375 | see its section (five reviewers) |
+| C v0.7.1 diff, review queue, export | done | b0bf319 | see its section |
+| D v0.7.2 checkpoints, /undo, /redo | done | d7a5897 | see its section |
+| E v0.7.3 /merge, /pr, secret scan | done | f0b8285 | 0 / 5 / 6 / 5 |
+| F v0.7.4 auto-test, /review, /fork, /compact | done | this push | 0 / 1 (+1 design, documented) / 9 / 10 |
+
+Last checks (after a38d00e):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0
+npm run build       ok
+npm run app:build   ok
+npm run app:test    9 passed (37.7s)
+npm test (1)        Test Files 224 passed · Tests 1468 passed | 2 skipped · 27.02s
+npm test (2)        Test Files 224 passed · Tests 1468 passed | 2 skipped · 27.71s
+```
+
+## Manual checks — everything open from v0.2 to v0.7 (one list, most important first)
+Nothing here was run by me: each needs a real key, login, GitHub account or terminal. This run's checks come first, then the overnight run's, then the v0.2–v0.4 list (deduped; older sections below keep their own copies for history).
+- `cd ~/ai-term && npm run build && npm run build:notifier && node dist/cli/index.js daemon stop && node dist/cli/index.js` — restart onto this run's code (stops running agents); everything below needs it.
+- `cd ~/ai-term && gh auth status && node dist/cli/index.js` — /pr for real, in a throwaway GitHub repo of yours: start an agent there, let it commit, `/pr <agent>` → the popup shows `git push -u -- origin refs/heads/ai/<slug>:refs/heads/ai/<slug>`, the real origin URL and `gh pr create …`; `y` → `✓ pull request opened · <url>`; on GitHub only that branch arrived (no tags).
+- `cd ~/ai-term && git config --global --get-regexp '^credential' ; node dist/cli/index.js` — /pr over an https origin that uses your credential helper (`gh auth setup-git` writes a URL-scoped one): the push succeeds without a prompt.
+- `cd ~/ai-term && node dist/cli/index.js` — /merge for real in a scratch repo (on main, clean): `/merge <agent>` → `y` → `✓ merged`; `git log -1` is a merge commit by you. Then a conflicting edit in both → `conflict undone, checkout as it was`; `cd ~/ai-term && git -C <scratch repo> status --short` is empty; `/merge <agent> rebase` starts an agent of the same engine in the worktree.
+- `cd ~/ai-term && node dist/cli/index.js` — secret scan: ask an agent to add `const k = "sk-ant-api03-<40 letters>"`; `/merge <agent>` → `⚠ file:line · API key (sk-) · N characters hidden`, `y` does nothing, typing `override` ⏎ merges.
+- `cd ~/ai-term && node dist/cli/index.js` — auto-test in a real JS project: `/test-cmd npm test`; an agent that runs `npm install` → card `? test setup changed · /test`; `/test <agent>` lists `node_modules/ (ignored)` and package files → `y` → `✓ tests pass` or `✗ N failing`; the next turn runs by itself; then `cd ~/ai-term && pgrep -fl vitest || echo none` → `none`.
+- `cd ~/ai-term && node dist/cli/index.js` — /review with a real key: `/review <agent>` → models with price ranges → `↓` `⏎` → the review popup; `/usage` shows its spend; `/settings` q on, `/review budget 0.05`, a turn → the card shows `review: …` by itself.
+- `cd ~/ai-term && node dist/cli/index.js` — /fork: `/fork <codex agent> sonnet` → the ask (first message, start, estimate) → `⏎` → a Claude agent in `ai/<name>-fork` starts with the same first message; when both finished, `/diff <name> fork vs <name>`.
+- `cd ~/ai-term && node dist/cli/index.js` — /compact in AI Term's agent on a key: after 4+ turns, `/compact` → the ask with a price → `⏎` → `compacted N older turns · … $…`; the next turn still knows the earlier work.
+- `cd ~/ai-term && node dist/cli/index.js` — /undo and /redo: after an agent turn changed files, `/undo <agent>` lists the files → `y` restores; `/redo` brings them back; `x`-removing the agent drops its checkpoints.
+- `cd ~/ai-term && node dist/cli/index.js` — `d` on a finished worktree agent shows its diff (`m` merges, `x` discards); `/export <agent>` → a file in ~/Downloads that opens in a browser with no key in it.
+- `cd ~/ai-term && node dist/cli/index.js` — each new provider (xAI, Moonshot, Z.ai, OpenRouter, Bedrock, Vertex express): `/login` → provider → key + one model → the test shows `ready`; start an agent; a turn shows `$…`.
+- `cd ~/ai-term && ollama serve & node dist/cli/index.js` — Ollama: `/login` → Ollama → ⏎ → models listed; an agent runs with `local · no key`.
+- `cd ~/ai-term && kill 83116` — optional: stop the leaked test daemon from the earlier smoke run (it is not your ~/.ai-term daemon).
+- `cd ~/ai-term && npm run app:dist && open build/desktop/dist` — drag AI Term.app into Applications (the bundle in build/ is already at e2f7570).
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — first open (right-click Open if macOS asks); press Cmd+K and Cmd+T right away while it starts, then `/exit` and scroll up: no `^[]777;ai-term;…` text anywhere (token echo fix).
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — start a Claude Code agent, enter it, run `! env | grep ELECTRON_RUN_AS_NODE` → nothing (env leak fix).
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — App → Install ai command; check the exact paths; then `cd ~/ai-term && "$HOME/.local/bin/ai"` works in Terminal.app without Node; App → Uninstall removes only its link.
+- `cd ~/ai-term && open '/Applications/AI Term.app'` — notifications still say AI Term and open the agent; quit with Cmd+Q: no unexpected-quit dialog.
+- `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js` — restart the daemon onto tonight's code (stops running agents), then: B25 — set a tiny daily budget (`b`, e.g. $0.05) and start two AI Term agents on your API key with a long task each: one runs, the other pauses with `budget: today … held by other agents' requests`; Usage shows the held amount once settled.
+- `cd ~/ai-term && node dist/cli/index.js` — cost per task: after a turn, a key agent's card shows `· $0.xx`, a subscription Claude/Codex card shows `· N tok`; `/usage` lists BY AGENT; `/settings` o turns it off.
+- `cd ~/ai-term && node dist/cli/index.js` — presets: `/mode don't ask`, `/preset save risky first message`, `/preset risky` shows the box in red Don't ask, Esc puts your setup back; `/preset rm risky`.
+- `cd ~/ai-term && node dist/cli/index.js` — handoff with a key: `/settings` g on, `/handoff <agent> codex` → the ask names the model, tokens and price; ⏎ → a Codex agent starts in the same worktree with the note; the old card reads `handed off → …`. Without a priced key, on a finished Claude agent: it writes its own note.
+- `cd ~/ai-term && node dist/cli/index.js` — accounts: `/account add claude work`, log in through Claude's own browser flow in the session that opens, Ctrl+E, then `cd ~/ai-term && claude auth status --json` in Terminal.app still shows your normal account (separate Keychain entries).
+- `cd ~/ai-term && node dist/cli/index.js` — start box `a` → `account work`; inside that agent `! echo $CLAUDE_CONFIG_DIR` → `~/.ai-term/profiles/work`; the card reads `account work · sub`.
+- `cd ~/ai-term && CODEX_HOME="$HOME/.ai-term/profiles/side" codex login status; codex login status` — after `/account add codex side` and its login: each command shows its own account (the Codex keyring question).
+- `cd ~/ai-term && node dist/cli/index.js` — when an account really hits its limit: the card shows `⏸ limit · resets HH:MM` and the note offers `/handoff <agent> claude:<other>`; nothing switches by itself. Tell me the exact banner text if it isn't detected.
+- `cd ~/ai-term && open https://openai.com/policies/row-terms-of-use/` — read "What you cannot do" yourself before using a second ChatGPT account at a limit (the quote couldn't be fetched).
+- Catalog refresh: `cd ~/ai-term && curl -fsSL https://models.dev/api.json -o /tmp/models-dev.json && npx tsx scripts/update-prices.ts /tmp/models-dev.json && git diff --stat -- data/usage-prices.json` — commit it if the diff looks right (gives ctx % and real output limits).
+- Foundry key re-add (B12): `cd ~/ai-term && node dist/cli/index.js` — /settings, `t` on the Foundry key refuses `Foundry key must be added again to bind its endpoint`; `x`, `a` (re-add), `t` → GPT deployments `ready`, Grok/Kimi/DeepSeek/GLM `chat`.
+- Mark models: `cd ~/ai-term && node dist/cli/index.js` — /settings → Foundry key → `m` → your Kimi and Grok deployments → their catalog models (cost lines show dollars, real output limits apply).
+- Scratch repo: `cd ~/ai-term && rm -rf /tmp/ai-agent-try && mkdir /tmp/ai-agent-try && printf '# try\n' > /tmp/ai-agent-try/README.md && git -C /tmp/ai-agent-try init -q -b main && git -C /tmp/ai-agent-try add -- README.md && git -C /tmp/ai-agent-try -c user.name=you -c user.email=you@example.invalid commit -qm init`
+- Add a server: `cd ~/ai-term && node dist/cli/index.js` — `/mcp add`: a local MCP server you use (absolute executable, JSON argv, env names, masked values), review the paged preview, save.
+- The task: `cd ~/ai-term && node dist/cli/index.js` — `/cd /tmp/ai-agent-try`, `/model` → FOUNDRY → your Kimi or Grok `· ai term`, Ask, then `Use the <your skill> skill, ask the <your subagent> subagent to add a line to README.md, and call <your MCP server>'s <tool>`: Enter confirms the job, `y` on each write/MCP call/bash; every approval shows markers, never raw escapes.
+- Cost: same agent — after the turn, `turn · … in · … out · $…` lines (one per subagent too); Ctrl+E home → Usage shows the same Foundry spend; compare one Grok/Kimi turn with Azure's token numbers (reasoning billed as output).
+- Session allow: `cd ~/ai-term && node dist/cli/index.js` — at the MCP Ask prompt type `a`; the next call to that tool doesn't ask; a fresh agent asks again.
+- Project server: `cd ~/ai-term && node dist/cli/index.js` — `/cd` a project with `.mcp.json`, `/mcp`, `d` on one entry: approve once; edit its command, `d` again must ask.
+- /mcp popup: `cd ~/ai-term && node dist/cli/index.js` — inside the agent `/mcp`; meanwhile from the homepage `/send <name> hi` is refused (asking a question); Esc closes; Ctrl+K during a slow call and after idle discovery.
+- Sized allowance: `cd ~/ai-term && node dist/cli/index.js` — inside an agent `/caps spend 0.02`, ask for a long answer → it goes with a short reply; `/caps spend 0.001` → `● paused · cap reached … what's left fits under 1,000 output tokens`; `/caps spend 5`.
+- Budget stop: `cd ~/ai-term && node dist/cli/index.js` — home `b` → daily `0.01` → in an agent `Read README.md and summarize it` → `● paused · budget: today …`, card `waiting · question`; Esc → `■ stopped`; clear the daily budget.
+- Turn cap: `cd ~/ai-term && node dist/cli/index.js` — `/caps turns 2`, `Read README.md, then AGENTS.md, then PROGRESS.md one by one` → `cap reached: 2 turns this run · ⏎ allows 2 more`; ⏎; `/caps turns off`.
+- Kill switch: `cd ~/ai-term && node dist/cli/index.js` — Ask, `Run sleep 120 && echo finished`, `y`, Ctrl+K → `✗ killed: the request and 1 running command`; then `cd ~/ai-term && pgrep -fl "sleep 120" || echo none` → `none`.
+- Homepage stop: `cd ~/ai-term && node dist/cli/index.js` — same command, Ctrl+E home, `s`, `y` → exited; `cd ~/ai-term && pgrep -fl "sleep 120" || echo none` → `none`.
+- Deny, Esc, jail, key: `cd ~/ai-term && node dist/cli/index.js` — `Run ls -la` → `n` → denied, no retry; Esc during a long stream → `■ interrupted`; `Read /etc/hosts with the read tool` → `Path is outside the folder`; `Run env | sort` → `y` → no AITERM/OPENAI/ANTHROPIC/key value.
+- Card, `c`, notification: `cd ~/ai-term && node dist/cli/index.js` — card `✓ done` with the model `· ai term` and `API key ····last4`; `c` copies the last reply; going home before an approval gives `<name> · waiting: permission`.
+- /model inside: `cd ~/ai-term && node dist/cli/index.js` — `/model` lists the key's tested deployments; `/model <other>` switches and the card follows.
+- Context: `cd ~/ai-term && node dist/cli/index.js` — after the catalog refresh, `ctx N%` on the card and the bar; mark a deployment as a small-context model (e.g. `phi-4`), `Read PROGRESS.md in full` twice → `context 8x% · /compact or /clear` once; `/clear`; unmark.
+- Anthropic/OpenAI keys (if you have them): `cd ~/ai-term && node dist/cli/index.js` — `/login` → API key; `/model` → `claude-sonnet-5 · ai term` / `gpt-6.1-sol · ai term`, one turn each with a cost line.
+- Fallback: `cd ~/ai-term && node dist/cli/index.js` — /settings `r` → `keys run on: the cli` (rows read `· claude code` / `· codex`); `r` back.
+- Your skills and agents: `cd ~/ai-term && node dist/cli/index.js` — `/skills`, `/agents`: real Claude/Codex definitions, sources, token totals, a Codex TOML agent; Space one off and back; Enter reads the full file.
+- A command: `cd ~/ai-term && node dist/cli/index.js` — inside an agent run one of your commands `/<name> README.md` and check the argument substitution.
+- A repo under ~/Projects: `cd ~/ai-term && node dist/cli/index.js` — `/cd` a repo kept under `~/Projects` (or similar) that has `.claude/commands` → they appear in `/skills` → Commands.
+- Notifications, permission: `cd ~/ai-term && node dist/cli/index.js` — start a Codex agent and make it ask permission; first time the Allow prompt for "AI Term", then a banner `<name> · waiting: permission` with sound.
+- Notifications, done: `cd ~/ai-term && node dist/cli/index.js` — an agent finishing while you're inside it gives no banner; one finishing while you're on the homepage gives `<name> · done`.
+- Notifications off: `cd ~/ai-term && node dist/cli/index.js` — /settings, n → `notifications: off`; trigger waiting → no banner; n again.
+- Click with ai open: `cd ~/ai-term && node dist/cli/index.js` — two agents, select one; click the other's banner → it's selected, Enter attaches.
+- Click with ai closed: `cd ~/ai-term && node dist/cli/index.js` — start an agent with a task, /exit, click its done banner → a new Terminal opens ai inside it; Ctrl+E goes home.
+- Click without a banner: `cd ~/ai-term && node dist/cli/index.js debug ls` (copy an id, /exit ai), then `cd ~/ai-term && "build/notifier/AI Term.app/Contents/MacOS/AITermNotifier" --click <id>`.
+- Click for a removed agent: `cd ~/ai-term && "build/notifier/AI Term.app/Contents/MacOS/AITermNotifier" --click "$(uuidgen | tr A-Z a-z)" && tail -1 ~/.ai-term/logs/daemon.log` → nothing opens; log says `Notification click for unknown agent dropped`.
+- Terminal.app raise: `cd ~/ai-term && node dist/cli/index.js` — with another app in front, click a live agent's banner; Terminal activates, the right ai window rises, the agent is selected.
+- Raise probe: `cd ~/ai-term && printf '\e[5t'` — does this Terminal.app window come forward?
+- Unknown terminal: `cd ~/ai-term && TERM_PROGRAM=unknown node dist/cli/index.js` — a click selects only and notes `selected <name> from a notification`.
+- Bar trace: `cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace` — hands off; reply with the BAR_DIAGNOSTIC line.
+- Bar feel: `cd ~/ai-term && node dist/cli/index.js` — /settings h → bar on, /shell, `/usr/bin/vim -Nu NONE -i NONE -n` (type, Esc, :q), `/usr/bin/top` (q), a multi-line paste with Ctrl+E inside stays text, vim `:set mouse=a` click/wheel, resize (agent gets rows−1), Ctrl+E home and back; then h → bar off and the next attach is raw full height.
+- Bar with the CLIs: `cd ~/ai-term && node dist/cli/index.js` — bar on, type into Claude Code and Codex and go through one permission prompt each (Ctrl+C skips a Codex update notice; never approve an update here).
+- Two worktree starts: `cd ~/ai-term && node dist/cli/index.js` — /cd ~/ai-term, Codex, start two agents → `ai/codex` and `ai/codex-2` with distinct folders; then `cd ~/ai-term && git worktree list --porcelain && git status --short && git branch --show-current` (main stays checked out, no agent files) and `cd ~/ai-term && node dist/cli/index.js debug ls` (both branches).
+- Non-repo start: `cd ~/ai-term && node dist/cli/index.js` — /cd a plain temp folder, start an agent → it runs there, card says `worktree off: not a git repo`.
+- Worktrees toggle: `cd ~/ai-term && node dist/cli/index.js` — /settings w → off/on; /shell stays in /cd; x or /clean on a finished worktree agent keeps the tree (`worktree kept: <path>`).
+- Removal, clean: `cd ~/ai-term && node dist/cli/index.js` — let a worktree agent exit, x → `remove worktree and branch ai/<slug>? k keep · d delete`; Esc keeps; again with d → `✓ deleted worktree and branch …`.
+- Removal, loss: `cd ~/ai-term && node dist/cli/index.js` — in an exited agent's worktree add a file and a commit, x → `1 untracked · 1 commit not in main`; d only types; the branch name + ⏎ deletes.
+- /worktrees and /clean: `cd ~/ai-term && node dist/cli/index.js` — /worktrees lists v0.3.1 leftovers as `✗ Not in AI Term's record` and never offers to delete them; /clean says `kept N worktrees · /worktrees reviews them`.
+- Split, open and type: `cd ~/ai-term && node dist/cli/index.js` — Space, ↓, Space, v → two panes, marks gone; type in each; Ctrl+\ moves focus; Ctrl+\ twice sends one Ctrl+\.
+- Split, mouse: `cd ~/ai-term && node dist/cli/index.js` — in a split, click the other pane (it takes focus and gets the click); wheel over an unfocused pane does nothing.
+- Split, home and reopen: `cd ~/ai-term && node dist/cli/index.js` — Ctrl+E home with both running; v with nothing marked reopens the split.
+- Split, vim: `cd ~/ai-term && node dist/cli/index.js` — /shell twice, mark both, v, `/usr/bin/vim -Nu NONE` in one pane; insert, move, :q; the other pane is untouched.
+- Split, resize and exit: `cd ~/ai-term && node dist/cli/index.js` — drag the window narrower/wider (below 81 cols: `make the window bigger · ^E home`); /exit one pane's agent → `■ exited · exit 0 · ^\ closes`, Ctrl+\ turns the other into a normal attach.
+- /send, idle: `cd ~/ai-term && node dist/cli/index.js` — after an agent shows ✓ done, `/send <name> ` + Tab, paste two lines, ⏎ → `✓ sent to <name> · 2 lines`, one message.
+- /send, permission: `cd ~/ai-term && node dist/cli/index.js` — while an Ask-mode agent shows `waiting · permission`, `/send <name> 1` → `<name> is asking for permission, go inside to answer`.
+- /send, tool running (gate fix): `cd ~/ai-term && node dist/cli/index.js` — while a Claude agent runs a long Bash command, `/send <name> hi` → `<name> is running a tool and may ask permission · try again when it finishes`.
+- /send, trust prompt: `cd ~/ai-term && node dist/cli/index.js` — start an agent with no first message, `/send <name> hi` → `<name> may be asking to trust its folder · go inside first`.
+- /retry: `cd ~/ai-term && node dist/cli/index.js` — select a failed agent, /retry → same `ai/<slug>`, old card gone.
+- /find: `cd ~/ai-term && node dist/cli/index.js` — `/find error`, ↑↓, ⏎ → that agent selected, preview at the line with `↑ N lines back`.
+- /open: `cd ~/ai-term && node dist/cli/index.js` — /open → Finder at the worktree; /open code → VS Code, or the note when `code` isn't on PATH.
+- /doctor: `cd ~/ai-term && node dist/cli/index.js` — /doctor → the same lines as `ai doctor`; Esc closes.
+- B24 (optional, a throwaway home): `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js` once and quit, then `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js daemon stop && printf '{"sessions":[' > /tmp/ai-b24/state.json && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js` → the note names `state.json.corrupt-…`; finish with `cd ~/ai-term && AI_TERM_HOME=/tmp/ai-b24 node dist/cli/index.js daemon stop`.
+
+## Part F: v0.7.4 auto-test, /review, /fork, /compact — done
+Commits: `git log f0b8285..` (each feature: RED test commit, then GREEN): auto-test 49b0bc1/ac413df, /review b3231d5/6ff05e3, /fork c76bb32/3a8e2f0, /compact 2205f16/de2cabb, docs and copy d5db91c, review fixes a5f6acc/b660b73, plus the fix-review commits after it and this handover.
+
+What works:
+- **Auto-test (D55, on, `/settings` j):** `/test-cmd npm test` sets the project's test command once (an argument list: no shell). When an agent with a worktree finishes a turn, it runs there after the checkpoint: 10-minute limit, 16 MiB output cap, stdin closed, its own process group, an env without keys or tokens (`CI=1`). Card: `✓ tests pass`, `✗ N failing`, `✗ tests fail`, `✗ tests timed out`, `✗ tests couldn't start`. If the agent changed the test setup (package.json, `.npmrc`, runner configs, `conftest.py`, Makefile, toolchain pins, `.gitignore`, the command's own script…) or filled an ignored dependency folder (`node_modules/`, a virtualenv), it asks instead: `? test setup changed · /test`. `/test [agent]` shows the command, folder and changed setup; `y` runs exactly that, and later turns with the same setup run by themselves.
+- **/review [agent]:** a popup lists your keys' priced chat models (cheapest first, last pick highlighted) with each one's price range, the diff size and the token range (D49); `↑↓` `⏎` sends one request with the diff, secrets removed; budgets hold the worst case first. The answer opens in a popup; the card shows `review: 1 high, 2 low`. `/review <agent> show` reopens it. Auto-review (D55, **off**, `/settings` q) reviews each new diff after a turn with your last pick, under `/review budget <usd>` a day (default $1).
+- **/fork [agent] <model>:** the same first message on another model (any `/model` offers), in its own worktree from the commit the agent started from, always Ask; the ask estimates half to twice the agent's tokens so far. `/diff <agent> vs <other>` compares the two (against the other's last checkpoint, else its branch).
+- **/compact (inside AI Term's agent):** summarizes all but the last two turns with the agent's own model; asks first with the token and price range; same caps, budgets and usage as a turn; the conversation changes only when the whole summary arrived. The 85% note now says `/compact or /clear`.
+
+Prompt vs code:
+- "/compact asks first with a price range" for AI Term's agent only, as the prompt says; the CLIs keep their own `/compact`.
+- Auto-test "ask first": the card asks (`? test setup changed · /test`) rather than a popup appearing by itself (calmer; D55). Once you run a setup with `/test`, the same setup later runs without asking (else every JS project with `npm install` would ask every turn).
+- `/fork <model>` keeps the source's engine and login when that engine offers the model; another engine starts on its own login.
+
+Findings (fresh typescript-reviewer and security-reviewer on f0b8285..de2cabb; a security fix review on b660b73):
+- **HIGH (security):** ignored files never reached the "setup changed" check, so an agent could plant `node_modules/.bin/vitest` (or a virtualenv script, an ignored `.npmrc`) and auto-test ran it. Fixed: ignored dependency folders and setup-named ignored files count, with a walk of names, sizes and times; approval remembered per agent while the setup is unchanged; more setup names (`.gitignore`, `go.work`, `.pnp.cjs`, `.yarn/`, `.bundle/`, `*.gradle`, `*.pth`, `sitecustomize.py`, every relative-path word of the command).
+- **HIGH (security, design, documented not changed):** tests are code: the agent's own test and source files run with your rights; only the setup asks. That is the trade-off the prompt chose; README and architecture now say so, and `/settings` j turns auto-test off.
+- **MEDIUM:** a `setsid` child kept a run open forever (now it ends 2 s after the command exits); a fork whose worktree couldn't be made ran in your checkout (now nothing starts); auto-review kept its daily hold when nothing was sent (now only a sent request counts, and holds keep their day); a turn starting during the turn-end checks still got a test run (now re-checked, one turn end at a time); `/review` redaction missed URL passwords, npm and Stripe tokens (new patterns, also used by the secret scan).
+- **Fix review (b660b73):** untracked or committed dependency files and other ignored folders (`dist/`, `target/`, `__pycache__/`) slipped past the check (now every ignored entry counts, and a run's own output stays approved); a link out of the worktree hid its target after one approval (now such a setup always asks); the URL-password pattern hit templates and placeholders like `${DB_PASS}`, `%s`, `<password>` and blocked merges (now skipped); the walk had no time limit (10 s, then the setup asks).
+- **LOW:** a review finishing after the agent restarted put a stale result on the card; a key error booked the budget hold; `/compact` didn't count a request without usage, kept the old context reading and its summary read as user instructions; `0 failing` showed on a failed run; the compare popup offered merge and discard; `/test-cmd` in an unrecorded worktree could pick another repository; review maps weren't cleaned on remove.
+- Not fixed, with reasons:
+  - Tests aren't sandboxed (see the design HIGH above); a process that escapes the group with `setsid` keeps running after the run ends (no sandbox to stop it).
+  - A background process the agent left running could change the setup between the check and the spawn (milliseconds; D35).
+  - Redaction is pattern-based: a secret with no known shape or secret-looking name can still reach a review (short values such as `password = hunter`).
+  - A JS project with a large `node_modules` takes a few seconds per turn end to check (the walk); past 200k entries or 10 s every turn asks.
+
+Checks: the run summary at the top (after a38d00e).
+
+New dependencies: none.
+
+Concepts introduced:
+- **Process group:** a program started `detached` leads its own group, and a signal sent to the negative pid reaches every process in it, so a timeout stops npm and every worker it started (`runTests` in `src/daemon/test-run.ts`); a process that calls `setsid` leaves the group, which only a sandbox can prevent.
+- **Ignored files:** git's `.gitignore` rules hide build output and dependencies from status and diffs, so a check that reads only git's change lists misses them; `ls-files --others --ignored --directory` lists them (`testSetup`).
+- **Context compaction:** a model reads the whole conversation on every request; replacing old turns with a short summary (`src/agent/compact.ts`) keeps later requests smaller and cheaper, at the cost of losing detail.
 
 ## Part E: v0.7.3 /merge, /pr, secret scan (D55, scan on) — done
 Commits: see `git log d7a5897..` (RED test commits precede each fix): GREEN 747e37e, review fixes 1e79abd and the fix-review commits after it, plus this handover.
