@@ -485,7 +485,7 @@ export class SessionManager extends EventEmitter {
                 if(direct)this.emit('ownerOutput',info.id,chunk);else live.pendingEmits=(live.pendingEmits??0)+1;
                 live.output = live.output.then(async () => {
                     if(live.mirrorFailed)return;
-                    try{await live.mirror.write(data);}finally{if(!direct)live.pendingEmits=(live.pendingEmits??1)-1;}
+                    await live.mirror.write(data);
                     this.scheduleLimitCheck(live);
                     info.lastOutputAt = new Date().toISOString();
                     if (info.status === 'starting'&&(!live.statusState||live.statusState.status==='starting')) {
@@ -508,6 +508,9 @@ export class SessionManager extends EventEmitter {
                     // Stop the failed child without waiting on live.output, which is this very task.
                     try{await host.stop();}catch{this.log.error('Failed to stop session after terminal mirror failure');}
                 }).finally(()=>{
+                    // Only once its emit is done (review: the first chunk waits on a state save first, and the next one
+                    // must not go ahead of it on the direct path), and on every way out, failures included.
+                    if(!direct)live.pendingEmits=(live.pendingEmits??1)-1;
                     live.queuedBytes-=bytes;
                     this.updatePause(live);
                 });

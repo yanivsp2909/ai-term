@@ -201,7 +201,10 @@ export class Homepage {
       const [engines,keys]=await Promise.all([this.loadEngines(),this.connection.request({kind:'keys.list'})]);
       this.keys=keys.keys??[];
       if(this.ended)return;
-      if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length)await this.openCredentials('login');
+      // Nothing logged in: the login popup, unless you already started something in the first frame (review: it replaced
+      // what you were typing); then a note says how instead.
+      const busy=Boolean(this.field.text||this.box||this.credentials||this.helpOffset!==null);
+      if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length){if(busy)this.showNote('No engine is logged in and no API key is saved · /login connects one');else await this.openCredentials('login');}
       else this.draw(true);
       await this.subscribeStats(true);await this.subscribeUsage(true);
       // Notification clicks select agents here while this homepage is open. An older daemon refuses the request;
