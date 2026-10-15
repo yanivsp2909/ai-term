@@ -394,7 +394,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -738,7 +738,7 @@ export class Homepage {
     try{enabled=(await this.connection.request({kind:'settings.get'})).settings?.queue===true;}catch{this.showNote('Settings unavailable');return;}
     if(argument==='add'){if(!enabled){this.showNote('the queue is off · turn it on in /settings (b)');return;}this.openBox('start');if(this.box)this.box.queue=true;this.draw(true);return;}
     if(this.popup){this.showNote('close the open popup first');return;}
-    const panel:QueuePanel=new QueuePanel(()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},async id=>{await this.connection.request({kind:'queue.remove',itemId:id});},enabled);
+    const panel:QueuePanel=new QueuePanel(()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},async id=>validateQueue((await this.connection.request({kind:'queue.remove',itemId:id})).queue),enabled);
     this.popup=panel;this.draw(true);
     try{panel.set(validateQueue((await this.connection.request({kind:'queue.list'})).queue));}catch(error){this.showNote(error instanceof Error?error.message:'Queue unavailable');}
   }

@@ -10,7 +10,7 @@ export class QueuePanel {
   private choice = 0;
   private note = '';
   private readonly panel: TextPanel;
-  constructor(private readonly changed: () => void, private readonly close: () => void, private readonly remove: (id: string) => Promise<void>, private readonly enabled: boolean) {
+  constructor(private readonly changed: () => void, private readonly close: () => void, private readonly remove: (id: string) => Promise<QueueItem[]>, private readonly enabled: boolean) {
     this.panel = new TextPanel('Queue', changed, close);
   }
   set(items: readonly QueueItem[]): void { this.items = [...items]; this.choice = Math.min(this.choice, Math.max(0, items.length - 1)); this.render(); }
@@ -18,7 +18,7 @@ export class QueuePanel {
     if (key === 'up' || key === 'down') { this.choice = Math.max(0, Math.min(this.items.length - 1, this.choice + (key === 'up' ? -1 : 1))); this.render(); return; }
     if (key === 'x') {
       const item = this.items[this.choice]; if (!item) return;
-      void this.remove(item.id).then(() => { this.note = '✓ removed from the queue'; this.render(); }, (error: unknown) => { this.note = `✗ ${error instanceof Error ? error.message : 'not removed'}`; this.render(); });
+      void this.remove(item.id).then(items => { this.note = '✓ removed from the queue'; this.set(items); }, (error: unknown) => { this.note = `✗ ${error instanceof Error ? error.message : 'not removed'}`; this.render(); });
       return;
     }
     this.panel.key(key);

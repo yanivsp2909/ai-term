@@ -117,3 +117,34 @@ it('limits hold: AI Term\'s agent runs with the item\'s turns and $ as its caps;
   expect(overLimit({ usd: 2 }, { tokens: 10, costUsd: null, unknownPrice: true })).toBe(true);
   expect(stopDelayMs('21:30', new Date(2026, 9, 15, 21, 0))).toBe(30 * 60_000);
 });
+
+// End to end, as the daemon runs it: a real SessionManager and DaemonServer, a client connection, a fake CLI.
+it('end to end: /queue add over the socket, the due item starts a real session through create(), with its stop time set; /queue lists it started', async () => {
+  const { getPaths, preparePaths } = await import('../src/shared/paths.js');
+  const { Logger } = await import('../src/daemon/log.js');
+  const { SessionManager } = await import('../src/daemon/session-manager.js');
+  const { DaemonServer } = await import('../src/daemon/server.js');
+  const { Connection } = await import('../src/client/connection.js');
+  const pty = (await import('node-pty')).default, engines = await import('../src/daemon/engines.js');
+  const real = pty.spawn;
+  vi.spyOn(pty, 'spawn').mockImplementation((file, args, options) => file === '/bin/sh' ? real('/bin/sh', ['-c', 'sleep 300'], { ...options, env: { PATH: '/usr/bin:/bin' } }) : real(file, args, options));
+  vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
+  const root = await temp(), paths = getPaths(join(root, 'home')); await preparePaths(paths);
+  const { writeFile, mkdir } = await import('node:fs/promises'); const proj = join(root, 'proj'); await mkdir(proj);
+  await writeFile(join(paths.root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off', queue: true }), { mode: 0o600 });
+  const log = new Logger(paths.log), manager = new SessionManager(paths, log); await manager.load();
+  const server = new DaemonServer(paths, manager, log); await server.listen();
+  let clock = new Date(2026, 9, 15, 20, 0);
+  const queue = new QueueService(paths.root, { create: r => manager.create({ ...r }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop) }, log, () => clock);
+  await queue.load(); server.setQueue(queue);
+  const client = await Connection.connect(paths, { entry: join(process.cwd(), 'src', 'cli', 'index.ts'), autoStart: false });
+  try {
+    const added = await client.request({ kind: 'queue.add', trigger: { kind: 'at', time: '20:30' }, limit: { until: '23:00' }, request: request({ cwd: proj }) });
+    expect(added.queue).toHaveLength(1);
+    clock = new Date(2026, 9, 15, 20, 31); await queue.tick();
+    const listed = (await client.request({ kind: 'queue.list' })).queue ?? [];
+    expect(listed[0]).toMatchObject({ state: 'started', sessionId: expect.any(String) });
+    expect(manager.list().find(session => session.id === listed[0]?.sessionId)).toMatchObject({ engine: 'codex', permission: 'ask', cwd: proj });
+    await expect(client.request({ kind: 'queue.add', trigger: { kind: 'after', agent: 'x' }, limit: { usd: 2 }, request: request({ cwd: proj }) })).rejects.toThrow('An agent on your subscription needs a stop time');
+  } finally { client.close(); queue.close(); await server.close(); await manager.shutdown(); }
+}, 30_000);
