@@ -1,5 +1,6 @@
 import type { KeyProvider } from './protocol.js';
-import type { AgentDiff } from './diff.js';
+import type { AgentDiff, DiffFile } from './diff.js';
+import { scanLine } from './secret-scan.js';
 import { cleanNote } from './handoff.js';
 import { redactSecrets } from './redact.js';
 import { PROVIDER_LABELS } from './providers.js';
@@ -16,17 +17,25 @@ export type ReviewState = { state: 'running' } | ({ state: 'done'; auto?: true }
 
 // The diff as the reviewer reads it: one header per file, git's own lines (already cleaned of controls by the daemon),
 // secrets removed; past REVIEW_DIFF_CHARS it is cut between files and says so.
+// Gate: files that usually hold secrets go as their name only, and each line the secret scan flags (patterns and the
+// entropy check, as before /merge) is left out, so redaction by pattern isn't the only guard on what the model sees.
+const SECRET_FILE = /(?:^|\/)(?:\.env(?:\..*)?|\.envrc|.*\.(?:pem|key|p12|pfx|jks|keystore|ppk|kdbx)|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.[a-z]+)?|secrets?(?:\.[a-z]+)?|\.npmrc|\.netrc|\.pypirc|\.git-credentials|service-account.*\.json)$/i;
+function reviewLines(file: DiffFile): string[] {
+  if (SECRET_FILE.test(file.path)) return ['(left out: a file that usually holds secrets)'];
+  return file.lines.map(line => /^[+-]/.test(line) && scanLine(line.slice(1)) ? '(line left out: the secret scan flagged it)' : line);
+}
 export function diffForReview(diff: AgentDiff): string {
   const parts: string[] = [];
   let used = 0, shown = 0;
   for (const file of diff.files) {
-    const part = [`--- ${file.from ? `${file.from} → ` : ''}${file.path} (${file.status}, +${file.added} −${file.removed})`, ...file.lines, ...(file.cut ? ['(this file is cut here)'] : [])].join('\n');
+    const part = [`--- ${file.from ? `${file.from} → ` : ''}${file.path} (${file.status}, +${file.added} −${file.removed})`, ...reviewLines(file), ...(file.cut ? ['(this file is cut here)'] : [])].join('\n');
     if (used + part.length > REVIEW_DIFF_CHARS) break;
     parts.push(part); used += part.length + 1; shown++;
   }
   if (shown < diff.files.length) parts.push(`(the diff is cut here: ${diff.files.length - shown} more file${diff.files.length - shown === 1 ? '' : 's'} not shown)`);
   else if (diff.capped) parts.push('(parts of this diff were too large to show)');
-  return redactSecrets(parts.join('\n'));
+  // The diff can't close the tag it is sent in (prompt text inside it stays data).
+  return redactSecrets(parts.join('\n')).replace(/<\/?diff>/gi, tag => tag.replace('<', '‹'));
 }
 export function reviewPrompt(diffText: string): string {
   return [
