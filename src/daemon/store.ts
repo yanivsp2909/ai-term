@@ -5,10 +5,14 @@ import { dirname, join, basename } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { ownedByMe } from '../shared/owner.js';
 export async function atomicWrite(path: string, value: unknown): Promise<void> {
+    return atomicWriteText(path, JSON.stringify(value) + '\n');
+}
+// The same, for text that isn't JSON (v1.0.2 brain.md).
+export async function atomicWriteText(path: string, text: string): Promise<void> {
     const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
     const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
     try {
-        await file.writeFile(JSON.stringify(value) + '\n');
+        await file.writeFile(text);
         await file.sync();
     }
     catch (error) {

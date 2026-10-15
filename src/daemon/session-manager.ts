@@ -45,6 +45,8 @@ import { windowsRecipe, windowsShell } from './win-launch.js';
 import { pathInside } from '../shared/path-inside.js';
 import { limitCaps, overLimit, stopDelayMs, type QueueLimit } from '../shared/queue.js';
 const QUEUE_CHECK_MS = 15_000, QUEUE_REPORT_MS = 3 * 60_000;
+import { BRAIN_BATCH_CHARS, BRAIN_MAX_DECISIONS, BRAIN_OUTPUT_PER_FILE, BRAIN_SUMMARY_FILE_CHARS, brainMention, brainPrompt, parseSummaries, type BrainPlan, type BrainResult } from '../shared/brain.js';
+import { BrainError, brainPaths, readBrain, readRepoFile, removeBrain, scanRepo, writeBrain } from './brain.js';
 import { allocateFreePort, devEnv, DevServers, scriptOf } from './dev-servers.js';
 import type { DevPlan, DevState } from '../shared/dev.js';
 const DEV_OFF = 'Dev servers are off; turn them on in /settings (y)', DEV_NO_TREE = 'A dev server runs in an agent\'s worktree; this agent has none', DEV_NO_CMD = "Set the project's dev command with /dev-cmd first";
@@ -353,11 +355,16 @@ export class SessionManager extends EventEmitter {
                 profile=choice;profilePath=await prepareProfile(this.paths.root,agent.engine,choice,homedir());
             }
         }
+        // v1.0.2 (D55, on): the repository map /brain made, for an agent that starts fresh (not a login or a resume).
+        // Claude Code takes it as a system-prompt file and AI Term's agent reads it at start; Codex only when you asked
+        // for the mention in its first message (it has no flag for an instructions file).
+        const brain=agent&&!agent.login&&!continuation?.resume&&settings?.brainForAgents!==false&&(agent.engine!=='codex'||agent.brainMention===true)?await this.brainFor(request.cwd):null;
         const conversationId=agent?.engine==='claude-code'&&!agent.login?(continuation?.conversationId??randomUUID()):undefined;
         // Status is not billing: subscription and key sessions both report it. Login sessions only sign in.
         const withStatus=Boolean(agent&&!agent.login&&this.usage);
         const codexStatus=withStatus&&agent?.engine==='codex'?{node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})}:undefined;
-        const argvRequest=agent?{...agent,...(conversationId?{conversationId}:{}),...(continuation?.resume?{resume:true}:{}),...(codexStatus?{codexStatus}:{})}:null;
+        const mentioned=brain&&agent?.engine==='codex'?{firstMessage:brainMention(brain.file,agent.firstMessage??'')}:{};
+        const argvRequest=agent?{...agent,...mentioned,...(conversationId?{conversationId}:{}),...(continuation?.resume?{resume:true}:{}),...(codexStatus?{codexStatus}:{}),...(brain&&agent.engine==='claude-code'?{brainFile:brain.file}:{})}:null;
         let recipe: SpawnRecipe;
         let authMethod: SessionInfo['authMethod'];
         let agentKey: {view:KeyView;models:string[]}|undefined;
@@ -394,6 +401,7 @@ export class SessionManager extends EventEmitter {
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account',...(profile?{profile}:{}) }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
+        if(brain)info.brain={builtAt:brain.builtAt};
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
             const forkWorktree=fork!==undefined;
@@ -455,7 +463,7 @@ export class SessionManager extends EventEmitter {
                 const endpoint=bound&&binding?binding.endpoint:provider==='ollama'&&isLocalEndpoint(agentKey.view.endpoint)?agentKey.view.endpoint:null;
                 live.agentModels=models;
                 const command={node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})};
-                const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,lsp:settings?.lspDiagnostics===true,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
+                const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,lsp:settings?.lspDiagnostics===true,...(brain?{brainFile:brain.file}:{}),...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
                 const file=join(dirname(transcript),'agent-secrets.json'),split=splitAgentSecrets(buildAgentEnv(process.env,{secret,endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry}),file,this.paths.root);
                 writeAgentSecrets(file,split.secrets);
                 // An agent that never started leaves no secret behind for long; a restart's newer file keeps its own timer.
@@ -746,9 +754,9 @@ export class SessionManager extends EventEmitter {
     }
     // One request on a saved key for a job (a handoff note, a review): held against the budgets at its worst case first,
     // then settled with the provider's own counts. Only fixed words ever leave; the provider's error text never does.
-    private async keyedRequest(id:string,writer:import('./handoff.js').KeyedWriter,prompt:string,job:{worst:number;maxOutput:number;what:'handoff'|'review'},settings:Settings):Promise<{text:string;summary:HandoffSummary}>{
+    private async keyedRequest(id:string,writer:import('./handoff.js').KeyedWriter,prompt:string,job:{worst:number;maxOutput:number;what:'handoff'|'review'|'brain'},settings:Settings):Promise<{text:string;summary:HandoffSummary}>{
         // A review may read an agent that has exited (whose own holds the ledger already closed): it holds under its own id.
-        const {worst,what}=job,usage=this.usage?.summary(),label=what==='handoff'?'Handoff summary':'Review',holder=what==='review'?randomUUID():id;
+        const {worst,what}=job,usage=this.usage?.summary(),label=what==='handoff'?'Handoff summary':what==='brain'?'Brain':'Review',holder=what==='handoff'?id:randomUUID();
         // No ledger, no budget check: a keyed request is never sent unchecked (v0.6 gate).
         if(!this.ledger)throw new Error('Budget check unavailable; try again');
         const held=this.ledger.reserve({sessionId:holder,provider:writer.key.provider,model:writer.model,amountUsd:worst},{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
@@ -768,7 +776,7 @@ export class SessionManager extends EventEmitter {
             if(error instanceof KeyError)throw error;
             this.log.error(`${label} request failed`);
             // eslint-disable-next-line preserve-caught-error -- provider errors may carry anything the provider sent; only fixed words leave.
-            throw new Error(what==='handoff'?'The handoff summary request failed':'The review request failed');
+            throw new Error(what==='handoff'?'The handoff summary request failed':what==='brain'?'The brain request failed':'The review request failed');
         }finally{clearTimeout(timer);}
         // The agent exited meanwhile: its hold was already booked at the worst case, so the real usage isn't added on top.
         const stillHeld=grant!==null&&this.ledger?.holds(grant)===true;
@@ -1228,6 +1236,87 @@ export class SessionManager extends EventEmitter {
             inputTokens:{low:Math.round(tokens*0.8),high:Math.round(tokens*1.25)},outputTokens:{low:200,high:REVIEW_OUTPUT_TOKENS},fingerprint:createHash('sha256').update(text).digest('hex')};
         return {live,prompt,fingerprint:plan.fingerprint,plan,writers:reviewWriters(await this.keys.list(),settings,this.handoffWriter.prices),settings};
     }
+    // v1.0.2 /brain. The repository is the one the folder belongs to (a worktree maps its main repository).
+    private brainBuilding=new Set<string>();
+    private async brainRepo(cwd:string):Promise<string>{
+        try{return await projectRepo(cwd);}catch(error){if(error instanceof TestRunError)throw new BrainError("This folder isn't in a git repository; /brain maps one",{cause:error});throw error;}
+    }
+    // For an agent that starts: brain.md's path and when it was written, or null (none, or not a repository).
+    private async brainFor(cwd:string):Promise<{file:string;builtAt:string}|null>{
+        let top:string;
+        try{top=await projectRepo(cwd);}catch(error){if(error instanceof TestRunError)return null;this.log.error('Brain: the repository could not be found; the agent starts without it');return null;}
+        const {markdown}=brainPaths(this.paths.root,top);
+        try{const info=await lstat(markdown);return info.isFile()?{file:markdown,builtAt:info.mtime.toISOString()}:null;}
+        catch(error){if(isFsError(error,'ENOENT'))return null;this.log.error('Brain: brain.md could not be read; the agent starts without it');return null;}
+    }
+    private async brainInput(cwd:string){
+        const top=await this.brainRepo(cwd),previous=await readBrain(this.paths.root,top),scan=await scanRepo(top,previous),settings=await new SettingsStore(this.paths.root).get();
+        // Modules to summarize: TS/JS and Python files new or changed since the last map (or every one, the first time a
+        // model pass runs, so a map built locally first still gets its summaries).
+        const pending=Object.keys(scan.index.files).filter(path=>scan.index.files[path]?.lang!=='other'&&!scan.index.files[path]?.summary);
+        const batches:{path:string;text:string}[][]=[];let batch:{path:string;text:string}[]=[],size=0;
+        for(const path of pending){
+            const text=scan.texts.get(path)??await this.brainText(top,path);if(text===null)continue;
+            const cut=text.slice(0,BRAIN_SUMMARY_FILE_CHARS);
+            if(size+cut.length>BRAIN_BATCH_CHARS&&batch.length){batches.push(batch);batch=[];size=0;}
+            batch.push({path,text:cut});size+=cut.length;
+        }
+        if(batch.length)batches.push(batch);
+        const prompts=batches.map(files=>({prompt:brainPrompt(files),paths:files.map(f=>f.path)}));
+        const tokens=prompts.reduce((sum,p)=>sum+estimateTokens(p.prompt),0),files=prompts.reduce((sum,p)=>sum+p.paths.length,0);
+        const inputTokens={low:Math.round(tokens*0.8),high:Math.round(tokens*1.25)},outputTokens={low:files*BRAIN_OUTPUT_PER_FILE.low,high:files*BRAIN_OUTPUT_PER_FILE.high+prompts.length*300};
+        const writers=files?reviewWriters(await this.keys.list(),settings,this.handoffWriter.prices):[];
+        const fingerprint=createHash('sha256').update(JSON.stringify([top,Object.entries(scan.index.files).map(([path,file])=>[path,file.hash]),scan.removed,scan.index.skipped])).digest('hex');
+        return {top,previous,scan,settings,prompts,inputTokens,outputTokens,writers,fingerprint,files};
+    }
+    // A file's text for the model pass when the scan kept it from the last map (unchanged, but never summarized).
+    private async brainText(top:string,path:string):Promise<string|null>{const read=await readRepoFile(top,path);return read.kind==='file'?read.text:null;}
+    async brainPlan(cwd:string):Promise<BrainPlan>{
+        const input=await this.brainInput(cwd),{scan,previous,settings,writers}=input;
+        const last=settings.reviewModel,selected=writers.length?Math.max(0,writers.findIndex(w=>w.key.id===last?.keyId&&w.model===last.model)):0;
+        return {repo:input.top,files:Object.keys(scan.index.files).length,changed:previous?scan.parsed.length:Object.keys(scan.index.files).length,removed:scan.removed.length,skipped:scan.index.skipped,builtAt:previous?.builtAt??null,
+            summarize:input.files,inputTokens:input.inputTokens,outputTokens:input.outputTokens,models:writers.map(w=>reviewModelView(w,input.inputTokens,input.outputTokens)),selected,fingerprint:input.fingerprint,agents:settings.brainForAgents!==false};
+    }
+    // The plan you saw, and only that one: a repository that changed since refuses. The model pass is held against the
+    // budgets request by request, and its worst case must fit the per-run cap (/settings c).
+    async buildBrain(cwd:string,fingerprint:string,model?:{keyId:string;model:string}):Promise<BrainResult>{
+        const input=await this.brainInput(cwd),{top,scan,settings}=input;
+        if(input.fingerprint!==fingerprint)throw new BrainError('The repository changed since the plan was shown; run /brain again');
+        if(this.brainBuilding.has(top))throw new BrainError('A /brain build for this repository is already running');
+        const writer=model?input.writers.find(w=>w.key.id===model.keyId&&w.model===model.model):undefined;
+        if(model&&!writer)throw new BrainError('Pick one of the models /brain offered');
+        this.brainBuilding.add(top);
+        try{
+            const index=scan.index;let summarized=0,costUsd:number|null=null;
+            if(writer&&input.prompts.length){
+                const worst=reviewModelView(writer,input.inputTokens,input.outputTokens).priceUsd.high;
+                // An empty cap (null) is no cap, as for agents.
+                const cap=settings.agentCaps?settings.agentCaps.spendUsd:DEFAULT_AGENT_CAPS.spendUsd;
+                if(cap!==null&&worst>cap)throw new BrainError("The brain's model pass would pass the per-run cap in /settings c");
+                const decisions:string[]=[];costUsd=0;const job=randomUUID();
+                for(const part of input.prompts){
+                    const tokens=estimateTokens(part.prompt),share={low:Math.round(tokens*0.8),high:Math.round(tokens*1.25)};
+                    const out={low:part.paths.length*BRAIN_OUTPUT_PER_FILE.low,high:part.paths.length*BRAIN_OUTPUT_PER_FILE.high+300};
+                    const written=await this.keyedRequest(job,writer,part.prompt,{worst:reviewModelView(writer,share,out).priceUsd.high,maxOutput:out.high,what:'brain'},settings);
+                    const read=parseSummaries(written.text,part.paths);
+                    for(const [path,summary] of Object.entries(read.summaries)){const file=index.files[path];if(file){index.files[path]={...file,summary};summarized++;}}
+                    decisions.push(...read.decisions);costUsd+=written.summary.costUsd??0;
+                }
+                index.design=[...new Set([...decisions,...index.design])].slice(0,BRAIN_MAX_DECISIONS);index.model=writer.model;
+            }
+            const written=await writeBrain(this.paths.root,top,index);
+            return {repo:top,path:written.path,lines:written.lines,files:Object.keys(index.files).length,changed:input.previous?scan.parsed.length:Object.keys(index.files).length,summarized,costUsd,model:writer?.model??null};
+        }finally{this.brainBuilding.delete(top);}
+    }
+    async brainShow(cwd:string):Promise<{repo:string;text:string;builtAt:string}>{
+        const top=await this.brainRepo(cwd),{markdown}=brainPaths(this.paths.root,top);
+        let file;
+        try{file=await open(markdown,fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW|fsConstants.O_NONBLOCK);}catch(error){if(isFsError(error,'ENOENT'))throw new BrainError('No brain for this repository yet · /brain builds one',{cause:error});throw error;}
+        try{const info=await file.stat();if(!info.isFile()||info.size>4*1024*1024)throw new BrainError('No brain for this repository yet · /brain builds one');return {repo:top,text:await file.readFile('utf8'),builtAt:info.mtime.toISOString()};}
+        finally{await file.close();}
+    }
+    async brainRemove(cwd:string):Promise<boolean>{return removeBrain(this.paths.root,await this.brainRepo(cwd));}
+    async setBrainForAgents(on:boolean):Promise<void>{await new SettingsStore(this.paths.root).update(async current=>({...current,brainForAgents:on}));}
     async reviewPlan(id:string):Promise<ReviewPlan>{
         const {plan,writers,settings}=await this.reviewInput(id);
         if(!writers.length)throw new ReviewError('No priced model among your keys · add an API key in /settings');

@@ -1047,3 +1047,22 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
   - **Plain fields:** odd columns, codes and severities are shown as plain values.
 - **Trust:** language servers may run project code (TypeScript loads the worktree's `node_modules/typescript`; rust-analyzer runs build scripts and proc macros; gopls and pyright read the project). That code is agent-written, so they run at bash's trust level: the same sandbox and env.
 - **Output:** `diagnostics for <path>: N errors` and one line per item (`line:col severity code message`, controls removed, 200 chars), at most 40 lines with `… N more`.
+
+### 12.26 v1.0.2 /brain (2026-10-15; only when you run it; agents get it: D55, on)
+- **Where it runs:** `/brain` runs on the repository the homepage's folder is in (`projectRepo`, so a worktree maps its main repository). The repo id is `repoDirectory(top)`, the same name as its worktree folder.
+- **Local pass** (`src/daemon/brain.ts` `scanRepo`, free):
+  - **Files:** `git ls-files -z --cached --others --exclude-standard -- .` lists them, so ignored files never show. Each is read once with `O_NOFOLLOW` (a link is listed by its target text, never followed).
+  - **Skipped:** files over 256 KB, binaries (a NUL in the first 8 KB), `.env`/`.envrc`, files named like secrets (review's `SECRET_FILE`), and any file with a line `scanLine` flags.
+  - **Parsing:** TS/JS and Python imports and exports by pattern (`src/shared/brain.ts`; nothing is run). Local imports are resolved to repository files.
+  - **Incremental:** a file with the same hash as last time keeps its entry and summary without being parsed again. Imports are resolved again for every file.
+- **Model pass** (optional): the popup lists the free local row, then `/review`'s priced models with the range for the modules not yet summarized (D49).
+  - **Sending:** batches of at most 60,000 characters (12,000 per file), redacted with `redactSecrets` inside `<file>` tags they can't close. Each batch is one `keyedRequest(what:'brain')`, held against the budgets at its worst case and counted in Usage.
+  - **Cap:** the whole pass's worst case must fit the per-run cap (`agentCaps.spendUsd`).
+  - **Answer:** read back as `PATH :: summary` and `DECISION :: …` lines.
+- **Files:** `~/.ai-term/brain/<repo id>/brain.md` (≤2,000 lines; modules ranked by importers; the rest counted, pointing at brain.json) and `brain.json` (each file's hash, exports, imports, local edges, summary). The folder is 0700 and the files 0600; brain.json is written last. Nothing is written in the repository.
+- **Fingerprint:** a build carries the plan's fingerprint (paths, hashes, removals, skips). A repository that changed since refuses.
+- **Agents** (`settings.brainForAgents`, on; `a` in the popup): at create, a fresh agent (not a login or a resume) gets brain.md's path and its mtime, which becomes `SessionInfo.brain.builtAt` (the card shows `brain · 2h old`).
+  - **Claude Code:** `--append-system-prompt-file=<path>`, one argv element. The option is in the 2.1.301 binary, though `--help` lists it only inside `--bare`'s text.
+  - **AI Term's agent:** `--brain=<path>`, read at start into its instructions (≤64 KiB).
+  - **Codex:** 0.160.1 has no option that adds instructions from a file (`model_instructions_file` replaces its own). The start box's `n` sets `brainMention`, and the daemon puts the path before the first message.
+  - **Paths:** `isBrainFile` accepts only an absolute `…/brain/<folder>/brain.md` with no controls.

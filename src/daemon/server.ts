@@ -24,6 +24,7 @@ import { CHECKPOINT_ERRORS } from './checkpoints.js';
 import { CHECKOUT_NOT_ON_BASE, MERGE_ERRORS, MergeError } from './merge.js';
 import { TEST_ERRORS } from './test-run.js';
 import { REVIEW_ERRORS } from './review.js';
+import { BRAIN_ERRORS } from './brain.js';
 import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
 import { DIRECT_HOSTS } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
@@ -322,6 +323,11 @@ export class DaemonServer {
                 case 'project.testCommand':
                     this.control(peer,{id:request.id,ok:true,testCommand:await this.manager.testCommand(request.cwd)});
                     break;
+                case 'brain.plan': this.control(peer,{id:request.id,ok:true,brainPlan:await this.manager.brainPlan(request.cwd)}); break;
+                case 'brain.build': this.control(peer,{id:request.id,ok:true,brainResult:await this.manager.buildBrain(request.cwd,request.fingerprint,request.model)}); break;
+                case 'brain.show': this.control(peer,{id:request.id,ok:true,brainText:await this.manager.brainShow(request.cwd)}); break;
+                case 'brain.remove': await this.manager.brainRemove(request.cwd); this.control(peer,{id:request.id,ok:true}); break;
+                case 'brain.agents': await this.manager.setBrainForAgents(request.on); this.control(peer,{id:request.id,ok:true}); break;
                 case 'sessions.devPlan':
                     this.control(peer,{id:request.id,ok:true,devPlan:await this.manager.devPlan(request.sessionId)});
                     break;
@@ -465,7 +471,7 @@ export class DaemonServer {
                 'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
                 // AI Term's agent (v0.4.1–v0.4.2).
                 'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh",'Pick a model for AI Term agent','Unknown catalog model',
-                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,...QUEUE_ERRORS,...DEV_ERRORS,
+                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,...QUEUE_ERRORS,...DEV_ERRORS,...BRAIN_ERRORS,'brain.json is unreadable; /brain rm, then /brain','The brain folder is not a plain folder; AI Term left it alone',
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',

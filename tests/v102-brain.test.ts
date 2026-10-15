@@ -42,7 +42,7 @@ async function repo() {
 
 it('TS/JS: imports and exports, ESM and CommonJS', () => {
   expect(parseTs("import { x } from './b';\nimport type { T } from \"./t\";\nexport * from './all';\nconst m = await import('./lazy');\nconst r = require('./req');\nexport function foo() {}\nexport const a = 1, b = 2;\nexport default class Main {}\nexport { q as w, e };\nexport interface Shape {}\nexport type Id = string;\n")).toEqual({
-    imports: ['./b', './t', './all', './lazy', './req'], exports: ['foo', 'a', 'default', 'w', 'e', 'Shape', 'Id'],
+    imports: ['./b', './t', './all', './lazy', './req'], exports: ['foo', 'a', 'b', 'default', 'w', 'e', 'Shape', 'Id'],
   });
 });
 
@@ -60,7 +60,7 @@ it('the local pass: tracked and untracked files git does not ignore; binaries, >
   expect(index.files['src/a.ts']).toMatchObject({ lang: 'ts', exports: ['foo', 'Bar'], local: ['src/b.ts'] });
   expect(index.files['src/new.ts']?.local).toEqual(['src/a.ts']);
   expect(index.files['src/c.js']?.local).toEqual(['src/b.ts']);
-  expect(index.files['py/pkg/m.py']).toMatchObject({ lang: 'py', exports: ['run', 'Thing'], local: ['py/pkg/n.py'] });
+  expect(index.files['py/pkg/m.py']).toMatchObject({ lang: 'py', exports: ['run', 'Thing'], local: ['py/pkg/n.py', 'py/pkg/__init__.py'] });
   expect(index.files['README.md']).toMatchObject({ lang: 'other', exports: [], local: [] });
   expect(index.files['src/a.ts']?.hash).toMatch(/^[0-9a-f]{64}$/);
   expect(parsed.length).toBe(9);
@@ -146,7 +146,7 @@ it('the card shows when a brain was given and how old it is', () => {
   const now = Date.now(), at = new Date(now - 2 * 3600_000).toISOString();
   const session = { id: randomUUID(), title: 'fixer', engine: 'claude-code', model: 'opus', auth: { kind: 'account' }, cwd: '/w', permission: 'ask', status: 'running', statusDetail: 'running', statusSince: at, createdAt: at, lastOutputAt: at, exitCode: null, ctxPercent: null, lastActivity: null, brain: { builtAt: at } } as unknown as SessionInfo;
   const card = cardText(session, now, 80);
-  expect([card.model?.text, card.activity?.text].join(' ')).toContain('brain · 2h old');
+  expect(card.model).toContain('brain · 2h old');
 });
 
 it('reads back the markdown it wrote', async () => {

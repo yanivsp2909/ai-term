@@ -66,10 +66,12 @@ import { validateHandoffPlan, validateHandoffSummary } from '../../shared/handof
 import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.js';
 import { openFolder, OpenError, type FolderApp } from './open-folder.js';
 import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-command.js';
-import { sep } from 'node:path';
+import { basename, sep } from 'node:path';
 import { QueueForm, QueuePanel } from './queue-panel.js';
 import { validateQueue } from '../../shared/queue.js';
 import { DevAsk } from './dev-ask.js';
+import { BrainAsk } from './brain-ask.js';
+import { brainAge, validateBrainPlan, validateBrainResult, type BrainPlan } from '../../shared/brain.js';
 import { validateDevPlan, type DevPlan } from '../../shared/dev.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
@@ -99,7 +101,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk;
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -404,7 +406,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/dev'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/dev','/brain'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -602,6 +604,7 @@ export class Homepage {
     if (command==='/test-cmd') { await this.testCmdCommand(argument); return; }
     if (command==='/dev-cmd') { await this.devCmdCommand(argument); return; }
     if (command==='/dev') { await this.devCommand(argument); return; }
+    if (command==='/brain') { await this.brainCommand(argument); return; }
     if (command==='/test') { await this.testCommand(argument); return; }
     if (command==='/queue') { await this.queueCommand(argument); return; }
     if (command==='/review') { await this.reviewCommand(argument); return; }
@@ -765,6 +768,38 @@ export class Homepage {
     });},()=>{this.enqueue(async()=>{
       try{await this.connection.request({kind:'sessions.devStop',sessionId:session.id});this.showNote(`dev server for ${session.title} stopped`);}
       catch(error){this.showNote(error instanceof Error?error.message:'Dev server could not be stopped');}
+    });});
+    this.popup=ask;this.draw(true);
+  }
+  // v1.0.2 /brain [show | rm]: a map of the repository this homepage's folder is in (where new agents start).
+  private async brainCommand(argument:string):Promise<void>{
+    const cwd=this.folder;
+    if(argument==='show'){
+      try{const shown=(await this.connection.request({kind:'brain.show',cwd})).brainText;if(!shown)throw new Error('Brain unavailable');
+        if(this.popup){this.showNote('close the open popup first');return;}
+        const panel:TextPanel=new TextPanel(`Brain · ${basename(shown.repo)} · ${brainAge(shown.builtAt,Date.now())}`,()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
+        panel.set(shown.text.split('\n').map(text=>({text,tone:text.startsWith('#')?'ink' as const:'ink-2' as const})));this.popup=panel;this.draw(true);}
+      catch(error){this.showNote(error instanceof Error?error.message:'Brain unavailable');}
+      return;
+    }
+    if(argument==='rm'){
+      try{await this.connection.request({kind:'brain.remove',cwd});this.showNote('✓ brain removed for this repository · /brain builds a new one');}
+      catch(error){this.showNote(error instanceof Error?error.message:'Brain could not be removed');}
+      return;
+    }
+    if(argument){this.showNote('/brain · /brain show · /brain rm');return;}
+    let plan:BrainPlan;
+    try{plan=validateBrainPlan((await this.connection.request({kind:'brain.plan',cwd})).brainPlan);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Brain unavailable');return;}
+    if(this.popup){this.showNote('close the open popup first');return;}
+    const ask:BrainAsk=new BrainAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},model=>{this.enqueue(async()=>{
+      this.showNote(model?`◐ building the brain with ${model.model}`:'◐ building the brain');
+      try{const result=validateBrainResult((await this.connection.request({kind:'brain.build',cwd,fingerprint:plan.fingerprint,...(model?{model:{keyId:model.keyId,model:model.model}}:{})})).brainResult);
+        this.showNote(`✓ brain for ${basename(result.repo)}: ${result.files} files, ${result.lines} lines${result.model?` · ${result.summarized} summaries by ${result.model} · ${result.costUsd===null?'price ?':`$${result.costUsd.toFixed(4)}`}`:''} · /brain show`);}
+      catch(error){this.showNote(`brain not built: ${error instanceof Error?error.message:'request failed'}`);}
+    });},on=>{this.enqueue(async()=>{
+      try{await this.connection.request({kind:'brain.agents',on});this.showNote(on?'✓ new agents get the brain':'new agents start without the brain');}
+      catch(error){this.showNote(error instanceof Error?error.message:'Brain setting could not be saved');}
     });});
     this.popup=ask;this.draw(true);
   }
@@ -1121,6 +1156,8 @@ export class Homepage {
       this.draw(true); return;
     }
     if (b.kind === 'start' && b.row !== 4 && key === 'a' && b.engine !== 'ai-term' && b.auth?.kind !== 'key') { this.nextAccount(b); this.draw(true); return; }
+    // v1.0.2: Codex has no instructions-file flag; n asks for the brain's path in its first message instead.
+    if (b.kind === 'start' && b.row !== 4 && key === 'n' && b.engine === 'codex') { b.brainMention = !b.brainMention; this.draw(true); return; }
     if (b.kind === 'start' && b.row !== 4 && key === 'p' && this.presetsEnabled) { this.enqueue(async () => { await this.nextPreset(b); this.draw(true); }); return; }
     if (b.kind === 'start' && b.row !== 4 && (key === 'm' || key === 'c' || key==='e')) { b.kind = key === 'm' ? 'model' : key==='e'?'effort':'folder'; this.returnToStart = true;if(b.kind==='model')this.resetModelTabs();else if(b.kind==='effort')this.valueChoices();this.draw(true);return; }
     if (key === 'enter') {
@@ -1159,7 +1196,7 @@ export class Homepage {
         if (b.checking || b.error) return;
         if (b.queue) { this.openQueueForm(b); return; }
         try {
-          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message,...(b.useWorktree!==undefined?{useWorktree:b.useWorktree}:{})});
+          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message,...(b.brainMention&&b.engine==='codex'?{brainMention:true as const}:{}),...(b.useWorktree!==undefined?{useWorktree:b.useWorktree}:{})});
           const session = validateSession(result.session); this.sessions = [session,...this.sessions.filter(s => s.id !== session.id)]; this.selectedId = session.id;
           this.box = undefined;this.permission='ask'; this.field.text = ''; this.previewCells = undefined; await this.updatePreview(false);
         } catch (error) { b.error = error instanceof Error ? error.message : 'Agent could not start'; }

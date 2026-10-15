@@ -19,7 +19,7 @@ export type ReviewState = { state: 'running' } | ({ state: 'done'; auto?: true }
 // secrets removed; past REVIEW_DIFF_CHARS it is cut between files and says so.
 // Gate: files that usually hold secrets go as their name only, and each line the secret scan flags (patterns and the
 // entropy check, as before /merge) is left out, so redaction by pattern isn't the only guard on what the model sees.
-const SECRET_FILE = /(?:^|\/)(?:\.env(?:\..*)?|\.envrc|.*\.(?:pem|key|p12|pfx|jks|keystore|ppk|kdbx)|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.[a-z]+)?|secrets?(?:\.[a-z]+)?|\.npmrc|\.netrc|\.pypirc|\.git-credentials|service-account.*\.json)$/i;
+export const SECRET_FILE = /(?:^|\/)(?:\.env(?:\..*)?|\.envrc|.*\.(?:pem|key|p12|pfx|jks|keystore|ppk|kdbx)|id_(?:rsa|dsa|ecdsa|ed25519)|credentials(?:\.[a-z]+)?|secrets?(?:\.[a-z]+)?|\.npmrc|\.netrc|\.pypirc|\.git-credentials|service-account.*\.json)$/i;
 function reviewLines(file: DiffFile): string[] {
   if (SECRET_FILE.test(file.path)) return ['(left out: a file that usually holds secrets)'];
   return file.lines.map(line => /^[+-]/.test(line) && scanLine(line.slice(1)) ? '(line left out: the secret scan flagged it)' : line);

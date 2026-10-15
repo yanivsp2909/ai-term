@@ -44,6 +44,11 @@ export async function repoTopLevel(cwd: string): Promise<string | null> {
     if (!isSafeAbsolutePath(top)) throw new GitError('Git check failed');
     return realpath(top);
 }
+// v1.0.2 /brain: the files git would show, tracked and untracked, without what .gitignore (and the like) leaves out.
+export async function listFiles(top: string): Promise<string[]> {
+    const out = await run(top, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '.'], 'Git check failed', { maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
+    return [...new Set(out.split('\0').filter(Boolean))];
+}
 export async function headCommit(cwd: string): Promise<string> {
     // show defaults to HEAD; unlike rev-parse --verify it accepts -- without treating HEAD as a path.
     const head = (await run(cwd, ['show', '--no-patch', '--format=%H', '--'], 'Repo has no commits')).trim();

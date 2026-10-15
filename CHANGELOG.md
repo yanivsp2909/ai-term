@@ -26,7 +26,10 @@ Started 2026-10-15. Not released yet.
 - **`ai doctor` checks more.** It reports the sandbox (sandbox-exec, bwrap or none, and why) and whether the credential store answers (asked of the background service, the only part that touches it). It also says whether `gh` is installed and logged in (from `gh auth status`'s exit code only, never its output or token) and whether the notifier is built.
 
 ### v1.0.2: /brain
-- Coming next.
+- **A map of your repository** (`/brain`, only when you run it). A free local pass lists the files and, for TypeScript, JavaScript and Python, each file's imports and exports and who imports whom. Ignored files, binaries, files over 256 KB, `.env` files and secret-flagged files are skipped.
+- **Optional summaries.** A model you pick adds a short summary per module and the main design decisions. It shows the token and price range first, counts against budgets and the per-run cap, and removes secrets before sending.
+- **Agents start knowing it** (on; `a` in the popup). AI Term's agent reads it, Claude Code gets it as extra instructions, and for Codex the start box can mention it in the first message. The card shows how old the map is.
+- **Kept outside your repository**, under `~/.ai-term/brain/`. Running `/brain` again rereads, and prices, only the files that changed. `/brain show` opens it, and `/brain rm` deletes it.
 
 ## v0.9 (2026-10-15)
 

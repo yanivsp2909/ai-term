@@ -27,6 +27,7 @@ import { stripVTControlCharacters } from 'node:util';
 import {MAX_COPY_BYTES, MAX_SEND_BYTES, MAX_FIND_CHARS, MAX_FIND_RESULTS, FIND_LINE_CHARS, type FindMatch, type Request, type SuccessResponse } from './protocol.js';
 import { validateQueue, validateQueueAdd } from './queue.js';
 import { isDevState, validateDevPlan } from './dev.js';
+import { validateBrainPlan, validateBrainResult } from './brain.js';
 export class ValidationError extends Error {
     readonly code = 'INVALID_REQUEST';
 }
@@ -145,12 +146,14 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if(!isSafeAbsolutePath(v.path)||v.kind==='worktrees.delete'&&(!isFingerprint(v.fingerprint)||v.confirm!==undefined&&!isWorktreeBranch(v.confirm)))throw new ValidationError('Invalid worktree request');
             break;
         case 'sessions.create':
-            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login','useWorktree'];
+            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login','useWorktree','brainMention'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
             if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermissionForEngine(v.engine,v.permission) || v.effort !== undefined && !isEffortForEngine(v.engine,v.effort) || (v.firstMessage !== undefined && !isFirstMessage(v.firstMessage)))) throw new ValidationError('Invalid account agent request');
             if (v.engine === 'ai-term' && (!v.auth || typeof v.auth !== 'object' || !('kind' in v.auth) || v.auth.kind !== 'key' || v.login !== undefined)) throw new ValidationError('AI Term agent needs an API key');
             // v0.6.2: a preset can turn the worktree on or off for this one agent; absent means the saved setting.
             if (v.useWorktree !== undefined && (typeof v.useWorktree !== 'boolean' || v.login !== undefined)) throw new ValidationError('Invalid worktree choice');
+            // v1.0.2: Codex has no instructions-file flag; this asks for the brain's path in its first message.
+            if (v.brainMention !== undefined && (v.brainMention !== true || v.engine !== 'codex' || v.login !== undefined)) throw new ValidationError('Invalid brain choice');
             if (v.login !== undefined && (v.login !== true || v.model!==null || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined || v.effort !== undefined)) throw new ValidationError('Invalid login session');
             if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
             break;
@@ -190,6 +193,12 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
         case 'sessions.dev':
             fields=['sessionId','fingerprint'];if(!isUUID(v.sessionId)||typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint))throw new ValidationError('Invalid dev server request');break;
+        case 'brain.plan': case 'brain.show': case 'brain.remove':
+            fields=['cwd'];if(!await validCwd(v.cwd))throw new ValidationError('Invalid brain request');break;
+        case 'brain.build':
+            fields=['cwd','fingerprint','model'];if(!await validCwd(v.cwd)||typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint)||v.model!==undefined&&!(isBrainRecord(v.model)&&Object.keys(v.model).every(k=>['keyId','model'].includes(k))&&isUUID(v.model.keyId)&&typeof v.model.model==='string'&&isValidModelId(v.model.model)))throw new ValidationError('Invalid brain request');break;
+        case 'brain.agents':
+            fields=['on'];if(typeof v.on!=='boolean')throw new ValidationError('Invalid brain request');break;
         case 'project.setDevCommand':
             fields=['cwd','command'];if(!await validCwd(v.cwd)||!(v.command===null||isTestCommand(v.command)))throw new ValidationError('Invalid dev command request');break;
         case 'project.setTestLoopback':
@@ -254,6 +263,9 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.undoPlan!==undefined)validateUndoPlan(v.undoPlan);
     if(v.queue!==undefined)validateQueue(v.queue);
     if(v.devPlan!==undefined)validateDevPlan(v.devPlan);
+    if(v.brainPlan!==undefined)validateBrainPlan(v.brainPlan);
+    if(v.brainResult!==undefined)validateBrainResult(v.brainResult);
+    if(v.brainText!==undefined&&!(isBrainRecord(v.brainText)&&typeof v.brainText.repo==='string'&&typeof v.brainText.text==='string'&&v.brainText.text.length<=4*1024*1024&&typeof v.brainText.builtAt==='string'))throw new ValidationError('Invalid brain text');
     if(v.mergePlan!==undefined)validateMergePlan(v.mergePlan);
     if(v.testPlan!==undefined)validateTestPlan(v.testPlan);
     if(v.reviewPlan!==undefined)validateReviewPlan(v.reviewPlan);
@@ -334,7 +346,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','brainForAgents','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -356,6 +368,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.queue!==undefined&&typeof v.queue!=='boolean')throw new ValidationError('Invalid queue setting');
     if(v.devServers!==undefined&&typeof v.devServers!=='boolean')throw new ValidationError('Invalid dev server setting');
     if(v.lspDiagnostics!==undefined&&typeof v.lspDiagnostics!=='boolean')throw new ValidationError('Invalid diagnostics setting');
+    if(v.brainForAgents!==undefined&&typeof v.brainForAgents!=='boolean')throw new ValidationError('Invalid brain setting');
     if(v.devCommands!==undefined&&(!isRecord(v.devCommands)||Object.keys(v.devCommands).length>50||Object.entries(v.devCommands).some(([repo,command])=>['__proto__','prototype','constructor'].includes(repo)||!isSafeAbsolutePath(repo)||!isTestCommand(command))))throw new ValidationError('Invalid dev commands');
     if(v.autoTest!==undefined&&typeof v.autoTest!=='boolean')throw new ValidationError('Invalid auto-test setting');
     if(v.autoReview!==undefined&&typeof v.autoReview!=='boolean')throw new ValidationError('Invalid auto-review setting');
@@ -403,7 +416,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || !(s.ctxPercent===null||isShare(s.ctxPercent)) || s.lastActivity!==undefined&&s.lastActivity!==null&&!isActivity(s.lastActivity) ||
-        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.priceYours!==undefined&&s.priceYours!==true || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit) || s.diffStat!==undefined&&!isDiffStat(s.diffStat) || s.tests!==undefined&&!isTestResult(s.tests)||s.dev!==undefined&&!isDevState(s.dev) || s.review!==undefined&&!isReviewState(s.review)) throw new ValidationError('Invalid daemon session');
+        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.priceYours!==undefined&&s.priceYours!==true || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit) || s.diffStat!==undefined&&!isDiffStat(s.diffStat) || s.tests!==undefined&&!isTestResult(s.tests)||s.dev!==undefined&&!isDevState(s.dev) || s.brain!==undefined&&!(isBrainRecord(s.brain)&&Object.keys(s.brain).length===1&&typeof s.brain.builtAt==='string'&&!Number.isNaN(Date.parse(s.brain.builtAt))) || s.review!==undefined&&!isReviewState(s.review)) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }
 function isReviewState(value: unknown): boolean { try { validateReviewState(value); return true; } catch { return false; } }
@@ -602,6 +615,7 @@ export function validateExtensionFile(value: unknown): ExtensionFile {
     return value as ExtensionFile;
 }
 
+function isBrainRecord(value:unknown):value is Record<string,unknown>{return !!value&&typeof value==='object'&&!Array.isArray(value);}
 const isRecord=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export const isMcpName=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value)&&!['__proto__','prototype','constructor'].includes(value);
 export const isMcpTool=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value)&&!['__proto__','prototype','constructor'].includes(value);

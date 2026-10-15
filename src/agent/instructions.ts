@@ -49,6 +49,22 @@ export async function loadInstructions(root: string): Promise<Instructions> {
   }
   return { text: parts.join('\n\n'), files, notes };
 }
+// v1.0.2: the repository map /brain made (~/.ai-term/brain/…/brain.md, outside the folder, so not through the jail), read
+// once at start after the folder's own instructions; at most 64 KiB, cut with a note.
+export async function withBrain(instructions: Instructions, path: string): Promise<Instructions> {
+  let text: string, cut: boolean;
+  try {
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const info = await file.stat();
+      if (!info.isFile()) return { ...instructions, notes: [...instructions.notes, "brain: not a file; the agent starts without it"] };
+      const buffer = Buffer.alloc(Math.min(info.size, FILE_MAX_BYTES)), { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      text = buffer.subarray(0, bytesRead).toString('utf8'); cut = info.size > FILE_MAX_BYTES;
+    } finally { await file.close(); }
+  } catch (error) { return { ...instructions, notes: [...instructions.notes, isFsError(error, 'ENOENT') ? 'brain: removed since the agent was started; it starts without it' : "brain: couldn't read it; the agent starts without it"] }; }
+  const part = `## Repository map (AI Term /brain; may be out of date, the code is the truth)\n${text.trim()}`;
+  return { text: [instructions.text, part].filter(Boolean).join('\n\n'), files: [...instructions.files, 'brain'], notes: [...instructions.notes, ...cut ? [`brain cut at ${FILE_MAX_BYTES / 1024} KiB`] : []] };
+}
 function resolveFrom(folder: string, target: string): string { return target.startsWith('/') ? target : `${folder}/${target}`; }
 
 // Linux (v0.8.1, TS review): the bash sandbox rebuilds home and ~/.config for each command, so the model is told that new

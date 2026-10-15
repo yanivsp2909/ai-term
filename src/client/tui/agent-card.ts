@@ -1,3 +1,4 @@
+import { brainAge } from '../../shared/brain.js';
 import type { SessionInfo, Status, TaskUsage } from '../../shared/protocol.js';
 import type { TestResult } from '../../shared/test-run.js';
 import { reviewCardText } from './review-ask.js';
@@ -93,7 +94,9 @@ export function cardText(session: SessionInfo, now: number, width: number, optio
   const status = { text: !shell && textWidth(withAge) + 1 + MIN_NAME > width ? `${dontAsk}${glyph} ${word}` : withAge, color, bold: session.status === 'waiting' };
   const baseModel = shell ? 'shell' : `${session.model ?? 'CLI default'} · ${engineLabel(session.engine)}`;
   const withBranch=baseModel+(session.branch?` · ${session.branch}`:'');
-  const model=textWidth(withBranch)<=width?withBranch:baseModel;
+  // v1.0.2: the repository map it was given at start, and how old that map is (it may be out of date).
+  const brain=session.brain?` · brain · ${brainAge(session.brain.builtAt,now)}`:'';
+  const model=textWidth(withBranch+brain)<=width?withBranch+brain:textWidth(withBranch)<=width?withBranch:baseModel;
   // Full `ctx NN%` when it fits beside the whole model text; else the mockup's bare `NN%`; else none. The model is never clipped for it.
   const percent = session.ctxPercent === null || shell || narrow ? null : `${Math.round(session.ctxPercent)}%`;
   const ctxText = percent === null ? null : [`ctx ${percent}`, percent].find(text => textWidth(model) + CTX_GAP + text.length <= width) ?? null;
