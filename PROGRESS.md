@@ -1,6 +1,90 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: see the handover commit after 38ce471 (Part A of the v0.7 fix-and-gate run)
+Roadmap step: run 2026-10-15 (2), Claude Code, Opus 5.5: A (B26, B27, B28) done · B v0.7 gate: next
+Branch: main. Started at d3aeb15 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64) with `/usr/bin/sandbox-exec` present, so the real sandbox was tested here, not only its profile.
+
+## Part A: B26, B27, B28 — done
+Commits: B26 974ecab (RED) / 7e7197e (GREEN, plus a symlinked key folder found while writing it); read-hiding follow-up (Yaniv, mid-run) 6d70bf7 (RED) / 003bd01; B27 889e4ce / 545373b; B28 1629236 / c02e239; docs ea59324, ux-copy ea7a0aa; review 31379ab (RED) / 38ce471; test timing 1 commit.
+
+### What works
+- **B26 (HIGH) sandboxed auto-test (D56, Proposed; `src/daemon/test-sandbox.ts`, `process-tree.ts`).** On macOS every test run (auto-test and `/test`) runs under `sandbox-exec -p <profile> --` with a deny-by-default profile built only from checked absolute paths (quotes, parentheses, backslashes, control characters refused):
+  - writes: only the agent's worktree and a fresh per-run temp folder (`TMPDIR`, npm, Go and XDG caches), removed after the run;
+  - network: none, loopback included; unix sockets only inside the run's temp folder; 127.0.0.1 is a per-project switch, off by default (`l` in `/test`, stored in `settings.testLoopback`);
+  - reads: the contents of your home folder, `/Volumes`, `/tmp`, `/var/tmp` and your user temp area are hidden; reopened are the toolchains on `PATH` under home and the usual version managers, git's own config, and the repository's git folder. The key folders stay closed inside those too (the prompt's list plus `.git-credentials`, gcloud, azure, pypirc, gem/cargo credentials, Maven and Gradle settings, and more), also at their link targets;
+  - no signals or process info outside the run; launchctl, `open` and osascript are blocked (probed);
+  - a denial reads `✗ blocked by sandbox: <path or network>`, never as a failure count; processes the run detached are followed (`ps` every 250 ms) and stopped with it.
+  - Without a working sandbox nothing runs by itself: the card says `tests need you · no sandbox`, `/test` shows `no sandbox: it runs with your user's rights` and asks every time; the plan's fingerprint covers the sandbox and loopback state.
+- **Checked on this Mac:** ai-term's own vitest passes under the real-home profile (1.5 s), and `ls ~/Documents` reads `blocked by sandbox: ~/Documents`.
+- **B27 (LOW) prices per provider:** `settings.providerPrices` per provider and model; every price lookup uses `overridesFor(settings, provider)`.
+  - At daemon start, old model-only records move to the one provider that has their id. With several providers or none they stay, priced as before, and `/settings` p lists them once as `any provider`.
+  - The form picks the provider (← →), takes an optional cache-read price and saves through the daemon's queue (`prices.set`).
+- **B28 (UX) the price pause:** with a budget, an unpriced model still waits (no way to run outside a budget).
+  - The pause offers `p`: a price per 1M, prefilled with the catalog's closest model and labeled `guess, check it`, every number typed.
+  - `m` (a Foundry deployment) marks it as a catalog model; ⏎ checks again; Esc stops.
+  - The daemon lets the agent price only its own model, only while it has none.
+  - The card says `price: yours`; Ollama is $0 and never pauses on price. The README limits paragraph matches the code.
+
+### Prompt vs code
+- **README said ⏎ goes on with a budget; the code waited** (it said "⏎ checks again" since the v0.6 gate). The README now says what the code does.
+- **The sandbox goes further than the prompt's list.** The prompt listed the key folders to close. While Part A was running, Yaniv asked to also close everything else a test can read and copy into the worktree, so home, `/Volumes`, `/tmp`, `/var/tmp` and the user temp area are hidden too, with toolchains reopened.
+- **Denials show the path alone, not a verb.** The prompt suggested `<what>`. With home hidden, a refused path may be a read or a write, so the card shows just the path, or `network`.
+- **A run you approve without a sandbox isn't remembered.** The `/test` y then applies to that run only.
+
+### Findings (Part A reviewers: security-reviewer, typescript-reviewer, fresh context)
+- **CRITICAL:** none.
+- **HIGH:** 1, explained, not changed. A prompt-injected model with an approved (or Don't ask) bash command can read the agent's status token from its process environment (`ps -E`) and call `price.set` to price its own unpriced model at $0 before you do.
+  - Not changed because that same command already runs with your rights: it can write `~/.ai-term/settings.json` (or anything else) directly, so the token adds no power.
+  - The guard that matters holds: an agent can never change a price that exists, only you can, in `/settings` p. A price set at a pause is logged, and the card shows `price: yours`.
+- **MEDIUM:** 6 fixed:
+  - credential files inside toolchain folders closed;
+  - a `/test` y failure after the sandbox exists no longer leaves its temp folder;
+  - `/settings` p can no longer overwrite a price saved at a pause;
+  - `p` is offered only where a price can be saved;
+  - the 100-price cap gets its own message;
+  - the 127.0.0.1 wording says it opens every local service.
+- **MEDIUM:** 2 explained, not changed:
+  - **The repository's `.git` folder is readable** (its config could hold a token in a remote URL). Hiding `.git/config` makes every git command inside tests fatal (tested). Branches and commits are what the agent works on anyway.
+  - **A process that double-forks between two process-list looks can outlive the run.** It stays inside the sandbox: no network, no secret reads, writes only to the worktree. Seatbelt can't stop forks, and macOS has no process group that a test can't leave.
+- **LOW:** fixed: `/var/tmp` hidden; a bin right under home opens only itself; a dropped path is logged; a reused process id is never adopted; pasted control characters never drawn.
+- **LOW:** explained: test output can print text that looks like a denial (cosmetic); `price: yours` refreshes at the agent's next request; an old record for an id only Anthropic or OpenAI has keeps doing nothing, as before.
+
+### Checks (after 38ce471 and the test-timing commit)
+```
+npm run typecheck   exit 0
+npm run lint        exit 0 (ESLint: no issues)
+npm run build       ESM ⚡️ Build success
+npm run app:build   ✓ built
+npm test (1)        Test Files 228 passed · Tests 1499 passed | 2 skipped · 28.93s
+npm test (2)        Test Files 228 passed · Tests 1499 passed | 2 skipped · 29.95s
+npm run app:test    9 passed (37.9s)
+```
+One earlier full run had 2 auto-test tests time out at vitest's 1 s wait (a sandboxed run adds a probe and a process-list read); their waits are now 10 s, then three runs plus the two above passed.
+
+### New manual checks (this run only)
+- `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js`: restart onto this code (it stops running agents).
+- `cd ~/ai-term && node dist/cli/index.js`: the sandbox in a real JS project. Run `/test-cmd npm test` and let an agent finish a turn. The card shows `✓ tests pass` or `✗ N failing`, and `/test` shows `sandbox: writes only in this worktree …`. Then have the agent add a test that does `fs.readFileSync(os.homedir()+'/Documents/…')`: the card reads `✗ blocked by sandbox: ~/Documents/…`.
+- `cd ~/ai-term && node dist/cli/index.js`: in `/test` press `l`. The plan comes back with `127.0.0.1: on for this project`, and a test that starts a local server passes.
+- `cd ~/ai-term && node dist/cli/index.js`: a Python, Go or Rust project's tests under the sandbox. If one fails with `✗ blocked by sandbox: <path>`, tell me the path: a toolchain folder may need reopening.
+- `cd ~/ai-term && node dist/cli/index.js`: B28 with a real unpriced model.
+  - Set a daily budget (`b`), then start AI Term's agent on an OpenRouter or Foundry model with no catalog price.
+  - The pause offers `p` (and `m` on Foundry). `p` shows `guess, check it: …` or `no guess`. ⏎ saves, the turn goes on, and the card says `price: yours`.
+- `cd ~/ai-term && node dist/cli/index.js`: `/settings` → `p` lists your prices once each. A price you had before this run shows under its provider, or as `any provider`.
+
+### Gotchas
+- The sandbox needs `/usr/bin/sandbox-exec` (deprecated by Apple but present on macOS 26.5). If a future macOS drops it, auto-test falls back to asking every time (`tests need you · no sandbox`), never to running unsandboxed.
+- Toolchains outside the list (`TOOLCHAINS` in `test-sandbox.ts`) and not on `PATH` are hidden; add a folder there if a real project needs one.
+- Test caches (npm, Go, XDG) live in the run's temp folder, so each run starts cold.
+
+### New dependencies
+- None.
+
+### Concepts introduced
+- **Seatbelt profiles (`src/daemon/test-sandbox.ts`).** macOS's kernel sandbox takes a small Scheme-like profile; `sandbox-exec -p` applies it to a process and everything it starts, and nothing inside can drop it. Rules are checked last-match-wins, so the profile hides broad folders first, reopens toolchains, closes key folders again, then reopens the run's own folders. Paths are refused rather than escaped, because one stray quote could end a string and add a rule.
+- **Following a process tree without cgroups (`src/daemon/process-tree.ts`).** macOS has no container that keeps every child of a run; a child can leave its process group with `setsid`. Reading `ps` (pid, parent, start time) a few times a second records each descendant while its parent still lives, and the start time makes sure a reused process id is never killed.
+
+## Previous run: checkpoint (parts A–F, 2026-10-15)
 Last commit: a38d00e fix: Part F fix review (the handover commit follows it; this run started at 22669aa)
 Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1 done · D v0.7.2 done · E v0.7.3 done · F v0.7.4 done. All six parts done; nothing blocked.
 Branch: main, pushed after each part. Started clean at 22669aa after `git pull --ff-only` (already up to date). No other agent worked in this repo.
