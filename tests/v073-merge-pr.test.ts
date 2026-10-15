@@ -129,3 +129,39 @@ it('a push never runs a command the repo config names (ssh command, credential h
   await m.pr(agent.id, plan.fingerprint, false);
   await expect(access(marker)).rejects.toThrow();
 });
+
+// ---- Part E review findings ----
+it('HIGH (security review): /pr pushes from your checkout; a worktree .git file pointing elsewhere changes nothing', async () => {
+  const { temp, origin, bin, m, agent, tree } = await setup();
+  await work(tree, 'feature.ts', 'x\n');
+  await writeFile(join(bin, 'gh'), '#!/bin/sh\nif [ "$1" = auth ]; then exit 0; fi\npwd > "$(dirname "$0")/gh.cwd"\necho https://github.com/yaniv/ai-term/pull/9\n'); await chmod(join(bin, 'gh'), 0o755);
+  const plan = await m.prPlan(agent.id);
+  const evil = join(temp, 'evil'); await run('/usr/bin/git', ['init', '-q', '--', evil]); await git(evil, 'remote', 'add', '--', 'origin', join(temp, 'evil-origin.git'));
+  await writeFile(join(tree, '.git'), `gitdir: ${join(evil, '.git')}\n`);
+  await m.pr(agent.id, plan.fingerprint, false);
+  expect((await git(origin, 'for-each-ref', '--format=%(refname)')).stdout).toContain('refs/heads/ai/fixer');
+  expect((await readFile(join(bin, 'gh.cwd'), 'utf8')).trim()).not.toBe(tree);
+});
+
+it('HIGH (security review): an askpass named in the repo config never runs during a push', async () => {
+  const { temp, repo, bin, m, agent, tree } = await setup();
+  const marker = join(temp, 'askpass-ran'), script = join(temp, 'ask.sh');
+  await writeFile(script, `#!/bin/sh\n/usr/bin/touch ${marker}\necho x\n`); await chmod(script, 0o755);
+  await work(tree, 'feature.ts', 'x\n');
+  await writeFile(join(bin, 'gh'), '#!/bin/sh\nif [ "$1" = auth ]; then exit 0; fi\necho https://github.com/yaniv/ai-term/pull/10\n'); await chmod(join(bin, 'gh'), 0o755);
+  await git(repo, 'config', 'core.askPass', script); await git(repo, 'remote', 'set-url', '--', 'origin', 'https://127.0.0.1:9/never.git');
+  const plan = await m.prPlan(agent.id);
+  await expect(m.pr(agent.id, plan.fingerprint, false)).rejects.toThrow('Push failed; nothing was opened');
+  await expect(access(marker)).rejects.toThrow();
+});
+
+it('MEDIUM (security review): core.worktree in the shared config can\'t move the merge out of your checkout', async () => {
+  const { temp, repo, m, agent, tree } = await setup();
+  await work(tree, 'feature.ts', 'x\n');
+  const elsewhere = join(temp, 'elsewhere'); await mkdir(elsewhere); await writeFile(join(elsewhere, 'readme.md'), 'hello\n');
+  await git(repo, 'config', 'core.worktree', elsewhere);
+  const plan = await m.mergePlan(agent.id);
+  await m.merge(agent.id, plan.fingerprint, false);
+  expect(await readFile(join(repo, 'feature.ts'), 'utf8')).toBe('x\n');
+  await expect(access(join(elsewhere, 'feature.ts'))).rejects.toThrow();
+});

@@ -76,3 +76,13 @@ it('/pr shows the push and gh commands; without gh it is a one-line note', async
     h.type('y'); await shows(h.tty, '✓ pull request opened · https://github.com/yaniv/ai-term/pull/7');
   } finally { await h.home.stop(); }
 });
+
+it('MEDIUM (TS review): the rebase agent starts on the original agent\'s engine, model and account, and only once it stopped', async () => {
+  const keyed: SessionInfo = { ...fixer, engine: 'ai-term', model: 'grok-5', auth: { kind: 'key', keyId: randomUUID(), provider: 'xai', keyLabel: 'grok', last4: 'abcd' }, status: 'exited', exitCode: 0 };
+  const h = await open(body => body.kind === 'sessions.list' ? { sessions: [keyed] } : body.kind === 'sessions.mergePlan' ? { mergePlan: mergePlan() } : body.kind === 'sessions.merge' ? new DaemonRequestError('Merge conflict; it was undone and your checkout is as it was') : body.kind === 'sessions.create' ? { session: { ...keyed, id: randomUUID(), title: 'fixer rebase' } } : {});
+  try {
+    h.type('/merge fixer\r'); await shows(h.tty, 'Merge ai/fixer'); h.type('y'); await shows(h.tty, 'rebase starts an agent');
+    h.type('/merge fixer rebase\r');
+    await vi.waitFor(() => expect(h.requests.find(r => r.kind === 'sessions.create')).toMatchObject({ engine: 'ai-term', model: 'grok-5', auth: { kind: 'key', keyId: keyed.auth.kind === 'key' ? keyed.auth.keyId : '' } }));
+  } finally { await h.home.stop(); }
+});

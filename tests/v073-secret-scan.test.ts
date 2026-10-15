@@ -28,3 +28,26 @@ it('only added lines count; removed lines and context are not scanned', () => {
   const text = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,1 @@\n-OLD_TOKEN=abcdef123456\n keep\n';
   expect(scanPatch(text)).toEqual([]);
 });
+
+// ---- Part E review findings ----
+it('HIGH (both reviews): an added line starting with ++ is content, not a header; hunk counts decide', () => {
+  const token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+  const text = `diff --git a/x.txt b/x.txt\n--- a/x.txt\n+++ b/x.txt\n@@ -0,0 +1,3 @@\n+x="${token}"\n+++ y="${token}"\n+++ b/evil\n`;
+  expect(scanPatch(text).map(h => [h.file, h.line])).toEqual([['x.txt', 1], ['x.txt', 2]]);
+});
+
+it('HIGH (TS review): paths with spaces or quoted names keep their real name, no tab', () => {
+  const token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+  const spaced = `diff --git a/my dir/a b.txt b/my dir/a b.txt\n--- a/my dir/a b.txt\t\n+++ b/my dir/a b.txt\t\n@@ -0,0 +1 @@\n+t="${token}"\n`;
+  const quoted = `diff --git "a/\\303\\251 \\"q\\".txt" "b/\\303\\251 \\"q\\".txt"\n--- /dev/null\n+++ "b/\\303\\251 \\"q\\".txt"\n@@ -0,0 +1 @@\n+t="${token}"\n`;
+  expect(scanPatch(spaced)[0]?.file).toBe('my dir/a b.txt');
+  expect(scanPatch(quoted)[0]?.file).toBe('é "q".txt');
+});
+
+it('MEDIUM (TS review): paths, long identifiers and fixtures are not "high-entropy"; a real token still is', () => {
+  const add = (file: string, line: string) => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -0,0 +1 @@\n+${line}\n`;
+  expect(scanPatch(add('src/a.ts', 'const p = "/Users/foo/someVeryLongDirectoryName2/another-Dir_Name3";'))).toEqual([]);
+  expect(scanPatch(add('src/a.ts', 'const name = "renderHomepageLayoutWithPreview2Columns";'))).toEqual([]);
+  expect(scanPatch(add('tests/fixtures/data.json', '"blob": "aZ3kP9qL2mX7vB4nR8tY1wE6uI0oS5dF"'))).toEqual([]);
+  expect(scanPatch(add('src/a.ts', 'client: "aZ3kP9qL2mX7vB4nR8tY1wE6uI0oS5dF"')).map(h => h.kind)).toEqual(['high-entropy string']);
+});
