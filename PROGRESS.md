@@ -1,16 +1,98 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: see the handover commit after 64e78ec (Part B, v0.8.1 Linux)
-Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A (B29, D56/D57 pinned) done · B v0.8.1 Linux done · C v0.8.2 Windows next
+Last commit: see the handover commit after f03f8e7 (Part C, v0.8.2 Windows)
+Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A done · B v0.8.1 Linux done · C v0.8.2 Windows done · D v0.8 release gate next
 Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64); no Linux or Windows machine here (Docker/colima are installed but not running, and starting them would download a VM image, which the limits rule out), so Linux and Windows run for real only in GitHub Actions (Part D).
 
 | Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
 |---|---|---|---|
 | A B29, pin D56/D57 | done | fb31f36 | review: 0 / 2 fixed / 1 fixed + 3 explained / 3 explained |
-| B v0.8.1 Linux | done (Linux paths first run for real in Part D's CI) | this push | review: 0 / 4 fixed / 9 fixed + 2 explained / 7 fixed + 5 explained |
+| B v0.8.1 Linux | done (Linux paths first run for real in Part D's CI) | 29cc615 | review: 0 / 4 fixed / 9 fixed + 2 explained / 7 fixed + 5 explained |
+| C v0.8.2 Windows | done (Windows paths first run for real in Part D's CI) | this push | review: 0 / 6 fixed / 11 fixed + 2 explained / 4 fixed + 6 explained |
 
 **The prompt was cut off:** it ends inside Part E ("times passed while the"), and Part F (v0.9.2 dev servers per worktree) has no text at all. Part E will follow the visible text and the safer reading of the cut sentence; Part F can't be built from no spec, so the run stops before it.
+
+## Part C: v0.8.2 Windows — done
+Commits: b591e30 (RED) / b677132; review ce5b0b2 (RED) / f03f8e7.
+
+**Windows couldn't run here either:** everything is unit-tested on macOS, and the Windows-only test (ACL, pipe) runs first in Part D on windows-latest.
+
+**What was built (D59 Proposed):**
+- **Folder:** `%USERPROFILE%\.ai-term` gets an icacls ACL for your SID alone. The daemon verifies the root and each folder in it at start (an Administrators owner is accepted when every entry is yours). `ownedByMe`/`privateMode` defer to that ACL on Windows.
+- **Daemon:** a named pipe with a random per-start name.
+  - **Startup:** libuv's first-instance flag means an existing name stops the daemon.
+  - **Token:** the client shows a token from `run\daemon.pipe`, which only you can read.
+  - **Proof:** the daemon must prove the token (HMAC of the client's nonce) before the client sends anything.
+  - **Stale files:** a pipe file is removed when stale or unproven.
+  - **Stop:** `ai daemon stop` is a graceful request.
+  - **Start race:** a live PID with a lock under 30 s old is starting, not stale, and the client waits 20 s.
+- **Keys:** Credential Manager (the library's Windows store). Failure line: `Windows Credential Manager unavailable`.
+- **No sandbox:** auto-test asks every time; AI Term's agent is Ask only, with the note (Part B's rule).
+- **CLIs:** argv only.
+  - **.exe:** a native `.exe` runs directly.
+  - **npm launcher:** npm's `.cmd` is read, never run. Its script runs with node, or its native `.exe` directly. npm.cmd and npx.cmd are recognized too.
+  - **Refused:** other `.cmd` files, `.bat` files and unreadable launchers.
+  - **cmd.exe:** never gets arguments. The one PowerShell use is a shell session, started with no arguments (the exception the prompt allows, noted in code and README).
+- **Processes:** `taskkill /T /F` for PTYs, bash, test runs and MCP servers. ps-based tracking is skipped. `windowsHide` is set on the children that open consoles.
+- **Tools:**
+  - git: Git for Windows' `git.exe`, or none, never a bare name.
+  - Bash: Git Bash's `bash.exe`, never WSL's.
+  - Shell sessions: PowerShell.
+  - Clipboard: `clip.exe`, sent as UTF-16. `/open`: Explorer.
+  - Stats: CPU and memory.
+  - Notifications: none yet.
+- **Env:**
+  - `Path` is spelled `PATH`.
+  - Credential variables are removed whatever their case.
+  - The agent, bash, test and git envs get only the Windows basics.
+- **Paths:**
+  - Drive paths accept either slash; spaces and non-ASCII names work.
+  - Refused: `..`, device names, alternate data streams and UNC.
+  - Worktree guards ignore case.
+- **Desktop app:** NSIS installer, unsigned (README notes the SmartScreen warning).
+
+**Fresh review (security-reviewer, typescript-reviewer):**
+- **HIGH fixed:**
+  - The client didn't verify the daemon. Pipe names can be listed, so after a daemon died without cleanup (`ai daemon stop` was TerminateProcess) another account could sit on the stale name and read keys typed into `/login`.
+  - Git for Windows' `C:/…` output was rejected, so worktrees never worked.
+  - A cold start (PowerShell) could exceed 3 s and let a second daemon take over.
+  - Every `ai` paid for PowerShell.
+  - An Administrators-owned folder (elevated terminal) was refused.
+  - The agent's env lacked `SystemRoot`/`TEMP`, and its secrets-file and entry checks wanted `/` paths, so AI Term's agent couldn't start on Windows.
+- **MEDIUM fixed:**
+  - Swallowed launcher errors.
+  - `.bat` files weren't refused, and a synchronous spawn error was unhandled.
+  - npm launchers of native `.exe` CLIs were refused.
+  - A bare `git.exe` fallback (Windows searches the repo folder first).
+  - Case-sensitive worktree guards.
+  - Stop failures were unreported.
+  - MCP `npx` couldn't start.
+  - A corrupt pipe file blocked start, and temp files leaked.
+  - Only the root was ACL-checked.
+  - A duplicate-daemon race.
+  - `isAgentFolder` wasn't Windows-aware.
+- **LOW fixed:** alternate data streams and device names; case-insensitive env filters; Explorer's exit code. A relative Git Bash path is no longer built from a bare git.
+- **Explained, not changed:**
+  - **Imported env files:** an env file you import from anywhere has no owner check on Windows (stat has no owner), and `O_NOFOLLOW` doesn't exist there.
+  - **node-pty quoting:** it splits an argument that starts and ends with `"` and holds a space. The pieces stay positional after `--`, never flags.
+  - **PATH trust:** a PATH `git.exe` is trusted like a PATH CLI.
+  - **Pre-hello connections:** they cost a little until their 5 s timeout.
+  - **UNC paths** are refused.
+  - **Constrained Language Mode** blocks the ACL check, so the daemon refuses to start there.
+  - **The `~` shortening** in the homepage is case-sensitive.
+  - **Network and per-agent CPU** aren't shown on Windows.
+
+**Checks (after f03f8e7):**
+- typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 37ms`; app:build `✓ built in 57ms`.
+- npm test twice: `Test Files 233 passed (233)` · `Tests 1577 passed | 5 skipped (1582)` (30.06s, 30.10s).
+- app:test `9 passed (37.6s)`.
+- verification-loop clean.
+
+**New manual checks (Windows, need a Windows PC):**
+- `cd ~/ai-term && npm ci && npm run build && node dist/cli/index.js` in PowerShell, with Git for Windows and Claude Code (npm) installed. A Claude agent starts, and `icacls %USERPROFILE%\.ai-term` shows only your account.
+- `cd ~/ai-term && node dist/cli/index.js daemon stop`: says `Daemon stopped.` and `%USERPROFILE%\.ai-term\run\daemon.pipe` is gone.
+- `cd ~/ai-term && npm run app:dist`: an NSIS installer appears in `build\desktop\dist`. SmartScreen warns on first run.
 
 ## Part B: v0.8.1 Linux — done
 Commits: 625cbe6 (RED) / e399281; review 91f677b (RED) / 64e78ec.
