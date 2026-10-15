@@ -52,7 +52,7 @@ import { ForkAsk, forkTarget } from './fork-ask.js';
 import { validateForkPlan } from '../../shared/fork.js';
 import { ReviewAsk, reviewResultLines } from './review-ask.js';
 import { validateReviewPlan, validateReviewResult, type ReviewResult } from '../../shared/review.js';
-import { parseTestCommand, testCommandText, validateProjectTestCommand, validateTestPlan } from '../../shared/test-run.js';
+import { parseTestCommand, testCommandText, validateProjectTestCommand, validateProjectTestLoopback, validateTestPlan } from '../../shared/test-run.js';
 import { MergeAsk } from './merge-ask.js';
 import { validateMergePlan, validatePrPlan } from '../../shared/merge.js';
 import { validateUndoPlan } from '../../shared/checkpoints.js';
@@ -728,6 +728,9 @@ export class Homepage {
   // v0.7.4 /test [agent]: the plan first (command, folder, changed setup files); y runs it, the card shows the result.
   private async testCommand(name:string):Promise<void>{
     const session=this.namedOrSelected(name,'/test');if(!session)return;
+    await this.showTestPlan(session);
+  }
+  private async showTestPlan(session:SessionInfo):Promise<void>{
     let plan:import('../../shared/test-run.js').TestPlan;
     try{plan=validateTestPlan((await this.connection.request({kind:'sessions.testPlan',sessionId:session.id})).testPlan);}
     catch(error){this.showNote(error instanceof Error?error.message:'Tests unavailable');return;}
@@ -735,6 +738,11 @@ export class Homepage {
     const ask:TestAsk=new TestAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
       try{await this.connection.request({kind:'sessions.test',sessionId:session.id,fingerprint:plan.fingerprint});this.showNote(`◐ testing ${session.title} · the card shows the result`);}
       catch(error){this.showNote(`tests stopped: ${error instanceof Error?error.message:'request failed'}`);}
+    });},allowed=>{this.enqueue(async()=>{
+      // B26 l: the project's 127.0.0.1 switch; the plan is shown again, since it changes what runs.
+      try{validateProjectTestLoopback((await this.connection.request({kind:'project.setTestLoopback',cwd:session.worktree??session.cwd,allowed})).testLoopback);}
+      catch(error){this.showNote(error instanceof Error?error.message:'Test setting could not save');return;}
+      await this.showTestPlan(session);
     });});
     this.popup=ask;this.draw(true);
   }

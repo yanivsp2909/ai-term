@@ -5,22 +5,31 @@ import { lstat, open, readdir, readlink, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { failingCount, isDependencyPath, isTestCommand, isTestConfig } from '../shared/test-run.js';
+import { ProcessTree } from './process-tree.js';
+import { sandboxDenial, type PreparedSandbox } from './test-sandbox.js';
 import { diffNameStatus, GitError, insideWorktree, isolatedGitDir, repoCommonDir, repoTopLevel, runGit, untrackedFiles } from './git.js';
 
 // v0.7.4: one test run in an agent's worktree. argv only (spawn, no shell), stdin closed, its own process group so a
 // timeout or a cancel ends everything it started (npm starts node, node starts workers). Output is read to the end but
 // only its last TAIL_BYTES are kept (for the failing count); past OUTPUT_CAP the run is stopped as failed.
+// B26: with a sandbox (test-sandbox.ts) the whole tree runs under sandbox-exec; what the sandbox stopped reads as
+// `blocked`, never as a failure count. Processes the run detached are followed and stopped with it (process-tree.ts).
 export const TEST_TIMEOUT_MS = 10 * 60_000, TEST_OUTPUT_CAP = 16 * 1024 * 1024;
 const TAIL_BYTES = 64 * 1024, KILL_GRACE_MS = 2_000;
-export type TestOutcome = { state: 'pass' } | { state: 'fail'; failing: number | null } | { state: 'timeout' } | { state: 'error' } | { state: 'cancelled' };
-export interface TestRunOptions { timeoutMs?: number; outputCap?: number; signal?: AbortSignal; log?: (text: string) => void }
+export type TestOutcome = { state: 'pass' } | { state: 'fail'; failing: number | null } | { state: 'timeout' } | { state: 'error' } | { state: 'cancelled' } | { state: 'blocked'; what: string } | { state: 'nosandbox' };
+export interface TestRunOptions { timeoutMs?: number; outputCap?: number; signal?: AbortSignal; log?: (text: string) => void; sandbox?: Pick<PreparedSandbox, 'program' | 'profile' | 'spec'> }
+// sandbox-exec's own refusal (a profile the system rejects): EX_DATAERR or EX_OSERR, and its name on stderr.
+const SANDBOX_REFUSED = /^sandbox-exec: /m;
 
 export function runTests(command: readonly string[], cwd: string, env: Record<string, string>, options: TestRunOptions = {}): Promise<TestOutcome> {
   if (!isTestCommand(command)) return Promise.resolve({ state: 'error' });
-  const [program, ...args] = command;
+  const box = options.sandbox, argv = box ? [box.program, '-p', box.profile, '--', ...command] : [...command];
+  const [program, ...args] = argv;
   return new Promise(resolve => {
     let tail = Buffer.alloc(0), total = 0, ended: 'timeout' | 'cancelled' | 'capped' | null = null, settled = false;
     const child = spawn(program ?? '', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const tree = child.pid === undefined ? null : new ProcessTree(child.pid, options.log);
+    tree?.start();
     const group = (signal: NodeJS.Signals) => {
       // A negative pid signals the whole group; the child may already be gone (ESRCH), which is what we wanted.
       if (child.pid === undefined) return;
@@ -41,7 +50,7 @@ export function runTests(command: readonly string[], cwd: string, env: Record<st
       settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', onAbort);
       // Whatever is left of the group goes too: a test runner's background server must not outlive its run.
       if (outcome.state !== 'error') group('SIGKILL');
-      resolve(outcome);
+      void (tree ? tree.stop().catch(() => { options.log?.('Test run: leftover processes were not checked'); return 0; }) : Promise.resolve(0)).then(() => resolve(outcome));
     };
     const read = (chunk: Buffer) => {
       total += chunk.length;
@@ -56,14 +65,21 @@ export function runTests(command: readonly string[], cwd: string, env: Record<st
     child.on('exit', exitCode => {
       code = exitCode; group('SIGKILL');
       // A process that left the group (setsid) can hold the pipes open forever: past a grace period they are closed and
-      // the run ends anyway (that process is out of reach without a sandbox).
+      // the run ends anyway (the process tree stops what it saw of it).
       setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); conclude(); }, KILL_GRACE_MS).unref();
     });
+    const failed = (): TestOutcome => {
+      const text = tail.toString('utf8');
+      if (!box) return { state: 'fail', failing: failingCount(text) };
+      if (code !== null && [65, 71].includes(code) && SANDBOX_REFUSED.test(text)) return { state: 'nosandbox' };
+      const what = sandboxDenial(text, box.spec);
+      return what ? { state: 'blocked', what } : { state: 'fail', failing: failingCount(text) };
+    };
     const conclude = () => {
       if (ended === 'timeout') finish({ state: 'timeout' });
       else if (ended === 'cancelled') finish({ state: 'cancelled' });
-      else if (ended === 'capped') finish({ state: 'fail', failing: failingCount(tail.toString('utf8')) });
-      else finish(code === 0 ? { state: 'pass' } : { state: 'fail', failing: failingCount(tail.toString('utf8')) });
+      else if (ended === 'capped') finish(failed());
+      else finish(code === 0 ? { state: 'pass' } : failed());
     };
     child.on('close', conclude);
   });

@@ -288,6 +288,9 @@ export class DaemonServer {
                 case 'project.setTestCommand':
                     this.control(peer,{id:request.id,ok:true,testCommand:await this.manager.setTestCommand(request.cwd,request.command)});
                     break;
+                case 'project.setTestLoopback':
+                    this.control(peer,{id:request.id,ok:true,testLoopback:await this.manager.setTestLoopback(request.cwd,request.allowed)});
+                    break;
                 case 'sessions.mergePlan':
                     this.control(peer,{id:request.id,ok:true,mergePlan:await this.manager.mergePlan(request.sessionId)});
                     break;

@@ -59,6 +59,8 @@ export function testsText(tests: TestResult): Styled {
     case 'fail': return { text: tests.failing === null ? '✗ tests fail' : `✗ ${tests.failing} failing`, color: 'status-error' };
     case 'timeout': return { text: '✗ tests timed out', color: 'status-error' };
     case 'error': return { text: "✗ tests couldn't start", color: 'status-error' };
+    case 'blocked': return { text: `✗ blocked by sandbox: ${tests.what}`, color: 'status-error' };
+    case 'nosandbox': return { text: 'tests need you · no sandbox', color: 'status-waiting' };
     case 'ask': return { text: '? test setup changed · /test', color: 'status-waiting' };
   }
 }

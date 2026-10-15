@@ -3,9 +3,14 @@ import { stripVTControlCharacters } from 'node:util';
 // v0.7.4 auto-test (D55, on). A project's test command is an argument list, never a shell line: typed once with
 // /test-cmd, kept per repository in settings, run in an agent's worktree when it finishes a turn.
 export const MAX_TEST_WORDS = 32, MAX_TEST_WORD = 512, MAX_TEST_CHANGED = 20;
-export type TestResult = { state: 'running' } | { state: 'pass' } | { state: 'fail'; failing: number | null } | { state: 'timeout' } | { state: 'error' } | { state: 'ask'; changed: string[] };
-// What /test shows before it runs: the command, where, and the test setup files the agent changed.
-export interface TestPlan { title: string; command: string[]; cwd: string; changed: string[]; fingerprint: string }
+// B26: blocked = the sandbox stopped something (what: `network`, `read ~/.ssh/x`, `write /path`); nosandbox = no working
+// sandbox, so nothing runs by itself and /test asks every time.
+export type TestResult = { state: 'running' } | { state: 'pass' } | { state: 'fail'; failing: number | null } | { state: 'timeout' } | { state: 'error' } | { state: 'ask'; changed: string[] } | { state: 'blocked'; what: string } | { state: 'nosandbox' };
+export const MAX_BLOCKED_WHAT = 80;
+// What /test shows before it runs: the command, where, the test setup files the agent changed, whether it runs sandboxed
+// (B26) and whether the project lets its tests reach 127.0.0.1.
+export interface TestPlan { title: string; command: string[]; cwd: string; changed: string[]; fingerprint: string; sandbox: boolean; loopback: boolean }
+export interface ProjectTestLoopback { repo: string; loopback: boolean }
 export interface ProjectTestCommand { repo: string; command: string[] | null }
 
 // eslint-disable-next-line no-control-regex -- refusing controls is the point.
@@ -78,7 +83,8 @@ const exact = (v: Record<string, unknown>, keys: string[]) => Object.keys(v).len
 const isChanged = (v: unknown): v is string[] => Array.isArray(v) && v.length <= MAX_TEST_CHANGED && v.every(isPath);
 export function validateTestResult(value: unknown): TestResult {
   const r = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-  const ok = !!r && (['running', 'pass', 'timeout', 'error'].includes(String(r.state)) && exact(r, ['state'])
+  const ok = !!r && (['running', 'pass', 'timeout', 'error', 'nosandbox'].includes(String(r.state)) && exact(r, ['state'])
+    || r.state === 'blocked' && exact(r, ['state', 'what']) && typeof r.what === 'string' && r.what.length > 0 && [...r.what].length <= MAX_BLOCKED_WHAT && !CONTROL.test(r.what)
     || r.state === 'fail' && exact(r, ['state', 'failing']) && (r.failing === null || Number.isSafeInteger(r.failing) && Number(r.failing) >= 0)
     || r.state === 'ask' && exact(r, ['state', 'changed']) && isChanged(r.changed));
   if (!ok) throw new Error('Invalid test result');
@@ -86,7 +92,7 @@ export function validateTestResult(value: unknown): TestResult {
 }
 export function validateTestPlan(value: unknown): TestPlan {
   const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-  if (!p || !exact(p, ['title', 'command', 'cwd', 'changed', 'fingerprint']) || typeof p.title !== 'string' || [...p.title].length > 60 || CONTROL.test(p.title) || !isTestCommand(p.command) || !isPath(p.cwd) || !String(p.cwd).startsWith('/')
+  if (!p || !exact(p, ['title', 'command', 'cwd', 'changed', 'fingerprint', 'sandbox', 'loopback']) || typeof p.sandbox !== 'boolean' || typeof p.loopback !== 'boolean' || typeof p.title !== 'string' || [...p.title].length > 60 || CONTROL.test(p.title) || !isTestCommand(p.command) || !isPath(p.cwd) || !String(p.cwd).startsWith('/')
     || !isChanged(p.changed) || typeof p.fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(p.fingerprint)) throw new Error('Invalid test plan');
   return p as unknown as TestPlan;
 }
@@ -94,4 +100,9 @@ export function validateProjectTestCommand(value: unknown): ProjectTestCommand {
   const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
   if (!p || !exact(p, ['repo', 'command']) || !isPath(p.repo) || !String(p.repo).startsWith('/') || !(p.command === null || isTestCommand(p.command))) throw new Error('Invalid test command');
   return p as unknown as ProjectTestCommand;
+}
+export function validateProjectTestLoopback(value: unknown): ProjectTestLoopback {
+  const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  if (!p || !exact(p, ['repo', 'loopback']) || !isPath(p.repo) || !String(p.repo).startsWith('/') || typeof p.loopback !== 'boolean') throw new Error('Invalid test loopback');
+  return p as unknown as ProjectTestLoopback;
 }

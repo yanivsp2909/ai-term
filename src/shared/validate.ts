@@ -9,7 +9,7 @@ import { isDiffStat, validateAgentDiff } from './diff.js';
 import { validateSessionExport } from './session-export.js';
 import { validateUndoPlan } from './checkpoints.js';
 import { validateMergePlan, validatePrPlan } from './merge.js';
-import { isTestCommand, validateProjectTestCommand, validateTestPlan, validateTestResult } from './test-run.js';
+import { isTestCommand, validateProjectTestCommand, validateProjectTestLoopback, validateTestPlan, validateTestResult } from './test-run.js';
 import { validateReviewPlan, validateReviewResult, validateReviewState } from './review.js';
 import { isForkTarget, validateForkPlan } from './fork.js';
 export function isValidModelId(id: string): boolean {
@@ -166,6 +166,8 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['cwd'];if(!await validCwd(v.cwd))throw new ValidationError('Invalid test command request');break;
         case 'project.setTestCommand':
             fields=['cwd','command'];if(!await validCwd(v.cwd)||!(v.command===null||isTestCommand(v.command)))throw new ValidationError('Invalid test command request');break;
+        case 'project.setTestLoopback':
+            fields=['cwd','allowed'];if(!await validCwd(v.cwd)||typeof v.allowed!=='boolean')throw new ValidationError('Invalid test loopback request');break;
         case 'sessions.mergePlan': case 'sessions.prPlan':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
         case 'sessions.merge': case 'sessions.pr':
@@ -229,6 +231,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.forkPlan!==undefined)validateForkPlan(v.forkPlan);
     if(v.review!==undefined)validateReviewResult(v.review);
     if(v.testCommand!==undefined)validateProjectTestCommand(v.testCommand);
+    if(v.testLoopback!==undefined)validateProjectTestLoopback(v.testLoopback);
     if(v.prPlan!==undefined)validatePrPlan(v.prPlan);
     if(v.merged!==undefined&&(!v.merged||typeof v.merged!=='object'||Object.keys(v.merged).length!==1||typeof (v.merged as {commit?:unknown}).commit!=='string'||!/^[0-9a-f]{40,64}$/.test((v.merged as {commit:string}).commit)))throw new ValidationError('Invalid merge result');
     if(v.pr!==undefined&&(!v.pr||typeof v.pr!=='object'||Object.keys(v.pr).length!==1||typeof (v.pr as {url?:unknown}).url!=='string'||!/^https:\/\/\S{1,500}$/.test((v.pr as {url:string}).url)))throw new ValidationError('Invalid PR result');
@@ -327,6 +330,8 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.reviewModel!==undefined&&(!isRecord(v.reviewModel)||Object.keys(v.reviewModel).length!==2||!isUUID(v.reviewModel.keyId)||typeof v.reviewModel.model!=='string'||!isValidModelId(v.reviewModel.model)))throw new ValidationError('Invalid review model');
     // v0.7.4: set by the daemon only (project.setTestCommand), one argument list per repository.
     if(v.testCommands!==undefined&&(!isRecord(v.testCommands)||Object.keys(v.testCommands).length>50||Object.entries(v.testCommands).some(([repo,command])=>['__proto__','prototype','constructor'].includes(repo)||!isAbsolute(repo)||repo.includes('\0')||repo.length>1024||!isTestCommand(command))))throw new ValidationError('Invalid test commands');
+    // B26: set by the daemon only (project.setTestLoopback): the repositories whose tests may reach 127.0.0.1.
+    if(v.testLoopback!==undefined&&(!Array.isArray(v.testLoopback)||v.testLoopback.length>50||new Set(v.testLoopback).size!==v.testLoopback.length||v.testLoopback.some(repo=>typeof repo!=='string'||!isAbsolute(repo)||repo.includes('\0')||repo.length>1024)))throw new ValidationError('Invalid test loopback setting');
     if(v.handoff!==undefined&&typeof v.handoff!=='boolean')throw new ValidationError('Invalid handoff setting');
     try{if(v.accounts!==undefined)validateAccounts(v.accounts);if(v.defaultAccounts!==undefined)validateDefaultAccounts(v.defaultAccounts);}catch{throw new ValidationError('Invalid accounts');}
     // Whole settings (not a patch): each default names an account of that engine.

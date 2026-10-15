@@ -186,3 +186,16 @@ it('cards, results and the /test popup say it plainly; l switches 127.0.0.1 for 
   await expect(validateRequest({ id, kind: 'project.setTestLoopback', cwd: '/tmp', allowed: true })).resolves.toMatchObject({ allowed: true });
   await expect(validateRequest({ id, kind: 'project.setTestLoopback', cwd: '/tmp', allowed: 'yes' })).rejects.toThrow();
 });
+
+it.skipIf(!MAC)('macOS (skipped elsewhere: sandbox-exec is macOS only): a key folder that is a link elsewhere stays unreadable through its target', async () => {
+  const dir = await temp(), home = join(dir, 'home'), keys = join(dir, 'vault', 'ssh'), tree = join(dir, 'tree');
+  await mkdir(keys, { recursive: true }); await mkdir(home); await mkdir(tree);
+  await writeFile(join(keys, 'id_test'), 'PRIVATE-KEY-MATERIAL\n');
+  await run('/bin/ln', ['-s', keys, join(home, '.ssh')]);
+  await writeFile(join(tree, 'probe.sh'), `#!/bin/sh\ncat "$HOME/.ssh/id_test" > via-link.txt\ncat "${keys}/id_test" > via-target.txt\nexit 0\n`); await chmod(join(tree, 'probe.sh'), 0o755);
+  const box = await prepareSandbox(tree, { home, private: [], loopback: false });
+  try { await runTests(['./probe.sh'], tree, { ...buildTestEnv(process.env), HOME: home, ...box.env }, { timeoutMs: 20_000, sandbox: box }); }
+  finally { await box.dispose(); }
+  expect(await readFile(join(tree, 'via-link.txt'), 'utf8')).toBe('');
+  expect(await readFile(join(tree, 'via-target.txt'), 'utf8')).toBe('');
+}, 30_000);

@@ -32,6 +32,7 @@ import { applyUndo, CheckpointError, dropCheckpoints, listCheckpoints, snapshot,
 import type { UndoPlan } from '../shared/checkpoints.js';
 import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
 import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
+import { prepareSandbox, sandboxReady, SANDBOX_EXEC, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, type ForkPlan, type ForkTarget } from '../shared/fork.js';
 import { ownLoginLabel } from '../shared/models.js';
@@ -114,6 +115,8 @@ export class SessionManager extends EventEmitter {
     static sendEnterDelayMs = 50;
     // v0.6.3: how long a handed-off agent has to start (a test shortens it).
     static handoffStartMs = 30_000;
+    // B26: the sandbox auto-test runs under (a test points it at a missing file to see the no-sandbox path).
+    static sandboxExec = SANDBOX_EXEC;
     private sessions = new Map<string, Live>();
     private size = { cols: 85, rows: 30 };
     private saving: Promise<void> = Promise.resolve();
@@ -977,6 +980,25 @@ export class SessionManager extends EventEmitter {
         await new SettingsStore(this.paths.root).update(async settings=>{const next={...settings.testCommands??{}};if(command)next[repo]=command;else delete next[repo];return {...settings,testCommands:next};});
         return {repo,command};
     }
+    // B26: whether the project's sandboxed tests may reach 127.0.0.1 (off by default; l in /test).
+    async setTestLoopback(cwd:string,allowed:boolean):Promise<{repo:string;loopback:boolean}>{
+        const repo=await this.projectOf(cwd);
+        await new SettingsStore(this.paths.root).update(async settings=>{const others=(settings.testLoopback??[]).filter(r=>r!==repo);return {...settings,testLoopback:allowed?[...others,repo]:others};});
+        return {repo,loopback:allowed};
+    }
+    // The run's sandbox, or null when this Mac can't give one (not macOS, no sandbox-exec, a path no profile can hold, or a
+    // profile the system refuses): then nothing runs by itself. The caller disposes what it gets.
+    private async sandboxFor(path:string,repo:string|undefined):Promise<PreparedSandbox|null>{
+        let loopback=false;
+        if(repo)try{loopback=(await new SettingsStore(this.paths.root).get()).testLoopback?.includes(await projectRepo(repo))===true;}catch{this.log.error('Settings unreadable; tests run without 127.0.0.1');}
+        let box:PreparedSandbox;
+        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,program:SessionManager.sandboxExec});}
+        catch(error){this.log.error(error instanceof SandboxPathError?'Test sandbox: a path can\'t go into a profile; tests ask first':'Test sandbox: its temp folder could not be made; tests ask first');return null;}
+        if(await sandboxReady(box.profile,box.program))return box;
+        this.log.error('Test sandbox unavailable; tests ask first');
+        await box.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));
+        return null;
+    }
     // The agent's worktree, its recorded start and the project's command; null when there's nothing to run.
     private async testTarget(live:Live):Promise<{path:string;base:string;repo?:string;command:string[]}|null>{
         const record=live.info.worktree?this.worktreeRecords.get(live.info.worktree):undefined;
@@ -1006,13 +1028,20 @@ export class SessionManager extends EventEmitter {
             const setup=await testSetup(target.path,target.base,target.repo,target.command);
             // The agent went back to work (or away) while this was checked: its next turn end decides.
             if(live.info.status!=='done'||this.sessions.get(id)!==live)return;
-            if(setup.changed.length&&(setup.unverifiable||setup.fingerprint!==live.approvedSetup)){this.setTests(live,{state:'ask',changed:setup.changed.slice(0,MAX_TEST_CHANGED)});return;}
-            await this.startTests(live,target.command,target.path,setup.unverifiable?undefined:target);
+            // B26: code the agent wrote never runs outside a sandbox without asking; without one, /test asks every time.
+            const box=await this.sandboxFor(target.path,target.repo);
+            if(!box){this.setTests(live,{state:'nosandbox'});return;}
+            if(live.info.status!=='done'||this.sessions.get(id)!==live||setup.changed.length&&(setup.unverifiable||setup.fingerprint!==live.approvedSetup)){
+                await box.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));
+                if(live.info.status==='done'&&this.sessions.get(id)===live)this.setTests(live,{state:'ask',changed:setup.changed.slice(0,MAX_TEST_CHANGED)});
+                return;
+            }
+            await this.startTests(live,target.command,target.path,box,setup.unverifiable?undefined:target);
         }catch{this.log.error('Auto-test skipped; git could not read the worktree');}
         finally{this.turnEnds.delete(id);}
     }
-    async testPlan(id:string):Promise<TestPlan>{return (await this.testPlanSetup(id)).plan;}
-    private async testPlanSetup(id:string):Promise<{plan:TestPlan;unverifiable:boolean}>{
+    async testPlan(id:string):Promise<TestPlan>{const {plan,box}=await this.testPlanSetup(id);await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));return plan;}
+    private async testPlanSetup(id:string):Promise<{plan:TestPlan;unverifiable:boolean;setup:string;box:PreparedSandbox|null}>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         this.undoIdle(live);
@@ -1022,32 +1051,38 @@ export class SessionManager extends EventEmitter {
         if(!target)throw new TestRunError('No test command for this project · /test-cmd <command>');
         let setup:import('./test-run.js').TestSetup;
         try{setup=await testSetup(target.path,target.base,target.repo,target.command);}catch(error){this.log.error('Test plan: git could not read the worktree');throw new TestRunError('Tests unavailable; git could not read the worktree',{cause:error});}
-        return {plan:{title:live.info.title,command:target.command,cwd:target.path,changed:setup.changed.slice(0,MAX_TEST_CHANGED),fingerprint:setup.fingerprint},unverifiable:setup.unverifiable};
+        const box=await this.sandboxFor(target.path,target.repo),loopback=box?.spec.loopback??false;
+        // The fingerprint covers the sandbox too: y never runs unsandboxed (or with 127.0.0.1) a plan shown otherwise.
+        const fingerprint=createHash('sha256').update(setup.fingerprint).update(`\0sandbox=${box?'on':'off'}\0loopback=${loopback}`).digest('hex');
+        return {plan:{title:live.info.title,command:target.command,cwd:target.path,changed:setup.changed.slice(0,MAX_TEST_CHANGED),fingerprint,sandbox:!!box,loopback},unverifiable:setup.unverifiable,setup:setup.fingerprint,box};
     }
     // Runs exactly what /test showed; the result arrives on the card.
     async runTestPlan(id:string,fingerprint:string):Promise<void>{
-        const {plan,unverifiable}=await this.testPlanSetup(id),live=this.sessions.get(id);
-        if(!live||plan.fingerprint!==fingerprint)throw new TestRunError('The test setup changed since it was shown; run /test again');
-        // You approved this setup: later turns that leave it as it is run without asking again (unless part of it can't be
-        // checked, like a link out of the worktree: then every turn asks).
-        live.approvedSetup=unverifiable?undefined:fingerprint;
-        const target=unverifiable?null:await this.testTarget(live);
-        void this.startTests(live,plan.command,plan.cwd,target??undefined);
+        const {plan,unverifiable,setup,box}=await this.testPlanSetup(id),live=this.sessions.get(id);
+        if(!live||plan.fingerprint!==fingerprint){await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));throw new TestRunError('The test setup changed since it was shown; run /test again');}
+        // You approved this setup: later sandboxed turns that leave it as it is run without asking again (unless part of it
+        // can't be checked, like a link out of the worktree: then every turn asks). Without a sandbox your y is for this run.
+        if(box)live.approvedSetup=unverifiable?undefined:setup;
+        const target=unverifiable||!box?null:await this.testTarget(live);
+        void this.startTests(live,plan.command,plan.cwd,box,target??undefined);
     }
     // target: given when the run started from a setup you approved (or one with nothing to ask about); what the run itself
     // wrote (build output, caches) then becomes the approved setup, so the next turn asks only about the agent's changes.
-    private async startTests(live:Live,command:string[],cwd:string,target?:{path:string;base:string;repo?:string;command:string[]}):Promise<void>{
+    // box: the run's sandbox; null only for a run you approved in /test knowing there was none.
+    private async startTests(live:Live,command:string[],cwd:string,box:PreparedSandbox|null,target?:{path:string;base:string;repo?:string;command:string[]}):Promise<void>{
         this.cancelTests(live.info.id,false);
         const controller=new AbortController();this.testRuns.set(live.info.id,controller);
         this.setTests(live,{state:'running'});
         let outcome:import('./test-run.js').TestOutcome;
-        try{outcome=await runTests(command,cwd,buildTestEnv(process.env),{signal:controller.signal,log:text=>this.log.error(text)});}
+        try{outcome=await runTests(command,cwd,{...buildTestEnv(process.env),...box?.env},{signal:controller.signal,log:text=>this.log.error(text),...(box?{sandbox:box}:{})});}
         catch{this.log.error('Test command could not start');outcome={state:'error'};}
+        finally{await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));}
+        if(outcome.state==='nosandbox')this.log.error('Test sandbox refused its profile; tests ask first');
         if(this.testRuns.get(live.info.id)===controller)this.testRuns.delete(live.info.id);
         // Cancelled: the agent works again (or went away); its result is cleared there.
         if(outcome.state==='cancelled'||controller.signal.aborted)return;
         if(outcome.state==='error')this.log.error('Test command could not start');
-        if(target)try{const after=await testSetup(target.path,target.base,target.repo,target.command);live.approvedSetup=after.unverifiable?undefined:after.fingerprint;}catch{this.log.error('Test setup unreadable after the run; the next turn asks');live.approvedSetup=undefined;}
+        if(target&&outcome.state!=='nosandbox')try{const after=await testSetup(target.path,target.base,target.repo,target.command);live.approvedSetup=after.unverifiable?undefined:after.fingerprint;}catch{this.log.error('Test setup unreadable after the run; the next turn asks');live.approvedSetup=undefined;}
         this.setTests(live,outcome);
     }
     // keep: a result already shown stays (the agent was removed or the daemon stops); else it is cleared with the run.
