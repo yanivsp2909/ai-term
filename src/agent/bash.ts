@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, realpath } from 'node:fs/promises';
+import { access, readlink, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, normalize, resolve } from 'node:path';
+import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { PERSISTENCE_DIRS, PERSISTENCE_FILES, SANDBOX_EXEC, SandboxPathError, sandboxPath } from '../daemon/test-sandbox.js';
 import { visible } from './display.js';
 import { isFsError } from '../shared/paths.js';
@@ -23,10 +23,13 @@ export interface BashResult { exitCode: number | null; signal: string | null; st
 // user: your home folder (B29), whose startup files and persistence folders a command may not write; os.homedir() unless
 // a test passes a fake one.
 export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string; protect?: readonly string[]; user?: string } }
-// Real paths (link targets included) of the places in PERSISTENCE_FILES and PERSISTENCE_DIRS.
-export interface Persistence { files: readonly string[]; dirs: readonly string[] }
+// Real paths (link targets included) of the places in PERSISTENCE_FILES and PERSISTENCE_DIRS; parents: the folders
+// between your home and them (~/.config, ~/Library), which may not be renamed, removed or replaced by a link (security
+// review: a ~/.config swapped for a link would lead ~/.config/git somewhere no rule names). Their other contents stay open.
+export interface Persistence { files: readonly string[]; dirs: readonly string[]; parents?: readonly string[] }
 export function bashProfile(home: string, cwd: string, protect: readonly string[] = [], persistence: Persistence = { files: [], dirs: [] }): string {
   const own = cwd.startsWith(`${home}/`) ? [`(allow file-read-data file-read-xattr file-write* (subpath "${sandboxPath(cwd)}"))`, `(allow network-outbound (remote unix-socket (subpath "${sandboxPath(cwd)}")))`] : [];
+  const literals = [...persistence.files, ...persistence.parents ?? []];
   return ['(version 1)', '(allow default)',
     // No debugger attach (task ports) and no peeking into other processes: the agent's and daemon's memory hold the key and
     // AI Term's credentials (fix review). Their own child processes stay visible.
@@ -34,24 +37,39 @@ export function bashProfile(home: string, cwd: string, protect: readonly string[
     `(deny file-read-data file-read-xattr file-write* (subpath "${sandboxPath(home)}"))`, `(deny network-outbound (remote unix-socket (subpath "${sandboxPath(home)}")))`, ...own,
     ...protect.map(dir => `(deny file-write* (subpath "${sandboxPath(join(dir, 'hooks'))}") (literal "${sandboxPath(join(dir, 'config'))}"))`),
     // B29, last so nothing above reopens them (rules are last-match-wins).
-    ...persistence.files.length + persistence.dirs.length ? [`(deny file-write* ${[...persistence.files.map(path => `(literal "${sandboxPath(path)}")`), ...persistence.dirs.map(path => `(subpath "${sandboxPath(path)}")`)].join(' ')})`] : [], ''].join('\n');
+    ...literals.length + persistence.dirs.length ? [`(deny file-write* ${[...literals.map(path => `(literal "${sandboxPath(path)}")`), ...persistence.dirs.map(path => `(subpath "${sandboxPath(path)}")`)].join(' ')})`] : [], ''].join('\n');
 }
-// Each place by its own path and, when it is a link (dotfiles kept in a repository), by its target: the sandbox matches
-// the real path. ZDOTDIR moves zsh's startup files, so they are protected there too.
+// A path and, when it is a link, where it leads, even when that doesn't exist yet (a dangling dotfile link would create
+// its target). Only a missing path falls back; any other failure refuses the command rather than leave a place open.
+async function withTarget(path: string): Promise<string[]> {
+  try { return [path, await realpath(path)]; } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+  try { return [path, resolve(dirname(path), await readlink(path))]; } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'EINVAL')) return [path]; throw error; }
+}
+// Each place under your home as given and as its real path (the sandbox matches real paths, and home may be a link).
+// ZDOTDIR moves zsh's startup files, so they are protected there too.
 export async function persistencePaths(user: string, env: Readonly<Record<string, string | undefined>> = {}): Promise<Persistence> {
-  const zdot = env.ZDOTDIR && isAbsolute(env.ZDOTDIR) && normalize(env.ZDOTDIR) === env.ZDOTDIR ? ['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout'].map(name => join(env.ZDOTDIR ?? '', name)) : [];
-  const both = async (paths: readonly string[]) => [...new Set((await Promise.all(paths.map(async path => [path, await realpath(path).catch(() => path)]))).flat())];
-  return { files: await both([...PERSISTENCE_FILES.map(name => join(user, name)), ...zdot]), dirs: await both(PERSISTENCE_DIRS.map(name => join(user, name))) };
+  const real = await realpath(user).catch((error: unknown) => { if (isFsError(error, 'ENOENT')) return user; throw error; });
+  const homes = [...new Set([user, real])];
+  const zdot = env.ZDOTDIR && isAbsolute(env.ZDOTDIR) ? ['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout'].map(name => join(normalize(env.ZDOTDIR ?? '/'), name)) : [];
+  const all = async (paths: readonly string[]) => [...new Set((await Promise.all(paths.map(withTarget))).flat())];
+  const under = (names: readonly string[]) => homes.flatMap(home => names.map(name => join(home, name)));
+  const parents = [...new Set([...PERSISTENCE_FILES, ...PERSISTENCE_DIRS].flatMap(name => name.split('/').slice(0, -1).map((_, at, parts) => parts.slice(0, at + 1).join('/'))))];
+  return { files: await all([...under(PERSISTENCE_FILES), ...zdot]), dirs: await all(under(PERSISTENCE_DIRS)), parents: under(parents) };
 }
 // The protected place a refusal names, as ~/path; null when the output names none (the command's own error then stands).
-const REFUSED = /Operation not permitted|EPERM/i, PATH_TOKEN = /(?:~|\.{1,2})?\/[^\s:'",;()]+/g;
+// A name may be relative to wherever the command had gone (`cd ~ && echo >> .zshrc`): it is tried from the folder and from
+// home. macOS paths are case-insensitive, so the comparison is too.
+const REFUSED = /Operation not permitted|EPERM/i, PATH_TOKEN = /[^\s:'",;()]*[./][^\s:'",;()]*/g;
 export function blockedPlace(output: string, cwd: string, user: string, guarded: Persistence & { home?: string }): string | null {
-  const inside = (path: string) => guarded.files.includes(path) || [...guarded.dirs, ...guarded.home ? [guarded.home] : []].some(dir => path === dir || path.startsWith(`${dir}/`));
+  const fold = (path: string) => process.platform === 'darwin' ? path.toLowerCase() : path;
+  const within = (path: string, dir: string) => fold(path) === fold(dir) || fold(path).startsWith(`${fold(dir)}/`);
+  const inside = (path: string) => !within(path, cwd) && ([...guarded.files, ...guarded.parents ?? []].some(file => fold(file) === fold(path)) || [...guarded.dirs, ...guarded.home ? [guarded.home] : []].some(dir => within(path, dir)));
   for (const line of output.split('\n')) {
     if (!REFUSED.test(line)) continue;
     for (const token of line.match(PATH_TOKEN) ?? []) {
-      const path = token.startsWith('~/') ? join(user, token.slice(2)) : resolve(cwd, token);
-      if (inside(path)) return path.startsWith(`${user}/`) ? `~/${path.slice(user.length + 1)}` : path;
+      const tries = token.startsWith('~/') ? [join(user, token.slice(2))] : isAbsolute(token) ? [normalize(token)] : [resolve(cwd, token), resolve(user, token)];
+      const path = tries.find(inside);
+      if (path) return within(path, user) ? `~/${path.slice(user.length + 1)}` : path;
     }
   }
   return null;
@@ -64,9 +82,12 @@ async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
   if (!options.sandbox || process.platform !== 'darwin') return plain;
   try { await access(SANDBOX_EXEC, constants.X_OK); } catch { return plain; }
   const user = options.sandbox.user ?? homedir();
-  const [home, cwd, realUser, persistence] = await Promise.all([realpath(options.sandbox.home).catch(() => options.sandbox?.home ?? ''), realpath(options.cwd), realpath(user).catch(() => user), persistencePaths(user, options.env)]);
+  const missing = (fallback: string) => (error: unknown) => { if (isFsError(error, 'ENOENT')) return fallback; throw error; };
+  let home: string, cwd: string, realUser: string, persistence: Persistence;
+  try { [home, cwd, realUser, persistence] = await Promise.all([realpath(options.sandbox.home).catch(missing(options.sandbox.home)), realpath(options.cwd), realpath(user).catch(missing(user)), persistencePaths(user, options.env)]); }
+  catch { throw new ToolError("bash can't run here: AI Term couldn't read the folders its sandbox protects"); }
   let profile: string;
-  try { profile = bashProfile(home, cwd, await Promise.all((options.sandbox.protect ?? []).map(dir => realpath(dir).catch(() => dir))), persistence); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a folder with quotes, parentheses or control characters in its path"); throw error; }
+  try { profile = bashProfile(home, cwd, await Promise.all((options.sandbox.protect ?? []).map(dir => realpath(dir).catch(missing(dir)))), persistence); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a path with quotes, parentheses or control characters (this folder, or where one of your dotfile links leads)"); throw error; }
   return { program: SANDBOX_EXEC, args: ['-p', profile, '--', '/bin/sh', '-c', command], guard: { user: realUser, cwd, places: { ...persistence, home } } };
 }
 
