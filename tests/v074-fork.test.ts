@@ -119,3 +119,14 @@ it('homepage: /fork <agent> <model> shows the D49 ask and ⏎ forks; /diff a vs 
     await shows(tty, 'fixer @ checkpoint 1');
   } finally { await home.stop(); }
 });
+
+it('MEDIUM (both reviews): a fork whose worktree can\'t be made doesn\'t start at all (never in your checkout)', async () => {
+  const d = await daemon();
+  const source = await d.manager.create({ engine: 'codex', model: 'gpt-a', auth: { kind: 'account' }, cwd: d.repo, permission: 'ask', title: 'fixer', firstMessage: 'fix it' });
+  const records = (d.manager as unknown as { worktreeRecords: Map<string, { baseCommit?: string }> }).worktreeRecords, record = records.get(source.worktree ?? '');
+  if (!record) throw new Error('no record');
+  record.baseCommit = 'f'.repeat(40);
+  const before = d.manager.list().length;
+  await expect(d.manager.fork(source.id, { engine: 'codex', model: 'gpt-b', auth: { kind: 'account' } })).rejects.toThrow("The fork's worktree couldn't be made (the start commit may be gone); nothing started");
+  expect(d.manager.list()).toHaveLength(before);
+});

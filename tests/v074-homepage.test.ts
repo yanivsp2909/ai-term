@@ -89,3 +89,16 @@ it('/review lists the models with their price ranges; ↓ ⏎ runs the one picke
   expect(cardText({ ...fixer, review: { state: 'done', high: 0, medium: 0, low: 0 } }, Date.now(), 120).activity?.text).toBe('+3 −1 · ready to review · review: no issues');
   expect(cardText({ ...fixer, review: { state: 'running' } }, Date.now(), 120).activity?.text).toBe('+3 −1 · ready to review · ◐ reviewing');
 });
+
+it('LOW (TS review): a comparison popup can\'t merge or discard; names with " vs " in them still split on the last one', async () => {
+  const other: SessionInfo = { ...fixer, id: randomUUID(), title: 'a vs b', worktree: '/tmp/trees/avb', branch: 'ai/a-vs-b' };
+  const diff = { title: 'a vs b', branch: 'ai/a-vs-b', base: 'fixer @ checkpoint 1', files: [], added: 0, removed: 0, capped: false };
+  const h = await open(body => body.kind === 'sessions.diff' ? { diff } : {}, [fixer, other]);
+  try {
+    h.type('/diff a vs b vs fixer\r');
+    await vi.waitFor(() => expect(h.requests).toContainEqual({ kind: 'sessions.diff', sessionId: other.id, against: fixer.id }));
+    await shows(h.tty, 'fixer @ checkpoint 1');
+    h.type('m'); h.type('x'); await new Promise(resolve => setTimeout(resolve, 150));
+    expect(h.requests.some(r => r.kind === 'sessions.mergePlan' || r.kind === 'sessions.remove')).toBe(false);
+  } finally { await h.home.stop(); }
+});

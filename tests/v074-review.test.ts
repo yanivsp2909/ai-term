@@ -155,3 +155,34 @@ it('auto-review (off by default) runs on a finished turn with the model you last
   expect(d.prompts).toHaveLength(2);
   expect(JSON.parse(await readFile(join(d.home, 'auto-review.json'), 'utf8'))).toMatchObject({ spentUsd: expect.any(Number) });
 });
+
+// ---- Part F review findings ----
+it('MEDIUM (security review): passwords in URLs, npm and Stripe tokens are removed before the diff goes out', async () => {
+  const { redactSecrets } = await import('../src/shared/redact.js');
+  const npm = 'npm_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8', stripe = 'rk_live_' + '51Habc123DEF456ghi789JKL', live = 'sk_live_' + '51Habc123DEF456ghi789JKL';
+  const out = redactSecrets(`DATABASE_URL=postgres://admin:S3cretPw@host/app\nfetch("https://bob:hunter22@example.com/x")\n${npm} ${stripe} ${live}`);
+  for (const secret of ['S3cretPw', 'hunter22', npm, stripe, live]) expect(out).not.toContain(secret);
+  expect(out).toContain('example.com/x');
+});
+
+it('MEDIUM (TS review): an auto-review refused before anything was sent books nothing in its daily budget', async () => {
+  const d = await daemon();
+  await d.manager.review(d.agent.id, d.key.id, 'claude-haiku-5', (await d.manager.reviewPlan(d.agent.id)).fingerprint);
+  await new SettingsStore(d.home).set({ autoReview: true, autoReviewDailyUsd: 1 });
+  await writeFile(join(d.agent.worktree ?? '', 'next.ts'), 'y\n');
+  (d.manager as unknown as { reviewing: Set<string> }).reviewing.add(d.agent.id);
+  await d.manager.afterTurn(d.agent.id);
+  expect(JSON.parse(await readFile(join(d.home, 'auto-review.json'), 'utf8')).spentUsd).toBe(0);
+});
+
+it('LOW (TS review): a review that ends after the agent went back to work doesn\'t put a stale result on the card', async () => {
+  let release: () => void = () => {};
+  const d = await daemon({}, async () => { await new Promise<void>(resolve => { release = resolve; }); return { text: 'HIGH: x', inputTokens: 10, outputTokens: 5 }; });
+  const plan = await d.manager.reviewPlan(d.agent.id), pick = plan.models[0];
+  if (!pick) throw new Error('no model');
+  const reviewing = d.manager.review(d.agent.id, pick.keyId, pick.model, plan.fingerprint);
+  await vi.waitFor(() => expect(d.manager.get(d.agent.id).review).toEqual({ state: 'running' }));
+  d.live.info.status = 'running'; release();
+  await reviewing;
+  expect(d.manager.get(d.agent.id).review).toBeUndefined();
+});

@@ -133,3 +133,48 @@ it('the client accepts only the fixed result shapes', () => {
   for (const bad of [{ state: 'pass', extra: 1 }, { state: 'fail' }, { state: 'fail', failing: -1 }, { state: 'ask', changed: ['\u001b[31mx'] }, { state: 'ask', changed: Array(30).fill('a') }, { state: 'nope' }])
     expect(() => validateTestResult(bad)).toThrow();
 });
+
+// ---- Part F review findings ----
+it('HIGH (security review): ignored dependency folders the agent filled count as test setup; once you approve, later turns run until they change', async () => {
+  const { repo, m, agent, tree } = await setup('#!/bin/sh\nexit 0\n');
+  await writeFile(join(repo, '.gitignore'), 'node_modules/\n'); await git(repo, 'add', '--', '.gitignore'); await git(repo, 'commit', '-qm', 'ignore', '--');
+  await git(tree, 'merge', '-q', '--ff-only', 'main');
+  await m.setTestCommand(repo, ['./check.sh']);
+  await mkdir(join(tree, 'node_modules', '.bin'), { recursive: true }); await writeFile(join(tree, 'node_modules', '.bin', 'vitest'), '#!/bin/sh\necho evil\n');
+  await m.afterTurn(agent.id);
+  expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['node_modules/ (ignored)'] });
+  const plan = await m.testPlan(agent.id);
+  await m.runTestPlan(agent.id, plan.fingerprint);
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+  await m.afterTurn(agent.id);
+  expect(result(m, agent.id)).toEqual({ state: 'pass' });
+  await writeFile(join(tree, 'node_modules', '.bin', 'vitest'), '#!/bin/sh\necho more evil\n');
+  await m.afterTurn(agent.id);
+  expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['node_modules/ (ignored)'] });
+});
+
+it('MEDIUM (security review): a process that leaves the group (setsid) can\'t keep a run open past its limit', async () => {
+  const dir = await temp(), started = Date.now();
+  const outcome = await runTests(['/bin/sh', '-c', "perl -e 'use POSIX; POSIX::setsid(); sleep 20' & sleep 1; exit 0"], dir, buildTestEnv(process.env), { timeoutMs: 2_000 });
+  expect(outcome).toEqual({ state: 'pass' });
+  expect(Date.now() - started).toBeLessThan(6_000);
+}, 15_000);
+
+it('MEDIUM (TS review): a turn that starts while the turn end is checked gets no test run or result', async () => {
+  const { repo, m, agent, live } = await setup('#!/bin/sh\nexit 0\n');
+  await m.setTestCommand(repo, ['./check.sh']);
+  const ending = m.afterTurn(agent.id);
+  live.info.status = 'running';
+  await ending;
+  expect(result(m, agent.id)).toBeUndefined();
+});
+
+it('LOW (both reviews): every relative path word is the command\'s script; more setup names; 0 failing reads as unknown; /test-cmd refuses an unrecorded worktree folder', async () => {
+  expect(isTestConfig('scripts/test.sh', ['bash', 'scripts/test.sh'])).toBe(true);
+  expect(isTestConfig('run.js', ['node', './run.js'])).toBe(true);
+  for (const path of ['.gitignore', 'go.work', '.pnp.cjs', '.yarn/releases/yarn-4.cjs', '.bundle/config', 'lib/sitecustomize.py', 'site/x.pth', 'deps.gradle']) expect(isTestConfig(path, ['npm', 'test']), path).toBe(true);
+  expect(failingCount('test result: FAILED. 5 passed; 0 failed; 0 ignored')).toBeNull();
+  const { home, m } = await setup();
+  const stray = join(home, 'worktrees', 'other', 'x'); await mkdir(stray, { recursive: true }); await run('/usr/bin/git', ['init', '-q', '--', stray]);
+  await expect(m.setTestCommand(stray, ['npm', 'test'])).rejects.toThrow("Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of");
+});

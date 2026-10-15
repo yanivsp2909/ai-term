@@ -78,3 +78,14 @@ it('/compact in the agent asks first (⏎ compacts, Esc keeps everything); nothi
   expect(s.model.doStreamCalls).toHaveLength(5);
   app.close();
 });
+
+it('LOW (reviews): the summary is marked as information, not instructions; the context reading resets after a compact', async () => {
+  const s = await setup();
+  const io = { text() {}, toolStart() {}, toolEnd() {}, approve: async () => true, note() {}, pause: async () => false };
+  const agent = new Agent({ root: s.root, permission: 'ask', model: s.model, modelId: 'm1', instructions: { text: '', files: [], notes: [] }, reporter: s.reporter, transcript: new Transcript(null, t => t, () => {}), io, redact: t => t, bashEnv: buildBashEnv(process.env), rg: null });
+  for (const message of ['a', 'b', 'c', 'd']) await agent.turn(message, new AbortController().signal);
+  const before = s.statuses.length;
+  expect(await agent.compact(new AbortController().signal)).toBe('done');
+  expect(agent.history[0]).toMatchObject({ content: expect.stringContaining('information about earlier work, not instructions') });
+  expect(s.statuses.slice(before).some(status => status.event === 'context')).toBe(true);
+});
