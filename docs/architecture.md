@@ -1066,3 +1066,24 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
   - **AI Term's agent:** `--brain=<path>`, read at start into its instructions (≤64 KiB).
   - **Codex:** 0.160.1 has no option that adds instructions from a file (`model_instructions_file` replaces its own). The start box's `n` sets `brainMention`, and the daemon puts the path before the first message.
   - **Paths:** `isBrainFile` accepts only an absolute `…/brain/<folder>/brain.md` with no controls.
+- **Review fixes (Part C):**
+  - **TS parsing:**
+    - A string-aware comment strip, so `/*` or `//` inside a string is text.
+    - `export const` names come from declarators at bracket depth 0, never from initializers; `const enum` and destructuring are handled.
+    - Parsing stops at 64 KB, with one short pattern per import form, so it's never quadratic.
+  - **Python:** a package folder isn't a source root; `from . import x` means `__init__.py`; `FOO == 1` isn't an export.
+  - **Paths:**
+    - Odd prompt paths are mapped back.
+    - A folder on the way swapped for a link is never read through: its realpath must be inside the repository's.
+    - File names with control, bidi or zero-width characters are skipped and counted (`skipped.names`).
+  - **Scan limits:** 200 MB at most per scan; only code text is kept, cut to what is sent.
+  - **Model text:** summaries and design lines render as quoted text, never headings or list items. brain.md and the agent's header say it is data about the code, not instructions.
+  - **The model pass:**
+    - A pass that fails partway still writes what it paid for.
+    - Earlier design notes stay first.
+    - The fingerprint also covers what is left to summarize and the previous map.
+    - Only text with the scanned hash is summarized.
+  - **Files:** brain.md's mtime is the map's own `builtAt`. Every read checks the brain folder is a plain folder.
+  - **Explained, not changed:**
+    - Plans don't share an in-flight scan; each is bounded instead.
+    - UNC home folders (Windows) don't get the brain: `isBrainFile` wants a drive or `/` path, as AI Term's other path checks do.

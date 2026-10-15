@@ -56,7 +56,7 @@ it('the local pass: tracked and untracked files git does not ignore; binaries, >
   await writeFile(join(top, 'src', 'new.ts'), "import { foo } from './a.js';\n");
   const { index, parsed } = await scanRepo(top, null);
   expect(Object.keys(index.files).sort()).toEqual(['.gitignore', 'README.md', 'py/pkg/__init__.py', 'py/pkg/m.py', 'py/pkg/n.py', 'src/a.ts', 'src/b.ts', 'src/c.js', 'src/new.ts']);
-  expect(index.skipped).toEqual({ binary: 1, large: 1, env: 1, secret: 1 });
+  expect(index.skipped).toEqual({ binary: 1, large: 1, env: 1, secret: 1, names: 0 });
   expect(index.files['src/a.ts']).toMatchObject({ lang: 'ts', exports: ['foo', 'Bar'], local: ['src/b.ts'] });
   expect(index.files['src/new.ts']?.local).toEqual(['src/a.ts']);
   expect(index.files['src/c.js']?.local).toEqual(['src/b.ts']);
@@ -83,7 +83,7 @@ it('brain.md: tree, modules with exports, imports and importers, design notes; n
   const text = renderBrain({ ...index, design: ['One daemon owns every PTY'], files: { ...index.files, 'src/a.ts': { ...index.files['src/a.ts']!, summary: 'Entry helpers.' } } }, new Date());
   expect(text).toContain('# Brain: proj');
   expect(text).toContain('## Design');
-  expect(text).toContain('- One daemon owns every PTY');
+  expect(text).toContain('- > One daemon owns every PTY');
   expect(text).toContain('### src/a.ts');
   expect(text).toContain('Entry helpers.');
   expect(text).toContain('exports: foo, Bar');

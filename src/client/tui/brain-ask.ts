@@ -12,7 +12,7 @@ import { brainAge, type BrainPlan } from '../../shared/brain.js';
 const money = (usd: number): string => `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
 const WINDOW = 10;
 export function brainLines(plan: BrainPlan, choice: number, now = Date.now()): Line[] {
-  const skipped = [plan.skipped.binary ? `${plan.skipped.binary} binary` : '', plan.skipped.large ? `${plan.skipped.large} over 256 KB` : '', plan.skipped.env ? `${plan.skipped.env} .env` : '', plan.skipped.secret ? `${plan.skipped.secret} flagged by the secret scan` : ''].filter(Boolean);
+  const skipped = [plan.skipped.binary ? `${plan.skipped.binary} binary` : '', plan.skipped.large ? `${plan.skipped.large} over 256 KB` : '', plan.skipped.env ? `${plan.skipped.env} .env` : '', plan.skipped.secret ? `${plan.skipped.secret} flagged by the secret scan` : '', plan.skipped.names ? `${plan.skipped.names} with control characters in the name` : ''].filter(Boolean);
   const rows = ['local map only · free', ...(plan.summarize ? plan.models : []).map(m => `${m.model} · key ····${m.last4} · ${money(m.priceUsd.low)}–${money(m.priceUsd.high)}`)];
   const start = Math.max(0, Math.min(choice - Math.floor(WINDOW / 2), rows.length - WINDOW));
   return [

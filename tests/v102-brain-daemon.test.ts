@@ -52,7 +52,7 @@ async function daemon(settings: Record<string, unknown> = {}, summarize?: Summar
 it('the local pass needs no model: the plan offers it free, the build writes brain.md under the AI Term folder', async () => {
   const d = await daemon();
   const plan = validateBrainPlan(await d.manager.brainPlan(d.repo));
-  expect(plan).toMatchObject({ files: 2, changed: 2, removed: 0, skipped: { binary: 0, large: 0, env: 0, secret: 1 }, builtAt: null, summarize: 2, agents: true });
+  expect(plan).toMatchObject({ files: 2, changed: 2, removed: 0, skipped: { binary: 0, large: 0, env: 0, secret: 1, names: 0 }, builtAt: null, summarize: 2, agents: true });
   expect(plan.models.map(m => m.model)).toEqual(['claude-haiku-5', 'claude-sonnet-5']);
   expect(plan.models[0]?.priceUsd.high).toBeGreaterThan(0);
   const result = validateBrainResult(await d.manager.buildBrain(d.repo, plan.fingerprint));
@@ -83,7 +83,7 @@ it('the model pass: summaries and design decisions, secrets kept out, counted in
   expect(d.prompts.join('\n')).not.toContain(LEAK);
   expect(d.prompts.join('\n')).not.toContain('leak.ts');
   const text = await readFile(result.path, 'utf8');
-  expect(text).toContain('The src/a.ts module.'); expect(text).toContain('- Modules export one value each.');
+  expect(text).toContain('The src/a.ts module.'); expect(text).toContain('- > Modules export one value each.');
   expect(d.usage.summary().today.costUsd).toBeGreaterThan(0);
   await writeFile(join(d.repo, 'src', 'b.ts'), 'export const b = 2;\n');
   const next = await d.manager.brainPlan(d.repo);

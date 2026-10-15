@@ -46,7 +46,7 @@ import { pathInside } from '../shared/path-inside.js';
 import { limitCaps, overLimit, stopDelayMs, type QueueLimit } from '../shared/queue.js';
 const QUEUE_CHECK_MS = 15_000, QUEUE_REPORT_MS = 3 * 60_000;
 import { BRAIN_BATCH_CHARS, BRAIN_MAX_DECISIONS, BRAIN_OUTPUT_PER_FILE, BRAIN_SUMMARY_FILE_CHARS, brainMention, brainPrompt, parseSummaries, type BrainPlan, type BrainResult } from '../shared/brain.js';
-import { BrainError, brainPaths, readBrain, readRepoFile, removeBrain, scanRepo, writeBrain } from './brain.js';
+import { BrainError, brainFolderSafe, brainPaths, readBrain, readRepoFile, removeBrain, scanRepo, writeBrain } from './brain.js';
 import { allocateFreePort, devEnv, DevServers, scriptOf } from './dev-servers.js';
 import type { DevPlan, DevState } from '../shared/dev.js';
 const DEV_OFF = 'Dev servers are off; turn them on in /settings (y)', DEV_NO_TREE = 'A dev server runs in an agent\'s worktree; this agent has none', DEV_NO_CMD = "Set the project's dev command with /dev-cmd first";
@@ -1246,7 +1246,7 @@ export class SessionManager extends EventEmitter {
         let top:string;
         try{top=await projectRepo(cwd);}catch(error){if(error instanceof TestRunError)return null;this.log.error('Brain: the repository could not be found; the agent starts without it');return null;}
         const {markdown}=brainPaths(this.paths.root,top);
-        try{const info=await lstat(markdown);return info.isFile()?{file:markdown,builtAt:info.mtime.toISOString()}:null;}
+        try{if(!await brainFolderSafe(this.paths.root,top))return null;const info=await lstat(markdown);return info.isFile()?{file:markdown,builtAt:info.mtime.toISOString()}:null;}
         catch(error){if(isFsError(error,'ENOENT'))return null;this.log.error('Brain: brain.md could not be read; the agent starts without it');return null;}
     }
     private async brainInput(cwd:string){
@@ -1256,7 +1256,7 @@ export class SessionManager extends EventEmitter {
         const pending=Object.keys(scan.index.files).filter(path=>scan.index.files[path]?.lang!=='other'&&!scan.index.files[path]?.summary);
         const batches:{path:string;text:string}[][]=[];let batch:{path:string;text:string}[]=[],size=0;
         for(const path of pending){
-            const text=scan.texts.get(path)??await this.brainText(top,path);if(text===null)continue;
+            const text=scan.texts.get(path)??await this.brainText(top,path,scan.index.files[path]?.hash??'');if(text===null)continue;
             const cut=text.slice(0,BRAIN_SUMMARY_FILE_CHARS);
             if(size+cut.length>BRAIN_BATCH_CHARS&&batch.length){batches.push(batch);batch=[];size=0;}
             batch.push({path,text:cut});size+=cut.length;
@@ -1266,11 +1266,14 @@ export class SessionManager extends EventEmitter {
         const tokens=prompts.reduce((sum,p)=>sum+estimateTokens(p.prompt),0),files=prompts.reduce((sum,p)=>sum+p.paths.length,0);
         const inputTokens={low:Math.round(tokens*0.8),high:Math.round(tokens*1.25)},outputTokens={low:files*BRAIN_OUTPUT_PER_FILE.low,high:files*BRAIN_OUTPUT_PER_FILE.high+prompts.length*300};
         const writers=files?reviewWriters(await this.keys.list(),settings,this.handoffWriter.prices):[];
-        const fingerprint=createHash('sha256').update(JSON.stringify([top,Object.entries(scan.index.files).map(([path,file])=>[path,file.hash]),scan.removed,scan.index.skipped])).digest('hex');
+        // What you approved: the files and their hashes, what is left to summarize and the map it builds on (review: a
+        // /brain rm or another build between plan and build changed what would be sent).
+        const fingerprint=createHash('sha256').update(JSON.stringify([top,Object.entries(scan.index.files).map(([path,file])=>[path,file.hash]),scan.removed,scan.index.skipped,prompts.map(p=>p.paths),previous?.builtAt??null])).digest('hex');
         return {top,previous,scan,settings,prompts,inputTokens,outputTokens,writers,fingerprint,files};
     }
     // A file's text for the model pass when the scan kept it from the last map (unchanged, but never summarized).
-    private async brainText(top:string,path:string):Promise<string|null>{const read=await readRepoFile(top,path);return read.kind==='file'?read.text:null;}
+    // Only the very text that was hashed: a file changed since the scan waits for the next /brain (review).
+    private async brainText(top:string,path:string,hash:string):Promise<string|null>{const read=await readRepoFile(top,path);return read.kind==='file'&&read.hash===hash?read.text.slice(0,BRAIN_SUMMARY_FILE_CHARS):null;}
     async brainPlan(cwd:string):Promise<BrainPlan>{
         const input=await this.brainInput(cwd),{scan,previous,settings,writers}=input;
         const last=settings.reviewModel,selected=writers.length?Math.max(0,writers.findIndex(w=>w.key.id===last?.keyId&&w.model===last.model)):0;
@@ -1294,15 +1297,21 @@ export class SessionManager extends EventEmitter {
                 const cap=settings.agentCaps?settings.agentCaps.spendUsd:DEFAULT_AGENT_CAPS.spendUsd;
                 if(cap!==null&&worst>cap)throw new BrainError("The brain's model pass would pass the per-run cap in /settings c");
                 const decisions:string[]=[];costUsd=0;const job=randomUUID();
-                for(const part of input.prompts){
+                // Earlier design notes first; new ones after (review: a small rescan pushed out the whole-repo ones).
+                const merge=()=>{index.design=[...new Set([...index.design,...decisions])].slice(0,BRAIN_MAX_DECISIONS);index.model=writer.model;};
+                try{for(const part of input.prompts){
                     const tokens=estimateTokens(part.prompt),share={low:Math.round(tokens*0.8),high:Math.round(tokens*1.25)};
                     const out={low:part.paths.length*BRAIN_OUTPUT_PER_FILE.low,high:part.paths.length*BRAIN_OUTPUT_PER_FILE.high+300};
                     const written=await this.keyedRequest(job,writer,part.prompt,{worst:reviewModelView(writer,share,out).priceUsd.high,maxOutput:out.high,what:'brain'},settings);
                     const read=parseSummaries(written.text,part.paths);
                     for(const [path,summary] of Object.entries(read.summaries)){const file=index.files[path];if(file){index.files[path]={...file,summary};summarized++;}}
                     decisions.push(...read.decisions);costUsd+=written.summary.costUsd??0;
+                }}catch(error){
+                    // A request that failed partway keeps what the earlier ones paid for: the map is written with them.
+                    if(summarized||decisions.length){merge();await writeBrain(this.paths.root,top,index).catch(()=>{this.log.error('Brain: the partial map could not be saved');});}
+                    throw error;
                 }
-                index.design=[...new Set([...decisions,...index.design])].slice(0,BRAIN_MAX_DECISIONS);index.model=writer.model;
+                merge();
             }
             const written=await writeBrain(this.paths.root,top,index);
             return {repo:top,path:written.path,lines:written.lines,files:Object.keys(index.files).length,changed:input.previous?scan.parsed.length:Object.keys(index.files).length,summarized,costUsd,model:writer?.model??null};
@@ -1310,6 +1319,7 @@ export class SessionManager extends EventEmitter {
     }
     async brainShow(cwd:string):Promise<{repo:string;text:string;builtAt:string}>{
         const top=await this.brainRepo(cwd),{markdown}=brainPaths(this.paths.root,top);
+        if(!await brainFolderSafe(this.paths.root,top))throw new BrainError('No brain for this repository yet · /brain builds one');
         let file;
         try{file=await open(markdown,fsConstants.O_RDONLY|fsConstants.O_NOFOLLOW|fsConstants.O_NONBLOCK);}catch(error){if(isFsError(error,'ENOENT'))throw new BrainError('No brain for this repository yet · /brain builds one',{cause:error});throw error;}
         try{const info=await file.stat();if(!info.isFile()||info.size>4*1024*1024)throw new BrainError('No brain for this repository yet · /brain builds one');return {repo:top,text:await file.readFile('utf8'),builtAt:info.mtime.toISOString()};}

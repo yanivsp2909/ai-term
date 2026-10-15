@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat, open, readlink, rm, rmdir } from 'node:fs/promises';
-import { join } from 'node:path';
-import { BRAIN_MAX_FILE_BYTES, BRAIN_MAX_FILES, langOf, localImports, parsePy, parseTs, renderBrain, validateBrainIndex, type BrainFile, type BrainIndex, type BrainSkipped } from '../shared/brain.js';
+import { lstat, open, readlink, realpath, rm, rmdir, utimes } from 'node:fs/promises';
+import { dirname, join, sep } from 'node:path';
+import { BRAIN_MAX_FILE_BYTES, BRAIN_MAX_FILES, BRAIN_SUMMARY_FILE_CHARS, langOf, localImports, parsePy, parseTs, renderBrain, validateBrainIndex, type BrainFile, type BrainIndex, type BrainSkipped } from '../shared/brain.js';
 import { SECRET_FILE } from '../shared/review.js';
 import { scanLine } from '../shared/secret-scan.js';
 import { isFsError, privateDirectory } from '../shared/paths.js';
@@ -21,10 +21,19 @@ export function brainPaths(root: string, top: string): BrainPaths {
   const dir = join(root, 'brain', repoDirectory(top));
   return { dir, markdown: join(dir, 'brain.md'), json: join(dir, 'brain.json') };
 }
+// A name with a control, bidi or zero-width character, or too long to show: never read, counted.
+// eslint-disable-next-line no-control-regex -- refusing these characters in a file name is the point.
+const ODD_NAME = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+export const BRAIN_MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 const ENV_FILE = /(?:^|\/)\.env(?:\..*)?$|(?:^|\/)\.envrc$/i;
 type Read = { kind: 'file'; text: string; bytes: number; hash: string } | { kind: 'link'; hash: string } | { kind: 'skip'; reason: keyof BrainSkipped } | { kind: 'gone' };
+// The brain folder, checked on every read too: a real folder of yours, not a link (security review).
+export async function brainFolderSafe(root: string, top: string): Promise<boolean> {
+  try { const info = await lstat(brainPaths(root, top).dir); if (info.isSymbolicLink() || !info.isDirectory()) throw new BrainError('The brain folder is not a plain folder; AI Term left it alone'); return true; }
+  catch (error) { if (isFsError(error, 'ENOENT')) return false; throw error; }
+}
 // One file as the map sees it: never through a link (it could lead out of the repository), never past 256 KB.
-export async function readRepoFile(top: string, path: string): Promise<Read> {
+export async function readRepoFile(top: string, path: string, realTop?: string): Promise<Read> {
   if (ENV_FILE.test(path)) return { kind: 'skip', reason: 'env' };
   if (SECRET_FILE.test(path)) return { kind: 'skip', reason: 'secret' };
   const full = join(top, ...path.split('/'));
@@ -33,7 +42,16 @@ export async function readRepoFile(top: string, path: string): Promise<Read> {
   if (info.isSymbolicLink()) return { kind: 'link', hash: createHash('sha256').update(`link\0${await readlink(full)}`).digest('hex') };
   if (!info.isFile()) return { kind: 'gone' };
   if (info.size > BRAIN_MAX_FILE_BYTES) return { kind: 'skip', reason: 'large' };
-  const file = await open(full, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  // O_NOFOLLOW guards only the last part: a folder on the way swapped for a link (git still lists what its index holds)
+  // would lead outside the repository. Its real folder must be inside the repository's (security review).
+  const root = realTop ?? await realpath(top);
+  let folder: string;
+  try { folder = await realpath(dirname(full)); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return { kind: 'gone' }; throw error; }
+  if (folder !== root && !folder.startsWith(root.endsWith(sep) ? root : root + sep)) return { kind: 'gone' };
+  let file;
+  // Swapped for a link or removed since the look above: listed as gone, not a failed scan (review).
+  try { file = await open(full, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) { if (isFsError(error, 'ELOOP') || isFsError(error, 'ENOENT') || isFsError(error, 'EMLINK')) return { kind: 'gone' }; throw error; }
   let buffer: Buffer;
   try { buffer = await file.readFile(); } finally { await file.close(); }
   if (buffer.length > BRAIN_MAX_FILE_BYTES) return { kind: 'skip', reason: 'large' };
@@ -47,18 +65,23 @@ export async function readRepoFile(top: string, path: string): Promise<Read> {
 export async function scanRepo(top: string, previous: BrainIndex | null): Promise<{ index: BrainIndex; parsed: string[]; removed: string[]; texts: Map<string, string> }> {
   const listed = await listFiles(top);
   if (listed.length > BRAIN_MAX_FILES) throw new BrainError('This repository has over 20,000 files; /brain maps up to 20,000');
-  const skipped: BrainSkipped = { binary: 0, large: 0, env: 0, secret: 0 }, found = new Map<string, { file: Omit<BrainFile, 'local'>; imports: string[] }>(), parsed: string[] = [], texts = new Map<string, string>();
+  const realTop = await realpath(top);
+  let total = 0;
+  const skipped: BrainSkipped = { binary: 0, large: 0, env: 0, secret: 0, names: 0 }, found = new Map<string, { file: Omit<BrainFile, 'local'>; imports: string[] }>(), parsed: string[] = [], texts = new Map<string, string>();
   for (let i = 0; i < listed.length; i += 32) {
-    const batch = listed.slice(i, i + 32), reads = await Promise.all(batch.map(path => readRepoFile(top, path)));
+    const batch = listed.slice(i, i + 32), reads = await Promise.all(batch.map(path => ODD_NAME.test(path) || path.length > 4096 ? Promise.resolve<Read>({ kind: 'skip', reason: 'names' }) : total > BRAIN_MAX_TOTAL_BYTES ? Promise.resolve<Read>({ kind: 'skip', reason: 'large' }) : readRepoFile(top, path, realTop)));
     batch.forEach((path, n) => {
       const read = reads[n];
       if (!read || read.kind === 'gone') return;
-      if (read.kind === 'skip') { skipped[read.reason]++; return; }
+      if (read.kind === 'skip') { skipped[read.reason] = (skipped[read.reason] ?? 0) + 1; return; }
+      // At most 200 MB read in one scan; past it, files count as too large (security review: a scan has a bound).
+      if (read.kind === 'file') total += read.bytes;
       const before = previous?.files[path], lang = read.kind === 'link' ? 'other' : langOf(path);
       if (before && before.hash === read.hash) { found.set(path, { file: { hash: before.hash, lang: before.lang, bytes: before.bytes, exports: before.exports, ...before.summary ? { summary: before.summary } : {} }, imports: before.imports ?? [] }); return; }
       parsed.push(path);
       if (read.kind === 'link') { found.set(path, { file: { hash: read.hash, lang: 'other', bytes: 0, exports: [] }, imports: [] }); return; }
-      texts.set(path, read.text);
+      // Only code is ever summarized, and only its start is sent: nothing else is kept in memory (review).
+      if (lang !== 'other') texts.set(path, read.text.slice(0, BRAIN_SUMMARY_FILE_CHARS));
       const shape = lang === 'ts' ? parseTs(read.text) : lang === 'py' ? parsePy(read.text) : { imports: [], exports: [] };
       found.set(path, { file: { hash: read.hash, lang, bytes: read.bytes, exports: shape.exports.slice(0, 200) }, imports: shape.imports.slice(0, 400) });
     });
@@ -70,6 +93,7 @@ export async function scanRepo(top: string, previous: BrainIndex | null): Promis
 }
 export async function readBrain(root: string, top: string): Promise<BrainIndex | null> {
   const { json } = brainPaths(root, top);
+  if (!await brainFolderSafe(root, top)) return null;
   let file;
   try { file = await open(json, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
   catch (error) { if (isFsError(error, 'ENOENT')) return null; throw error; }
@@ -88,6 +112,8 @@ export async function writeBrain(root: string, top: string, index: BrainIndex, n
   await privateDirectory(join(root, 'brain')); await privateDirectory(paths.dir);
   const markdown = renderBrain(index, now);
   await atomicWriteText(paths.markdown, markdown + '\n');
+  // brain.md's time is the map's own, so an agent's card and the next plan agree on its age (review).
+  const at = new Date(index.builtAt); await utimes(paths.markdown, at, at);
   await atomicWrite(paths.json, index);
   return { path: paths.markdown, lines: markdown.split('\n').length };
 }
