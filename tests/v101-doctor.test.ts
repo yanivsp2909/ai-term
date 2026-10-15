@@ -14,7 +14,7 @@ const base = { platform: 'darwin' as NodeJS.Platform, sandbox: async () => ({ do
 it('macOS, everything there', async () => {
   expect(await extraLines('/x/dist/cli/index.js', base)).toEqual([
     'Sandbox: sandbox-exec · agent bash, tests and dev servers run in it',
-    'Keychain: reachable',
+    'Credential store: macOS Keychain reachable',
     'gh: /opt/homebrew/bin/gh; logged in',
     'Notifier: built',
   ]);
@@ -24,18 +24,18 @@ it('nothing there: each line says why and what to do, and nothing gh printed rea
   const lines = await extraLines('/x/dist/cli/index.js', { ...base, sandbox: async () => ({ dontAsk: false, note: "don't ask needs macOS's sandbox-exec, which is missing" }), keychain: async () => null, ghStatus: async () => ({ code: 1, output: 'not logged in PRIVATE' }), notifier: () => 'not built' });
   expect(lines).toEqual([
     "Sandbox: none · don't ask needs macOS's sandbox-exec, which is missing",
-    "Keychain: not checked · the daemon isn't running; start ai, then run ai doctor again",
+    "Credential store: not checked · the daemon isn't running; start ai, then run ai doctor again",
     'gh: /opt/homebrew/bin/gh; not logged in · gh auth login',
     'Notifier: not built · npm run build:notifier',
   ]);
   expect(lines.join('\n')).not.toContain('PRIVATE');
   const noGh = await extraLines('/x', { ...base, gh: async () => null, keychain: async () => ({ reachable: false, note: 'Keychain unavailable' }) });
   expect(noGh).toContain('gh: not found · /pr needs it');
-  expect(noGh).toContain('Keychain: unavailable · Keychain unavailable');
+  expect(noGh).toContain('Credential store: unavailable · Keychain unavailable');
 });
 
 it('Linux and Windows', async () => {
-  expect(await extraLines('/x', { ...base, platform: 'linux', notifySend: async () => '/usr/bin/notify-send' })).toEqual(['Sandbox: bwrap · agent bash and tests run in it', 'Keychain: reachable', 'gh: /opt/homebrew/bin/gh; logged in', 'Notifier: notify-send']);
+  expect(await extraLines('/x', { ...base, platform: 'linux', notifySend: async () => '/usr/bin/notify-send' })).toEqual(['Sandbox: bwrap · agent bash and tests run in it', 'Credential store: Secret Service reachable', 'gh: /opt/homebrew/bin/gh; logged in', 'Notifier: notify-send']);
   expect((await extraLines('/x', { ...base, platform: 'linux' })).at(-1)).toBe("Notifier: none · notify-send isn't installed");
   expect((await extraLines('/x', { ...base, platform: 'win32', sandbox: async () => ({ dontAsk: false, note: "don't ask needs a sandbox, and Windows has none AI Term can use" }) }))[0]).toBe("Sandbox: none · don't ask needs a sandbox, and Windows has none AI Term can use");
   expect((await extraLines('/x', { ...base, platform: 'win32' })).at(-1)).toBe("Notifier: none · notifications aren't available on Windows yet");
@@ -58,10 +58,10 @@ it('the daemon answers keys.health by looking up a probe entry that never holds 
 });
 
 it('the full report runs without a daemon and adds the four lines', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ai-doctor-')); vi.stubEnv('AI_TERM_HOME', root);
+  const root = await mkdtemp(join(tmpdir(), 'ai-doctor-')); vi.stubEnv('AI_TERM_HOME', root); vi.stubEnv('PATH', root);
   try {
     const lines = await doctorLines(resolve('src/cli/index.ts'), () => {}, { ...base, keychain: async () => null });
     expect(lines.some(line => line.startsWith('Sandbox: '))).toBe(true);
-    expect(lines).toContain("Keychain: not checked · the daemon isn't running; start ai, then run ai doctor again");
+    expect(lines).toContain("Credential store: not checked · the daemon isn't running; start ai, then run ai doctor again");
   } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
 });

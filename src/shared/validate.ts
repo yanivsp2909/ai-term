@@ -131,6 +131,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             break;
         case 'usage.summary':case 'usage.diagnostics':
         case 'engines.status':
+        case 'keys.health':
         case 'sessions.list':
             fields = [];
             break;

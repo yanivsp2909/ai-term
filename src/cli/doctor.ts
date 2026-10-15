@@ -5,6 +5,12 @@ import { Connection } from '../client/connection.js';
 import { getPaths, isFsError } from '../shared/paths.js';
 import { redact } from '../daemon/log.js';
 import { buildSpawnEnv } from '../daemon/env.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import type { AgentSandbox } from '../shared/protocol.js';
+import { agentSandbox } from '../daemon/agent-sandbox.js';
+import { notifierAppPath, NOTIFIER_EXECUTABLE } from '../daemon/notifier.js';
+import { systemTool } from '../shared/executable.js';
 export function versionNumber(output: string): string { return output.match(/\b\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\b/)?.[0] ?? 'unavailable'; }
 export function claudeAuth(output: string): string {
     let value: unknown;
@@ -36,28 +42,57 @@ function run(file: string, args: string[], env: NodeJS.ProcessEnv): Promise<{
         resolve({ code, output: stdout + stderr }); // Only the parsers' allowlisted fields ever reach stdout.
     }));
 }
-export async function doctor(entry: string): Promise<void> {
-    await doctorLines(entry, line => process.stdout.write(line + '\n'));
+export async function doctor(entry: string, deps: Partial<DoctorDeps> = {}): Promise<void> {
+    await doctorLines(entry, line => process.stdout.write(line + '\n'), deps);
+}
+// v1.0.1: what the four extra lines are read from; tests swap each one (no real keychain, gh or sandbox probe).
+export interface DoctorDeps {
+    platform: NodeJS.Platform;
+    sandbox: () => Promise<AgentSandbox>;
+    // null: the daemon isn't running, and only the daemon touches the keychain.
+    keychain: () => Promise<{ reachable: boolean; note?: string } | null>;
+    gh: () => Promise<string | null>;
+    ghStatus: (file: string, args: string[]) => Promise<{ code: number | null; output: string }>;
+    // 'built' when the macOS notifier helper is there.
+    notifier: (entry: string) => string;
+    notifySend: () => Promise<string | null>;
+}
+const STORE_NAME: Partial<Record<NodeJS.Platform, string>> = { darwin: 'macOS Keychain', linux: 'Secret Service', win32: 'Windows Credential Manager' };
+const SANDBOX_NAME: Partial<Record<NodeJS.Platform, string>> = { darwin: 'sandbox-exec · agent bash, tests and dev servers run in it', linux: 'bwrap · agent bash and tests run in it' };
+export async function extraLines(entry: string, deps: DoctorDeps): Promise<string[]> {
+    const sandbox = await deps.sandbox(), keychain = await deps.keychain(), gh = await deps.gh();
+    // gh's own words never reach the report: they name the account and may show part of its token. Only the exit code.
+    const ghLine = gh ? `gh: ${gh}; ${(await deps.ghStatus(gh, ['auth', 'status'])).code === 0 ? 'logged in' : 'not logged in · gh auth login'}` : 'gh: not found · /pr needs it';
+    const notifier = deps.platform === 'darwin' ? deps.notifier(entry) === 'built' ? 'Notifier: built' : 'Notifier: not built · npm run build:notifier'
+        : deps.platform === 'linux' ? await deps.notifySend() ? 'Notifier: notify-send' : "Notifier: none · notify-send isn't installed"
+            : "Notifier: none · notifications aren't available on Windows yet";
+    return [
+        sandbox.dontAsk ? `Sandbox: ${SANDBOX_NAME[deps.platform] ?? 'available'}` : `Sandbox: none · ${sandbox.note ?? "AI Term couldn't check for one"}`,
+        // "Credential store", not "Keychain:": the report is redacted, and a word with "key" before a colon reads as a secret.
+        keychain === null ? `Credential store: not checked · the daemon isn't running; start ai, then run ai doctor again` : keychain.reachable ? `Credential store: ${STORE_NAME[deps.platform] ?? 'OS keychain'} reachable` : `Credential store: unavailable · ${keychain.note ?? 'no answer'}`,
+        ghLine,
+        notifier,
+    ];
 }
 // The ai doctor report, line by line and redacted, each also handed to `each` as it is found (the CLI prints as it
 // goes); /doctor shows the same lines in a popup.
-export async function doctorLines(entry: string, each: (line: string) => void = () => {}): Promise<string[]> {
+export async function doctorLines(entry: string, each: (line: string) => void = () => {}, deps: Partial<DoctorDeps> = {}): Promise<string[]> {
     const lines: string[] = [], print = (line: string) => { const safe = redact(line); lines.push(safe); each(safe); };
     const paths = getPaths();
     print(`Node: ${process.version}`);
     let client: Connection | undefined;
+    let keychain: DoctorDeps['keychain'] = async () => null;
     try {
         client = await Connection.connect(paths, { entry, autoStart: false, readOnly: true });
         print(`Daemon: running; protocol ${(await client.hello).protocol}`);
+        const connection = client;
+        keychain = async () => (await connection.request({ kind: 'keys.health' })).keychain ?? { reachable: false, note: 'this daemon is older; ai daemon stop, then ai' };
     }
     catch (error) {
         if (isFsError(error, 'ENOENT') || isFsError(error, 'ECONNREFUSED'))
             print('Daemon: not running');
         else
             print(`Daemon: unavailable (${error instanceof Error ? error.message : 'connection failed'})`);
-    }
-    finally {
-        client?.close();
     }
     for (const path of [paths.root, paths.run]) {
         try {
@@ -83,6 +118,19 @@ export async function doctorLines(entry: string, each: (line: string) => void = 
         print(`${name}: ${path}; version ${versionNumber(version.output)}`);
         const auth = await run(path, name === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'], env);
         print(`${name} auth: ${name === 'claude' ? claudeAuth(auth.output) : codexAuth(auth.code, auth.output)}`);
+    }
+    // The connection stays open until here: the keychain line asks this daemon.
+    try {
+        const env = process.env;
+        for (const line of await extraLines(entry, {
+            platform: process.platform, sandbox: () => agentSandbox(), keychain, gh: () => findExecutable('gh'),
+            ghStatus: (file, args) => run(file, args, env),
+            notifier: from => existsSync(join(notifierAppPath(from), NOTIFIER_EXECUTABLE)) ? 'built' : 'not built',
+            notifySend: () => systemTool('notify-send'), ...deps,
+        })) print(line);
+    }
+    finally {
+        client?.close();
     }
     return lines;
 }

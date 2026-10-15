@@ -223,6 +223,7 @@ export class DaemonServer {
                 case 'usage.subscribe':peer.usage=request.on;this.control(peer,{id:request.id,ok:true});break;
                 case 'clicks.subscribe':peer.clicks=request.on;peer.terminal=request.on?request.terminal:undefined;this.control(peer,{id:request.id,ok:true});break;
                 case 'keys.list': this.control(peer,{id:request.id,ok:true,keys:await this.keys.list()}); break;
+                case 'keys.health': this.control(peer,{id:request.id,ok:true,keychain:await this.keys.health()}); break;
                 case 'keys.add': this.control(peer,{id:request.id,ok:true,key:await this.keys.add(request)}); break;
                 case 'keys.remove': await this.keys.remove(request.keyId); this.control(peer,{id:request.id,ok:true}); break;
                 case 'keys.scanEnvFile': this.control(peer,{id:request.id,ok:true,found:await this.keys.scanEnvFile(request.path)}); break;

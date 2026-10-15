@@ -141,6 +141,8 @@ export type Request = {
 } | {
     kind: 'engines.status';
 } | { kind: 'keys.list' }
+  // v1.0.1 ai doctor: whether the OS keychain answers (a probe entry that never holds a key), asked of the daemon.
+  | { kind: 'keys.health' }
   // secret is absent only for Ollama, which has no key; deployments are the model ids for every provider but Anthropic and OpenAI.
   | { kind: 'keys.add'; provider: KeyProvider; label: string; secret?: string; endpoint?: string; deployments?: string[] }
   | { kind: 'keys.remove' | 'keys.test'; keyId: string }
@@ -261,6 +263,7 @@ export interface SuccessResponse {
     engines?: EnginesStatus;
     notifier?: NotifierState;
     agentSandbox?: AgentSandbox;
+    keychain?: { reachable: boolean; note?: string };
     notificationPermission?:NotificationAuthorization;
     keys?: KeyView[];
     key?: KeyView;
