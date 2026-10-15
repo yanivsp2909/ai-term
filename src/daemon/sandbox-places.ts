@@ -8,7 +8,8 @@ export const PERSISTENCE_FILES: readonly string[] = ['.zshrc', '.zshenv', '.zpro
   '.bash_aliases'];
 export const PERSISTENCE_DIRS: readonly string[] = ['.config/fish', 'Library/LaunchAgents', '.ssh', '.config/git', '.claude', '.codex', '.config/autostart', '.config/systemd/user', '.config/environment.d',
   // Linux: user units in ~/.local/share override enabled system ones without being enabled; desktop and window-manager
-  // autostart; and PATH folders in home, where a planted git or ls would run as you (security review).
-  '.local/share/systemd/user', '.config/plasma-workspace/env', '.config/autostart-scripts', '.config/i3', '.config/sway', '.config/hypr', '.config/openbox', '.local/bin', 'bin',
+  // autostart. Not ~/.local/bin or ~/bin: the agent installs tools there (Yaniv, 2026-10-15), so a program planted in a
+  // PATH folder in home can still run as you later.
+  '.local/share/systemd/user', '.config/plasma-workspace/env', '.config/autostart-scripts', '.config/i3', '.config/sway', '.config/hypr', '.config/openbox',
   // oh-my-zsh loads custom/*.zsh at every shell; D-Bus starts a service file's program on demand (gate).
   '.oh-my-zsh/custom', '.local/share/dbus-1/services'];
