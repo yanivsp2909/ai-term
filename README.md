@@ -1,77 +1,59 @@
 # AI Term
 
-`ai` is a terminal UI for running AI coding agents. One homepage shows every agent:
-- what it's doing, with a live preview of its screen
-- your API spend and tokens for today, this week and this month
-- what your Mac is doing
+AI Term is the `ai` command: one terminal homepage for running AI coding agents side by side. It starts Claude Code and Codex on your own logins, untouched, and its own agent on any API key you save. Each agent gets its own git worktree, so they can't step on each other or on your checkout. A background service keeps them running when you close the terminal. The homepage lists every agent with a live preview of its screen, your API spend and what the machine is doing, and you type what you want built at the bottom. When an agent is done you read its diff, test it, review it, and merge it, each step only when you ask. It's Yaniv's personal and learning project: macOS first, Linux and Windows since v0.8.
 
-You type what you want built at the bottom, pick a model, and AI Term starts the right agent:
-- **Claude account:** runs Claude Code.
-- **ChatGPT account:** runs Codex.
-- **API keys** (Anthropic, OpenAI, Microsoft Foundry; from v0.6.5 also xAI, Moonshot, Z.ai, OpenRouter, Amazon Bedrock, Google Vertex express mode, and Ollama on this Mac with no key): run AI Term's own agent, with exact per-turn cost, caps, budgets that stop it before a request crosses them, and a kill switch. `/settings` → `keys run on: the cli` sends keys back to the CLIs.
+## Install
 
-Agents keep running in a background service when you leave them or close the terminal. Run `ai` again and they're all still there.
+### From source (macOS, Linux, Windows)
+You need Node 22 or newer and git. For Claude Code or Codex on your own login, install and log in to those CLIs first.
+```sh
+git clone <this repository> ai-term && cd ai-term
+npm install
+npm run build
+npm link          # puts `ai` on your PATH (or run: node dist/cli/index.js)
+ai
+```
+`npm run dev` runs `ai` from source without building. `npm run build:notifier` builds the macOS notification helper (needs Xcode Command Line Tools); without it AI Term just doesn't notify.
 
-Personal and learning project. macOS first; Linux from v0.8.1 and Windows from v0.8.2 (both below).
+### The Mac app and the `ai` link
+`npm run app:dist` builds **AI Term.app** and a zip (`build/desktop/dist/`). Drag the app into Applications. It's ad-hoc signed, not notarized, so the first time right-click it → Open → Open (or Privacy & Security → Open Anyway). The app needs no Node: it runs `ai` and its daemon on its bundled runtime.
 
-## Linux (v0.8.1)
-Everything above works on Linux too, with these differences:
-- **Daemon socket:** `~/.ai-term/run/daemon.sock`, with the same rules as on macOS (folder 0700, socket 0600, refused if the folder is a link or someone else's). `XDG_RUNTIME_DIR` isn't used.
-- **Keys:** kept in the Secret Service (GNOME Keyring, KWallet) through the same library as macOS's Keychain. With no keyring running, or a locked one, key features refuse with `No Secret Service keyring (none running, or it is locked); API keys need one, and AI Term never stores them in a file`. There is no file fallback.
-- **Sandboxes:** through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`, in `/usr/bin`, `/usr/local/bin` or `/bin`; `sudo apt install bubblewrap`).
-  - **Tests (D56):** the system is read-only. Your home, other homes, `/tmp`, `/var/tmp`, `/run`, `/media` and `/mnt` are hidden. Toolchains and the repository's git folder come back read-only, key folders stay hidden, and only the worktree and a temp folder are writable.
-  - **Test network:** a test run gets its own network, so only its own 127.0.0.1 works. Your machine's services stay closed even with `l` on, which only matters on macOS.
-  - **What a block looks like:** a hidden file reads as missing, so a blocked write or network shows `✗ blocked by sandbox`, and a blocked read shows as a test failure.
-  - **Agent bash (D57, B29):** AI Term's agent's bash gets its own process list, so it can't see or attach to your other processes. It can't see `~/.ai-term` (its own worktree excepted), AI Term's sockets, or your session's runtime folder (where the D-Bus session bus would hand out Secret Service keys).
-  - **Persistence spots:** read-only. Besides the macOS list, Linux adds `~/.xprofile`, `~/.xsessionrc`, `~/.xinitrc`, `~/.pam_environment`, `~/.gnupg/gpg-agent.conf`, `~/.local/share/systemd/user`, Plasma and window-manager autostart (`~/.config/plasma-workspace/env`, `autostart-scripts`, `i3`, `sway`, `hypr`, `openbox`). `~/.local/bin` and `~/bin` stay writable so the agent can install tools there (your choice); a program it puts there could later run as you.
-  - **How:** home, `~/.config` and the like are rebuilt for each command with every entry put back, so a startup file that doesn't exist yet can't be created either. Anything new at those levels vanishes when the command ends, and the agent is told so.
-  - **Renames:** every folder between them and a protected file, such as `~/work/proj/.git` or a dotfiles folder behind a `~/.zshrc` link, is pinned so it can't be renamed and swapped out. A repository without `.git/hooks` gets an empty one, made read-only.
-  - **Unreadable entries:** an entry of home that can't be read, such as a dead network mount, is left out rather than stopping bash.
-  - **Where bubblewrap can't start:** in Ask, bash runs the command you approved as before. In Don't ask it refuses.
-  - **Session sockets** in `/tmp` are hidden from agent bash (v0.8 gate): the X11 display, a `dbus-launch` bus, ssh-agent and tmux. So are `~/.dbus`, `~/.Xauthority` and `~/.ICEauthority`.
-  - **What stays reachable** (as on macOS, where bash also has the network): the Docker socket, and a D-Bus session bus or X11 display on an abstract socket (dbus-launch and X11 sessions share the network namespace). The Secret Service gives any program of yours a saved key while the keyring is unlocked; on such sessions Don't ask can't keep it out.
-  - **Toolchains outside home** on `PATH` (Linuxbrew's `/home/linuxbrew`, NixOS's `/run/current-system`) come back read-only for tests.
-  - **Without bubblewrap** (or where it can't start, for example with user namespaces turned off): auto-test asks every time (`tests need you · no sandbox`). AI Term's agent offers Ask only, and the start box and `/mode` show why in one line (`don't ask needs bubblewrap (bwrap), which isn't installed`). The same goes anywhere a sandbox can't start, macOS included.
-- **Helpers:** `notify-send`, `xdg-open`, `wl-copy`, `xclip` and `xsel` are run only from `/usr/local/bin`, `/usr/bin` or `/bin`. An agent can write a PATH folder in your home, and AI Term runs these outside any sandbox.
-- **AppImage:** the daemon starts from the AppImage file itself, not from the app's temporary mount, so it keeps working after the app quits.
-- **Notifications:** through `notify-send` when it is installed, else none (`/settings` says `notifications unavailable: notify-send isn't installed`). Clicking one does nothing on Linux.
-- **Clipboard** (`y`, `Y`): `wl-copy` on Wayland, else `xclip` or `xsel`. With none of them, the copy says to install one.
-- **`/open`:** `xdg-open`. **This machine:** `/proc/meminfo`, `/proc/net/dev` (containers, bridges and VPN tunnels left out) and `ps` CPU time, measured as the change since the last look.
-- **Desktop app:** an AppImage and a .deb from `npm run app:dist` on Linux, unsigned. Each ⌘ key in the desktop key table below is Ctrl+Shift there (Ctrl+Shift+C copies, Ctrl+Shift+T starts an agent, and so on). There's no Hide, no Zoom and no `ai` command install from the app.
+In the app, App menu → **Install `ai` command…** shows exactly what it makes: one link, `~/.local/bin/ai`, to the app's own `ai`. No sudo and no shell profile changes. If `~/.local/bin` isn't on your PATH, add it, and `ai` works in any terminal.
 
-## Windows (v0.8.2)
-Everything above works on Windows too, with these differences:
-- **AI Term's folder:** `%USERPROFILE%\.ai-term`. On creation `icacls` gives your account full control and removes every other entry. Each daemon start reads the folder and each folder in it back (owner and entries, by SID) and refuses to run unless they are yours alone. An Administrators owner, as an elevated terminal makes, counts as yours.
-- **Daemon:** a named pipe, `\\.\pipe\ai-term-<your id>-<random>`, a new random part each start. Its name and a token are written to `run\daemon.pipe` inside that folder.
-  - A pipe that already exists, whoever made it, makes the daemon stop rather than share it.
-  - Node can't narrow a pipe's own ACL, which lets other accounts open it for reading. So the daemon answers nothing until a client shows the token, which only your account can read.
-  - Pipe names can be listed, so the client also checks the daemon: the daemon must answer a fresh nonce with proof of the token before anything else is sent. If it can't, the pipe file is removed and `ai` says so.
-  - `ai daemon stop` asks the daemon to stop, so it removes its pipe file. The file also goes whenever a stale lock shows the daemon is gone.
-  - A daemon may take a few seconds to start (it checks the ACL first). The client waits up to 20 s, and a second start doesn't take over one that is still starting.
-- **Keys:** Windows Credential Manager. If it can't be used, key features refuse with `Windows Credential Manager unavailable`.
-- **No sandbox:** auto-test asks every time (`tests need you · no sandbox`). AI Term's agent is Ask only: `ask · don't ask needs a sandbox, and Windows has none AI Term can use`.
-- **Claude Code and Codex:** a native `.exe` runs directly. npm's `.cmd` launcher is never run: AI Term reads the script (or native `.exe`) it names and starts that with `node` (or directly), the arguments still an array. cmd.exe would read `%`, `&` and quotes in a first message as commands. A `.cmd` that isn't npm's, and any `.bat`, is refused, and so is a launcher that can't be read.
-  - `npm test` in `/test` and `npx` MCP servers work the same way (npm's own `npm.cmd`, `npx.cmd`).
-  - A first message that starts and ends with `"` and contains a space reaches the CLI split into words (a node-pty quirk); it stays the message, never options.
-  - A test or MCP command that isn't on PATH is refused rather than looked for in the agent's folder, which Windows would search first.
-- **Agent bash:** Git for Windows' `bash.exe` (never WSL's). Without Git for Windows, bash says it needs it.
-- **git:** Git for Windows' `git.exe`, from Program Files or else PATH. Without it, git features say so; AI Term never runs a bare `git.exe`, which Windows would first look for in the repository's own folder.
-- **AI Term's agent** keeps the Windows basics it needs (`SystemRoot`, `TEMP`, `USERPROFILE`, …) and nothing else of your env.
-- **Paths:** checks of worktree paths ignore case and slash style, as NTFS does. Device names (`NUL`, `CON`…), alternate data streams (`file:stream`) and network paths (`\\server\share`) are refused.
-- **Shell agents:** PowerShell (7 when installed, else Windows PowerShell), started with no arguments.
-- **Stopping:** `taskkill /T /F` stops an agent's or a command's whole process tree.
-- **Not on Windows yet:** notifications (`/settings` says so), network and per-agent CPU in This machine (CPU and memory show), click-through.
-- **Clipboard:** `clip.exe` (sent as UTF-16, so non-ASCII text survives). **`/open`:** Explorer.
-- **Paths:** paths with spaces and non-ASCII names work. Worktrees stay under `%USERPROFILE%\.ai-term\worktrees`.
-- **Known gaps:**
-  - An env file you import from anywhere isn't owner-checked (Windows `stat` has no owner); pick your own.
-  - PowerShell's Constrained Language Mode (AppLocker, WDAC) blocks the ACL check, so the daemon won't start there.
-- **Desktop app:** an NSIS installer from `npm run app:dist` on Windows. It is unsigned, so SmartScreen warns "Windows protected your PC" on first run (More info → Run anyway). The desktop keys are Ctrl+Shift, as on Linux.
+### Linux
+- `sudo apt install bubblewrap` (or your distro's package) for the sandboxes. Without it, tests ask every time and AI Term's agent is Ask only.
+- A Secret Service keyring (GNOME Keyring or KWallet) for API keys. AI Term never stores a key in a file, so without one, key features say so and refuse.
+- `notify-send` for notifications, and `wl-copy`, `xclip` or `xsel` for the clipboard.
+- `npm run app:dist` on Linux builds an AppImage and a .deb, unsigned. The desktop keys are Ctrl+Shift where macOS uses ⌘.
+- Everything else, and what differs: [Linux details](#linux-details-v081).
 
-## Status
-`ai` starts Claude Code and Codex on their own logins, and AI Term's own agent on any saved API key (see below). `/login` connects an account or saves a key in the macOS Keychain; `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage shows estimated API-key spend and tokens for today, this week and this month; subscriptions are excluded from those totals. Each agent's own total since it started (cost per task, v0.6.1) shows on its card and in `/usage`: dollars for API keys, tokens for subscriptions. `b` sets advisory budget limits; `/settings` offers Foundry deployment price overrides.
+### Windows
+- Git for Windows: AI Term's agent's bash and every git call use it.
+- There's no sandbox AI Term can use on Windows, so tests ask every time and AI Term's agent is Ask only.
+- `npm run app:dist` on Windows builds an NSIS installer. It's unsigned, so SmartScreen warns "Windows protected your PC" the first time: More info → Run anyway.
+- Everything else, and what differs: [Windows details](#windows-details-v082).
 
-Ask passes explicit ask flags. New Claude agents keep a conversation UUID for `/resume`; Codex `/resume` opens its own picker in the saved folder. `/effort` chooses next-agent reasoning; Claude offers auto permission mode through `/mode`. Every Codex session uses `--no-daemon` and disables the startup update check; key sessions get only their own provider credential. Real-key approval and billing checks are in `docs/testing/v0.1.7-keys-login.md`.
+## First run
+1. Run `ai`. The background service starts by itself. `ai doctor` checks Node, the service, the CLIs and their logins, the sandbox, the credential store, gh and the notifier.
+2. Nothing logged in yet? The login popup opens. Pick Claude or ChatGPT to use that CLI's own login, or save an API key. Keys go to the OS keychain and never to a file. `/login` opens it again later.
+3. `/cd` picks the project folder. Type what you want built and press ⏎. The start box shows the engine, model, folder, mode and worktree; ⏎ starts it.
+4. With the command bar empty, ⏎ opens the selected agent full screen. Ctrl+E brings you back home, and the agent keeps working.
+5. When it's done: `d` shows its diff, `/test` runs your tests, `/review` gets a second opinion from another model, and `/merge` merges its branch. Each one asks first.
+
+`/help` lists every command and key, and so does the [list below](#commands-and-keys). The [user guide](docs/user-guide.md) explains each area, and the [changelog](CHANGELOG.md) shows what changed in each version.
+
+## Security model, in plain words
+- **Your keys:** API keys live only in the OS keychain: the macOS Keychain, Secret Service on Linux, Credential Manager on Windows. Only the background service reads one, right before it starts an agent that needs it, and puts it in that agent's environment alone. The homepage only ever knows a key's last 4 characters. Claude Code and Codex on your own login get none of your keys, so they can't quietly bill one. AI Term never reads, copies or edits those CLIs' own logins (`~/.claude`, `~/.codex`).
+- **Ask (the default):** agents ask before they act. Claude Code and Codex use their own prompts. AI Term's agent shows every write, edit and command exactly as it will run, and waits for y.
+- **Don't ask:** it's per agent, chosen when you start one, and never a default. The card shows it with `!`. What an agent can still do then depends on its engine:
+  - **Claude Code** runs with its permission prompts off and no sandbox from AI Term. It can do anything your user account can, anywhere in your home, so use it only on work you'd let run unattended.
+  - **Codex** stays in its own workspace-write sandbox: it writes in its folder and a temp folder.
+  - **AI Term's agent** runs every command in a sandbox (sandbox-exec on macOS, bubblewrap on Linux; on Windows it's Ask only). Its commands never see your API keys or AI Term's own folder. It can't change shell startup files, login items, `~/.ssh`, git's global settings, or Claude Code's and Codex's settings.
+  - **What it can still do in your home:** with its prompts off, AI Term's agent can still read your home, `~/.ssh` included (it can't change it), write anywhere else in your home, use the network, and install tools in `~/.local/bin` or `~/bin`. A tool placed there runs as you, outside any sandbox, the next time you call it.
+- **Agent code you run:** tests (`/test`, auto-test) and dev servers (`/dev`) run the agent's code. They run in a sandbox that writes only in the worktree and a temp folder, has no network (a dev server listens only on its own port), and holds no keys. Where no sandbox can start, AI Term asks you each time and says why.
+- **Your checkout:** agents work in their own worktrees. `/merge` touches your checkout only when it's clean, after you've seen and accepted exactly what it will do and a secret scan has passed. Worktrees with unsaved work are never deleted without your word.
+- **The background service:** it's reachable only by your user. On macOS and Linux that's a socket in `~/.ai-term` (folder 0700, socket 0600); on Windows a named pipe with a token only your account can read. It refuses to start if that folder is a link or belongs to someone else.
+- **Things that spend tokens on their own** (auto-review, the queue, handoffs, diagnostics) are off until you turn them on in `/settings`. Anything that spends tokens shows its estimate and asks first.
 
 ## Commands and keys
 
@@ -129,7 +111,7 @@ The earlier app/Terminal.app physical typing comparison remains unmeasured, and 
 | `ai status-line` | Internal Claude status-line helper: reads stdin, reports context, prints model · ctx N% |
 | `ai status-notify <json>` | Internal Codex notify helper: forwards only the turn-complete type and last reply (256 KB cap) to the daemon; always exits 0 silently |
 | `ai agent` | Internal: AI Term's own agent. The daemon starts it in a PTY with the key in its env only; run by hand it explains that and exits 2 |
-| `ai doctor` | Report Node, daemon, file modes, CLI installation/version and login method |
+| `ai doctor` | Report Node, daemon, file modes, CLI installation/version and login method, and (v1.0.1) the sandbox (`sandbox-exec`, `bwrap` or `none` and why), the credential store (asked of the daemon; `not checked` when it isn't running), `gh` installed and logged in (from `gh auth status`'s exit code only; its output and token never reach the report) and the notifier |
 | `ai daemon` | Internal background service entry point |
 | `ai daemon stop` | Stop the background service and all its sessions |
 | `ai debug stats` | Print ten one-second numeric RAM/CPU diagnostics; no daemon connection; a closed output pipe exits quietly |
@@ -184,7 +166,7 @@ Homepage slash commands:
 | `/worktrees` | Review and delete AI Term worktrees. Popup listing every worktree AI Term created, including those whose agent is gone: branch, folder, what deleting would lose, and its agent if one still exists. ⏎ opens the keep/delete question |
 | `/budget` | Daily, weekly and monthly USD limits. Same as `b` |
 | `/usage` | API spend and tokens by provider. Same as `u`: usage details popup, each period then each provider (spend, tokens, cached share, budget), then `BY AGENT`: each agent's own total since it started (dollars for API keys, tokens for subscriptions; v0.6.1). By model isn't available yet |
-| `/doctor` | Check Node, daemon, files and CLIs. The `ai doctor` report in a popup: Node, daemon, file modes, CLI install, version and login method |
+| `/doctor` | Check Node, daemon, files and CLIs. The `ai doctor` report in a popup: Node, daemon, file modes, CLI install, version and login method, sandbox, credential store, gh and notifier |
 | `/help` | Commands and keyboard help. All commands and keys; ↑↓/PgUp/PgDn scroll, Esc closes |
 | `/theme graphite\|slate\|ink\|auto\|light` | Choose the saved theme |
 | `/exit` | Quit AI Term; agents keep running |
@@ -312,6 +294,11 @@ AI Term refuses, with a fixed reason and without touching anything:
 
 If a step fails, it stops and says which step (`Worktree remove failed; branch kept` or `Worktree removed; branch delete failed`). It never deletes files itself and never touches another worktree or branch. `/clean` only removes list records and says how many worktrees it kept. `/worktrees` lists them all for later; folders in `~/.ai-term/worktrees` that no record claims (from agents removed before v0.3.2) appear as `✗ Not in AI Term's record` and are never deleted by AI Term. Remove those yourself with `git worktree remove` if you don't need them.
 
+## Engines, usage and logins
+`ai` starts Claude Code and Codex on their own logins, and AI Term's own agent on any saved API key (see below). `/login` connects an account or saves a key in the OS keychain (macOS Keychain, Secret Service on Linux, Credential Manager on Windows); `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage shows estimated API-key spend and tokens for today, this week and this month; subscriptions are excluded from those totals. Each agent's own total since it started (cost per task, v0.6.1) shows on its card and in `/usage`: dollars for API keys, tokens for subscriptions. `b` sets daily, weekly and monthly USD budgets, which hold across agents (a key session stops before a request crosses one); `/settings` offers Foundry deployment price overrides.
+
+Ask passes explicit ask flags. New Claude agents keep a conversation UUID for `/resume`; Codex `/resume` opens its own picker in the saved folder. `/effort` chooses next-agent reasoning; Claude offers auto permission mode through `/mode`. Every Codex session uses `--no-daemon` and disables the startup update check; key sessions get only their own provider credential. Real-key approval and billing checks are in `docs/testing/v0.1.7-keys-login.md`.
+
 ## AI Term's agent (v0.4.3)
 
 Every API key runs AI Term's own agent (D47; `/settings` → `keys run on: the cli` sends keys back to Claude Code and Codex). In `/model`: a tested Foundry deployment (GPT ones over the Responses API, others such as Grok, Kimi, DeepSeek or GLM over Chat Completions, each one tested with a tiny request first), or one of the catalog's chat models for an Anthropic or OpenAI key, or (v0.6.5) a model of an xAI, Moonshot, Z.ai, OpenRouter, Bedrock, Vertex or Ollama key that passed its test; every row reads `· ai term`. Their list prices come built in from the same Models.dev catalog (refreshed 2026-10-15), so cost per turn, Usage and budgets count them; a model the catalog doesn't list shows `price ?` until you set a price override (`/settings` p), with a daily, weekly or monthly budget set the agent waits until it has a price (set it, then ⏎ checks again), because its spend couldn't count; with only a spend cap it asks once per model and run. Ollama is priced at $0 unless you set an override for that model (for a billed cloud model it serves). Ollama is reached at the port you give: whoever listens there answers (another macOS user on a shared Mac could, while Ollama is off); no key ever goes to it. Type a task, keep Ask, ⏎. The card, preview, bar, splits, notifications, `c` and Usage work as for the CLIs.
@@ -383,7 +370,63 @@ Servers run in the daemon and start on selection. Stdio uses `spawn(command, arg
 
 All configured env/header values are treated as secrets and stored in AI Term's Keychain namespace `mcp:<server-id>:<name>`, bound to the approved hash. Settings, responses, transcripts and logs contain no values; views expose at most the last four characters (short values have no suffix). As with the existing key-add form, masked user input travels inward once over the authenticated local socket to the daemon; it is never returned or sent to the model. A project's existing values are read only from its approved bounded `.mcp.json` entry and copied into the same Keychain namespace. Ctrl+K cancels in-flight calls and kills stdio process groups; agent exit stops its connections. Subagents share their parent's MCP permission session and cancellation.
 
+## Linux details (v0.8.1)
+Everything above works on Linux too, with these differences:
+- **Daemon socket:** `~/.ai-term/run/daemon.sock`, with the same rules as on macOS (folder 0700, socket 0600, refused if the folder is a link or someone else's). `XDG_RUNTIME_DIR` isn't used.
+- **Keys:** kept in the Secret Service (GNOME Keyring, KWallet) through the same library as macOS's Keychain. With no keyring running, or a locked one, key features refuse with `No Secret Service keyring (none running, or it is locked); API keys need one, and AI Term never stores them in a file`. There is no file fallback.
+- **Sandboxes:** through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`, in `/usr/bin`, `/usr/local/bin` or `/bin`; `sudo apt install bubblewrap`).
+  - **Tests (D56):** the system is read-only. Your home, other homes, `/tmp`, `/var/tmp`, `/run`, `/media` and `/mnt` are hidden. Toolchains and the repository's git folder come back read-only, key folders stay hidden, and only the worktree and a temp folder are writable.
+  - **Test network:** a test run gets its own network, so only its own 127.0.0.1 works. Your machine's services stay closed even with `l` on, which only matters on macOS.
+  - **What a block looks like:** a hidden file reads as missing, so a blocked write or network shows `✗ blocked by sandbox`, and a blocked read shows as a test failure.
+  - **Agent bash (D57, B29):** AI Term's agent's bash gets its own process list, so it can't see or attach to your other processes. It can't see `~/.ai-term` (its own worktree excepted), AI Term's sockets, or your session's runtime folder (where the D-Bus session bus would hand out Secret Service keys).
+  - **Persistence spots:** read-only. Besides the macOS list, Linux adds `~/.xprofile`, `~/.xsessionrc`, `~/.xinitrc`, `~/.pam_environment`, `~/.gnupg/gpg-agent.conf`, `~/.local/share/systemd/user`, Plasma and window-manager autostart (`~/.config/plasma-workspace/env`, `autostart-scripts`, `i3`, `sway`, `hypr`, `openbox`). `~/.local/bin` and `~/bin` stay writable so the agent can install tools there (your choice); a program it puts there could later run as you.
+  - **How:** home, `~/.config` and the like are rebuilt for each command with every entry put back, so a startup file that doesn't exist yet can't be created either. Anything new at those levels vanishes when the command ends, and the agent is told so.
+  - **Renames:** every folder between them and a protected file, such as `~/work/proj/.git` or a dotfiles folder behind a `~/.zshrc` link, is pinned so it can't be renamed and swapped out. A repository without `.git/hooks` gets an empty one, made read-only.
+  - **Unreadable entries:** an entry of home that can't be read, such as a dead network mount, is left out rather than stopping bash.
+  - **Where bubblewrap can't start:** in Ask, bash runs the command you approved as before. In Don't ask it refuses.
+  - **Session sockets** in `/tmp` are hidden from agent bash (v0.8 gate): the X11 display, a `dbus-launch` bus, ssh-agent and tmux. So are `~/.dbus`, `~/.Xauthority` and `~/.ICEauthority`.
+  - **What stays reachable** (as on macOS, where bash also has the network): the Docker socket, and a D-Bus session bus or X11 display on an abstract socket (dbus-launch and X11 sessions share the network namespace). The Secret Service gives any program of yours a saved key while the keyring is unlocked; on such sessions Don't ask can't keep it out.
+  - **Toolchains outside home** on `PATH` (Linuxbrew's `/home/linuxbrew`, NixOS's `/run/current-system`) come back read-only for tests.
+  - **Without bubblewrap** (or where it can't start, for example with user namespaces turned off): auto-test asks every time (`tests need you · no sandbox`). AI Term's agent offers Ask only, and the start box and `/mode` show why in one line (`don't ask needs bubblewrap (bwrap), which isn't installed`). The same goes anywhere a sandbox can't start, macOS included.
+- **Helpers:** `notify-send`, `xdg-open`, `wl-copy`, `xclip` and `xsel` are run only from `/usr/local/bin`, `/usr/bin` or `/bin`. An agent can write a PATH folder in your home, and AI Term runs these outside any sandbox.
+- **AppImage:** the daemon starts from the AppImage file itself, not from the app's temporary mount, so it keeps working after the app quits.
+- **Notifications:** through `notify-send` when it is installed, else none (`/settings` says `notifications unavailable: notify-send isn't installed`). Clicking one does nothing on Linux.
+- **Clipboard** (`y`, `Y`): `wl-copy` on Wayland, else `xclip` or `xsel`. With none of them, the copy says to install one.
+- **`/open`:** `xdg-open`. **This machine:** `/proc/meminfo`, `/proc/net/dev` (containers, bridges and VPN tunnels left out) and `ps` CPU time, measured as the change since the last look.
+- **Desktop app:** an AppImage and a .deb from `npm run app:dist` on Linux, unsigned. Each ⌘ key in the desktop key table below is Ctrl+Shift there (Ctrl+Shift+C copies, Ctrl+Shift+T starts an agent, and so on). There's no Hide, no Zoom and no `ai` command install from the app.
+
+## Windows details (v0.8.2)
+Everything above works on Windows too, with these differences:
+- **AI Term's folder:** `%USERPROFILE%\.ai-term`. On creation `icacls` gives your account full control and removes every other entry. Each daemon start reads the folder and each folder in it back (owner and entries, by SID) and refuses to run unless they are yours alone. An Administrators owner, as an elevated terminal makes, counts as yours.
+- **Daemon:** a named pipe, `\\.\pipe\ai-term-<your id>-<random>`, a new random part each start. Its name and a token are written to `run\daemon.pipe` inside that folder.
+  - A pipe that already exists, whoever made it, makes the daemon stop rather than share it.
+  - Node can't narrow a pipe's own ACL, which lets other accounts open it for reading. So the daemon answers nothing until a client shows the token, which only your account can read.
+  - Pipe names can be listed, so the client also checks the daemon: the daemon must answer a fresh nonce with proof of the token before anything else is sent. If it can't, the pipe file is removed and `ai` says so.
+  - `ai daemon stop` asks the daemon to stop, so it removes its pipe file. The file also goes whenever a stale lock shows the daemon is gone.
+  - A daemon may take a few seconds to start (it checks the ACL first). The client waits up to 20 s, and a second start doesn't take over one that is still starting.
+- **Keys:** Windows Credential Manager. If it can't be used, key features refuse with `Windows Credential Manager unavailable`.
+- **No sandbox:** auto-test asks every time (`tests need you · no sandbox`). AI Term's agent is Ask only: `ask · don't ask needs a sandbox, and Windows has none AI Term can use`.
+- **Claude Code and Codex:** a native `.exe` runs directly. npm's `.cmd` launcher is never run: AI Term reads the script (or native `.exe`) it names and starts that with `node` (or directly), the arguments still an array. cmd.exe would read `%`, `&` and quotes in a first message as commands. A `.cmd` that isn't npm's, and any `.bat`, is refused, and so is a launcher that can't be read.
+  - `npm test` in `/test` and `npx` MCP servers work the same way (npm's own `npm.cmd`, `npx.cmd`).
+  - A first message that starts and ends with `"` and contains a space reaches the CLI split into words (a node-pty quirk); it stays the message, never options.
+  - A test or MCP command that isn't on PATH is refused rather than looked for in the agent's folder, which Windows would search first.
+- **Agent bash:** Git for Windows' `bash.exe` (never WSL's). Without Git for Windows, bash says it needs it.
+- **git:** Git for Windows' `git.exe`, from Program Files or else PATH. Without it, git features say so; AI Term never runs a bare `git.exe`, which Windows would first look for in the repository's own folder.
+- **AI Term's agent** keeps the Windows basics it needs (`SystemRoot`, `TEMP`, `USERPROFILE`, …) and nothing else of your env.
+- **Paths:** checks of worktree paths ignore case and slash style, as NTFS does. Device names (`NUL`, `CON`…), alternate data streams (`file:stream`) and network paths (`\\server\share`) are refused.
+- **Shell agents:** PowerShell (7 when installed, else Windows PowerShell), started with no arguments.
+- **Stopping:** `taskkill /T /F` stops an agent's or a command's whole process tree.
+- **Not on Windows yet:** notifications (`/settings` says so), network and per-agent CPU in This machine (CPU and memory show), click-through.
+- **Clipboard:** `clip.exe` (sent as UTF-16, so non-ASCII text survives). **`/open`:** Explorer.
+- **Paths:** paths with spaces and non-ASCII names work. Worktrees stay under `%USERPROFILE%\.ai-term\worktrees`.
+- **Known gaps:**
+  - An env file you import from anywhere isn't owner-checked (Windows `stat` has no owner); pick your own.
+  - PowerShell's Constrained Language Mode (AppLocker, WDAC) blocks the ACL check, so the daemon won't start there.
+- **Desktop app:** an NSIS installer from `npm run app:dist` on Windows. It is unsigned, so SmartScreen warns "Windows protected your PC" on first run (More info → Run anyway). The desktop keys are Ctrl+Shift, as on Linux.
+
 ## Docs
+- `docs/user-guide.md`: one section per area, in plain words
+- `CHANGELOG.md`: what changed in each version
 - `AGENTS.md`: rules for every coding agent working here
 - `docs/architecture.md`: how it works, the protocol, security checks, decisions
 - `docs/design.md` and `docs/design/tokens.json`: the approved UI
