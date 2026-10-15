@@ -9,7 +9,7 @@ import { WORKTREE_DELETE_ERRORS } from './worktree-removal.js';
 import { activateTerminal } from './terminal-activate.js';
 import type { TerminalBundle } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
-import { SessionManager, AGENT_COMMAND_ERRORS, HANDOFF_ERRORS } from './session-manager.js';
+import { SessionManager, AGENT_COMMAND_ERRORS, FORK_ERRORS, HANDOFF_ERRORS } from './session-manager.js';
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
@@ -260,6 +260,12 @@ export class DaemonServer {
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
+                case 'sessions.forkPlan':
+                    this.control(peer,{id:request.id,ok:true,forkPlan:await this.manager.forkPlan(request.sessionId,{engine:request.engine,model:request.model,auth:request.auth,...(request.effort!==undefined?{effort:request.effort}:{})})});
+                    break;
+                case 'sessions.fork':
+                    this.control(peer,{id:request.id,ok:true,session:await this.manager.fork(request.sessionId,{engine:request.engine,model:request.model,auth:request.auth,...(request.effort!==undefined?{effort:request.effort}:{})})});
+                    break;
                 case 'sessions.reviewPlan':
                     this.control(peer,{id:request.id,ok:true,reviewPlan:await this.manager.reviewPlan(request.sessionId)});
                     break;
@@ -304,7 +310,7 @@ export class DaemonServer {
                     this.control(peer,{id:request.id,ok:true,exportData:await this.manager.exportSession(request.sessionId)});
                     break;
                 case 'sessions.diff':
-                    this.control(peer,{id:request.id,ok:true,diff:await this.manager.diff(request.sessionId)});
+                    this.control(peer,{id:request.id,ok:true,diff:await this.manager.diff(request.sessionId,request.against)});
                     break;
                 case 'sessions.text':
                     await this.sendText(peer,request.id,await this.manager.text(request.sessionId,request.lastReply));
@@ -392,7 +398,7 @@ export class DaemonServer {
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const fixed = new Set([
                 'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
-                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine','This agent has no worktree to diff',...CHECKPOINT_ERRORS,...MERGE_ERRORS,...TEST_ERRORS,...REVIEW_ERRORS,'This worktree has no recorded start to diff against','Diff unavailable; git could not read the worktree',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
+                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine','This agent has no worktree to diff',...CHECKPOINT_ERRORS,...MERGE_ERRORS,...TEST_ERRORS,...REVIEW_ERRORS,...FORK_ERRORS,'This worktree has no recorded start to diff against','Diff unavailable; git could not read the worktree',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
                 'Resume needs a finished agent','A shell has no AI conversation to resume','This older Claude agent has no conversation ID',
                 'Conversation already running','Conversation already starting','Invalid session request','Invalid session or title',
                 'Invalid preview size','Invalid attach','Session unavailable','Invalid resize','Not attached',

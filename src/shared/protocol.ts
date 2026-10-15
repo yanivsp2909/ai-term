@@ -137,7 +137,7 @@ export type Request = {
     sessionId: string;
 } | {
     // v0.7.1: the agent's worktree against the commit it started from, as text (d, /diff).
-    kind:'sessions.diff'; sessionId:string;
+    kind:'sessions.diff'; sessionId:string; against?:string; // v0.7.4: compare with another agent's work
 } | {
     // v0.7.1 /export: the session's text (and AI Term agent transcript), redacted, for one HTML file the client saves.
     kind:'sessions.export'; sessionId:string;
@@ -151,7 +151,9 @@ export type Request = {
     kind:'sessions.mergePlan' | 'sessions.prPlan' | 'sessions.testPlan' | 'sessions.reviewPlan' | 'sessions.lastReview'; sessionId:string;
 } | {
     kind:'sessions.review'; sessionId:string; keyId:string; model:string; fingerprint:string;
-} | {
+} | ({
+    kind:'sessions.forkPlan' | 'sessions.fork'; sessionId:string;
+} & import('./fork.js').ForkTarget) | {
     kind:'sessions.test'; sessionId:string; fingerprint:string;
 } | {
     kind:'project.testCommand'; cwd:string;
@@ -230,6 +232,7 @@ export interface SuccessResponse {
     mergePlan?: import('./merge.js').MergePlan;
     testPlan?: import('./test-run.js').TestPlan;
     reviewPlan?: import('./review.js').ReviewPlan;
+    forkPlan?: import('./fork.js').ForkPlan;
     review?: import('./review.js').ReviewResult;
     testCommand?: import('./test-run.js').ProjectTestCommand;
     prPlan?: import('./merge.js').PrPlan;

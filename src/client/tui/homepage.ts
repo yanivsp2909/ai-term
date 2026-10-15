@@ -48,6 +48,8 @@ import { HandoffAsk, handoffDone, handoffRequest } from './handoff-ask.js';
 import { DiffView } from './diff-view.js';
 import { UndoAsk } from './undo-ask.js';
 import { TestAsk } from './test-ask.js';
+import { ForkAsk, forkTarget } from './fork-ask.js';
+import { validateForkPlan } from '../../shared/fork.js';
 import { ReviewAsk, reviewResultLines } from './review-ask.js';
 import { validateReviewPlan, validateReviewResult, type ReviewResult } from '../../shared/review.js';
 import { parseTestCommand, testCommandText, validateProjectTestCommand, validateTestPlan } from '../../shared/test-run.js';
@@ -92,7 +94,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk;
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -585,6 +587,7 @@ export class Homepage {
     if (command==='/test-cmd') { await this.testCmdCommand(argument); return; }
     if (command==='/test') { await this.testCommand(argument); return; }
     if (command==='/review') { await this.reviewCommand(argument); return; }
+    if (command==='/fork') { await this.forkCommand(argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
@@ -642,6 +645,13 @@ export class Homepage {
   }
   // v0.7.1 /diff [agent]: the named agent (like /send, a name two agents share is refused), else the selected one.
   private async diffCommand(name:string):Promise<void>{
+    // v0.7.4 `/diff <agent> vs <other>`: the first agent's worktree against the other's last checkpoint.
+    const versus=name.split(' vs ');
+    if(versus.length===2){
+      const [a,b]=versus.map(part=>this.namedOrSelected(part.trim(),'/diff <agent> vs <other>'));
+      if(!a||!b)return;
+      await this.openDiff(a,b);return;
+    }
     if(!name){const selected=this.sessions.find(s=>s.id===this.selectedId);if(!selected){this.showNote('select an agent, then d or /diff');return;}await this.openDiff(selected);return;}
     const named=this.sessions.filter(s=>s.title===name);
     if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}
@@ -764,6 +774,29 @@ export class Homepage {
     const panel:TextPanel=new TextPanel(`Review · ${result.title} · ${result.model}`,()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
     panel.set(reviewResultLines(result));this.popup=panel;this.draw(true);
   }
+  // v0.7.4 /fork [agent] <model>: the D49 ask (what starts, an estimate), ⏎ starts it in its own worktree.
+  private async forkCommand(argument:string):Promise<void>{
+    const words=argument.split(' ').filter(Boolean),model=words.pop();
+    if(!model){this.showNote('/fork [agent] <model> · the same first message on another model');return;}
+    const source=this.namedOrSelected(words.join(' '),'/fork <model>');if(!source)return;
+    if(source.engine==='shell'){this.showNote('a shell has no first message to fork');return;}
+    try{this.engines=(await this.connection.request({kind:'engines.status'})).engines;this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];}
+    catch(error){this.showNote(error instanceof Error?error.message:'Models unavailable');return;}
+    const target=forkTarget(source,model,modelChoices(this.keys,this.engines,this.keysRunOn));
+    if(typeof target==='string'){this.showNote(target);return;}
+    let plan:import('../../shared/fork.js').ForkPlan;
+    try{plan=validateForkPlan((await this.connection.request({kind:'sessions.forkPlan',sessionId:source.id,...target})).forkPlan);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Fork unavailable');return;}
+    if(this.popup){this.showNote('fork plan ready · close the open popup and run /fork again');return;}
+    const ask:ForkAsk=new ForkAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
+      let session:SessionInfo;
+      try{session=validateSession((await this.connection.request({kind:'sessions.fork',sessionId:source.id,...target})).session);}
+      catch(error){this.showNote(`fork stopped: ${error instanceof Error?error.message:'request failed'}`);return;}
+      this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];
+      this.showNote(`✓ forked ${source.title} → ${session.title} · /diff ${session.title} vs ${source.title} compares them`);
+    });});
+    this.popup=ask;this.draw(true);
+  }
   // v0.7.2 /undo [agent] and /redo [agent]: the plan (what changes) first; y restores, n or Esc keeps everything.
   private async undoCommand(redo:boolean,name:string):Promise<void>{
     let session:SessionInfo|undefined;
@@ -795,9 +828,9 @@ export class Homepage {
     }catch(error){this.showNote(`export failed: ${error instanceof Error?error.message:'request failed'}`);}
   }
   // The review queue's popup (v0.7.1): m merges (v0.7.3), x discards through the v0.3.2 removal flow, Esc keeps it for later.
-  private async openDiff(session:SessionInfo):Promise<void>{
+  private async openDiff(session:SessionInfo,against?:SessionInfo):Promise<void>{
     let diff:import('../../shared/diff.js').AgentDiff;
-    try{diff=validateAgentDiff((await this.connection.request({kind:'sessions.diff',sessionId:session.id})).diff);}
+    try{diff=validateAgentDiff((await this.connection.request({kind:'sessions.diff',sessionId:session.id,...(against?{against:against.id}:{})})).diff);}
     catch(error){this.showNote(error instanceof Error?error.message:'Diff unavailable');return;}
     const close=()=>{if(this.popup===view)this.popup=undefined;this.draw(true);};
     const view:DiffView=new DiffView(diff,{changed:()=>this.draw(true),close,

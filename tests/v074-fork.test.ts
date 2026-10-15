@@ -96,7 +96,7 @@ it('homepage: /fork <agent> <model> shows the D49 ask and ⏎ forks; /diff a vs 
     if (body.kind === 'sessions.list') response.sessions = [fixer, forked];
     if (body.kind === 'sessions.preview') { response.snapshot = ''; response.cols = 85; response.rows = 30; }
     if (body.kind === 'keys.list') response.keys = [];
-    if (body.kind === 'engines.status') response.engines = { claudeCode: { installed: true, loggedIn: true, authMethod: 'subscription' }, codex: { installed: true, loggedIn: true, authMethod: 'subscription' } };
+    if (body.kind === 'engines.status') response.engines = { claudeCode: { installed: true, path: '/bin/claude', version: '1', loggedIn: true, authMethod: 'subscription' }, codex: { installed: true, path: '/bin/codex', version: '1', loggedIn: true, authMethod: 'subscription' } };
     if (body.kind === 'sessions.forkPlan') response.forkPlan = plan;
     if (body.kind === 'sessions.fork') response.session = forked;
     if (body.kind === 'sessions.diff') response.diff = { title: 'fixer fork', branch: 'ai/fixer-fork', base: 'fixer @ checkpoint 1', files: [], added: 0, removed: 0, capped: false };

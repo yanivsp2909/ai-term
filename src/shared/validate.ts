@@ -11,6 +11,7 @@ import { validateUndoPlan } from './checkpoints.js';
 import { validateMergePlan, validatePrPlan } from './merge.js';
 import { isTestCommand, validateProjectTestCommand, validateTestPlan, validateTestResult } from './test-run.js';
 import { validateReviewPlan, validateReviewResult, validateReviewState } from './review.js';
+import { isForkTarget, validateForkPlan } from './fork.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
     // eslint-disable-next-line no-useless-escape
@@ -147,8 +148,14 @@ export async function validateRequest(value: unknown): Promise<Request> {
             break;
         case 'sessions.text':
             fields=['sessionId','lastReply'];if(!isUUID(v.sessionId)||v.lastReply!==undefined&&typeof v.lastReply!=='boolean')throw new ValidationError('Invalid session UUID');break;
-        case 'sessions.diff': case 'sessions.export':
+        case 'sessions.export':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.diff':
+            fields=['sessionId','against'];if(!isUUID(v.sessionId)||v.against!==undefined&&!isUUID(v.against))throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.forkPlan': case 'sessions.fork': {
+            fields=['sessionId','engine','model','auth','effort'];const {kind:_kind,id:_id,sessionId,...target}=v;void _kind;void _id;
+            if(!isUUID(sessionId)||!isForkTarget(target))throw new ValidationError('Invalid fork request');break;
+        }
         case 'sessions.testPlan': case 'sessions.reviewPlan': case 'sessions.lastReview':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
         case 'sessions.review':
@@ -219,6 +226,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.mergePlan!==undefined)validateMergePlan(v.mergePlan);
     if(v.testPlan!==undefined)validateTestPlan(v.testPlan);
     if(v.reviewPlan!==undefined)validateReviewPlan(v.reviewPlan);
+    if(v.forkPlan!==undefined)validateForkPlan(v.forkPlan);
     if(v.review!==undefined)validateReviewResult(v.review);
     if(v.testCommand!==undefined)validateProjectTestCommand(v.testCommand);
     if(v.prPlan!==undefined)validatePrPlan(v.prPlan);

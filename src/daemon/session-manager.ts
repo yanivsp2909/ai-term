@@ -24,15 +24,18 @@ import { isFsError, type Paths } from '../shared/paths.js';
 import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord, type CliEngine } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
-import { GitError, isWorktreeTop } from './git.js';
+import { GitError, isWorktreeTop, runGit } from './git.js';
 import { worktreeDiff, worktreeStat } from './diff.js';
 import type { AgentDiff } from '../shared/diff.js';
 import { fitExport, redactExportMeta, transcriptFor } from './session-export.js';
-import { applyUndo, CheckpointError, dropCheckpoints, snapshot, undoPlan, type CheckpointContext } from './checkpoints.js';
+import { applyUndo, CheckpointError, dropCheckpoints, listCheckpoints, snapshot, undoPlan, type CheckpointContext } from './checkpoints.js';
 import type { UndoPlan } from '../shared/checkpoints.js';
 import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
 import { changedTestConfig, runTests, testFingerprint, TestRunError, projectRepo } from './test-run.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
+import { FORK_PREVIEW_CHARS, type ForkPlan, type ForkTarget } from '../shared/fork.js';
+import { ownLoginLabel } from '../shared/models.js';
+import { keyAuthLabel } from '../shared/providers.js';
 import { AutoReviewLedger, ReviewError, reviewModelView, reviewWriters } from './review.js';
 import { countFindings, diffForReview, REVIEW_OUTPUT_TOKENS, reviewPrompt, reviewText, type ReviewPlan, type ReviewResult } from '../shared/review.js';
 import { estimateTokens } from '../agent/limits.js';
@@ -68,6 +71,7 @@ export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry alrea
     'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
     'Agent does not accept pasted lines','Agent is printing too fast to check','Agent is running a tool','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
+    firstMessage?: string; // v0.7.4 /fork: what it was started with (memory only: a prompt is never written to disk here)
     diffStatSeq?: number; // v0.7.1: which diff-stat count is the latest (a stale one never lands)
     info: SessionInfo;
     host?: PtyHost;
@@ -99,6 +103,8 @@ export const HANDOFF_NOT_STARTED="The new agent didn't start; the old one keeps 
 export const HANDOFF_NOT_STOPPED="The new agent didn't start and couldn't be stopped; stop it with s";
 export const HANDOFF_NOT_STARTED_PAID="The new agent didn't start; the old one keeps running · the note's tokens were spent";
 // Every handoff refusal is one of these fixed texts, so the socket can return it as written.
+export class ForkError extends Error {}
+export const FORK_ERRORS=['Only an AI agent can be forked',"Fork needs the agent's first message; this one started without one, or before the background service restarted",'Fork needs an agent with a worktree, so the two can be compared','Pick two different agents to compare','These agents are in different repositories'] as const;
 export const HANDOFF_ERRORS=[HANDOFF_NOT_STOPPED,'Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done',"Agent hit its limit and can't write the note · add an API key for the summary",'Agent is being handed off'];
 const HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
 function sameWriter(approved:HandoffWriter,writer:import('./handoff.js').KeyedWriter|null):boolean{return approved.kind==='agent'?writer===null:writer!==null&&approved.provider===writer.key.provider&&approved.model===writer.model&&approved.last4===writer.key.last4;}
@@ -288,7 +294,7 @@ export class SessionManager extends EventEmitter {
         try{await this.remove(id);}catch{this.log.error('Retried agent: old record could not be removed');}
         return next;
     }
-    async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{resume?:boolean;conversationId?:string;worktree?:string;branch?:string}): Promise<SessionInfo> {
+    async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{resume?:boolean;conversationId?:string;worktree?:string;branch?:string}, fork?:{startCommit:string}): Promise<SessionInfo> {
         const cwdValid=await validCwd(request.cwd);
         if (this.closing || !cwdValid || (request.title !== undefined && !isTitle(request.title)))
             throw new Error('Invalid session request');
@@ -356,7 +362,7 @@ export class SessionManager extends EventEmitter {
             const isolate='useWorktree' in request&&request.useWorktree!==undefined?request.useWorktree:settings?.worktrees!=='off';
             if(isolate){
                 try {
-                    const {repo,baseBranch,baseCommit,...start}=await prepareWorktree(this.paths.root,request.cwd,info.title,text=>this.log.error(text));Object.assign(info,start);
+                    const {repo,baseBranch,baseCommit,...start}=await prepareWorktree(this.paths.root,request.cwd,info.title,text=>this.log.error(text),fork?.startCommit);Object.assign(info,start);
                     if(start.worktree&&start.branch&&repo)this.worktreeRecords.set(start.worktree,{path:start.worktree,branch:start.branch,repo,...(baseBranch?{baseBranch}:{}),...(baseCommit?{baseCommit}:{}),createdAt:now});
                 } catch { info.worktreeNote='worktree off: git check failed'; }
             }
@@ -381,6 +387,7 @@ export class SessionManager extends EventEmitter {
         const live: Live = { info,...(statusTelemetry?{statusState:initialStatus(now)}:{}), mirror: new Mirror(this.size.cols, this.size.rows, reply, agent?.engine==='codex'?signal=>this.codexSignal(live,signal):undefined), queuedBytes:0, attached:false,clientPaused:false, paused:false, output: Promise.resolve() };
         // Fresh lastOutputAt for the homepage's quiet timer; never persisted, and silent once the session ended.
         live.outputClock=new OutputClock(()=>{if(!['exited','error'].includes(info.status))this.event({kind:'session.updated',session:{...info}});});
+        if(agent?.firstMessage!==undefined)live.firstMessage=agent.firstMessage;
         this.sessions.set(info.id, live);
         try {
             if(statusTelemetry&&agent?.engine==='codex'){
@@ -1096,6 +1103,40 @@ export class SessionManager extends EventEmitter {
             finally{await ledger.settle(worst,spent);}
         }catch(error){this.log.error(`Auto-review skipped (${error instanceof ReviewError||error instanceof CheckpointError?error.message:'unexpected error'})`);}
     }
+    // v0.7.4 /fork: what would start (D49 asks with this), and the start itself. The new agent runs in its own worktree
+    // from the commit the source started from, in the matching folder, always in Ask mode.
+    private forkSource(id:string):{live:Live;record:WorktreeRecord;firstMessage:string;cwd:string}{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        if(live.info.engine==='shell')throw new ForkError('Only an AI agent can be forked');
+        if(live.firstMessage===undefined)throw new ForkError("Fork needs the agent's first message; this one started without one, or before the background service restarted");
+        const record=live.info.worktree?this.worktreeRecords.get(live.info.worktree):undefined;
+        if(!record?.repo||!record.baseCommit||!live.info.worktree)throw new ForkError('Fork needs an agent with a worktree, so the two can be compared');
+        // The same folder inside the repository as the source (its worktree path swapped for your checkout's).
+        const inside=live.info.cwd===live.info.worktree?'':live.info.cwd.startsWith(live.info.worktree+'/')?live.info.cwd.slice(live.info.worktree.length+1):'';
+        return {live,record,firstMessage:live.firstMessage,cwd:inside?join(record.repo,inside):record.repo};
+    }
+    async forkPlan(id:string,target:ForkTarget):Promise<ForkPlan>{
+        const {live,record,firstMessage}=this.forkSource(id);
+        let authLabel:string,price:import('../shared/protocol.js').ModelPrice|undefined,subscription=false;
+        if(target.auth.kind==='key'){
+            const key=await this.keys.view(target.auth.keyId);authLabel=keyAuthLabel(key.provider,key.last4);
+            if(target.model){const settings=await new SettingsStore(this.paths.root).get();price=findPrice(this.handoffWriter.prices,key.provider,target.model,settings.priceOverrides??{},key.provider==='foundry'?deploymentAlias(settings,target.model):undefined);}
+        }else{
+            const engine=target.engine==='ai-term'?null:target.engine,status=engine?await checkEngine(engine,process.env).catch(()=>null):null;
+            subscription=status?.authMethod==='subscription';authLabel=target.auth.profile&&target.auth.profile!==OWN_ACCOUNT?`account ${target.auth.profile}`:ownLoginLabel(status?.authMethod);
+        }
+        const used=live.info.taskUsage?.tokens,tokens=used?{low:Math.round(used/2),high:used*2}:null;
+        // Mostly input (an agent rereads its context each request): priced at 90% input, 10% output.
+        const priceUsd=tokens&&price?{low:estimateCost(price,tokens.low*0.9,tokens.low*0.1)??0,high:estimateCost(price,tokens.high*0.9,tokens.high*0.1)??0}:null;
+        const preview=cleanNote(firstMessage).replace(/\s+/g,' ');
+        return {source:live.info.title,engine:target.engine,model:target.model,authLabel,firstMessage:[...preview].length>FORK_PREVIEW_CHARS?[...preview].slice(0,FORK_PREVIEW_CHARS).join('')+'…':preview,base:`${record.baseBranch??'start'} @ ${(record.baseCommit??'').slice(0,7)}`,tokens,priceUsd,subscription};
+    }
+    async fork(id:string,target:ForkTarget):Promise<SessionInfo>{
+        const {live,record,firstMessage,cwd}=this.forkSource(id);
+        const title=`${live.info.title} fork`.slice(0,60);
+        return this.create({engine:target.engine,model:target.model,...(target.effort!==undefined?{effort:target.effort}:{}),auth:target.auth,cwd,permission:'ask',title,firstMessage,useWorktree:true},undefined,{startCommit:record.baseCommit??''});
+    }
     // v0.7.1 /export: the session's screen text (its end, ~1 MiB) and, for AI Term's own agent, its transcript, all redacted.
     async exportSession(id:string):Promise<SessionExport>{
         const text=await this.text(id),live=this.sessions.get(id);if(!live)throw new Error('Session not found');
@@ -1109,13 +1150,30 @@ export class SessionManager extends EventEmitter {
             text:cutText?clean.slice(clean.length-EXPORT_TEXT_CHARS):clean,truncated:text.truncated||cutText,transcript,...(transcriptTruncated!==undefined?{transcriptTruncated}:{})}));
     }
     // v0.7.1 d and /diff: the agent's worktree against the commit it started from. Read-only; text only (src/daemon/diff.ts).
-    async diff(id:string):Promise<AgentDiff>{
-        if(!isUUID(id))throw new Error('Invalid session UUID');
+    async diff(id:string,against?:string):Promise<AgentDiff>{
+        if(!isUUID(id)||against!==undefined&&!isUUID(against))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
-        const {path,base,label,repo}=await this.diffTarget(live);
+        const {path,base,label,repo}=against===undefined?await this.diffTarget(live):await this.compareTarget(live,against);
         let body;
         try{body=await worktreeDiff(path,base,repo);}catch(error){this.log.error(`Diff failed: ${error instanceof GitError?error.message:'unexpected error'}`);throw new Error('Diff unavailable; git could not read the worktree',{cause:error});}
         return {title:live.info.title,branch:live.info.branch??'',base:label,...body};
+    }
+    // v0.7.4 `/diff <agent> vs <other>`: this worktree against the other agent's last checkpoint (its worktree at its last
+    // turn end), else its branch's last commit. Both worktrees must belong to the same repository AI Term recorded.
+    private async compareTarget(live:Live,otherId:string):Promise<{path:string;base:string;label:string;repo?:string}>{
+        if(otherId===live.info.id)throw new Error('Pick two different agents to compare');
+        const other=this.sessions.get(otherId);if(!other)throw new Error('Session not found');
+        const own=await this.diffTarget(live),theirs=await this.diffTarget(other),record=other.info.worktree?this.worktreeRecords.get(other.info.worktree):undefined;
+        if(!own.repo||own.repo!==theirs.repo||!record?.repo)throw new Error('These agents are in different repositories');
+        let checkpoint:import('./checkpoints.js').Checkpoint|undefined;
+        try{checkpoint=(await listCheckpoints(theirs.path,this.checkpointSlug(other),await this.checkpointContext(otherId))).at(-1);}
+        catch(error){if(!(error instanceof CheckpointError))this.log.error(`Compare: checkpoints unreadable (${error instanceof GitError?error.message:'unexpected error'})`);}
+        if(checkpoint)return {path:own.path,base:checkpoint.commit,label:`${other.info.title} @ checkpoint ${checkpoint.n}`,repo:own.repo};
+        let head:string;
+        try{head=(await runGit(record.repo,[`--git-dir=${join(record.repo,'.git')}`,'rev-parse','--verify','--end-of-options',`refs/heads/${other.info.branch??''}^{commit}`],'Git check failed')).trim();}
+        catch(error){this.log.error('Compare: the other branch is unreadable');throw new Error('Diff unavailable; git could not read the worktree',{cause:error});}
+        if(!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head))throw new Error('Diff unavailable; git could not read the worktree');
+        return {path:own.path,base:head,label:`${other.info.branch??other.info.title} @ ${head.slice(0,7)} (committed work only)`,repo:own.repo};
     }
     private async diffTarget(live:Live):Promise<{path:string;base:string;label:string;repo?:string}>{
         const path=live.info.worktree,record=path?this.worktreeRecords.get(path):undefined;

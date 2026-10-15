@@ -4,7 +4,7 @@ import { lstat, mkdir, realpath, readdir, chmod, rmdir } from 'node:fs/promises'
 import { privateDirectory, isFsError } from '../shared/paths.js';
 import { availableWorktreeSlug, isSafeAbsolutePath, worktreeSlug } from '../shared/validate.js';
 import type { WorktreePreview } from '../shared/protocol.js';
-import { addWorktree, branchNames, checkoutDirty, currentBranch, deleteBranch, GitError, headCommit, removeWorktree, repoTopLevel } from './git.js';
+import { addWorktree, branchNames, checkoutDirty, currentBranch, deleteBranch, GitError, headCommit, isCommit, removeWorktree, repoTopLevel } from './git.js';
 
 const queues = new Map<string, Promise<unknown>>();
 export function repoDirectory(top: string): string {
@@ -44,8 +44,9 @@ export function serialize<T>(root: string, task: () => Promise<T>): Promise<T> {
     return next;
 }
 // `log` gets fixed lines only: a failed start, and anything a rollback had to leave behind.
-export function prepareWorktree(root: string, cwd: string, title: string, log: (text: string) => void = () => {}): Promise<WorktreeStart> {
-    return serialize(root, () => create(root, cwd, title, log));
+// startCommit (v0.7.4 /fork): start from that commit of the same repository instead of the checkout's HEAD.
+export function prepareWorktree(root: string, cwd: string, title: string, log: (text: string) => void = () => {}, startCommit?: string): Promise<WorktreeStart> {
+    return serialize(root, () => create(root, cwd, title, log, startCommit));
 }
 // Undoes a start that failed part way: the plain remove and -d refuse anything with work in it, and the folder is
 // removed only when empty. What can't be undone is logged, since it would show up in /worktrees unrecorded.
@@ -54,9 +55,12 @@ async function rollback(top: string, path: string, branch: string, added: boolea
     try { if ((await branchNames(top)).includes(branch)) await deleteBranch(top, branch); } catch { log('Worktree start rollback: branch left in place'); }
     try { await rmdir(path); } catch (error) { if (!isFsError(error, 'ENOENT')) log('Worktree start rollback: folder left in place'); }
 }
-async function create(root: string, cwd: string, title: string, log: (text: string) => void): Promise<WorktreeStart> {
-    const plan = await inspect(root, cwd, title);
-    if (!plan.top || !plan.head || !plan.branch) return {cwd, worktreeNote: plan.note ?? 'worktree off: git check failed'};
+async function create(root: string, cwd: string, title: string, log: (text: string) => void, startCommit?: string): Promise<WorktreeStart> {
+    const inspected = await inspect(root, cwd, title);
+    if (!inspected.top || !inspected.head || !inspected.branch) return {cwd, worktreeNote: inspected.note ?? 'worktree off: git check failed'};
+    // A start commit must be a commit of this repository; anything else falls back to no worktree, never to HEAD.
+    if (startCommit !== undefined && !await isCommit(inspected.top, startCommit)) { log('Worktree start failed: the start commit is not in this repository'); return {cwd, worktreeNote: 'worktree off: creation failed'}; }
+    const plan = { ...inspected, top: inspected.top, branch: inspected.branch, head: startCommit ?? inspected.head };
     try {
         if (!isSafeAbsolutePath(root)) throw new Error('Unsafe worktree root');
         await privateDirectory(root);

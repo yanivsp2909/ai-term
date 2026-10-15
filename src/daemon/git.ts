@@ -47,6 +47,12 @@ export async function headCommit(cwd: string): Promise<string> {
     if (!COMMIT.test(head)) throw new GitError('Git check failed');
     return head;
 }
+// v0.7.4: whether id names a commit in this repository (an id only: never a branch name or an expression).
+export async function isCommit(cwd: string, id: string): Promise<boolean> {
+    if (!COMMIT.test(id)) return false;
+    try { return (await run(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${id}^{commit}`], 'Git check failed')).trim() === id; }
+    catch (error) { if (error instanceof GitError) return false; throw error; }
+}
 export async function addWorktree(cwd: string, path: string, branch: string, head: string): Promise<void> {
     if (!isSafeAbsolutePath(path) || !isWorktreeBranch(branch) || !COMMIT.test(head)) throw new GitError('Worktree creation failed');
     // -b is an option value (git has no --branch spelling); all positional paths/revisions follow --.
