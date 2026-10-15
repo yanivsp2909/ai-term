@@ -309,7 +309,7 @@ export class SessionManager extends EventEmitter {
             // v0.6.5 providers: the key's own models whose tiny test request (Ollama: its listing) succeeded.
             const catalog=key.provider==='anthropic'||key.provider==='openai'?key.provider:null;
             const models=key.provider==='foundry'?(key.deployments??[]).filter(model=>deploymentWire(key.lastTest?.find(r=>r.model===model))!==null):catalog?[...new Set([...catalogModels(catalog),...(agent.model?[agent.model]:[])])]:testedModels(key);
-            if(!agent.model||!models.includes(agent.model))throw new KeyError(key.provider==='foundry'?'Foundry deployment must pass its test first':catalog?'Pick a model for AI Term agent':'Model must pass its test first');
+            if(!agent.model||!models.includes(agent.model))throw new KeyError(key.provider==='foundry'?'Foundry deployment must pass its test first':catalog?'Pick a model for AI Term agent':'Model must pass its test first; test the key in /settings (t)');
             agentKey={view:key,models};authMethod='api-key';
             recipe={executable:process.execPath,args:[],env:{}};
         } else if (agent) {

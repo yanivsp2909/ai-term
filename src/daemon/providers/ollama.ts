@@ -18,12 +18,12 @@ export const localGet: LocalGet = (url, timeout) => new Promise((resolve, reject
   const timer = setTimeout(() => req.destroy(new OllamaError('Ollama timed out')), timeout);
   req.on('error', reject); req.on('close', () => clearTimeout(timer)); req.end();
 });
-export const OLLAMA_ERRORS = ['Ollama must be http://127.0.0.1:<port>', 'Ollama is not running', 'Ollama did not answer'] as const;
+export const OLLAMA_ERRORS = ['Ollama must be at http://127.0.0.1:<port>', 'Ollama is not running; start it, then test again (t)', 'Ollama did not answer'] as const;
 export async function listOllama(endpoint: string, get: LocalGet = localGet): Promise<string[]> {
-  if (!isLocalEndpoint(endpoint)) throw new OllamaError('Ollama must be http://127.0.0.1:<port>');
+  if (!isLocalEndpoint(endpoint)) throw new OllamaError('Ollama must be at http://127.0.0.1:<port>');
   let reply: LocalReply;
   try { reply = await get(new URL(`${endpoint}/api/tags`), TIMEOUT_MS); }
-  catch (error) { throw new OllamaError(error && typeof error === 'object' && 'code' in error && error.code === 'ECONNREFUSED' ? 'Ollama is not running' : 'Ollama did not answer'); }
+  catch (error) { throw new OllamaError(error && typeof error === 'object' && 'code' in error && error.code === 'ECONNREFUSED' ? 'Ollama is not running; start it, then test again (t)' : 'Ollama did not answer'); }
   let value: unknown;
   try { value = reply.status === 200 ? JSON.parse(reply.body) : null; } catch { value = null; }
   const list = value && typeof value === 'object' && 'models' in value && Array.isArray(value.models) ? value.models as unknown[] : null;

@@ -155,11 +155,11 @@ describe('Ollama listing', () => {
   });
   it('refuses any other URL and reports failures with fixed words', async () => {
     let calls = 0;
-    await expect(listOllama('http://localhost:11434', async () => { calls++; return { status: 200, body: '{}' }; })).rejects.toThrow('Ollama must be http://127.0.0.1:<port>');
+    await expect(listOllama('http://localhost:11434', async () => { calls++; return { status: 200, body: '{}' }; })).rejects.toThrow('Ollama must be at http://127.0.0.1:<port>');
     expect(calls).toBe(0);
     await expect(listOllama('http://127.0.0.1:11434', async () => ({ status: 500, body: 'secret text' }))).rejects.toThrow('Ollama did not answer');
     await expect(listOllama('http://127.0.0.1:11434', async () => ({ status: 200, body: 'not json' }))).rejects.toThrow('Ollama did not answer');
-    await expect(listOllama('http://127.0.0.1:11434', async () => { throw Object.assign(new Error('x'), { code: 'ECONNREFUSED' }); })).rejects.toThrow('Ollama is not running');
+    await expect(listOllama('http://127.0.0.1:11434', async () => { throw Object.assign(new Error('x'), { code: 'ECONNREFUSED' }); })).rejects.toThrow('Ollama is not running; start it, then test again (t)');
   });
 });
 

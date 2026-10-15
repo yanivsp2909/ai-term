@@ -38,9 +38,9 @@ async function setup(settings: Record<string, unknown> = {}) {
 it('an xAI key starts AI Term\'s agent on a tested model only, with the key only in its env', async () => {
   const d = await setup({ keysRunOn: 'cli' });
   const key = await d.keys.add({ provider: 'xai', label: 'grok', secret: SECRET, deployments: ['grok-5', 'grok-untested'] });
-  await expect(d.manager.create({ engine: 'ai-term', model: 'grok-5', auth: { kind: 'key', keyId: key.id }, cwd: d.root, permission: 'ask' })).rejects.toThrow('Model must pass its test first');
+  await expect(d.manager.create({ engine: 'ai-term', model: 'grok-5', auth: { kind: 'key', keyId: key.id }, cwd: d.root, permission: 'ask' })).rejects.toThrow('Model must pass its test first; test the key in /settings (t)');
   await d.keys.saveTest(key.id, [{ model: 'grok-5', status: 'ready' }, { model: 'grok-untested', status: 'error', httpStatus: 404 }]);
-  await expect(d.manager.create({ engine: 'ai-term', model: 'grok-untested', auth: { kind: 'key', keyId: key.id }, cwd: d.root, permission: 'ask' })).rejects.toThrow('Model must pass its test first');
+  await expect(d.manager.create({ engine: 'ai-term', model: 'grok-untested', auth: { kind: 'key', keyId: key.id }, cwd: d.root, permission: 'ask' })).rejects.toThrow('Model must pass its test first; test the key in /settings (t)');
   // keysRunOn: 'cli' can't send it to a CLI: no CLI can use an xAI key.
   const session = await d.manager.create({ engine: 'codex', model: 'grok-5', auth: { kind: 'key', keyId: key.id }, cwd: d.root, permission: 'ask' });
   expect(session).toMatchObject({ engine: 'ai-term', model: 'grok-5', auth: { kind: 'key', provider: 'xai', last4: 'cdef' } });

@@ -68,7 +68,7 @@ it('Ollama: no key field, a local endpoint prefilled; any other URL is refused',
   expect(added).toEqual({ kind: 'keys.add', provider: 'ollama', label: 'Ollama', endpoint: 'http://127.0.0.1:80' });
   const { p: q, sent: none } = panel('login');
   await choose(q, 9); await q.key('enter'); for (let i = 0; i < 22; i++) await q.key('backspace'); await type(q, 'http://localhost:11434'); await q.key('enter');
-  expect(none.filter(b => b.kind === 'keys.add')).toEqual([]); expect(q.lines().join('\n')).toContain('Ollama runs at http://127.0.0.1:<port>');
+  expect(none.filter(b => b.kind === 'keys.add')).toEqual([]); expect(q.lines().join('\n')).toContain('Ollama must be at http://127.0.0.1:<port>');
 });
 
 it('/settings shows each key by its last 4 (Ollama: no key) and removes and tests it like any other', async () => {
