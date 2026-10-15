@@ -56,7 +56,8 @@ it('with secret scan hits, y does nothing; only typing override then ⏎ goes on
 });
 
 it('a conflict says the checkout is untouched and offers an agent to rebase the branch in its worktree', async () => {
-  const h = await open(body => body.kind === 'sessions.mergePlan' ? { mergePlan: mergePlan() } : body.kind === 'sessions.merge' ? new DaemonRequestError('Merge conflict; it was undone and your checkout is as it was') : body.kind === 'sessions.create' ? { session: { ...fixer, id: randomUUID(), title: 'fixer rebase' } } : body.kind === 'engines.status' ? {} : {});
+  // The agent that wrote the branch has exited: one agent per worktree at a time.
+  const h = await open(body => body.kind === 'sessions.list' ? { sessions: [{ ...fixer, status: 'exited', exitCode: 0 }] } : body.kind === 'sessions.mergePlan' ? { mergePlan: mergePlan() } : body.kind === 'sessions.merge' ? new DaemonRequestError('Merge conflict; it was undone and your checkout is as it was') : body.kind === 'sessions.create' ? { session: { ...fixer, id: randomUUID(), title: 'fixer rebase' } } : {});
   try {
     h.type('/merge fixer\r'); await shows(h.tty, 'Merge ai/fixer'); h.type('y');
     await shows(h.tty, '/merge fixer rebase starts an agent to rebase ai/fixer onto main');

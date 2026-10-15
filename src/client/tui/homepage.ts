@@ -643,7 +643,8 @@ export class Homepage {
   }
   // v0.7.3 /merge [agent] [rebase] and /pr [agent]: the agent named (like /send), else the selected one.
   private async mergeCommand(kind:'merge'|'pr',argument:string):Promise<void>{
-    const words=argument.split(' ').filter(Boolean),rebase=kind==='merge'&&words.at(-1)==='rebase'&&words.length>1;
+    // `/merge rebase` alone: the selected agent (an agent named "rebase" is still reachable with /merge rebase rebase).
+    const words=argument.split(' ').filter(Boolean),rebase=kind==='merge'&&words.at(-1)==='rebase';
     if(rebase)words.pop();
     const name=words.join(' ');
     let session:SessionInfo|undefined;
@@ -661,6 +662,8 @@ export class Homepage {
     // No gh, or not logged in: one line, with the push you can run yourself.
     if(ask.kind==='pr'&&ask.plan.gh!=='ready'){this.showNote(ask.plan.gh==='missing'?`gh isn't installed · install the GitHub CLI, or run: git push -u -- origin ${ask.plan.branch}`:"gh isn't logged in · run gh auth login in a terminal, then /pr again");return;}
     const plan=ask.plan;
+    // Another popup opened while the plan was being made: it stays; this one is dropped with a word.
+    if(this.popup){this.showNote(`${kind==='merge'?'merge':'pull request'} plan ready · close the open popup and run /${kind} again`);return;}
     const popup:MergeAsk=new MergeAsk(ask,()=>this.draw(true),()=>{if(this.popup===popup)this.popup=undefined;this.draw(true);},override=>{this.enqueue(async()=>{
       this.showNote(kind==='merge'?`◐ merging ${plan.branch} into ${plan.base}`:`◐ pushing ${plan.branch} and opening a pull request`);
       try{
@@ -678,8 +681,14 @@ export class Homepage {
   private async startRebase(session:SessionInfo):Promise<void>{
     const base=this.conflicts.get(session.id);
     if(!base||!session.worktree||!session.branch){this.showNote(`run /merge ${session.title} first; a rebase is offered after a conflict`);return;}
+    // One agent per worktree at a time: the one that wrote the branch must have stopped.
+    const current=this.sessions.find(s=>s.id===session.id);
+    if(current&&!['exited','error'].includes(current.status)){this.showNote(`stop ${session.title} first (s), then /merge ${session.title} rebase`);return;}
+    if(session.engine==='shell'){this.showNote('a shell has no agent to rebase with');return;}
     const firstMessage=`The branch ${session.branch} in this worktree conflicts with ${base}. Run git rebase ${base}, resolve each conflict keeping both sides' intent, run the tests, and stop when the rebase is done. Don't push, merge or force anything.`;
-    try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:this.engine,model:this.model,...(this.effort!==undefined?{effort:this.effort}:{}),auth:this.auth,cwd:session.worktree,permission:'ask',title:`${session.title} rebase`.slice(0,60),firstMessage,useWorktree:false}));}
+    // The same engine, model, effort and login or key as the agent that wrote the branch: no surprise account or bill.
+    const auth:AuthRef=session.auth.kind==='key'?{kind:'key',keyId:session.auth.keyId}:{kind:'account',...(session.auth.profile?{profile:session.auth.profile}:{})};
+    try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:session.engine,model:session.model,...(session.effort!==undefined?{effort:session.effort}:{}),auth,cwd:session.worktree,permission:'ask',title:`${session.title} rebase`.slice(0,60),firstMessage,useWorktree:false}));}
     catch(error){this.showNote(error instanceof Error?error.message:'Agent could not start');}
   }
   // v0.7.2 /undo [agent] and /redo [agent]: the plan (what changes) first; y restores, n or Esc keeps everything.

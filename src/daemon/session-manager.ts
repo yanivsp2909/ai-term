@@ -919,7 +919,9 @@ export class SessionManager extends EventEmitter {
         return {title:live.info.title,repo:record.repo,worktree:live.info.worktree,branch:live.info.branch,base:record.baseBranch,scan:settings?.secretScan!==false};
     }
     private mergeError(error:unknown):Error{
-        if(error instanceof MergeError||error instanceof CheckpointError)return error;
+        // The reason under a fixed message is logged by its class or code only, never its text (git's stderr isn't kept).
+        if(error instanceof MergeError){const cause=error.cause;if(cause)this.log.error(`Merge or PR step failed (${cause instanceof Error?cause.constructor.name:'unknown'}${cause&&typeof cause==='object'&&'code'in cause&&typeof cause.code==='string'?` ${cause.code}`:''})`);return error;}
+        if(error instanceof CheckpointError)return error;
         this.log.error(`Merge or PR failed: ${error instanceof GitError?error.message:'unexpected error'}`);
         return new MergeError('Merge unavailable; git could not read the repository');
     }

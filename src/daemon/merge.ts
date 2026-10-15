@@ -19,31 +19,42 @@ export const MERGE_ERRORS = ['Your checkout has uncommitted changes; commit or s
   'Nothing to merge; the branch has no commits beyond the base', 'Changed since you looked; run /merge again', 'Changed since you looked; run /pr again',
   'Secret scan found possible secrets; type override to go on anyway', 'Merge conflict; it was undone and your checkout is as it was', 'Git refused the merge; your checkout is as it was',
   'Merge unavailable; git could not read the repository', 'This repo has no origin remote', 'gh is missing or not logged in', 'Push failed; nothing was opened',
-  'gh pr create failed; the branch is pushed', 'This agent has no worktree branch to merge'] as const;
+  'gh pr create failed; the branch is pushed', 'This agent has no worktree branch to merge', 'Merge conflict; undoing it failed: run git merge --abort in your checkout',
+  "Your checkout's git folder isn't a plain .git folder; merge it yourself"] as const;
 export const CHECKOUT_NOT_ON_BASE = /^Your checkout is not on [A-Za-z0-9._/-]{1,200}; switch to it yourself first$/;
 // The user's own git: where their global config is, and the environment git, ssh and gh need (PATH, HOME, the ssh
 // agent socket). Never a key: these processes run as you, with what you set up yourself.
 export interface UserGit { globalConfig: string; env: Record<string, string> }
 export interface MergeTarget { title: string; repo: string; worktree: string; branch: string; base: string; scan: boolean }
 const BIG = 16 * 1024 * 1024;
-const userRun = (cwd: string, args: string[], user: UserGit, timeout = 120_000) => runGit(cwd, args, 'Git check failed', { env: { ...user.env, GIT_CONFIG_GLOBAL: user.globalConfig }, timeout, maxBuffer: BIG });
+const userRun = (cwd: string, args: string[], user: UserGit, timeout = 120_000) => runGit(cwd, args, 'Git check failed', { env: { ...user.env, ...PINNED_ENV, GIT_CONFIG_GLOBAL: user.globalConfig }, timeout, maxBuffer: BIG });
 const sha = (...parts: unknown[]) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+// Your checkout, named outright: the shared config's core.worktree (which an agent can set) can't send a status, merge
+// or abort to another folder, and the git folder is its own .git, never one a .git file points at.
+const checkout = (t: MergeTarget) => [`--git-dir=${join(t.repo, '.git')}`, `--work-tree=${t.repo}`];
+// Commands git runs for credentials and fsmonitor: off, whatever any config says (environment config beats the repo's).
+const PINNED_ENV: Record<string, string> = { GIT_ASKPASS: '/usr/bin/false', GIT_CONFIG_COUNT: '3', GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false', GIT_CONFIG_KEY_1: 'core.hooksPath', GIT_CONFIG_VALUE_1: '/dev/null', GIT_CONFIG_KEY_2: 'core.askPass', GIT_CONFIG_VALUE_2: '/usr/bin/false' };
+async function plainGitFolder(t: MergeTarget): Promise<void> {
+  let info;
+  try { info = await lstat(join(t.repo, '.git')); } catch (error) { if (isFsError(error, 'ENOENT')) throw new MergeError("Your checkout's git folder isn't a plain .git folder; merge it yourself"); throw error; }
+  if (!info.isDirectory()) throw new MergeError("Your checkout's git folder isn't a plain .git folder; merge it yourself");
+}
 
 function checkTarget(t: MergeTarget): void { if (!isWorktreeBranch(t.branch) || !isPlainBranch(t.base)) throw new MergeError('This agent has no worktree branch to merge'); }
 async function commitOf(repo: string, ref: string): Promise<string> {
-  const id = (await runGit(repo, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`])).trim();
+  const id = (await runGit(repo, [`--git-dir=${join(repo, '.git')}`, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`])).trim();
   if (!COMMIT_ID.test(id)) throw new MergeError('Merge unavailable; git could not read the repository');
   return id;
 }
 // Commands git could run during a merge or checkout in your checkout: refused before anything runs.
 async function drivers(repo: string, base: string, branch: string): Promise<boolean> {
   let configured = '';
-  try { configured = await runGit(repo, ['config', '--name-only', '--get-regexp', '^(filter|merge)\\.']); } catch (error) { if (!(error instanceof GitError)) throw error; }
+  try { configured = await runGit(repo, [`--git-dir=${join(repo, '.git')}`, 'config', '--name-only', '--get-regexp', '^(filter|merge)\\.']); } catch (error) { if (!(error instanceof GitError)) throw error; }
   if (configured.trim()) return true;
   try { if ((await lstat(join(repo, '.git', 'info', 'attributes'))).size > 0) return true; } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
   for (const commit of [base, branch]) {
-    const names = (await runGit(repo, ['ls-tree', '-r', '-z', '--name-only', '--full-tree', '--end-of-options', commit], 'Git check failed', { maxBuffer: BIG })).split('\0').filter(name => name === '.gitattributes' || name.endsWith('/.gitattributes'));
-    for (const name of names) if (/\b(?:filter|merge)=/.test(await runGit(repo, ['cat-file', 'blob', `${commit}:${name}`], 'Git check failed', { maxBuffer: BIG }))) return true;
+    const names = (await runGit(repo, [`--git-dir=${join(repo, '.git')}`, 'ls-tree', '-r', '-z', '--name-only', '--full-tree', '--end-of-options', commit], 'Git check failed', { maxBuffer: BIG })).split('\0').filter(name => name === '.gitattributes' || name.endsWith('/.gitattributes'));
+    for (const name of names) if (/\b(?:filter|merge)=/.test(await runGit(repo, [`--git-dir=${join(repo, '.git')}`, 'cat-file', 'blob', `${commit}:${name}`], 'Git check failed', { maxBuffer: BIG }))) return true;
   }
   return false;
 }
@@ -61,15 +72,15 @@ async function scan(t: MergeTarget, baseCommit: string, branchCommit: string): P
 }
 interface MergeState { plan: MergePlan; baseCommit: string; branchCommit: string }
 async function mergeState(t: MergeTarget): Promise<MergeState> {
-  checkTarget(t);
-  const head = (await runGit(t.repo, ['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim();
+  checkTarget(t); await plainGitFolder(t);
+  const head = (await runGit(t.repo, [...checkout(t), 'symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim();
   if (head !== `refs/heads/${t.base}`) throw new MergeError(`Your checkout is not on ${t.base}; switch to it yourself first`);
   const baseCommit = await commitOf(t.repo, `refs/heads/${t.base}`), branchCommit = await commitOf(t.repo, `refs/heads/${t.branch}`);
   if (await drivers(t.repo, baseCommit, branchCommit)) throw new MergeError('This repo uses git filters or merge drivers; merge it yourself');
   // Attributes off as a second guard: with no driver configured nothing could run anyway.
-  const dirty = await runGit(t.repo, [`--attr-source=${EMPTY_TREE_ID}`, '-c', 'core.attributesFile=/dev/null', 'status', '--porcelain', '--untracked-files=no', '--ignore-submodules=all', '--']);
+  const dirty = await runGit(t.repo, [...checkout(t), `--attr-source=${EMPTY_TREE_ID}`, '-c', 'core.attributesFile=/dev/null', 'status', '--porcelain', '--untracked-files=no', '--ignore-submodules=all', '--']);
   if (dirty.trim()) throw new MergeError('Your checkout has uncommitted changes; commit or stash them yourself first');
-  const ahead = Number((await runGit(t.repo, ['rev-list', '--count', '--end-of-options', `${baseCommit}..${branchCommit}`])).trim());
+  const ahead = Number((await runGit(t.repo, [...checkout(t), 'rev-list', '--count', '--end-of-options', `${baseCommit}..${branchCommit}`])).trim());
   if (!ahead) throw new MergeError('Nothing to merge; the branch has no commits beyond the base');
   const found = await scan(t, baseCommit, branchCommit);
   const plan: MergePlan = { title: t.title, branch: t.branch, base: t.base, repo: t.repo, ahead, commands: [`cd ${t.repo}`, `git merge --no-ff --no-edit --no-gpg-sign -- ${t.branch}`], hits: found.hits, moreHits: found.more, ...(t.scan ? {} : { scanOff: true as const }), fingerprint: '' };
@@ -81,14 +92,20 @@ export async function merge(t: MergeTarget, fingerprint: string, override: boole
   const { plan, baseCommit } = await mergeState(t).catch((error: unknown) => { throw error instanceof MergeError && error.message.startsWith('Nothing to merge') ? new MergeError('Changed since you looked; run /merge again') : error; });
   if (plan.fingerprint !== fingerprint) throw new MergeError('Changed since you looked; run /merge again');
   if (plan.hits.length && !override) throw new MergeError('Secret scan found possible secrets; type override to go on anyway');
-  try { await userRun(t.repo, [`--attr-source=${EMPTY_TREE_ID}`, '-c', 'core.attributesFile=/dev/null', 'merge', '--no-ff', '--no-edit', '--no-gpg-sign', '--', t.branch], user); }
-  catch {
+  // Checked again last, right before git runs: a driver added since the plan refuses (a background process could still
+  // race this; agents are refused while they run or ask).
+  if (await drivers(t.repo, baseCommit, await commitOf(t.repo, `refs/heads/${t.branch}`))) throw new MergeError('This repo uses git filters or merge drivers; merge it yourself');
+  try { await userRun(t.repo, [...checkout(t), `--attr-source=${EMPTY_TREE_ID}`, '-c', 'core.attributesFile=/dev/null', 'merge', '--no-ff', '--no-edit', '--no-gpg-sign', '--', t.branch], user); }
+  catch (failure) {
     // Never left mid-merge: a conflict is aborted at once.
     let conflicted = false;
     try { await lstat(join(t.repo, '.git', 'MERGE_HEAD')); conflicted = true; } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
-    if (conflicted) { await userRun(t.repo, ['merge', '--abort'], user); throw new MergeError('Merge conflict; it was undone and your checkout is as it was'); }
-    if (await commitOf(t.repo, 'HEAD') !== baseCommit) throw new MergeError('Merge unavailable; git could not read the repository');
-    throw new MergeError('Git refused the merge; your checkout is as it was');
+    if (conflicted) {
+      try { await userRun(t.repo, [...checkout(t), 'merge', '--abort'], user); } catch (error) { throw new MergeError('Merge conflict; undoing it failed: run git merge --abort in your checkout', { cause: error }); }
+      throw new MergeError('Merge conflict; it was undone and your checkout is as it was', { cause: failure });
+    }
+    if (await commitOf(t.repo, 'HEAD') !== baseCommit) throw new MergeError('Merge unavailable; git could not read the repository', { cause: failure });
+    throw new MergeError('Git refused the merge; your checkout is as it was', { cause: failure });
   }
   return { commit: await commitOf(t.repo, 'HEAD') };
 }
@@ -99,21 +116,23 @@ export async function merge(t: MergeTarget, fingerprint: string, override: boole
 async function pushGuards(user: UserGit): Promise<string[]> {
   const read = (key: string) => runGit('/', ['config', '--file', user.globalConfig, '--get-all', key]).then(out => out.split('\n').filter(Boolean), () => [] as string[]);
   const helpers = await read('credential.helper'), ssh = (await read('core.sshCommand')).at(-1) ?? 'ssh';
-  return ['-c', `core.sshCommand=${ssh}`, '-c', 'credential.helper=', ...helpers.flatMap(h => ['-c', `credential.helper=${h}`]), '-c', 'protocol.ext.allow=never'];
+  return ['-c', `core.sshCommand=${ssh}`, '-c', 'credential.helper=', ...helpers.flatMap(h => ['-c', `credential.helper=${h}`]), '-c', 'protocol.ext.allow=never', '-c', 'core.askPass=/usr/bin/false'];
 }
 async function ghStatus(user: UserGit): Promise<{ state: PrPlan['gh']; path: string | null }> {
   const path = await resolveExecutable('gh', user.env.PATH ?? '');
   if (!path) return { state: 'missing', path: null };
-  const ok = await new Promise<boolean>(resolve => execFile(path, ['auth', 'status'], { env: user.env, timeout: 15_000 }, error => resolve(!error)));
+  const ok = await new Promise<boolean>(resolve => execFile(path, ['auth', 'status'], { env: { ...user.env, ...PINNED_ENV }, timeout: 15_000 }, error => resolve(!error)));
   return { state: ok ? 'ready' : 'logged out', path };
 }
 async function prState(t: MergeTarget, user: UserGit): Promise<{ plan: PrPlan; gh: string | null }> {
-  checkTarget(t);
-  const remote = (await runGit(t.worktree, ['remote', 'get-url', '--push', '--', 'origin']).catch(() => '')).trim();
+  checkTarget(t); await plainGitFolder(t);
+  // Read from your checkout with your global config, so the URL shown is where the push really goes (insteadOf included).
+  const remote = (await userRun(t.repo, [`--git-dir=${join(t.repo, '.git')}`, 'remote', 'get-url', '--push', '--', 'origin'], user).catch(() => '')).trim();
   if (!remote) throw new MergeError('This repo has no origin remote');
   const baseCommit = await commitOf(t.repo, `refs/heads/${t.base}`), branchCommit = await commitOf(t.repo, `refs/heads/${t.branch}`), gh = await ghStatus(user), found = await scan(t, baseCommit, branchCommit);
   const plan: PrPlan = { title: t.title, branch: t.branch, base: t.base, remote, gh: gh.state, commands: [`cd ${t.worktree}`, `git push -u -- origin ${t.branch}`, `gh pr create --head ${t.branch} --base ${t.base} --fill`], hits: found.hits, moreHits: found.more, ...(t.scan ? {} : { scanOff: true as const }), fingerprint: '' };
   plan.fingerprint = sha('pr', branchCommit, remote, found, t.scan, gh.state);
+  plan.commands = [`cd ${t.repo}`, `git push -u -- origin refs/heads/${t.branch}:refs/heads/${t.branch}`, `gh pr create --head ${t.branch} --base ${t.base} --fill`];
   return { plan, gh: gh.path };
 }
 export async function prPlan(t: MergeTarget, user: UserGit): Promise<PrPlan> { return (await prState(t, user)).plan; }
@@ -122,9 +141,14 @@ export async function openPr(t: MergeTarget, fingerprint: string, override: bool
   if (plan.fingerprint !== fingerprint) throw new MergeError('Changed since you looked; run /pr again');
   if (plan.gh !== 'ready' || !gh) throw new MergeError('gh is missing or not logged in');
   if (plan.hits.length && !override) throw new MergeError('Secret scan found possible secrets; type override to go on anyway');
-  // --receive-pack: for remote.<name>.receivepack git keeps the FIRST value it reads (the repo's), so -c can't pin it.
-  try { await userRun(t.worktree, [...await pushGuards(user), 'push', '--receive-pack=git receive-pack', '-u', '--', 'origin', t.branch], user); } catch { throw new MergeError('Push failed; nothing was opened'); }
-  const out = await new Promise<string | null>(resolve => execFile(gh, ['pr', 'create', '--head', t.branch, '--base', t.base, '--fill'], { cwd: t.worktree, env: user.env, timeout: 60_000, maxBuffer: 1024 * 1024 }, (error, stdout) => resolve(error ? null : stdout)));
+  // From your checkout's own .git (the worktree's .git file is the agent's), with an explicit refspec. --receive-pack:
+  // git keeps the FIRST receivepack value it reads (the repo's), so -c can't pin it; a local remote runs it here, hooks
+  // off; a remote host is sent the standard command (GitHub's ssh accepts only that).
+  const local = /^(?:\/|\.|file:)/.test(plan.remote) || !/[:@]/.test(plan.remote), receivePack = local ? 'git -c core.hooksPath=/dev/null receive-pack' : 'git-receive-pack';
+  try { await userRun(t.repo, [`--git-dir=${join(t.repo, '.git')}`, ...await pushGuards(user), 'push', `--receive-pack=${receivePack}`, '-u', '--', 'origin', `refs/heads/${t.branch}:refs/heads/${t.branch}`], user); }
+  catch (error) { throw new MergeError('Push failed; nothing was opened', { cause: error }); }
+  // gh runs in your checkout too, its own git calls pinned to that .git folder and work tree, fsmonitor, hooks and askpass off.
+  const out = await new Promise<string | null>(resolve => execFile(gh, ['pr', 'create', '--head', t.branch, '--base', t.base, '--fill'], { cwd: t.repo, env: { ...user.env, ...PINNED_ENV, GIT_DIR: join(t.repo, '.git'), GIT_WORK_TREE: t.repo }, timeout: 60_000, maxBuffer: 1024 * 1024 }, (error, stdout) => resolve(error ? null : stdout)));
   const url = out?.split('\n').map(line => line.trim()).filter(line => /^https:\/\/\S{1,500}$/.test(line)).at(-1);
   if (!url) throw new MergeError('gh pr create failed; the branch is pushed');
   return { url };

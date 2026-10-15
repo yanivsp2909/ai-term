@@ -105,14 +105,15 @@ it('the scan can be turned off (D55); a plan is bound to what it showed', async 
   await expect(m.merge(agent.id, plan.fingerprint, false)).rejects.toThrow('Changed since you looked; run /merge again');
 });
 
-it('/pr pushes ai/<slug> to origin and runs gh pr create in the worktree with argv only; gh missing or logged out is a one-line note', async () => {
-  const { origin, bin, m, agent, tree } = await setup();
+it('/pr pushes ai/<slug> to origin and runs gh pr create with argv only; gh missing or logged out is a one-line note', async () => {
+  const { repo, origin, bin, m, agent, tree } = await setup();
   await work(tree, 'feature.ts', 'x\n');
   expect((await m.prPlan(agent.id)).gh).toBe('missing');
   const log = join(bin, 'gh.log');
   await writeFile(join(bin, 'gh'), `#!/bin/sh\nprintf '%s\\n' "$@" >> ${log}\nif [ "$1" = auth ]; then exit \${GH_STUB_AUTH:-0}; fi\necho https://github.com/yaniv/ai-term/pull/7\n`); await chmod(join(bin, 'gh'), 0o755);
   const plan = await m.prPlan(agent.id);
-  expect(plan).toMatchObject({ gh: 'ready', branch: 'ai/fixer', base: 'main', remote: origin, commands: [`cd ${tree}`, 'git push -u -- origin ai/fixer', 'gh pr create --head ai/fixer --base main --fill'] });
+  // From your checkout's own .git, with an explicit refspec (the worktree's .git file is the agent's to write).
+  expect(plan).toMatchObject({ gh: 'ready', branch: 'ai/fixer', base: 'main', remote: origin, commands: [`cd ${repo}`, 'git push -u -- origin refs/heads/ai/fixer:refs/heads/ai/fixer', 'gh pr create --head ai/fixer --base main --fill'] });
   const result = await m.pr(agent.id, plan.fingerprint, false);
   expect(result.url).toBe('https://github.com/yaniv/ai-term/pull/7');
   expect((await git(origin, 'for-each-ref', '--format=%(refname)')).stdout).toContain('refs/heads/ai/fixer');
@@ -132,15 +133,19 @@ it('a push never runs a command the repo config names (ssh command, credential h
 
 // ---- Part E review findings ----
 it('HIGH (security review): /pr pushes from your checkout; a worktree .git file pointing elsewhere changes nothing', async () => {
-  const { temp, origin, bin, m, agent, tree } = await setup();
+  const { temp, repo, home, origin, bin, m, agent, tree } = await setup();
   await work(tree, 'feature.ts', 'x\n');
   await writeFile(join(bin, 'gh'), '#!/bin/sh\nif [ "$1" = auth ]; then exit 0; fi\npwd > "$(dirname "$0")/gh.cwd"\necho https://github.com/yaniv/ai-term/pull/9\n'); await chmod(join(bin, 'gh'), 0o755);
   const plan = await m.prPlan(agent.id);
   const evil = join(temp, 'evil'); await run('/usr/bin/git', ['init', '-q', '--', evil]); await git(evil, 'remote', 'add', '--', 'origin', join(temp, 'evil-origin.git'));
   await writeFile(join(tree, '.git'), `gitdir: ${join(evil, '.git')}\n`);
-  await m.pr(agent.id, plan.fingerprint, false);
+  // With the scan on, a worktree whose git files lead elsewhere is refused outright.
+  await expect(m.pr(agent.id, plan.fingerprint, false)).rejects.toThrow();
+  // With it off, the push still goes from your checkout to the real origin, and gh runs there too.
+  await new SettingsStore(home).set({ secretScan: false });
+  await m.pr(agent.id, (await m.prPlan(agent.id)).fingerprint, false);
   expect((await git(origin, 'for-each-ref', '--format=%(refname)')).stdout).toContain('refs/heads/ai/fixer');
-  expect((await readFile(join(bin, 'gh.cwd'), 'utf8')).trim()).not.toBe(tree);
+  expect((await readFile(join(bin, 'gh.cwd'), 'utf8')).trim()).toBe(await realpath(repo));
 });
 
 it('HIGH (security review): an askpass named in the repo config never runs during a push', async () => {

@@ -12,7 +12,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function mergeLines(ask: MergeAskPlan, typed: string): Line[] {
   const { plan } = ask, head = ask.kind === 'merge' ? `Merge ${plan.branch} → ${plan.base} in your checkout · ${plural(ask.plan.ahead, 'commit')}` : `Open a pull request: ${plan.branch} → ${plan.base} · ${ask.plan.remote}`;
   const scan: Line[] = plan.scanOff ? [{ text: 'secret scan: off (/settings v)', tone: 'ink-3' }] : plan.hits.length
-    ? [{ text: `secret scan: ${plural(plan.hits.length + plan.moreHits, 'possible secret')}`, tone: 'status-error' }, ...plan.hits.map(hit => ({ text: `⚠ ${hit.file}:${hit.line} · ${hit.kind} · ${hit.length} characters hidden`, tone: 'status-error' as const })), ...(plan.moreHits ? [{ text: `… and ${plan.moreHits} more`, tone: 'status-error' as const }] : [])]
+    ? [{ text: `secret scan: ${plan.moreHits ? `more than ${plan.hits.length} possible secrets` : plural(plan.hits.length, 'possible secret')}`, tone: 'status-error' }, ...plan.hits.map(hit => ({ text: `⚠ ${hit.file}:${hit.line} · ${hit.kind} · ${hit.length} characters hidden`, tone: 'status-error' as const })), ...(plan.moreHits ? [{ text: '… and more (the first 100 are shown)', tone: 'status-error' as const }] : [])]
     : [{ text: 'secret scan: nothing found', tone: 'ink-2' }];
   const verb = ask.kind === 'merge' ? 'merge' : 'open it';
   const footer: Line[] = plan.hits.length
