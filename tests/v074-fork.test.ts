@@ -58,7 +58,7 @@ it('/fork asks first, then starts the same first message on the other model in i
 it('refuses an agent without a first message or a worktree, and never forks into Don\'t ask', async () => {
   const d = await daemon();
   const bare = await d.manager.create({ engine: 'codex', model: 'gpt-a', auth: { kind: 'account' }, cwd: d.repo, permission: 'ask', title: 'idle' });
-  await expect(d.manager.forkPlan(bare.id, { engine: 'codex', model: 'gpt-b', auth: { kind: 'account' } })).rejects.toThrow("Fork needs the agent's first message; this one started without one, or before the background service restarted");
+  await expect(d.manager.forkPlan(bare.id, { engine: 'codex', model: 'gpt-b', auth: { kind: 'account' } })).rejects.toThrow("Fork needs the agent's first message; it started without one, or before the background service restarted");
   const loose = await d.manager.create({ engine: 'codex', model: 'gpt-a', auth: { kind: 'account' }, cwd: d.home, permission: 'dontAsk', title: 'loose', firstMessage: 'x' });
   await expect(d.manager.forkPlan(loose.id, { engine: 'codex', model: 'gpt-b', auth: { kind: 'account' } })).rejects.toThrow('Fork needs an agent with a worktree, so the two can be compared');
   const source = await d.manager.create({ engine: 'codex', model: 'gpt-a', auth: { kind: 'account' }, cwd: d.repo, permission: 'dontAsk', title: 'fast', firstMessage: 'go' });

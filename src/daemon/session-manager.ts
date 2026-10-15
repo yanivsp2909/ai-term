@@ -104,7 +104,7 @@ export const HANDOFF_NOT_STOPPED="The new agent didn't start and couldn't be sto
 export const HANDOFF_NOT_STARTED_PAID="The new agent didn't start; the old one keeps running · the note's tokens were spent";
 // Every handoff refusal is one of these fixed texts, so the socket can return it as written.
 export class ForkError extends Error {}
-export const FORK_ERRORS=['Only an AI agent can be forked',"Fork needs the agent's first message; this one started without one, or before the background service restarted",'Fork needs an agent with a worktree, so the two can be compared','Pick two different agents to compare','These agents are in different repositories'] as const;
+export const FORK_ERRORS=['Only an AI agent can be forked',"Fork needs the agent's first message; it started without one, or before the background service restarted",'Fork needs an agent with a worktree, so the two can be compared','Pick two different agents to compare','These agents are in different repositories'] as const;
 export const HANDOFF_ERRORS=[HANDOFF_NOT_STOPPED,'Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done',"Agent hit its limit and can't write the note · add an API key for the summary",'Agent is being handed off'];
 const HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
 function sameWriter(approved:HandoffWriter,writer:import('./handoff.js').KeyedWriter|null):boolean{return approved.kind==='agent'?writer===null:writer!==null&&approved.provider===writer.key.provider&&approved.model===writer.model&&approved.last4===writer.key.last4;}
@@ -1109,7 +1109,7 @@ export class SessionManager extends EventEmitter {
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         if(live.info.engine==='shell')throw new ForkError('Only an AI agent can be forked');
-        if(live.firstMessage===undefined)throw new ForkError("Fork needs the agent's first message; this one started without one, or before the background service restarted");
+        if(live.firstMessage===undefined)throw new ForkError("Fork needs the agent's first message; it started without one, or before the background service restarted");
         const record=live.info.worktree?this.worktreeRecords.get(live.info.worktree):undefined;
         if(!record?.repo||!record.baseCommit||!live.info.worktree)throw new ForkError('Fork needs an agent with a worktree, so the two can be compared');
         // The same folder inside the repository as the source (its worktree path swapped for your checkout's).

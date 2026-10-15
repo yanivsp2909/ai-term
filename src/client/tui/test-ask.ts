@@ -11,7 +11,7 @@ export function testLines(plan: TestPlan): Line[] {
     { text: `Run tests for ${plan.title}`, tone: 'ink' },
     { text: `$ ${testCommandText(plan.command)}`, tone: 'ink-2' },
     { text: `in ${plan.cwd} · no API keys in its env · 10 min limit`, tone: 'ink-3' },
-    ...(plan.changed.length ? [{ text: 'changed by this agent: running the tests runs them', tone: 'status-waiting' as const }, ...plan.changed.map(name => ({ text: `  ${name}`, tone: 'ink-2' as const }))] : []),
+    ...(plan.changed.length ? [{ text: 'this agent changed these test setup files; running the tests runs them', tone: 'status-waiting' as const }, ...plan.changed.map(name => ({ text: `  ${name}`, tone: 'ink-2' as const }))] : []),
     { text: 'y runs · n or Esc runs nothing', tone: 'ink-3' },
   ];
 }

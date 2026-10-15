@@ -63,7 +63,7 @@ it('/test shows the command, the folder and the changed setup files; y runs exac
   try {
     h.type('/test fixer\r');
     await shows(h.tty, 'Run tests for fixer'); await shows(h.tty, '$ ./check.sh'); await shows(h.tty, 'package.json');
-    await shows(h.tty, 'changed by this agent: running the tests runs them');
+    await shows(h.tty, 'this agent changed these test setup files; running the tests runs them');
     h.type('y');
     await vi.waitFor(() => expect(h.requests).toContainEqual({ kind: 'sessions.test', sessionId: fixer.id, fingerprint: fp }));
     await shows(h.tty, '◐ testing fixer');
