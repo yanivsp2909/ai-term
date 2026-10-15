@@ -11,7 +11,7 @@ import { WORKTREE_DELETE_ERRORS } from './worktree-removal.js';
 import { activateTerminal } from './terminal-activate.js';
 import type { TerminalBundle } from '../shared/protocol.js';
 import { validateRequest } from '../shared/validate.js';
-import { SessionManager, AGENT_COMMAND_ERRORS, FORK_ERRORS, HANDOFF_ERRORS } from './session-manager.js';
+import { DEV_ERRORS, SessionManager, AGENT_COMMAND_ERRORS, FORK_ERRORS, HANDOFF_ERRORS } from './session-manager.js';
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
@@ -314,6 +314,20 @@ export class DaemonServer {
                 case 'project.testCommand':
                     this.control(peer,{id:request.id,ok:true,testCommand:await this.manager.testCommand(request.cwd)});
                     break;
+                case 'sessions.devPlan':
+                    this.control(peer,{id:request.id,ok:true,devPlan:await this.manager.devPlan(request.sessionId)});
+                    break;
+                case 'sessions.dev':
+                    await this.manager.runDevPlan(request.sessionId,request.fingerprint);
+                    this.control(peer,{id:request.id,ok:true});
+                    break;
+                case 'sessions.devStop':
+                    await this.manager.stopDev(request.sessionId);
+                    this.control(peer,{id:request.id,ok:true});
+                    break;
+                case 'project.setDevCommand':
+                    this.control(peer,{id:request.id,ok:true,devCommand:await this.manager.setDevCommand(request.cwd,request.command)});
+                    break;
                 case 'project.setTestCommand':
                     this.control(peer,{id:request.id,ok:true,testCommand:await this.manager.setTestCommand(request.cwd,request.command)});
                     break;
@@ -443,7 +457,7 @@ export class DaemonServer {
                 'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
                 // AI Term's agent (v0.4.1–v0.4.2).
                 'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh",'Pick a model for AI Term agent','Unknown catalog model',
-                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,...QUEUE_ERRORS,
+                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,...QUEUE_ERRORS,...DEV_ERRORS,
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',

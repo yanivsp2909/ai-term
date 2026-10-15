@@ -57,7 +57,7 @@ it('the /dev popup says what runs, where, on which port, and whether in the sand
 });
 
 it('cards show a running dev server and one that ended', () => {
-  const session = { id: randomUUID(), title: 'fixer', engine: 'codex', model: 'gpt', auth: { kind: 'account' }, cwd: '/w/a', worktree: '/w/a', branch: 'ai/fixer', permission: 'ask', status: 'done', statusDetail: '', createdAt: new Date().toISOString(), lastActivityAt: new Date().toISOString(), exitCode: null } as unknown as SessionInfo;
+  const session = { id: randomUUID(), title: 'fixer', engine: 'codex', model: 'gpt', auth: { kind: 'account' }, cwd: '/w/a', worktree: '/w/a', branch: 'ai/fixer', permission: 'ask', status: 'done', statusDetail: 'done', statusSince: new Date().toISOString(), createdAt: new Date().toISOString(), lastOutputAt: new Date().toISOString(), exitCode: 0, ctxPercent: null, lastActivity: null, diffStat: { added: 3, removed: 1, files: 2 } } as unknown as SessionInfo;
   expect(cardText({ ...session, dev: { state: 'running', port: 4101 } }, Date.now(), 80).activity?.text).toContain('▶ dev :4101');
   expect(cardText({ ...session, dev: { state: 'exited', port: 4101, code: 1 } }, Date.now(), 80).activity?.text).toContain('✗ dev exited 1');
 });

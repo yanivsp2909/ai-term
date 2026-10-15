@@ -29,7 +29,6 @@ export const commandRegistry:readonly Command[]=[
  {name:'/fork',description:'The same first message on another model, in its own worktree (spends tokens; asks first)',argumentHint:()=>'[agent] <model>',current:c=>c.selectedTitle??''},
  {name:'/review',description:'One reviewer pass on an agent\'s diff by a keyed model you pick (spends tokens; asks first)',argumentHint:()=>'[agent] [show] | budget <usd>',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/test',description:'Run the project\'s tests in an agent\'s worktree (asks first; the card shows the result)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
- {name:'/queue',description:'Agents that start after an agent finishes or at a time, each with a limit (D55, off; /settings b)',argumentHint:()=>'[add]',values:()=>['add'],current:none},
  {name:'/test-cmd',description:'The project\'s test command, run when an agent finishes (none clears it)',argumentHint:()=>'[<command> | none]',current:none},
  {name:'/undo',description:'Restore an agent\'s worktree to its previous checkpoint (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/redo',description:'Bring back what the last /undo replaced (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
@@ -46,6 +45,9 @@ export const commandRegistry:readonly Command[]=[
  {name:'/help',description:'Commands and keyboard help',current:none},
  {name:'/theme',description:'Choose the saved theme',argumentHint:()=> 'graphite|slate|ink|auto|light',values:()=>['graphite','slate','ink','auto','light'],current:c=>c.theme},
  {name:'/exit',description:'Quit AI Term; agents keep running',current:none},
+ {name:'/dev',description:'Run the project\'s dev server in an agent\'s worktree on its own port (asks first; D55, off; /settings y)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
+ {name:'/dev-cmd',description:'The project\'s dev server command, like npm run dev (none clears it)',argumentHint:()=>'<command> | none',current:none},
+ {name:'/queue',description:'Agents that start after an agent finishes or at a time, each with a limit (D55, off; /settings b)',argumentHint:()=>'[add]',values:()=>['add'],current:none},
 ];
 export const aiSubcommands=['ai','ai --attach <id>','ai --version','ai doctor','ai status-line','ai status-notify <json>','ai agent','ai daemon','ai daemon stop','ai debug stats','ai debug usage','ai debug ls','ai debug shell [cwd]','ai debug attach <id>','ai debug stop <id>','ai debug peek <id>'] as const;
 export const debugActions=aiSubcommands.filter(c=>c.startsWith('ai debug ')).map(c=>c.split(' ')[2]??'');

@@ -57,7 +57,7 @@ export function requestTimeout(kind: RequestBody['kind']): number {
     // Gate: a review waits up to 2 minutes for the provider; a fork makes a worktree and starts an engine; a test plan walks
     // ignored folders (10 s) and probes the sandbox (10 s); a review plan reads the whole diff.
     if (kind === 'sessions.review' || kind === 'sessions.fork') return 5 * 60_000;
-    if (kind === 'sessions.reviewPlan' || kind === 'sessions.forkPlan' || kind === 'sessions.testPlan' || kind === 'sessions.test') return 2 * 60_000;
+    if (kind === 'sessions.reviewPlan' || kind === 'sessions.forkPlan' || kind === 'sessions.testPlan' || kind === 'sessions.test' || kind === 'sessions.devPlan' || kind === 'sessions.dev' || kind === 'sessions.devStop') return 2 * 60_000;
     return ['keys.add', 'keys.importEnv', 'sessions.create', 'sessions.resume'].includes(kind) ? 60_000 : 5000;
 }
 export class Connection extends EventEmitter {

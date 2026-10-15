@@ -1,3 +1,4 @@
+import { commandRegistry } from '../src/client/tui/commands.js';
 import { expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -27,7 +28,8 @@ it('menu arrows select commands without changing agents, Enter picks, and Esc cl
 });
 it('menu wraps, typing resets to first filtered match, and argument command fills field',async()=>{
  const {home,tty,client}=await fixture();try{
-  tty.emit('data',Buffer.from('/\x1b[A\x1b[A\r'));await expect.poll(()=>screen(tty)).toContain('› /theme █');
+  // Up twice from the first command wraps to the next-to-last one in the registry (an argument command: ⏎ fills it in).
+  tty.emit('data',Buffer.from('/\x1b[A\x1b[A\r'));await expect.poll(()=>screen(tty)).toContain(`› ${commandRegistry.at(-2)?.name} █`);
   expect(client.requests.some(r=>r.kind==='settings.set')).toBe(false);
   tty.emit('data',Buffer.from('\x1b'));await expect.poll(()=>screen(tty)).toContain('What do you want to build?');
   tty.emit('data',Buffer.from('/\x1b[Bm\r'));await expect.poll(()=>screen(tty)).toContain('Select model');

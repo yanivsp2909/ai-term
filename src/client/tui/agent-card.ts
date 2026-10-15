@@ -44,7 +44,9 @@ function activity(session: SessionInfo, now: number): Styled | null {
   if (session.status === 'done') {
     const stat = session.diffStat, change = stat ? (stat.files ? `+${stat.added} −${stat.removed}` : 'no changes') : null, tests = session.tests ? testsText(session.tests) : null;
     const review = session.review ? reviewCardText(session.review) : null, found = session.review?.state === 'done' && session.review.high > 0;
-    return { text: [change, tests?.text ?? 'ready to review', review].filter(Boolean).join(' · '), color: found ? 'status-error' : tests?.color ?? 'ink-3' };
+    // v0.9.2: its dev server, while it runs or after it ended by itself.
+    const dev = session.dev ? session.dev.state === 'running' ? `▶ dev :${session.dev.port}` : `✗ dev exited ${session.dev.code ?? 'by a signal'}` : null;
+    return { text: [change, tests?.text ?? 'ready to review', dev, review].filter(Boolean).join(' · '), color: found ? 'status-error' : tests?.color ?? 'ink-3' };
   }
   if (session.status === 'error') return { text: session.exitCode !== null && !session.statusDetail.startsWith('exit ') ? `exit ${session.exitCode} · ${session.statusDetail}` : session.statusDetail, color: 'status-error' };
   if (session.status !== 'running') return null;

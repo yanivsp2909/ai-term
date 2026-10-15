@@ -943,6 +943,21 @@ The prompt's text for this part was cut off at "times passed while the". Everyth
   - **`/queue add`** opens the start box as "Queue a new agent". Its ⏎ opens `QueueForm`: `after <agent>` or `at HH:MM`, then the limit, parsed by `parseTrigger` and `parseLimit`.
   - **`/settings` b** turns the queue on or off.
 
+### 12.24 v0.9.2 dev servers per worktree (2026-10-15; D55, off by default)
+The prompt's text for this part never arrived (it was cut off inside the queue part), so the spec was chosen the cautious way and noted in PROGRESS.md.
+- **Settings:** `settings.devServers` (`/settings` y). `settings.devCommands[repo]` is set by `project.setDevCommand` (`/dev-cmd`), one argument list per repository, like the test command.
+- **Plan (`SessionManager.devSetup`):** an agent with a worktree; the project's command; the worktree's port (`allocateFreePort`: kept per worktree in `devPorts` while the daemon runs, else the first port in 4100–4199 that no worktree holds and nothing listens on).
+  - **Sandbox:** on macOS `sandboxFor(…, {loopback:true})`, the test profile with `localhost` bind, inbound and outbound open. On Linux and Windows there is none, with a `why`.
+  - **`fingerprint`:** sha256 of the command, folder, port and sandbox.
+- **Requests:** `sessions.devPlan` returns `DevPlan` (`src/shared/dev.ts`). `sessions.dev` runs only that fingerprint (`DEV_ERRORS`). `sessions.devStop` stops it.
+- **`DevServers` (`src/daemon/dev-servers.ts`):**
+  - **Start:** `[...sandbox.prefix, ...command]`, argv only, detached, with `devEnv` (the test env without `CI`, plus `PORT`, `HOST=127.0.0.1`, `BROWSER=none`).
+  - **Output:** a tail of 20 lines with controls and escapes removed.
+  - **Stop:** `killGroup` SIGTERM, then SIGKILL after 2 s.
+  - **Ending:** a server that ends by itself sets `SessionInfo.dev = {state:'exited', code}`; a running one is `{state:'running', port}`. The card adds `▶ dev :port` or `✗ dev exited N`.
+  - **Who stops it:** `remove()` and `shutdown()`. Nothing starts or restarts it by itself.
+- **Client:** `/dev-cmd`, `/dev [agent]` (`DevAsk`: `y` starts, `x` stops, `n`/Esc closes).
+
 ## 13. Decisions log
 
 Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless he objects.

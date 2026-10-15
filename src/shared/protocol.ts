@@ -45,7 +45,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
-export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<CliEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; devServers?: boolean; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<CliEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -89,7 +89,8 @@ export interface SessionInfo {
     limit?:{resets:string|null}; // v0.6.4: its account hit a usage limit (read from its screen); resets HH:MM when it says.
     handoffTo?:string; // v0.6.3: the agent this one handed its work to (`handed off → <name>` on the card).
     diffStat?:import('./diff.js').DiffStat; // v0.7.1: its worktree's changes since it started, counted when it finished a turn.
-    tests?:import('./test-run.js').TestResult; // v0.7.4: the project's test command, run in its worktree when it finished a turn.
+    tests?:import('./test-run.js').TestResult;
+    dev?:import('./dev.js').DevState; // v0.9.2: its worktree's dev server, while it runs or after it ended by itself. // v0.7.4: the project's test command, run in its worktree when it finished a turn.
     review?:import('./review.js').ReviewState; // v0.7.4: the last /review (or auto-review) of its diff.
     priceYours?:true; // B28: AI Term's agent runs on a price you typed (/settings p, or p at a pause), $0 included.
 }
@@ -179,6 +180,13 @@ export type Request = {
 } | {
     kind:'project.setTestCommand'; cwd:string; command:string[]|null;
 } | {
+    // v0.9.2 dev servers per worktree (D55, off by default).
+    kind:'sessions.devPlan'|'sessions.devStop'; sessionId:string;
+} | {
+    kind:'sessions.dev'; sessionId:string; fingerprint:string;
+} | {
+    kind:'project.setDevCommand'; cwd:string; command:string[]|null;
+} | {
     kind:'project.setTestLoopback'; cwd:string; allowed:boolean;
 } | {
     kind:'prices.set'; provider:KeyProvider; model:string; price:ModelPrice;
@@ -236,6 +244,8 @@ export interface SuccessResponse {
     daemonPid?: number;
     proof?: string;
     queue?: import('./queue.js').QueueItem[];
+    devPlan?: import('./dev.js').DevPlan;
+    devCommand?: { repo: string; command: string[] | null };
     usage?:UsageSummary;usageDiagnostics?:UsageDiagnostics;
     worktreePreview?: WorktreePreview;
     keptWorktree?: string;

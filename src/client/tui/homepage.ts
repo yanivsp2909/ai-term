@@ -69,6 +69,8 @@ import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-comma
 import { sep } from 'node:path';
 import { QueueForm, QueuePanel } from './queue-panel.js';
 import { validateQueue } from '../../shared/queue.js';
+import { DevAsk } from './dev-ask.js';
+import { validateDevPlan, type DevPlan } from '../../shared/dev.js';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
@@ -97,7 +99,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk;
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -394,7 +396,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/dev'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -590,6 +592,8 @@ export class Homepage {
     if (command==='/undo'||command==='/redo') { await this.undoCommand(command==='/redo',argument); return; }
     if (command==='/merge'||command==='/pr') { await this.mergeCommand(command==='/pr'?'pr':'merge',argument); return; }
     if (command==='/test-cmd') { await this.testCmdCommand(argument); return; }
+    if (command==='/dev-cmd') { await this.devCmdCommand(argument); return; }
+    if (command==='/dev') { await this.devCommand(argument); return; }
     if (command==='/test') { await this.testCommand(argument); return; }
     if (command==='/queue') { await this.queueCommand(argument); return; }
     if (command==='/review') { await this.reviewCommand(argument); return; }
@@ -730,6 +734,31 @@ export class Homepage {
       if(!argument)this.showNote(result.command?`test command for ${result.repo}: ${testCommandText(result.command)}`:`no test command for ${result.repo} · /test-cmd <command>`);
       else this.showNote(result.command?`✓ test command for ${result.repo}: ${testCommandText(result.command)} · runs when an agent finishes`:`✓ no test command for ${result.repo}`);
     }catch(error){this.showNote(error instanceof Error?error.message:'Test command unavailable');}
+  }
+  // v0.9.2 /dev-cmd <command> | none: the project's dev command (the selected agent's project, else this folder's).
+  private async devCmdCommand(argument:string):Promise<void>{
+    const selected=this.sessions.find(s=>s.id===this.selectedId),cwd=selected?.worktree??selected?.cwd??this.folder;
+    const command=argument==='none'?null:parseTestCommand(argument);
+    if(!argument||argument!=='none'&&!command){this.showNote('/dev-cmd <command> · none clears it; no shell: pipes and && are plain words');return;}
+    try{const result=(await this.connection.request({kind:'project.setDevCommand',cwd,command})).devCommand;
+      this.showNote(result?.command?`✓ dev command for ${result.repo}: ${testCommandText(result.command)} · /dev starts it`:`✓ no dev command for ${result?.repo??'this project'}`);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Dev command unavailable');}
+  }
+  // v0.9.2 /dev [agent]: the plan first; y starts it, x stops a running one; the card shows ▶ dev :port.
+  private async devCommand(name:string):Promise<void>{
+    const session=this.namedOrSelected(name,'/dev');if(!session)return;
+    let plan:DevPlan;
+    try{plan=validateDevPlan((await this.connection.request({kind:'sessions.devPlan',sessionId:session.id})).devPlan);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Dev server unavailable');return;}
+    if(this.popup){this.showNote('close the open popup first');return;}
+    const ask:DevAsk=new DevAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
+      try{await this.connection.request({kind:'sessions.dev',sessionId:session.id,fingerprint:plan.fingerprint});this.showNote(`▶ dev server for ${session.title} · http://127.0.0.1:${plan.port}`);}
+      catch(error){this.showNote(`dev server didn't start: ${error instanceof Error?error.message:'request failed'}`);}
+    });},()=>{this.enqueue(async()=>{
+      try{await this.connection.request({kind:'sessions.devStop',sessionId:session.id});this.showNote(`dev server for ${session.title} stopped`);}
+      catch(error){this.showNote(error instanceof Error?error.message:'Dev server could not be stopped');}
+    });});
+    this.popup=ask;this.draw(true);
   }
   // v0.9.1 /queue lists the queue; /queue add opens the start box, whose ⏎ then asks when it starts and its limit.
   private async queueCommand(argument:string):Promise<void>{

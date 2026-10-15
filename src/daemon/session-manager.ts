@@ -45,6 +45,11 @@ import { windowsRecipe, windowsShell } from './win-launch.js';
 import { pathInside } from '../shared/path-inside.js';
 import { limitCaps, overLimit, stopDelayMs, type QueueLimit } from '../shared/queue.js';
 const QUEUE_CHECK_MS = 15_000, QUEUE_REPORT_MS = 3 * 60_000;
+import { allocateFreePort, devEnv, DevServers } from './dev-servers.js';
+import type { DevPlan, DevState } from '../shared/dev.js';
+const DEV_OFF = 'Dev servers are off; turn them on in /settings (y)', DEV_NO_TREE = 'A dev server runs in an agent\'s worktree; this agent has none', DEV_NO_CMD = "Set the project's dev command with /dev-cmd first";
+const DEV_NO_PORT = 'No free dev port left (4100–4199); stop a dev server first', DEV_CHANGED = 'The dev server setup changed since it was shown; run /dev again', DEV_RUNNING = 'A dev server already runs for this agent; /dev shows it';
+export const DEV_ERRORS: readonly string[] = [DEV_OFF, DEV_NO_TREE, DEV_NO_CMD, DEV_NO_PORT, DEV_CHANGED, DEV_RUNNING, "The dev server couldn't start"];
 import { prepareSandbox, sandboxReady, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, forkTitle, type ForkPlan, type ForkTarget } from '../shared/fork.js';
@@ -135,6 +140,9 @@ export class SessionManager extends EventEmitter {
     // null: the system's own (sandbox-exec on macOS, bwrap on Linux).
     static sandboxExec: string | null = null;
     private secretTimers=new Map<string,ReturnType<typeof setTimeout>>();
+    // v0.9.2: dev servers, and each worktree's port (kept while the daemon runs).
+    private readonly dev=new DevServers({error:(text:string)=>this.log.error(text)});
+    private readonly devPorts=new Map<string,number>();
     private sessions = new Map<string, Live>();
     private size = { cols: 85, rows: 30 };
     private saving: Promise<void> = Promise.resolve();
@@ -1078,11 +1086,12 @@ export class SessionManager extends EventEmitter {
     }
     // The run's sandbox, or null when this Mac can't give one (not macOS, no sandbox-exec, a path no profile can hold, or a
     // profile the system refuses): then nothing runs by itself. The caller disposes what it gets.
-    private async sandboxFor(path:string,repo:string|undefined):Promise<PreparedSandbox|null>{
+    // loopback: a dev server listens on 127.0.0.1 whatever the project's test switch says (v0.9.2).
+    private async sandboxFor(path:string,repo:string|undefined,force?:{loopback:boolean}):Promise<PreparedSandbox|null>{
         // Windows has no sandbox: said as it is, not as a path that couldn't go into a profile (gate).
         if(process.platform==='win32'){this.log.error('Test sandbox: Windows has none; tests ask first');return null;}
         let loopback=false;
-        if(repo)try{loopback=(await new SettingsStore(this.paths.root).get()).testLoopback?.includes(await projectRepo(repo))===true;}catch{this.log.error('Settings unreadable; tests run without 127.0.0.1');}
+        if(force)loopback=force.loopback;else if(repo)try{loopback=(await new SettingsStore(this.paths.root).get()).testLoopback?.includes(await projectRepo(repo))===true;}catch{this.log.error('Settings unreadable; tests run without 127.0.0.1');}
         // The repository's git folder stays readable (a worktree's .git file points into it); the rest of home doesn't.
         let gitDir:string|undefined;
         if(repo)try{gitDir=await repoCommonDir(repo);}catch{this.log.error('Test sandbox: the repository\'s git folder is unknown; git inside tests may fail');}
@@ -1359,7 +1368,7 @@ export class SessionManager extends EventEmitter {
     }
     async stop(id: string): Promise<void> { const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
-    async remove(id: string): Promise<void> { if (this.closing) throw new Error('Background service is stopping'); const live = this.sessions.get(id); if (!live)
+    async remove(id: string): Promise<void> { if (this.closing) throw new Error('Background service is stopping'); await this.dev.stop(id); const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
         throw new Error('Only exited sessions can be removed'); this.cancelTests(id,true); this.reviewResults.delete(id); this.reviewedDiff.delete(id); if(live.mirrorFailed)await this.stop(id); await live.output; await removeSessionFiles(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
     // A worktree shared by resumed agents belongs to whichever is still live, else the newest record.
@@ -1455,8 +1464,49 @@ export class SessionManager extends EventEmitter {
         const task=live.output.then(()=>{if(!owned())throw new Error('Not attached');live.mirror.resize(cols,rows);live.host?.resize(cols,rows);this.event({kind:'session.previewResized',sessionId:id,cols,rows});});
         live.output=task.catch(()=>{this.log.error('Attachment change failed');});await task;
     }
+    // v0.9.2 dev servers per worktree (D55, off by default): /dev-cmd per project, a plan shown before any start, one
+    // port per worktree on 127.0.0.1, the test sandbox with 127.0.0.1 open on macOS. Linux's sandbox gives a run its own
+    // network, which your browser can't reach, so there (and on Windows) it runs as you after your y, every time.
+    async setDevCommand(cwd:string,command:string[]|null):Promise<{repo:string;command:string[]|null}>{
+        const repo=await this.projectOf(cwd);
+        await new SettingsStore(this.paths.root).update(async settings=>{const next={...settings.devCommands??{}};if(command)next[repo]=command;else delete next[repo];return {...settings,devCommands:next};});
+        return {repo,command};
+    }
+    private async devSetup(id:string):Promise<{plan:DevPlan;box:PreparedSandbox|null;env:Record<string,string>;live:Live}>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        let settings:Settings;try{settings=await new SettingsStore(this.paths.root).get();}catch{throw new Error(DEV_OFF);}
+        if(settings.devServers!==true)throw new Error(DEV_OFF);
+        const worktree=live.info.worktree,record=worktree?this.worktreeRecords.get(worktree):undefined;
+        if(!worktree||!record?.repo)throw new Error(DEV_NO_TREE);
+        const command=settings.devCommands?.[await projectRepo(record.repo)];
+        if(!command)throw new Error(DEV_NO_CMD);
+        const port=await allocateFreePort(worktree,this.devPorts);if(port===null)throw new Error(DEV_NO_PORT);
+        this.devPorts.set(worktree,port);
+        const box=process.platform==='darwin'?await this.sandboxFor(worktree,record.repo,{loopback:true}):null;
+        const why=box?undefined:process.platform==='linux'?"no sandbox: on Linux a sandboxed server can't be reached from your browser":process.platform==='win32'?'no sandbox: Windows has none AI Term can use':"no sandbox: this Mac couldn't start one";
+        const running=this.dev.has(id);
+        const fingerprint=createHash('sha256').update(JSON.stringify({command,cwd:worktree,port,sandbox:!!box})).digest('hex');
+        return {plan:{title:live.info.title,command,cwd:worktree,port,sandbox:!!box,...(why?{why}:{}),fingerprint,running,tail:this.dev.tail(id)},box,env:devEnv(process.env,port),live};
+    }
+    async devPlan(id:string):Promise<DevPlan>{const {plan,box}=await this.devSetup(id);await box?.dispose().catch(()=>this.log.error('Dev server: its temp folder could not be removed'));return plan;}
+    // y on the plan you saw, and only that plan: a command, port or sandbox changed since refuses.
+    async runDevPlan(id:string,fingerprint:string):Promise<void>{
+        const {plan,box,env,live}=await this.devSetup(id);
+        if(plan.fingerprint!==fingerprint){await box?.dispose().catch(()=>this.log.error('Dev server: its temp folder could not be removed'));throw new Error(DEV_CHANGED);}
+        if(plan.running){await box?.dispose().catch(()=>this.log.error('Dev server: its temp folder could not be removed'));throw new Error(DEV_RUNNING);}
+        const setDev=(dev:DevState|undefined)=>{if(dev)live.info.dev=dev;else delete live.info.dev;if(this.sessions.get(id)===live)this.event({kind:'session.updated',session:{...live.info}});};
+        await this.dev.start(id,{command:plan.command,cwd:plan.cwd,port:plan.port,sandbox:box,env},code=>setDev({state:'exited',port:plan.port,code}));
+        setDev({state:'running',port:plan.port});
+    }
+    async stopDev(id:string):Promise<void>{
+        const live=this.sessions.get(id);await this.dev.stop(id);
+        if(live?.info.dev){delete live.info.dev;this.event({kind:'session.updated',session:{...live.info}});}
+    }
     async shutdown(): Promise<void> {
         this.closing=true;
+        // Dev servers go with the daemon: nothing of an agent's keeps running unseen.
+        await this.dev.stopAll();
         for(const id of [...this.testRuns.keys()])this.cancelTests(id,true);
         const ids=[...this.sessions.keys()];
         const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
