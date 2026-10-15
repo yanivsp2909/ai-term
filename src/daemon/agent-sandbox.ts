@@ -21,7 +21,8 @@ const runs = (file: string, args: readonly string[]): Promise<boolean> => new Pr
   execFile(file, [...args], { timeout: PROBE_TIMEOUT_MS, env: { PATH: '/usr/bin:/bin' } }, error => done(!error));
 });
 // The probe uses the flags the bash sandbox needs (its own PID namespace and /proc): a bwrap that can't make one fails here.
-export const BWRAP_PROBE = ['--die-with-parent', '--new-session', '--unshare-pid', '--unshare-user-try', '--bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--', '/bin/true'];
+// /bin/sh rather than /bin/true, which NixOS doesn't have (TS review); the namespaces and mounts are the real ones.
+export const BWRAP_PROBE = ['--die-with-parent', '--new-session', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try', '--unshare-user-try', '--bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', '--', '/bin/sh', '-c', ':'];
 export interface AgentSandboxDeps { bwrap?: string | null; probe?: (file: string, args: readonly string[]) => Promise<boolean>; sandboxExec?: string }
 export async function agentSandbox(platform: NodeJS.Platform = process.platform, deps: AgentSandboxDeps = {}): Promise<AgentSandbox> {
   const probe = deps.probe ?? runs;
@@ -39,10 +40,16 @@ export async function agentSandbox(platform: NodeJS.Platform = process.platform,
   return { dontAsk: false, note: NOTE.other };
 }
 export function dontAskNote(state: AgentSandbox): string | null { return state.dontAsk ? null : state.note ?? NOTE.unknown; }
-// Looked up at most once a minute: installing bubblewrap shows up without a daemon restart.
-const CACHE_MS = 60_000;
-let cached: { at: number; value: Promise<AgentSandbox> } | null = null;
+// A sandbox that works is looked at again after a minute; one that didn't after 10 s, so a slow first probe doesn't hold
+// Don't ask back for long (TS review). The daemon starts the first look at once (warmAgentSandbox).
+export function cacheFor(state: AgentSandbox): number { return state.dontAsk ? 60_000 : 10_000; }
+let cached: { at: number; value: Promise<AgentSandbox>; ttl: number } | null = null;
 export function currentAgentSandbox(now = Date.now()): Promise<AgentSandbox> {
-  if (!cached || now - cached.at > CACHE_MS) cached = { at: now, value: agentSandbox().catch((): AgentSandbox => ({ dontAsk: false, note: NOTE.unknown })) };
+  if (!cached || now - cached.at > cached.ttl) {
+    const entry = { at: now, ttl: Infinity, value: agentSandbox().catch((): AgentSandbox => ({ dontAsk: false, note: NOTE.unknown })) };
+    void entry.value.then(state => { entry.ttl = cacheFor(state); });
+    cached = entry;
+  }
   return cached.value;
 }
+export function warmAgentSandbox(): void { void currentAgentSandbox(); }

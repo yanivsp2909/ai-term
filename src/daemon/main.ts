@@ -6,7 +6,8 @@ import { UsageService } from './usage-service.js';
 import { migratePrices } from './price-migration.js';
 import { DaemonServer } from './server.js';
 import { Notifier, notifierAppPath, notificationsSetting, launchNotifySend } from './notifier.js';
-import { findExecutable } from '../shared/executable.js';
+import { systemTool } from '../shared/executable.js';
+import { warmAgentSandbox } from './agent-sandbox.js';
 import { ClickReceiver, CLICK_SOCKET } from './click-receiver.js';
 import { TerminalLauncher } from './terminal-launch.js';
 import { createRequire } from 'node:module';
@@ -29,7 +30,7 @@ export async function runDaemon(entry?:string): Promise<void> {
     // macOS: the signed helper app, with click-through. Linux (v0.8.1): notify-send when installed, no click-through.
     const mac = process.platform === 'darwin';
     const notifier = mac ? new Notifier(entry ? notifierAppPath(entry) : null, log, notificationsSetting(paths.root))
-        : new Notifier(null, log, notificationsSetting(paths.root), launchNotifySend, undefined, undefined, undefined, { platform: process.platform, notifySend: process.platform === 'linux' ? await findExecutable('notify-send') : null });
+        : new Notifier(null, log, notificationsSetting(paths.root), launchNotifySend, undefined, undefined, undefined, { platform: process.platform, notifySend: process.platform === 'linux' ? await systemTool('notify-send') : null });
     const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage,notifier);
     manager.on('statusChanged', (session: SessionInfo, previous: StatusState, next: StatusState, attached: boolean) => notifier.transition(session, previous, next, attached));
     // Notification clicks: select the agent in an open homepage, otherwise open Terminal inside it (D43).
@@ -70,6 +71,7 @@ export async function runDaemon(entry?:string): Promise<void> {
     process.on('SIGINT', onSignal);
     manager.on('fatal', (error: unknown) => { void shutdown(error); });
     try {
+        warmAgentSandbox();
         notifier.start();
         await usage.start();
         // B27: old price records keyed by model id alone move to their one provider (nothing is lost either way).

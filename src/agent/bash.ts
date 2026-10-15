@@ -1,10 +1,11 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, readlink, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { PERSISTENCE_DIRS, PERSISTENCE_FILES, SANDBOX_EXEC, SandboxPathError, sandboxPath } from '../daemon/test-sandbox.js';
-import { bashSandboxPlan, bwrapBashArgs, findBwrap, runtimeDir, ShadowError, type BwrapBashSpec } from '../daemon/bwrap.js';
+import { bashSandboxPlan, bwrapBashArgs, findBwrap, runtimeDirs, ShadowError, type BwrapBashSpec } from '../daemon/bwrap.js';
+import { BWRAP_PROBE } from '../daemon/agent-sandbox.js';
 import { visible } from './display.js';
 import { isFsError } from '../shared/paths.js';
 import { ToolError } from './tools.js';
@@ -25,8 +26,8 @@ export interface BashResult { exitCode: number | null; signal: string | null; st
 // a test passes a fake one.
 // require: Don't ask (v0.8.1). A command never runs without its sandbox then: no sandbox-exec, no bubblewrap or another
 // system refuses it. In Ask you approve each command, so it runs as before where no sandbox exists.
-// platform: process.platform unless a test says otherwise.
-export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string; protect?: readonly string[]; user?: string; require?: boolean; platform?: NodeJS.Platform } }
+// platform, linux: process.platform and the real bubblewrap, unless a test says otherwise.
+export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string; protect?: readonly string[]; user?: string; require?: boolean; platform?: NodeJS.Platform; linux?: { bwrap: string | null; ready: () => Promise<boolean> } } }
 // Real paths (link targets included) of the places in PERSISTENCE_FILES and PERSISTENCE_DIRS; parents: the folders
 // between your home and them (~/.config, ~/Library), which may not be renamed, removed or replaced by a link (security
 // review: a ~/.config swapped for a link would lead ~/.config/git somewhere no rule names). Their other contents stay open.
@@ -100,17 +101,26 @@ async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
 }
 
 // Linux (v0.8.1): bubblewrap with D57 + B29's rules (src/daemon/bwrap.ts). A refused write there reads as a read-only
-// file system, or busy for a folder that was rebuilt.
+// file system, or busy for a folder that was rebuilt or pinned. Where bubblewrap can't start (user namespaces off, a
+// container) or its plan can't be made, Ask runs the command you approved as before and Don't ask refuses (TS review).
+// The probe is looked at once per agent: bash commands don't wait on it again.
+let linuxReady: Promise<boolean> | null = null;
+const probeLinux = (bwrap: string): Promise<boolean> => linuxReady ??= new Promise(done => {
+  execFile(bwrap, [...BWRAP_PROBE], { timeout: 10_000, env: { PATH: '/usr/bin:/bin' } }, error => done(!error));
+});
 async function linuxArgv(command: string, options: BashOptions, without: (why: string) => Argv): Promise<Argv> {
   const sandbox = options.sandbox; if (!sandbox) return without('no sandbox was asked for');
-  const bwrap = await findBwrap();
+  const bwrap = sandbox.linux ? sandbox.linux.bwrap : await findBwrap();
   if (!bwrap) return without("bubblewrap (bwrap) isn't installed");
+  if (!await (sandbox.linux ? sandbox.linux.ready() : probeLinux(bwrap))) return without("bubblewrap couldn't start a sandbox here");
   const user = sandbox.user ?? homedir();
-  let spec: BwrapBashSpec, persistence: Persistence;
-  try { [spec, persistence] = await Promise.all([bashSandboxPlan({ user, aiTermHome: sandbox.home, cwd: options.cwd, protect: sandbox.protect ?? [], runtime: await runtimeDir(options.env) }), persistencePaths(user, options.env)]); }
-  catch (error) { throw new ToolError(error instanceof ShadowError ? error.message : "bash can't run here: AI Term couldn't check the folders its sandbox protects"); }
-  let args: string[];
-  try { args = bwrapBashArgs(spec); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a path with control characters (this folder, or where one of your dotfile links leads)"); throw error; }
+  let spec: BwrapBashSpec, persistence: Persistence, args: string[];
+  try {
+    [spec, persistence] = await Promise.all([bashSandboxPlan({ user, aiTermHome: sandbox.home, cwd: options.cwd, protect: sandbox.protect ?? [], runtime: await runtimeDirs({ ...process.env, ...options.env.XDG_RUNTIME_DIR ? { XDG_RUNTIME_DIR: options.env.XDG_RUNTIME_DIR } : {} }) }), persistencePaths(user, options.env)]);
+    args = bwrapBashArgs(spec);
+  } catch (error) {
+    return without(error instanceof ShadowError ? error.message.replace(/^bash can't run here: /, '') : error instanceof SandboxPathError ? 'a path it protects has control characters' : "AI Term couldn't check the folders its sandbox protects");
+  }
   return { program: bwrap, args: [...args, '--', '/bin/sh', '-c', command], guard: { user: spec.shadows[0]?.dir ?? user, cwd: spec.cwd, places: { ...persistence, home: spec.aiTermHome } } };
 }
 

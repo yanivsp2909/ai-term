@@ -27,8 +27,23 @@ export const SAMPLE_COMMANDS = {
 // Linux (v0.8.1): memory and network come from /proc, read by cat so the sampler's one way of running things stays.
 export interface SampleCommands { ps: { file: string; args: readonly string[] }; memory: { file: string; args: readonly string[] }; net: { file: string; args: readonly string[] } }
 export function sampleCommands(platform: NodeJS.Platform = process.platform): SampleCommands {
-  if (platform === 'linux') return { ps: SAMPLE_COMMANDS.ps, memory: { file: '/bin/cat', args: ['/proc/meminfo'] }, net: { file: '/bin/cat', args: ['/proc/net/dev'] } };
+  if (platform === 'linux') return { ps: { file: '/bin/ps', args: ['-Ao', 'pid=,ppid=,rss=,times='] }, memory: { file: '/bin/cat', args: ['/proc/meminfo'] }, net: { file: '/bin/cat', args: ['/proc/net/dev'] } };
   return { ps: SAMPLE_COMMANDS.ps, memory: SAMPLE_COMMANDS.vmStat, net: SAMPLE_COMMANDS.netstat };
+}
+// Linux: procps' %cpu is a lifetime average, so an agent idle after an hour of work would still look busy (TS review).
+// times= is cumulative CPU seconds; the share is its change between two looks.
+export interface PsTimes { pid: number; ppid: number; rssKb: number; seconds: number }
+export function parsePsTimes(text: string): PsTimes[] {
+  const rows: PsTimes[] = [];
+  for (const line of text.split('\n')) {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$/);
+    if (match) rows.push({ pid: Number(match[1]), ppid: Number(match[2]), rssKb: Number(match[3]), seconds: Number(match[4]) });
+  }
+  return rows;
+}
+// cpu: percent of one core over the interval (ps's scale on macOS); a process not seen last time counts 0 this time.
+export function psCpuShares(rows: readonly PsTimes[], before: ReadonlyMap<number, number>, seconds: number): ProcRow[] {
+  return rows.map(row => { const then = before.get(row.pid); return { pid: row.pid, ppid: row.ppid, rssKb: row.rssKb, cpu: then === undefined || !(seconds > 0) || row.seconds < then ? 0 : (row.seconds - then) / seconds * 100 }; });
 }
 // Used = MemTotal − MemAvailable (what `free` calls used plus what the kernel can't reclaim quickly).
 export function parseMeminfo(text: string): number | null {
@@ -37,6 +52,8 @@ export function parseMeminfo(text: string): number | null {
   if (total === null || available === null || !Number.isSafeInteger(total) || available > total) return null;
   return total - available;
 }
+// Virtual interfaces carry bytes the physical one also counts (containers, bridges, VPN tunnels): left out (TS review).
+const VIRTUAL = /^(?:lo|veth|docker|br-|virbr|vnet|cni|flannel|cali|kube|podman|lxc|lxd|tun|tap|wg|tailscale|zt)/;
 // /proc/net/dev: two header lines, then `name: rx-bytes ×8 fields, tx-bytes ×8 fields`. Loopback doesn't count.
 export function parseProcNetDev(text: string): Map<string, NetCounter> | null {
   const lines = text.split('\n');
@@ -45,7 +62,7 @@ export function parseProcNetDev(text: string): Map<string, NetCounter> | null {
   for (const line of lines.slice(2)) {
     const match = line.match(/^\s*([^:\s]+):\s*(.*)$/); if (!match) continue;
     const name = match[1] ?? '', fields = (match[2] ?? '').trim().split(/\s+/);
-    if (name === 'lo' || fields.length < 16 || !fields.every(field => /^\d+$/.test(field))) continue;
+    if (VIRTUAL.test(name) || fields.length < 16 || !fields.every(field => /^\d+$/.test(field))) continue;
     counters.set(name, { rx: Number(fields[0]), tx: Number(fields[8]) });
   }
   return counters;
@@ -202,7 +219,7 @@ export function runCommand(file: string, args: string[]): Promise<string> {
 }
 export const defaultSamplerDeps = (sessions: () => SessionRoot[], log: SamplerDeps['log']): SamplerDeps => ({ run: runCommand, cpus, totalmem, now: () => performance.now(), sessions, log });
 
-interface Baseline { at: number; cpus: CpuInfo[]; net: Map<string, NetCounter> }
+interface Baseline { at: number; cpus: CpuInfo[]; net: Map<string, NetCounter>; times?: Map<number, number> }
 export class SystemSampler extends EventEmitter {
   private timer: ReturnType<typeof setInterval> | undefined;
   private baseline: Baseline | null = null;
@@ -242,15 +259,15 @@ export class SystemSampler extends EventEmitter {
     const at = this.deps.now(), cpuList = this.deps.cpus(), net = linux ? parseProcNetDev(netText) : parseNetstat(netText), memUsed = linux ? parseMeminfo(vmText) : parseVmStat(vmText);
     if (!net) throw new SampleError(linux ? '/proc/net/dev unreadable' : 'netstat output unreadable');
     if (memUsed === null) throw new SampleError(linux ? '/proc/meminfo unreadable' : 'vm_stat output unreadable');
-    const before = this.baseline;
-    this.baseline = { at, cpus: cpuList, net };
+    const before = this.baseline, times = linux ? parsePsTimes(psText) : null;
+    this.baseline = { at, cpus: cpuList, net, ...times ? { times: new Map(times.map(row => [row.pid, row.seconds])) } : {} };
     if (!before) return null; // the first sample only sets the baseline for the deltas
     const machineCpu = cpuPercent(before.cpus, cpuList), rates = netRates(before.net, net, (at - before.at) / 1000);
     if (machineCpu === null || rates === null) return null; // counter reset or no elapsed time: skip this one
     const memTotal = this.deps.totalmem();
     return validateSystemStats({
       cpuPercent: machineCpu, memUsedBytes: Math.min(memUsed, memTotal), memTotalBytes: memTotal, netRxBytesPerSec: rates.rx, netTxBytesPerSec: rates.tx,
-      sessions: sessionUsage(parsePs(psText), this.deps.sessions(), cpuList.length),
+      sessions: sessionUsage(times ? psCpuShares(times, before.times ?? new Map(), (at - before.at) / 1000) : parsePs(psText), this.deps.sessions(), cpuList.length),
     });
   }
 }

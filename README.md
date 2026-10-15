@@ -23,11 +23,18 @@ Everything above works on Linux too, with these differences:
   - **Test network:** a test run gets its own network, so only its own 127.0.0.1 works. Your machine's services stay closed even with `l` on, which only matters on macOS.
   - **What a block looks like:** a hidden file reads as missing, so a blocked write or network shows `✗ blocked by sandbox`, and a blocked read shows as a test failure.
   - **Agent bash (D57, B29):** AI Term's agent's bash gets its own process list, so it can't see or attach to your other processes. It can't see `~/.ai-term` (its own worktree excepted), AI Term's sockets, or your session's runtime folder (where the D-Bus session bus would hand out Secret Service keys).
-  - **Persistence spots:** read-only. Home, `~/.config` and the like are rebuilt for each command with every entry put back, so a startup file that doesn't exist yet can't be created either. Anything new at those levels vanishes when the command ends.
+  - **Persistence spots:** read-only. Besides the macOS list, Linux adds `~/.xprofile`, `~/.xsessionrc`, `~/.xinitrc`, `~/.pam_environment`, `~/.gnupg/gpg-agent.conf`, `~/.local/share/systemd/user`, Plasma and window-manager autostart (`~/.config/plasma-workspace/env`, `autostart-scripts`, `i3`, `sway`, `hypr`, `openbox`), and the PATH folders `~/.local/bin` and `~/bin` (a planted `git` there would run as you).
+  - **How:** home, `~/.config` and the like are rebuilt for each command with every entry put back, so a startup file that doesn't exist yet can't be created either. Anything new at those levels vanishes when the command ends, and the agent is told so.
+  - **Renames:** every folder between them and a protected file, such as `~/work/proj/.git` or a dotfiles folder behind a `~/.zshrc` link, is pinned so it can't be renamed and swapped out. A repository without `.git/hooks` gets an empty one, made read-only.
+  - **Unreadable entries:** an entry of home that can't be read, such as a dead network mount, is left out rather than stopping bash.
+  - **Where bubblewrap can't start:** in Ask, bash runs the command you approved as before. In Don't ask it refuses.
+  - **What stays reachable** (as on macOS, where bash also has the network): the Docker socket, an X11 display, an ssh-agent in `/tmp`, and a D-Bus session bus on an abstract socket (older X11 sessions). The Secret Service gives any program of yours a saved key while the keyring is unlocked; only the sandboxes keep it out.
   - **Without bubblewrap** (or where it can't start, for example with user namespaces turned off): auto-test asks every time (`tests need you · no sandbox`). AI Term's agent offers Ask only, and the start box and `/mode` show why in one line (`don't ask needs bubblewrap (bwrap), which isn't installed`). The same goes anywhere a sandbox can't start, macOS included.
+- **Helpers:** `notify-send`, `xdg-open`, `wl-copy`, `xclip` and `xsel` are run only from `/usr/local/bin`, `/usr/bin` or `/bin`. An agent can write a PATH folder in your home, and AI Term runs these outside any sandbox.
+- **AppImage:** the daemon starts from the AppImage file itself, not from the app's temporary mount, so it keeps working after the app quits.
 - **Notifications:** through `notify-send` when it is installed, else none (`/settings` says `notifications unavailable: notify-send isn't installed`). Clicking one does nothing on Linux.
 - **Clipboard** (`y`, `Y`): `wl-copy` on Wayland, else `xclip` or `xsel`. With none of them, the copy says to install one.
-- **`/open`:** `xdg-open`. **This machine:** `/proc/meminfo`, `/proc/net/dev` and `ps`.
+- **`/open`:** `xdg-open`. **This machine:** `/proc/meminfo`, `/proc/net/dev` (containers, bridges and VPN tunnels left out) and `ps` CPU time, measured as the change since the last look.
 - **Desktop app:** an AppImage and a .deb from `npm run app:dist` on Linux, unsigned. Each ⌘ key in the desktop key table below is Ctrl+Shift there (Ctrl+Shift+C copies, Ctrl+Shift+T starts an agent, and so on). There's no Hide, no Zoom and no `ai` command install from the app.
 
 ## Status

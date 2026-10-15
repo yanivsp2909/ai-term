@@ -22,3 +22,9 @@ export async function findExecutable(name: string, path = process.env.PATH ?? ''
     }
     return null;
 }
+// Helpers AI Term itself runs outside any sandbox (notify-send, xdg-open, the clipboard tools) come only from these system
+// folders: a PATH folder in your home (~/.local/bin) is one an agent's bash can write (security review).
+export const SYSTEM_TOOL_DIRS: readonly string[] = ['/usr/local/bin', '/usr/bin', '/bin'];
+export async function systemTool(name: string, dirs: readonly string[] = SYSTEM_TOOL_DIRS): Promise<string | null> {
+    return findExecutable(name, dirs.join(delimiter));
+}

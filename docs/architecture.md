@@ -827,16 +827,24 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
     - **Hidden:** `--tmpfs` over the runtime dir (D-Bus session bus, so no Secret Service requests) and over `AITERM_HOME`, with the agent's worktree bound back.
     - **Read-only:** `--ro-bind` link targets and the repository's `hooks/` and `config`.
     - **Limits:** more than 2000 entries in a rebuilt folder refuses the command. A blocked write reads as `EROFS` or `EBUSY` (`blockedPlace`).
+    - **Pinned (Part B review):** every folder between the deepest rebuilt folder (or `/`) and each read-only place is `--bind`-ed onto itself, so renaming an ancestor and copying it back can't leave a writable `.git/hooks` or dotfile target. A missing `hooks/` is created empty first (the one write `bashSandboxPlan` makes).
+    - **Runtime folders:** `runtimeDirs` takes AI Term's own `XDG_RUNTIME_DIR` (the bash env never has it) and `/run/user/<uid>`, each as a real path.
+    - **Unreadable entries:** an entry `lstat` can't read is left out.
+    - **Probe:** `linuxArgv` probes once per agent with `BWRAP_PROBE` (the real namespaces, `/bin/sh -c :`). If that fails, or the plan does, Ask falls back to plain `/bin/sh` and Don't ask refuses.
+    - **Residual (shared network, as on macOS):** filesystem sockets outside the rebuilt and hidden places (Docker, X11, `/tmp` ssh-agent) and abstract D-Bus buses stay reachable. The Secret Service has no per-application access, so any process of yours outside a sandbox can read a key while the keyring is unlocked.
 - **Ask only without a sandbox (`src/daemon/agent-sandbox.ts`).**
   - `agentSandbox()` checks for a sandbox: macOS needs `sandbox-exec` and a probe; Linux needs bwrap and a probe with `--unshare-pid`; Windows and other systems have none.
   - The result is cached for a minute and sent with `engines.status` as `agentSandbox {dontAsk, note}`.
   - **Client:** the homepage offers only `ask` for AI Term's agent (`modeValues(engine, dontAsk)`); the start box's mode row and `/mode` show the note.
   - **Daemon:** `create` refuses `dontAsk` for `ai-term` with the same note (`AGENT_SANDBOX_ERRORS`).
   - **Agent:** in Don't ask its bash runs with `require`, so a command never runs without its sandbox there.
+- **Helpers** AI Term runs outside any sandbox (`notify-send`, `xdg-open`, the clipboard tools) come from `SYSTEM_TOOL_DIRS` only (`/usr/local/bin`, `/usr/bin`, `/bin`), never from a PATH folder in home.
+- **AppImage.** `daemonCommand` starts the daemon from `$APPIMAGE` with `-e`, which finds the entry again under that run's `$APPDIR`, so it doesn't depend on the app's temporary mount.
 - **Notifications.** `Notifier` with a `NotifierSystem`. Linux runs `notify-send --app-name=AI Term -- AI Term <body>`, with markup escaped, and its env holds only the D-Bus and display variables. The state is `none` without it. Clicks and the Terminal launcher are macOS only.
 - **Elsewhere.**
   - Clipboard: `wl-copy`, `xclip` or `xsel`. `/open`: `xdg-open`.
-  - Stats: `sampleCommands('linux')` reads `/proc/meminfo` and `/proc/net/dev` through `cat`. `ps -Ao` works on both systems.
+  - Stats: `sampleCommands('linux')` reads `/proc/meminfo` and `/proc/net/dev` through `cat`, skipping virtual interfaces. Per-agent CPU comes from `ps -Ao pid=,ppid=,rss=,times=`, as the change in CPU seconds since the last sample (`psCpuShares`), because procps' `%cpu` is a lifetime average.
+  - `/test` on Linux says 127.0.0.1 is always the tests' own, and `l` does nothing there.
   - Desktop: `scripts/app-config.mjs` makes AppImage and deb targets, unsigned. `runtimePaths` accepts `resources/app`, with no `ai-node` and no command install. Accelerators are Ctrl+Shift.
 
 ## 13. Decisions log

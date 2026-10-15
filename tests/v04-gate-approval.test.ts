@@ -53,7 +53,7 @@ it('a task prompt with escape sequences shows them as markers, so the job confir
   a.instance.input('go\r');
   await vi.waitFor(() => expect(a.output()).toContain('● allow task reviewer?'));
   expect(raw(a.output())).toBeNull();
-  expect(a.output()).toContain("Don't ask permissions; commands are unsandboxed");
+  expect(a.output()).toContain("Don't ask permissions; commands run in AI Term's sandbox");
   expect(a.output()).toContain('␛]52;c;Q0FOQVJZ<U+0007>␛[2A␛[2K');
   a.instance.input('\x1b');
 });

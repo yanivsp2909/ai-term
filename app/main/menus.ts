@@ -27,6 +27,13 @@ export function appMenu(handlers: MenuHandlers, platform: NodeJS.Platform = proc
 }
 // The same mapping handles webContents key events and native menu clicks. This
 // also keeps accelerators working while a search/form field has focus.
+// Linux and Windows: with Shift held a key reads as its shifted sign (Ctrl+Shift+1 is '!', Ctrl+Shift+, is '<'), so the
+// shortcut comes from the physical key (TS review).
+const CODE_KEYS: Record<string, string> = { Minus: '-', Equal: '=', Comma: ',' };
+export function shortcutKey(input: { key: string; code: string }, platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'darwin') return input.key;
+  return /^Digit\d$/.test(input.code) ? input.code.slice(5) : /^Key[A-Z]$/.test(input.code) ? input.code.slice(3).toLowerCase() : CODE_KEYS[input.code] ?? input.key.toLowerCase();
+}
 export function menuShortcut(key: string): AppCommand | MenuAction | 'close' | 'quit' | undefined {
   const commands: Record<string, AppCommand | MenuAction | 'close' | 'quit'> = {k:'palette',t:'new-agent',d:'split',e:'home',',':'settings',c:'copy',v:'paste',a:'select-all',f:'find','+':'font-increase','=':'font-increase','-':'font-decrease','0':'font-reset',w:'close',q:'quit'};
   return /^[1-9]$/.test(key) ? `select ${key}` as AppCommand : commands[key.toLowerCase()];

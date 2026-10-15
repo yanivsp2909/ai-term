@@ -5,7 +5,7 @@ import { open, lstat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { validateSuccess } from '../shared/validate.js';
 import type { Paths } from '../shared/paths.js';
 import { preparePaths, isFsError } from '../shared/paths.js';
@@ -15,7 +15,15 @@ export type RequestBody = Request extends infer R ? R extends Request ? Omit<R, 
 export class DaemonRequestError extends Error {}
 // Source mode: a bare `--import tsx` resolves from the caller's folder, and tsx reads that folder's tsconfig.json. The absolute
 // loader and AI Term's own folder (two levels above src/cli/index.ts) keep both inside AI Term.
-export function daemonCommand(entry: string): { args: string[]; cwd?: string } {
+// AppImage (v0.8.1, TS review): the app runs from a temporary mount that goes when it quits, and the daemon outlives it.
+// So the daemon starts from the AppImage file itself, which mounts its own copy for as long as the daemon runs; the
+// entry is found again inside that mount (APPDIR), at the same place relative to it.
+export function daemonCommand(entry: string, env: Readonly<Record<string, string | undefined>> = process.env): { file?: string; args: string[]; cwd?: string } {
+    const appImage = env.APPIMAGE, appDir = env.APPDIR;
+    if (appImage && appDir && isAbsolute(appImage) && entry.startsWith(`${appDir}/`)) {
+        const inside = JSON.stringify(entry.slice(appDir.length + 1));
+        return { file: appImage, args: ['-e', `const p=require('node:path').join(process.env.APPDIR,${inside});process.argv.splice(1,0,p);import(require('node:url').pathToFileURL(p).href)`, 'daemon'] };
+    }
     if (!entry.endsWith('.ts')) return { args: [entry, 'daemon'] };
     return { args: ['--import', createRequire(import.meta.url).resolve('tsx'), entry, 'daemon'], cwd: resolve(dirname(entry), '..', '..') };
 }
@@ -148,7 +156,7 @@ export class Connection extends EventEmitter {
                     throw new Error('Unsafe daemon log', { cause: error });
                 await file.chmod(0o600);
                 const command = daemonCommand(options.entry);
-                const child = spawn(process.execPath, command.args, { detached: true, stdio: 'ignore', env: { ...process.env, AI_TERM_HOME: paths.root }, ...(command.cwd ? { cwd: command.cwd } : {}) });
+                const child = spawn(command.file ?? process.execPath, command.args, { detached: true, stdio: 'ignore', env: { ...process.env, AI_TERM_HOME: paths.root }, ...(command.cwd ? { cwd: command.cwd } : {}) });
                 child.on('error', error => { startupError = error; });
                 child.unref();
             }

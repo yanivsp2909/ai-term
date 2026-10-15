@@ -51,12 +51,15 @@ export async function loadInstructions(root: string): Promise<Instructions> {
 }
 function resolveFrom(folder: string, target: string): string { return target.startsWith('/') ? target : `${folder}/${target}`; }
 
-export function systemPrompt(root: string, instructions: Instructions, tools: { search: string }): string {
+// Linux (v0.8.1, TS review): the bash sandbox rebuilds home and ~/.config for each command, so the model is told that new
+// files made right there vanish (nothing else would say so: the write itself succeeds).
+export function systemPrompt(root: string, instructions: Instructions, tools: { search: string }, platform: NodeJS.Platform = process.platform): string {
   return [
-    "You are AI Term's coding agent, working in one folder on the user's Mac: " + root,
+    `You are AI Term's coding agent, working in one folder on the user's ${platform === 'darwin' ? 'Mac' : platform === 'win32' ? 'Windows PC' : 'computer'}: ` + root,
     'Tools: read, write, edit, bash and search. File paths are relative to that folder; the file tools cannot reach outside it.',
     `search: ${tools.search}`,
     'bash runs /bin/sh -c in the folder with a minimal environment and no API keys; long-running or interactive commands time out.',
+    ...(platform === 'linux' ? ["On this machine bash runs in a sandbox: new files made directly in the home folder or in ~/.config don't last past the command, and startup files can't be changed."] : []),
     'The user may approve or deny each write, edit and bash call. If one is denied, do not retry it; ask what to do instead.',
     'Read before you edit. Keep replies short and plain: no tables, no headings unless asked.',
     ...(instructions.text ? ['', '# Project instructions from the folder', instructions.text] : []),

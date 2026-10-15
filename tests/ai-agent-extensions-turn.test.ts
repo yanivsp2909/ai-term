@@ -78,13 +78,13 @@ it('runs a subagent as its own conversation, asks in the parent, counts cost/cap
   expect(a.recorder.statuses.filter(s=>s.event==='done')).toEqual([{event:'done',reply:'Parent done'}]);
 });
 
-it('a task confirmation accurately discloses inherited Dont ask and unsandboxed commands',async()=>{
+it('a task confirmation accurately discloses inherited Dont ask and that commands run in the sandbox',async()=>{
   const a=await setup([call('task',{name:'reviewer',prompt:'write a small file'}),call('write',{path:'tiny.txt',content:'one line'}),text('child'),text('parent')]);
   const jobs:{title:string;body:string}[]=[];
   const io:AgentIO={...a.recorder,text:s=>a.recorder.text(s),toolStart:()=>{},toolEnd:()=>{},approve:r=>a.recorder.approve(r),note:s=>a.recorder.note(s),pause:s=>a.recorder.pause(s),confirmJob:async r=>{jobs.push(r);return true;}};
   const agent=new Agent({...a.options,permission:'dontAsk',io});
   expect(await agent.turn('go',signal())).toBe('done');expect(jobs).toHaveLength(1);
-  expect(jobs[0]?.body).toContain("Don't ask");expect(jobs[0]?.body).toContain('commands are unsandboxed');expect(jobs[0]?.body).not.toContain('Ask permissions');
+  expect(jobs[0]?.body).toContain("Don't ask");expect(jobs[0]?.body).toContain("commands run in AI Term's sandbox");expect(jobs[0]?.body).not.toContain('Ask permissions');
   expect(a.recorder.approvals).toEqual([]);expect(await readFile(join(a.root,'tiny.txt'),'utf8')).toBe('one line');
 });
 

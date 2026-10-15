@@ -74,6 +74,8 @@ export function runTests(command: readonly string[], cwd: string, env: Record<st
       if (!box) return { state: 'fail', failing: failingCount(text) };
       if (code !== null && [65, 71].includes(code) && SANDBOX_REFUSED.test(text)) return { state: 'nosandbox' };
       // bubblewrap's own failure (no user namespace, a mount it couldn't make) comes before any test code runs.
+      // Its exec of the test command (not found inside the sandbox's view) is the tests not starting, not a missing sandbox.
+      if (code === 1 && /^bwrap: execvp /m.test(text)) return { state: 'error' };
       if (code === 1 && BWRAP_REFUSED.test(text)) return { state: 'nosandbox' };
       const what = sandboxDenial(text, box.spec);
       return what ? { state: 'blocked', what } : { state: 'fail', failing: failingCount(text) };

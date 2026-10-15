@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { isAppCommand, type AppCommand } from '../../src/shared/app-control.js';
-import { appMenu, menuShortcut } from './menus.js';
+import { appMenu, menuShortcut, shortcutKey } from './menus.js';
 import { spawn, type IPty } from 'node-pty';
 import { Logger } from '../../src/daemon/log.js';
 import { tokenColors } from '../../src/shared/theme-tokens.js';
@@ -142,7 +142,7 @@ function createWindow(): Promise<void> {
   window.webContents.on('before-input-event', (event, input) => {
     // macOS: Command+key. Linux and Windows: Ctrl+Shift+key (plain Ctrl keys go to the agent).
     if (process.platform === 'darwin' ? input.type !== 'keyDown' || !input.meta || input.alt || input.control || input.shift && !['+', '='].includes(input.key) : input.type !== 'keyDown' || !input.control || !input.shift || input.alt || input.meta) return;
-    const shortcut = menuShortcut(input.key);
+    const shortcut = menuShortcut(shortcutKey(input));
     if (!shortcut) return;
     event.preventDefault();
     if (shortcut === 'close') window?.close(); else if (shortcut === 'quit') app.quit();

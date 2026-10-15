@@ -1,5 +1,5 @@
-import { constants } from 'node:fs';
-import { access, lstat, readdir, readlink, realpath } from 'node:fs/promises';
+import { constants, type Stats } from 'node:fs';
+import { access, lstat, mkdir, readdir, readlink, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { SandboxPathError } from './sandbox-error.js';
@@ -49,15 +49,19 @@ export function bwrapTestArgs(spec: BwrapTestSpec): string[] {
 //   doesn't exist yet can then be "created" only in that tmpfs, which vanishes with the command; so does anything new
 //   at those levels.
 export interface ShadowEntry { path: string; kind: 'dir' | 'file' | 'link' | 'shadowed'; target?: string; readOnly: boolean }
-export interface BwrapBashSpec { aiTermHome: string; cwd: string; runtime: string | null; shadows: readonly { dir: string; entries: readonly ShadowEntry[] }[]; readOnly: readonly string[] }
+// pinned: each folder between a rebuilt one (or /) and a read-only place, bound onto itself so it is a mount point and
+// can't be renamed: renaming ~/work/proj and copying it back would otherwise leave a writable .git/hooks at the old path
+// (security review); macOS denies by path, which renames can't dodge.
+export interface BwrapBashSpec { aiTermHome: string; cwd: string; runtime: string | readonly string[] | null; shadows: readonly { dir: string; entries: readonly ShadowEntry[] }[]; readOnly: readonly string[]; pinned?: readonly string[] }
 export function bwrapBashArgs(spec: BwrapBashSpec): string[] {
   const p = bwrapPath, home = p(spec.aiTermHome), cwd = p(spec.cwd);
   const entry = (e: ShadowEntry): string[] => e.kind === 'shadowed' ? [] : e.kind === 'link' ? ['--symlink', e.target ?? '', p(e.path)] : [e.readOnly ? '--ro-bind' : '--bind', p(e.path), p(e.path)];
   return ['--die-with-parent', '--new-session', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try', '--unshare-user-try',
     '--bind', '/', '/', '--dev', '/dev', '--proc', '/proc',
     ...spec.shadows.flatMap(shadow => ['--tmpfs', p(shadow.dir), ...shadow.entries.flatMap(entry)]),
-    ...spec.runtime ? ['--tmpfs', p(spec.runtime)] : [],
+    ...(typeof spec.runtime === 'string' ? [spec.runtime] : spec.runtime ?? []).flatMap(path => ['--tmpfs', p(path)]),
     '--tmpfs', home, ...cwd.startsWith(`${home}/`) ? ['--bind', cwd, cwd] : [],
+    ...(spec.pinned ?? []).flatMap(path => ['--bind', p(path), p(path)]),
     ...spec.readOnly.flatMap(path => ['--ro-bind', p(path), p(path)]),
     '--chdir', cwd];
 }
@@ -69,8 +73,11 @@ export class ShadowError extends Error {}
 const missing = <T>(fallback: T) => (error: unknown): T => { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return fallback; throw error; };
 // What the bash sandbox needs, read from disk: the folders to rebuild (home, and each real folder between home and a
 // protected place), their entries, and the read-only places (protected ones that exist, their link targets, the
-// repository's hooks and config). Nothing is created on disk.
-export async function bashSandboxPlan(options: { user: string; aiTermHome: string; cwd: string; protect: readonly string[]; runtime: string | null }): Promise<BwrapBashSpec> {
+// repository's hooks and config). Nothing else is created on disk.
+// lstat: a test's stand-in. An entry that can't be looked at (a dead network mount: ENOTCONN, EIO) is left out of the
+// rebuilt folder rather than refusing every command (TS review); left out, it is simply not there inside.
+export async function bashSandboxPlan(options: { user: string; aiTermHome: string; cwd: string; protect: readonly string[]; runtime: string | readonly string[] | null; lstat?: (path: string) => Promise<Stats> }): Promise<BwrapBashSpec> {
+  const look = options.lstat ?? ((path: string) => lstat(path));
   const user = await realpath(options.user).catch(missing(options.user));
   const aiTermHome = await realpath(options.aiTermHome).catch(missing(options.aiTermHome)), cwd = await realpath(options.cwd);
   const files = PERSISTENCE_FILES.map(name => join(user, name)), dirs = PERSISTENCE_DIRS.map(name => join(user, name)), places = new Set([...files, ...dirs]);
@@ -98,7 +105,8 @@ export async function bashSandboxPlan(options: { user: string; aiTermHome: strin
     for (const name of names) {
       const path = join(dir, name);
       if (path === aiTermHome) continue;
-      const info = await lstat(path).catch(missing(null)); if (!info) continue;
+      let info: Stats;
+      try { info = await look(path); } catch { continue; }
       const isPlace = places.has(join(logical, name));
       if (shadowDirs.has(path)) { entries.push({ path, kind: 'shadowed', readOnly: false }); continue; }
       if (info.isSymbolicLink()) {
@@ -110,16 +118,35 @@ export async function bashSandboxPlan(options: { user: string; aiTermHome: strin
     }
     shadows.push({ dir, entries });
   }
+  // A repository without a hooks folder gets an empty one (as git init makes), so there is something to make read-only:
+  // otherwise the agent could create it and plant a hook (security review). The one thing this plan writes.
+  for (const dir of options.protect) await mkdir(join(dir, 'hooks'), { mode: 0o755 }).catch((error: unknown) => { if (!isFsError(error, 'EEXIST')) throw error; });
   for (const dir of options.protect) for (const name of ['hooks', 'config']) {
     const path = await realpath(join(dir, name)).catch(missing(null)); if (path) readOnly.add(path);
   }
-  return { aiTermHome, cwd, runtime: options.runtime, shadows, readOnly: [...readOnly] };
+  // Ancestors to pin: below the deepest rebuilt folder holding the place (its entries are mount points already), or
+  // below / when none holds it; a folder that holds a rebuilt one or AI Term's folder is left alone (pinning it would
+  // cover them).
+  const rebuilt = [...shadowDirs.keys()], inside = (path: string, root: string) => path === root || path.startsWith(`${root}/`);
+  const pinned = new Set<string>();
+  for (const place of readOnly) {
+    const top = rebuilt.filter(dir => inside(place, dir) && dir !== place).sort((a, b) => b.length - a.length)[0];
+    const below = top ? place.slice(top.length + 1).split('/') : place.split('/').filter(Boolean);
+    for (let depth = top ? 2 : 1; depth < below.length; depth++) {
+      const folder = top ? join(top, ...below.slice(0, depth)) : `/${below.slice(0, depth).join('/')}`;
+      if (rebuilt.some(dir => dir !== folder && inside(dir, folder)) || inside(aiTermHome, folder)) continue;
+      pinned.add(folder);
+    }
+  }
+  return { aiTermHome, cwd, runtime: options.runtime, shadows, readOnly: [...readOnly], pinned: [...pinned].sort((a, b) => a.split('/').length - b.split('/').length) };
 }
-// The session's runtime folder (D-Bus, the keyring's control socket): XDG_RUNTIME_DIR when it is a plain absolute path,
-// else the usual /run/user/<uid>, when it exists.
-export async function runtimeDir(env: Readonly<Record<string, string | undefined>>): Promise<string | null> {
-  const given = env.XDG_RUNTIME_DIR, uid = process.getuid?.();
-  const path = given && isAbsolute(given) && normalize(given) === given ? given : uid !== undefined ? `/run/user/${uid}` : null;
-  if (!path) return null;
-  return (await lstat(path).catch(missing(null)))?.isDirectory() ? resolve(path) : null;
+// The session's runtime folders (D-Bus, the keyring's control socket, ssh-agent): XDG_RUNTIME_DIR from AI Term's own
+// environment (the bash env never has it) and the usual /run/user/<uid>, each by its real path, when they exist.
+export async function runtimeDirs(env: Readonly<Record<string, string | undefined>>, uid: number | undefined = process.getuid?.()): Promise<string[]> {
+  const given = env.XDG_RUNTIME_DIR, found = new Set<string>();
+  for (const path of [...given && isAbsolute(given) ? [normalize(given)] : [], ...uid !== undefined ? [`/run/user/${uid}`] : []]) {
+    const real = await realpath(path).catch(missing(null));
+    if (real && (await lstat(real)).isDirectory()) found.add(resolve(real));
+  }
+  return [...found];
 }

@@ -113,12 +113,12 @@ export function sandboxDenial(output: string, spec: Pick<SandboxSpec, 'worktree'
 
 // Whether this Mac can sandbox the run: macOS, sandbox-exec present, and the profile itself accepted (a probe runs
 // /usr/bin/true under it; a profile the system rejects fails here, before any test code runs).
-// prefix (Linux): the whole bwrap argv, probed with /bin/true in place of the tests.
+// prefix (Linux): the whole bwrap argv, probed with `/bin/sh -c :` in place of the tests (NixOS has no /bin/true).
 export async function sandboxReady(profile: string, exec = SANDBOX_EXEC, prefix?: readonly string[]): Promise<boolean> {
   if (process.platform === 'linux' && prefix?.length) {
     const [program, ...args] = prefix;
     try { await access(program ?? '', constants.X_OK); } catch { return false; }
-    return new Promise(done => { execFile(program ?? '', [...args, '/bin/true'], { timeout: 10_000, env: { PATH: '/usr/bin:/bin' } }, error => done(!error)); });
+    return new Promise(done => { execFile(program ?? '', [...args, '/bin/sh', '-c', ':'], { timeout: 10_000, env: { PATH: '/usr/bin:/bin' } }, error => done(!error)); });
   }
   if (process.platform !== 'darwin') return false;
   try { await access(exec, constants.X_OK); } catch { return false; }
@@ -167,7 +167,7 @@ async function prepareLinux(worktree: string, temp: string, options: { home: str
     let dropped = false;
     const usable = (paths: readonly string[]) => paths.filter(path => { try { bwrapPath(path); return true; } catch { dropped = true; return false; } });
     const readable = usable([...new Set((await existing([...toolchainPaths(options.home, options.env ?? {}), ...toolchainPaths(realHome, options.env ?? {}), ...options.readable ?? []])).map(found => found.path))]);
-    const secrets = (await existing([...SECRET_PATHS.map(name => join(options.home, name)), ...options.private])).filter(found => !found.info.isSymbolicLink());
+    const secrets = await existing([...SECRET_PATHS.map(name => join(options.home, name)), ...options.private]);
     if (dropped) options.log?.('Test sandbox: a folder with control characters in its path stays closed to tests');
     const tree = await realpath(worktree);
     const args = bwrapTestArgs({ worktree: tree, temp, hidden: [...new Set([...hidden].sort((a, b) => a.length - b.length))], readable, secrets: [...new Map(secrets.map(found => [found.path, { path: found.path, dir: found.info.isDirectory() }])).values()] });

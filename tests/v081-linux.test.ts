@@ -64,7 +64,7 @@ it('system stats on Linux: /proc/meminfo (total − available) and /proc/net/dev
   expect(net && Object.fromEntries(net)).toEqual({ eth0: { rx: 1000, tx: 2000 } });
   expect(parseProcNetDev('garbage')).toBeNull();
   const linux = sampleCommands('linux');
-  expect(linux.ps.args).toEqual(['-Ao', 'pid=,ppid=,rss=,%cpu=']);
+  expect(linux.ps.args).toEqual(['-Ao', 'pid=,ppid=,rss=,times=']);
   expect([linux.memory.file, ...linux.memory.args]).toEqual(['/bin/cat', '/proc/meminfo']);
   expect([linux.net.file, ...linux.net.args]).toEqual(['/bin/cat', '/proc/net/dev']);
   expect(sampleCommands('darwin').memory.file).toBe('/usr/bin/vm_stat');
