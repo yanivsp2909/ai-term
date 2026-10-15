@@ -67,7 +67,7 @@ async function app(provider: 'foundry' | 'openrouter', guess: { model: string; p
     status: async () => {}, usage: async () => true, facts: async (): Promise<AgentFacts> => stubFacts({ model: 'my-kimi', price: price ?? (mapped ? { input: 0.7, output: 3 } : null), budgets }),
     reserve: async () => ({ grant: { id: randomUUID() } }), settle: async () => {},
     priceInfo: async () => ({ provider, guess }),
-    setPrice: async (_model, value) => { saved.push(value); price = value; return true; },
+    setPrice: async (_model, value) => { saved.push(value); price = value; return 'saved'; },
     mapModel: async (_model, catalog) => { mapped = catalog; return true; },
   };
   let out = ''; const screen = new Screen({ write: t => { out += t; }, columns: 160, rows: 40 }, createTheme('graphite'));
@@ -154,14 +154,14 @@ it('the daemon side: an agent can price only its own unpriced model (never chang
   await expect.poll(() => manager.get(session.id).status).toBe('running');
   expect((await reporter.facts('my-unpriced-x'))?.price).toBeNull();
   expect(await reporter.priceInfo('my-unpriced-x')).toEqual({ provider: 'foundry', guess: null });
-  expect(await reporter.setPrice('not-mine', { input: 1, output: 1 })).toBe(false);
-  expect(await reporter.setPrice('gpt-6.1-sol', { input: 0, output: 0 })).toBe(false);
-  expect(await reporter.setPrice('my-unpriced-x', { input: -1, output: 1 })).toBe(false);
-  expect(await reporter.setPrice('my-unpriced-x', { input: 0, output: 0 })).toBe(true);
+  expect(await reporter.setPrice('not-mine', { input: 1, output: 1 })).toBe('refused');
+  expect(await reporter.setPrice('gpt-6.1-sol', { input: 0, output: 0 })).toBe('refused');
+  expect(await reporter.setPrice('my-unpriced-x', { input: -1, output: 1 })).toBe('refused');
+  expect(await reporter.setPrice('my-unpriced-x', { input: 0, output: 0 })).toBe('saved');
   expect((await new SettingsStore(root).get()).providerPrices).toEqual({ foundry: { 'my-unpriced-x': { input: 0, output: 0 } } });
   expect((await reporter.facts('my-unpriced-x'))?.price).toEqual({ input: 0, output: 0, cacheRead: 0 });
   // Priced now: the agent can't change it (only you can, in /settings p).
-  expect(await reporter.setPrice('my-unpriced-x', { input: 9, output: 9 })).toBe(false);
+  expect(await reporter.setPrice('my-unpriced-x', { input: 9, output: 9 })).toBe('refused');
   await expect.poll(() => manager.get(session.id).priceYours).toBe(true);
   const info: SessionInfo = manager.get(session.id);
   expect(cardText({ ...info, taskUsage: { tokens: 10, costUsd: 0 } }, Date.now(), 120).auth).toContain('price: yours');

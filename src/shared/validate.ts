@@ -167,6 +167,8 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['cwd'];if(!await validCwd(v.cwd))throw new ValidationError('Invalid test command request');break;
         case 'project.setTestCommand':
             fields=['cwd','command'];if(!await validCwd(v.cwd)||!(v.command===null||isTestCommand(v.command)))throw new ValidationError('Invalid test command request');break;
+        case 'prices.set':
+            fields=['provider','model','price'];if(typeof v.provider!=='string'||!(PRICED_BY_YOU as readonly string[]).includes(v.provider)||typeof v.model!=='string')throw new ValidationError('Invalid price');validatePriceOverrides({[v.model]:v.price});break;
         case 'project.setTestLoopback':
             fields=['cwd','allowed'];if(!await validCwd(v.cwd)||typeof v.allowed!=='boolean')throw new ValidationError('Invalid test loopback request');break;
         case 'sessions.mergePlan': case 'sessions.prPlan':

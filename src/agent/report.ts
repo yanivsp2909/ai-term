@@ -37,9 +37,11 @@ export interface Reporter {
   // B28, at a price pause: the key's provider and the catalog's closest model (a guess for you to check); your price for
   // this model (only while it has none); which catalog model a Foundry deployment is. false: not saved.
   priceInfo?(model: string): Promise<PriceInfo | null>;
-  setPrice?(model: string, price: ModelPrice): Promise<boolean>;
+  setPrice?(model: string, price: ModelPrice): Promise<PriceSaved>;
   mapModel?(model: string, catalog: string): Promise<boolean>;
 }
+// full: you already have the most prices AI Term keeps; refused: anything else (a price set meanwhile, not its model).
+export type PriceSaved = 'saved' | 'full' | 'refused';
 export interface PriceInfo { provider: KeyProvider; guess: { model: string; price: ModelPrice } | null }
 const PRICE_KEYS = ['input', 'output', 'cacheRead'];
 function parsePrice(v: unknown): ModelPrice | null {
@@ -110,7 +112,7 @@ export class HttpReporter implements Reporter, ExtensionAccess {
     await this.query(Promise.resolve(worstCase).then(worst => ({ kind: 'budget.settle', id, worstCase: worst })));
   }
   async priceInfo(model: string): Promise<PriceInfo | null> { return parsePriceInfo(await this.query({ kind: 'price.info', model })); }
-  async setPrice(model: string, price: ModelPrice): Promise<boolean> { const answer = await this.query({ kind: 'price.set', model, price }); return !!answer && typeof answer === 'object' && 'saved' in answer && answer.saved === true; }
+  async setPrice(model: string, price: ModelPrice): Promise<PriceSaved> { const answer = await this.query({ kind: 'price.set', model, price }); return !answer || typeof answer !== 'object' ? 'refused' : 'saved' in answer && answer.saved === true ? 'saved' : 'full' in answer && answer.full === true ? 'full' : 'refused'; }
   async mapModel(model: string, catalog: string): Promise<boolean> { const answer = await this.query({ kind: 'price.map', model, catalog }); return !!answer && typeof answer === 'object' && 'saved' in answer && answer.saved === true; }
   async list(cwd: string) { const v=await this.query({kind:'extensions.list',cwd}); return validateExtensionCatalog(v && typeof v==='object' && 'extensions' in v ? v.extensions : null); }
   async read(cwd: string, extensionId: string) { const v=await this.query({kind:'extensions.read',cwd,extensionId}); return validateExtensionFile(v && typeof v==='object' && 'extension' in v ? v.extension : null); }

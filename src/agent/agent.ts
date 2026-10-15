@@ -13,6 +13,8 @@ import type { Reporter } from './report.js';
 import type { Transcript } from './transcript.js';
 import { RunLimits, maxOutputTokens, requestCost, estimateTokens, refusalPause, pricePauseText, NOT_ANSWERING, type Pause } from './limits.js';
 import type { ModelPrice } from '../shared/protocol.js';
+import { PRICED_BY_YOU } from '../shared/prices.js';
+import type { PriceSaved } from './report.js';
 import type { AgentFacts } from '../shared/agent-facts.js';
 import { COMPACT_OUTPUT_LOW, COMPACT_OUTPUT_TOKENS, compactedHistory, compactPrompt, KEEP_TURNS, splitHistory } from './compact.js';
 
@@ -35,7 +37,7 @@ export interface AgentIO {
 // B28: what a price pause offers besides ⏎ and Esc: p (your price for this model, the catalog's closest model as a guess to
 // check) and, for a Foundry deployment, m (which catalog model it is). save resolves false when nothing was saved.
 export interface PauseActions {
-  price?: { model: string; guess: { model: string; price: ModelPrice } | null; save(price: ModelPrice): Promise<boolean> };
+  price?: { model: string; guess: { model: string; price: ModelPrice } | null; save(price: ModelPrice): Promise<PriceSaved> };
   map?: { model: string; save(catalog: string): Promise<boolean> };
 }
 export interface AgentOptions {
@@ -418,9 +420,11 @@ export class Agent {
     const { reporter } = this.options, ask = pause.price;
     if (!ask || !reporter.setPrice) return { text: pause.text };
     const info = await reporter.priceInfo?.(ask.model) ?? null, model = ask.model;
-    const actions: PauseActions = { price: { model, guess: info?.guess ?? null, save: price => reporter.setPrice?.(model, price) ?? Promise.resolve(false) } };
-    if (info?.provider === 'foundry' && reporter.mapModel) actions.map = { model, save: catalog => reporter.mapModel?.(model, catalog) ?? Promise.resolve(false) };
-    return { text: pricePauseText(model, info?.provider ?? null, ask.budgets, ask.modelMax), actions };
+    const text = pricePauseText(model, info?.provider ?? null, ask.budgets, ask.modelMax);
+    if (!info || !PRICED_BY_YOU.includes(info.provider)) return { text };
+    const actions: PauseActions = { price: { model, guess: info.guess, save: price => reporter.setPrice?.(model, price) ?? Promise.resolve('refused' as const) } };
+    if (info.provider === 'foundry' && reporter.mapModel) actions.map = { model, save: catalog => reporter.mapModel?.(model, catalog) ?? Promise.resolve(false) };
+    return { text, actions };
   }
   // Context % for the card and the bar, and the warning once per crossing of 85% (D55, /settings can turn it off).
   private context(input: number, facts: AgentFacts | null): void {

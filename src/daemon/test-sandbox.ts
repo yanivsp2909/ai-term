@@ -15,7 +15,9 @@ export class SandboxPathError extends Error {}
 // Under your home folder. Read-data is denied (contents and listings); names and sizes stay visible, because path
 // resolution (realpath, getcwd) needs them and would otherwise fail inside the worktree, which lives in ~/.ai-term.
 export const SECRET_PATHS: readonly string[] = ['.ssh', '.aws', '.gnupg', '.netrc', '.npmrc', '.docker', '.kube', '.config/gh', 'Library/Keychains', '.ai-term', '.claude', '.claude.json', '.codex',
-  '.git-credentials', '.config/git/credentials', '.config/gcloud', '.azure', '.pypirc', '.gem/credentials', '.cargo/credentials', '.cargo/credentials.toml', '.terraform.d'];
+  '.git-credentials', '.config/git/credentials', '.config/gcloud', '.azure', '.pypirc', '.gem/credentials', '.cargo/credentials', '.cargo/credentials.toml', '.terraform.d',
+  // Credential files inside toolchain folders that stay readable (Part A review).
+  '.m2/settings.xml', '.m2/settings-security.xml', '.gradle/gradle.properties', '.gradle/init.d', '.config/mise/config.toml', '.bunfig.toml', '.pub-cache/credentials.json'];
 // hidden: folders whose contents tests can't read (your home, /Volumes, /tmp, the user temp area); readable: what inside
 // them stays open (the toolchains tests run, the repository's git folder). Key folders and private stay closed either way.
 export interface SandboxSpec { worktree: string; temp: string; home: string; private: readonly string[]; loopback: boolean; hidden?: readonly string[]; readable?: readonly string[] }
@@ -23,10 +25,11 @@ export interface SandboxSpec { worktree: string; temp: string; home: string; pri
 // key folders stay unreadable inside them (.cargo/credentials, .gem/credentials, .config/git/credentials).
 const TOOLCHAINS = ['.nvm', '.volta', '.fnm', '.local/share/fnm', '.pyenv', '.rbenv', '.rustup', '.cargo', 'go', '.gradle', '.m2', '.bun', '.deno', '.local/share/pnpm', 'Library/pnpm',
   '.asdf', '.local/share/mise', '.config/mise', '.local/bin', '.local/lib', '.sdkman', '.conda', 'miniconda3', 'anaconda3', 'miniforge3', '.jenv', '.gem', '.swiftpm', 'Library/Python',
-  '.node-gyp', 'Library/Caches/node-gyp', 'Library/Caches/ms-playwright', 'Library/Caches/Cypress', '.cache/ms-playwright', '.gitconfig', '.config/git', '.gitignore_global'];
+  '.node-gyp', 'Library/Caches/node-gyp', 'Library/Caches/ms-playwright', 'Library/Caches/Cypress', '.cache/ms-playwright', '.pub-cache', '.gitconfig', '.config/git', '.gitignore_global'];
 const TOOLCHAIN_VARS = ['JAVA_HOME', 'GOPATH', 'GOROOT', 'GOMODCACHE', 'CARGO_HOME', 'RUSTUP_HOME', 'NVM_DIR', 'VOLTA_HOME', 'PNPM_HOME', 'BUN_INSTALL', 'DENO_DIR', 'PYENV_ROOT', 'VIRTUAL_ENV', 'CONDA_PREFIX', 'POETRY_HOME', 'PIPX_HOME', 'GEM_HOME', 'RBENV_ROOT', 'ANDROID_HOME', 'ANDROID_SDK_ROOT'];
 // The folders under home to keep readable for these tests: the list above, the env's toolchain homes, and each PATH entry
-// under home (a `bin` folder with its parent, where its libraries live). Never home itself or anything above it.
+// under home (a `bin` folder with its parent, where its libraries live, unless that parent sits right under home: ~/bin or
+// ~/Documents/bin open only themselves). Never home itself or anything above it.
 export function toolchainPaths(home: string, env: Readonly<Record<string, string | undefined>>): string[] {
   const under = (path: string) => isAbsolute(path) && normalize(path) === path && path.startsWith(`${home}/`);
   const found = [...TOOLCHAINS.map(name => join(home, name)), ...TOOLCHAIN_VARS.map(name => env[name] ?? ''), ...(env.GEM_PATH ?? '').split(':')];
@@ -34,7 +37,7 @@ export function toolchainPaths(home: string, env: Readonly<Record<string, string
     const path = entry.replace(/\/+$/, '');
     if (!under(path)) continue;
     const parent = path.endsWith('/bin') ? path.slice(0, -'/bin'.length) : '';
-    found.push(parent && under(parent) ? parent : path);
+    found.push(parent && under(parent) && parent.slice(home.length + 1).includes('/') ? parent : path);
   }
   return [...new Set(found.filter(under))];
 }
@@ -112,7 +115,7 @@ export async function sandboxReady(profile: string, exec = SANDBOX_EXEC): Promis
 // A fresh 0700 temp folder for the run (TMPDIR, caches), the profile, and its removal afterwards. Throws SandboxPathError
 // when a path can't go into a profile; the caller then treats the run as having no sandbox.
 // env: the test's env, for the toolchains on its PATH; readable: more folders to keep open (the repository's git folder).
-export async function prepareSandbox(worktree: string, options: { home: string; private: readonly string[]; loopback: boolean; program?: string; env?: Readonly<Record<string, string | undefined>>; readable?: readonly string[] }): Promise<PreparedSandbox> {
+export async function prepareSandbox(worktree: string, options: { home: string; private: readonly string[]; loopback: boolean; program?: string; env?: Readonly<Record<string, string | undefined>>; readable?: readonly string[]; log?: (text: string) => void }): Promise<PreparedSandbox> {
   const temp = await mkdtemp(join(await realpath(tmpdir()), 'ai-term-test-'));
   try {
     const realHome = await realpath(options.home).catch(() => options.home);
@@ -121,11 +124,14 @@ export async function prepareSandbox(worktree: string, options: { home: string; 
     // Hidden: home, external volumes, /tmp and this user's temp area (other apps' files); the run's temp folder reopens.
     const userTemp = dirname(temp).match(/^\/private\/var\/folders\/[^/]+\/[^/]+(?=\/)/)?.[0];
     // Paths a profile can't hold (quotes and the like) are left closed rather than refusing the whole sandbox.
-    const usable = (paths: readonly string[]) => paths.filter(path => { try { sandboxPath(path); return true; } catch { return false; } });
+    let dropped = false;
+    const usable = (paths: readonly string[]) => paths.filter(path => { try { sandboxPath(path); return true; } catch { dropped = true; return false; } });
     const readable = usable([...new Set((await Promise.all([...toolchainPaths(options.home, options.env ?? {}), ...toolchainPaths(realHome, options.env ?? {}), ...options.readable ?? []]
       .map(async path => [path, await realpath(path).catch(() => path)]))).flat())]);
     const spec: SandboxSpec = { worktree: await realpath(worktree), temp, home: realHome, private: [...new Set([...options.private, ...targets])].filter(path => !SECRET_PATHS.some(name => join(realHome, name) === path)), loopback: options.loopback,
-      hidden: [...new Set([realHome, '/Volumes', '/private/tmp', ...userTemp ? [userTemp] : []])], readable };
+      hidden: [...new Set([realHome, '/Volumes', '/private/tmp', '/private/var/tmp', ...userTemp ? [userTemp] : []])], readable };
+    // Fixed words: the path itself may be anything.
+    if (dropped) options.log?.('Test sandbox: a folder with quotes, parentheses or control characters in its path stays closed to tests');
     const profile = sandboxProfile(spec);
     return { profile, spec, program: options.program ?? SANDBOX_EXEC, env: { TMPDIR: temp, TMP: temp, TEMP: temp, XDG_CACHE_HOME: join(temp, 'cache'), npm_config_cache: join(temp, 'npm-cache'), GOCACHE: join(temp, 'go-build') }, dispose: () => rm(temp, { recursive: true, force: true }) };
   } catch (error) { await rm(temp, { recursive: true, force: true }); throw error; }

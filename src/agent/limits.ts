@@ -1,6 +1,7 @@
 import type { AgentCaps, AgentFacts, BudgetRefusal } from '../shared/agent-facts.js';
 import type { KeyProvider, ModelPrice } from '../shared/protocol.js';
 import { estimateCost } from '../daemon/usage-prices.js';
+import { PRICED_BY_YOU } from '../shared/prices.js';
 
 // D49/D53: AI Term's agent checks before every model request (a "turn" here: one request, a reply or a tool round) that it
 // stays inside the run's caps and your budgets, using the worst case for that request (estimateTokens for the input, the
@@ -19,11 +20,12 @@ export function estimateTokens(text: string): number {
 export interface Pause { text: string; onContinue?: () => void; price?: { model: string; budgets: boolean; modelMax: number } }
 // B28: what the price pause offers. With a budget it waits for a price (⏎ checks again; never a way to run outside it); with
 // only this run's spend cap, ⏎ may go on without one. provider: the key's, once the daemon said it (m is Foundry's alone).
+// p only where a price can be saved (PRICED_BY_YOU: not Anthropic or OpenAI, which use the catalog), and never on a guess.
 export function pricePauseText(model: string, provider: KeyProvider | null, budgets: boolean, modelMax: number): string {
-  const ways = `p sets its price${provider === 'foundry' ? ' · m marks which catalog model it is' : ''}`;
+  const ways = provider && PRICED_BY_YOU.includes(provider) ? ` · p sets its price${provider === 'foundry' ? ' · m marks which catalog model it is' : ''}` : '';
   return budgets
-    ? `no price known for ${model}, so your budgets can't count it · ${ways} · ⏎ checks again · Esc stops`
-    : `no price known for ${model}, so what it spends is not counted in this run's spend cap · ${ways} · ⏎ goes on for this model this run (at most ${modelMax.toLocaleString('en-US')} output tokens a request) · Esc stops`;
+    ? `no price known for ${model}, so your budgets can't count it${ways} · ⏎ checks again · Esc stops`
+    : `no price known for ${model}, so what it spends is not counted in this run's spend cap${ways} · ⏎ goes on for this model this run (at most ${modelMax.toLocaleString('en-US')} output tokens a request) · Esc stops`;
 }
 const usd = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 export const NOT_ANSWERING = "AI Term isn't answering, so budgets and caps can't be checked · ⏎ asks again · Esc stops";

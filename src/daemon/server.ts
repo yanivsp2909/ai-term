@@ -1,5 +1,6 @@
 import { ExtensionService } from './extensions.js';
 import { catalogIds } from '../shared/model-catalog.js';
+import { savePrice } from './price-migration.js';
 import { createServer, type Socket, type Server } from 'node:net';
 import type { Paths } from '../shared/paths.js';
 import { listenPrivate, closePrivate, type SocketIdentity } from './private-socket.js';
@@ -287,6 +288,10 @@ export class DaemonServer {
                     break;
                 case 'project.setTestCommand':
                     this.control(peer,{id:request.id,ok:true,testCommand:await this.manager.setTestCommand(request.cwd,request.command)});
+                    break;
+                case 'prices.set':
+                    await savePrice(this.paths.root,request.provider,request.model,request.price);
+                    this.control(peer,{id:request.id,ok:true,settings:await new SettingsStore(this.paths.root).get()});
                     break;
                 case 'project.setTestLoopback':
                     this.control(peer,{id:request.id,ok:true,testLoopback:await this.manager.setTestLoopback(request.cwd,request.allowed)});

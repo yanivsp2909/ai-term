@@ -548,10 +548,10 @@ export class SessionManager extends EventEmitter {
         if(raw.kind==='price.set'&&keys==='kind,model,price'){
             if(!PRICED_BY_YOU.includes(key.provider))return null;
             try{validatePriceOverrides({[model]:raw.price});}catch{return null;}
-            const price=raw.price as import('../shared/protocol.js').ModelPrice;let saved=false;
-            await store.update(async settings=>{if(!unpriced(settings)||priceCount(settings)>=MAX_PRICES)return settings;saved=true;const current=settings.providerPrices??{};return {...settings,providerPrices:{...current,[key.provider]:{...current[key.provider],[model]:{input:price.input,output:price.output,...(price.cacheRead===undefined?{}:{cacheRead:price.cacheRead})}}}};});
+            const price=raw.price as import('../shared/protocol.js').ModelPrice;let saved=false,full=false;
+            await store.update(async settings=>{if(!unpriced(settings))return settings;if(priceCount(settings)>=MAX_PRICES){full=true;return settings;}saved=true;const current=settings.providerPrices??{};return {...settings,providerPrices:{...current,[key.provider]:{...current[key.provider],[model]:{input:price.input,output:price.output,...(price.cacheRead===undefined?{}:{cacheRead:price.cacheRead})}}}};});
             if(saved)this.log.info('A price for an AI Term agent\'s model was set at its pause');
-            return saved?{saved:true}:null;
+            return saved?{saved:true}:full?{full:true}:null;
         }
         if(raw.kind==='price.map'&&keys==='catalog,kind,model'){
             if(key.provider!=='foundry'||typeof raw.catalog!=='string'||!catalogIds().includes(raw.catalog))return null;
@@ -1026,7 +1026,7 @@ export class SessionManager extends EventEmitter {
         let gitDir:string|undefined;
         if(repo)try{gitDir=await repoCommonDir(repo);}catch{this.log.error('Test sandbox: the repository\'s git folder is unknown; git inside tests may fail');}
         let box:PreparedSandbox;
-        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,program:SessionManager.sandboxExec,env:buildTestEnv(process.env),readable:gitDir?[gitDir]:[]});}
+        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,program:SessionManager.sandboxExec,env:buildTestEnv(process.env),readable:gitDir?[gitDir]:[],log:text=>this.log.error(text)});}
         catch(error){this.log.error(error instanceof SandboxPathError?'Test sandbox: a path can\'t go into a profile; tests ask first':'Test sandbox: its temp folder could not be made; tests ask first');return null;}
         if(await sandboxReady(box.profile,box.program))return box;
         this.log.error('Test sandbox unavailable; tests ask first');
@@ -1075,7 +1075,7 @@ export class SessionManager extends EventEmitter {
         finally{this.turnEnds.delete(id);}
     }
     async testPlan(id:string):Promise<TestPlan>{const {plan,box}=await this.testPlanSetup(id);await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));return plan;}
-    private async testPlanSetup(id:string):Promise<{plan:TestPlan;unverifiable:boolean;setup:string;box:PreparedSandbox|null}>{
+    private async testPlanSetup(id:string):Promise<{plan:TestPlan;unverifiable:boolean;setup:string;box:PreparedSandbox|null;target:{path:string;base:string;repo?:string;command:string[]}}>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         this.undoIdle(live);
@@ -1088,17 +1088,17 @@ export class SessionManager extends EventEmitter {
         const box=await this.sandboxFor(target.path,target.repo),loopback=box?.spec.loopback??false;
         // The fingerprint covers the sandbox too: y never runs unsandboxed (or with 127.0.0.1) a plan shown otherwise.
         const fingerprint=createHash('sha256').update(setup.fingerprint).update(`\0sandbox=${box?'on':'off'}\0loopback=${loopback}`).digest('hex');
-        return {plan:{title:live.info.title,command:target.command,cwd:target.path,changed:setup.changed.slice(0,MAX_TEST_CHANGED),fingerprint,sandbox:!!box,loopback},unverifiable:setup.unverifiable,setup:setup.fingerprint,box};
+        return {plan:{title:live.info.title,command:target.command,cwd:target.path,changed:setup.changed.slice(0,MAX_TEST_CHANGED),fingerprint,sandbox:!!box,loopback},unverifiable:setup.unverifiable,setup:setup.fingerprint,box,target};
     }
     // Runs exactly what /test showed; the result arrives on the card.
     async runTestPlan(id:string,fingerprint:string):Promise<void>{
-        const {plan,unverifiable,setup,box}=await this.testPlanSetup(id),live=this.sessions.get(id);
+        // Everything that can fail is worked out before the sandbox exists (testPlanSetup); from here it is used or removed.
+        const {plan,unverifiable,setup,box,target}=await this.testPlanSetup(id),live=this.sessions.get(id);
         if(!live||plan.fingerprint!==fingerprint){await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));throw new TestRunError('The test setup changed since it was shown; run /test again');}
         // You approved this setup: later sandboxed turns that leave it as it is run without asking again (unless part of it
         // can't be checked, like a link out of the worktree: then every turn asks). Without a sandbox your y is for this run.
         if(box)live.approvedSetup=unverifiable?undefined:setup;
-        const target=unverifiable||!box?null:await this.testTarget(live);
-        void this.startTests(live,plan.command,plan.cwd,box,target??undefined);
+        void this.startTests(live,plan.command,plan.cwd,box,unverifiable||!box?undefined:target);
     }
     // target: given when the run started from a setup you approved (or one with nothing to ask about); what the run itself
     // wrote (build output, caches) then becomes the approved setup, so the next turn asks only about the agent's changes.

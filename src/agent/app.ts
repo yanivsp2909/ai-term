@@ -7,6 +7,7 @@ import { KeyReader, type KeyEvent } from './key-reader.js';
 import type { Screen } from './screen.js';
 import type { Agent, AgentIO, AgentPermission, PauseActions, ToolName } from './agent.js';
 import type { ModelPrice } from '../shared/protocol.js';
+import type { PriceSaved } from './report.js';
 import { catalogIds } from '../shared/model-catalog.js';
 import { loadInstructions } from './instructions.js';
 import { killAllBash } from './bash.js';
@@ -23,6 +24,9 @@ export interface AppOptions {
 }
 const QUIT_WINDOW_MS = 3000;
 type Paused = { resolve(go: boolean): void; text: string; actions?: PauseActions; mode: null | { kind: 'price'; buffer: string } | { kind: 'map'; filter: string; index: number }; saving: boolean };
+// Typed or pasted into a pause line: no line breaks or other control characters ever reach the screen.
+// eslint-disable-next-line no-control-regex -- removing controls is the point.
+const typed = (text: string) => text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b\[[0-9;?]*[ -/]*[@-~]|[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '');
 const usd = (n: number) => `$${n === 0 || n >= 0.01 ? n.toFixed(2) : String(n)}`;
 // "input / output" or "input / output / cache read", USD per 1M tokens; every number typed (no empty field becomes 0).
 function parsePrice(text: string): ModelPrice | null {
@@ -142,7 +146,7 @@ export class AgentApp implements AgentIO {
     }
     if (event.kind === 'escape') { paused.mode = null; screen.pause(paused.text); return; }
     if (mode.kind === 'price') {
-      if (event.kind === 'text' || event.kind === 'paste') mode.buffer = (mode.buffer + event.text.replace(/[\r\n]/g, '')).slice(0, 80);
+      if (event.kind === 'text' || event.kind === 'paste') mode.buffer = (mode.buffer + typed(event.text)).slice(0, 80);
       else if (event.kind === 'backspace') mode.buffer = mode.buffer.slice(0, -1);
       else if (event.kind === 'enter' && actions?.price) {
         const price = parsePrice(mode.buffer), save = actions.price, model = save.model;
@@ -153,7 +157,7 @@ export class AgentApp implements AgentIO {
       screen.prompt(mode.buffer); return;
     }
     const matches = this.catalogMatches(mode.filter);
-    if (event.kind === 'text' || event.kind === 'paste') { mode.filter = (mode.filter + event.text.replace(/[\r\n]/g, '')).slice(0, 80); mode.index = 0; }
+    if (event.kind === 'text' || event.kind === 'paste') { mode.filter = (mode.filter + typed(event.text)).slice(0, 80); mode.index = 0; }
     else if (event.kind === 'backspace') { mode.filter = mode.filter.slice(0, -1); mode.index = 0; }
     else if (event.kind === 'up' || event.kind === 'down') mode.index = Math.max(0, Math.min(matches.length - 1, mode.index + (event.kind === 'up' ? -1 : 1)));
     else if (event.kind === 'enter' && actions?.map) {
@@ -167,13 +171,13 @@ export class AgentApp implements AgentIO {
   private catalogMatches(filter: string): string[] { const f = filter.toLowerCase(); return catalogIds().filter(id => id.toLowerCase().includes(f)); }
   private mapLine(mode: { filter: string; index: number }): string { const matches = this.catalogMatches(mode.filter), choice = matches[mode.index]; return choice ? `${mode.filter} → ${choice} (${mode.index + 1} of ${matches.length})` : `${mode.filter} → no catalog model matches`; }
   // Saved: the pause ends and the check runs again with the new price. Not saved: the pause stays, saying so.
-  private saveAt(paused: Paused, saving: Promise<boolean>, done: string): void {
+  private saveAt(paused: Paused, saving: Promise<PriceSaved | boolean>, done: string): void {
     paused.saving = true;
-    void saving.then(ok => ok, () => false).then(ok => {
+    void saving.then(answer => answer === true ? 'saved' : answer === false ? 'refused' : answer, () => 'refused' as const).then(answer => {
       paused.saving = false;
       if (this.paused !== paused) return;
-      if (ok) { this.options.screen.note(`✓ ${done}`); paused.resolve(true); return; }
-      this.options.screen.note("AI Term didn't save it (a price may already be set) · /settings p · Esc back", 'error');
+      if (answer === 'saved') { this.options.screen.note(`✓ ${done}`); paused.resolve(true); return; }
+      this.options.screen.note(answer === 'full' ? 'AI Term keeps at most 100 prices · change one in /settings p · Esc back' : "AI Term didn't save it (this model may have a price now) · Esc back, then ⏎ checks again", 'error');
       if (paused.mode) this.options.screen.prompt(paused.mode.kind === 'price' ? paused.mode.buffer : this.mapLine(paused.mode));
     });
   }

@@ -21,11 +21,12 @@ export class ProcessTree {
   constructor(private readonly root: number, private readonly log: (text: string) => void = () => {}) {}
   start(): void { this.timer = setInterval(() => { void this.look(); }, POLL_MS); this.timer.unref(); void this.look(); }
   private look(): Promise<void> {
-    this.looking ??= table().then(rows => { this.add(rows); }, () => { this.log('Test run: the process list could not be read'); }).finally(() => { this.looking = null; });
+    this.looking ??= table().then(rows => { this.add(rows, true); }, () => { this.log('Test run: the process list could not be read'); }).finally(() => { this.looking = null; });
     return this.looking;
   }
-  private add(rows: Map<number, Row>): void {
-    const root = rows.get(this.root); if (root && !this.seen.has(this.root)) this.seen.set(this.root, root.start);
+  // adopt: only a look while the run lives records the root; at stop it may be gone and its id reused by a stranger.
+  private add(rows: Map<number, Row>, adopt: boolean): void {
+    const root = rows.get(this.root); if (adopt && root && !this.seen.has(this.root)) this.seen.set(this.root, root.start);
     // Only a process still running since it was seen is family: a reused id's children are someone else's.
     const family = new Set([...this.seen].filter(([pid, start]) => rows.get(pid)?.start === start).map(([pid]) => pid));
     for (let grew = true; grew;) {
@@ -38,7 +39,7 @@ export class ProcessTree {
     clearInterval(this.timer); await this.looking;
     let rows: Map<number, Row>;
     try { rows = await table(); } catch { this.log('Test run: the process list could not be read; leftover processes were not checked'); return 0; }
-    this.add(rows);
+    this.add(rows, false);
     let stopped = 0;
     for (const [pid, start] of this.seen) {
       if (rows.get(pid)?.start !== start) continue;

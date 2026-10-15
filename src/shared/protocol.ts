@@ -163,6 +163,8 @@ export type Request = {
 } | {
     kind:'project.setTestLoopback'; cwd:string; allowed:boolean;
 } | {
+    kind:'prices.set'; provider:KeyProvider; model:string; price:ModelPrice;
+} | {
     kind:'sessions.merge' | 'sessions.pr'; sessionId:string; fingerprint:string; override:boolean;
 } | {
     kind:'sessions.text'; sessionId:string; lastReply?:boolean;
