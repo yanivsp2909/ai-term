@@ -19,7 +19,14 @@ const MAX_PER_SESSION = 16, MAX_PER_MINUTE = 600, MAX_RELEASED = 10_000;
 // file: where live reservations survive a daemon crash (absent in tests that need no restart).
 // busy: the session is waiting on you or running a tool. A request's grant spans its tools (the step's usage comes after
 // them), so it must not expire into a booked worst case while you take time over an approval.
-export interface LedgerOptions { file?: string; book: (reservation: Reservation) => Promise<void>; log: { error(text: string): void }; ttlMs?: number; busy?: (sessionId: string) => boolean }
+// warn: a homepage warning (D33) when holds can't be saved ('save', cleared with null once a save works) or when some of
+// the last run's holds couldn't be counted ('load'); log lines alone went unseen (v0.6 gate).
+export interface LedgerOptions { file?: string; book: (reservation: Reservation) => Promise<void>; log: { error(text: string): void }; ttlMs?: number; busy?: (sessionId: string) => boolean; warn?: (key: 'save' | 'load', text: string | null) => void }
+const SAVE_WARNING = 'Budget holds could not be saved; agents keep running.', LOAD_WARNING = 'Some in-flight spend from the last run could not be counted.';
+// v0.6 gate: an agent that stopped waiting for its grant cancels it by id. A cancel can arrive before the reserve it
+// cancels (separate requests), so cancelled ids are remembered for a while, bounded.
+const MAX_CANCELLED = 1000, MAX_REFUSAL_LOGS = 1000;
+type Refusal = 'too many held for one agent' | 'too many requests a minute' | 'too many held overall' | 'ledger closed';
 type Spent = { day: number; week: number; month: number };
 
 export class BudgetLedger {
@@ -30,6 +37,9 @@ export class BudgetLedger {
   // Sessions whose agent exited: a reserve still in flight from it is refused, never left held until it expires.
   private readonly released = new Set<string>();
   private readonly rate = new Map<string, { start: number; count: number }>();
+  private readonly cancelled = new Map<string, string>();
+  private readonly refusalsLogged = new Set<string>();
+  private saveWarned = false;
   constructor(private readonly options: LedgerOptions) {}
   holds(id: string): boolean { return this.live.has(id); }
   reserved(): number { let total = 0; for (const { reservation } of this.live.values()) total += reservation.amountUsd; return total; }
@@ -43,23 +53,37 @@ export class BudgetLedger {
       // Never overwritten: kept for a look, as B24 keeps an unreadable agent list.
       try { await moveAside(file); this.options.log.error('Budget reservations unreadable; moved aside'); }
       catch { this.options.log.error('Budget reservations unreadable and could not be moved aside'); this.closed = true; }
+      this.options.warn?.('load', LOAD_WARNING);
       return;
     }
     const list = raw && typeof raw === 'object' && 'reservations' in raw && Array.isArray(raw.reservations) ? raw.reservations as unknown[] : [];
     const left = list.filter(isReservation);
-    if (list.length !== left.length) this.options.log.error('Budget reservation record unreadable; skipped');
-    for (const reservation of left) await this.options.book(reservation);
+    let lost = list.length !== left.length;
+    if (lost) this.options.log.error('Budget reservation record unreadable; skipped');
+    // One booking that fails (a full disk) must not stop the daemon or the rest of the bookings.
+    for (const reservation of left) {
+      try { await this.options.book(reservation); }
+      catch { lost = true; this.options.log.error('Budget reservation could not be booked at start'); }
+    }
+    if (lost) this.options.warn?.('load', LOAD_WARNING);
     if (list.length) await this.persist();
   }
-  reserve(request: { sessionId: string; provider: KeyProvider; model: string; amountUsd: number }, budgets: Budgets, spent: Spent): ReserveAnswer {
+  // id: chosen by the agent (v0.6 gate), so it can cancel a grant whose answer it never got; absent from older agents.
+  reserve(request: { sessionId: string; provider: KeyProvider; model: string; amountUsd: number; id?: string }, budgets: Budgets, spent: Spent): ReserveAnswer {
     const unavailable: ReserveAnswer = { refused: { budget: 'unavailable', spent: 0, reserved: this.reserved(), limit: 0 } };
-    if (this.closed || this.released.has(request.sessionId) || !Number.isFinite(request.amountUsd) || request.amountUsd < 0 || this.live.size >= MAX_RESERVATIONS) return unavailable;
+    const { id: wanted, ...fields } = request;
+    if (wanted !== undefined && (!isUUID(wanted) || this.live.has(wanted))) return unavailable;
+    if (wanted !== undefined && this.cancelled.has(wanted)) { const owner = this.cancelled.get(wanted); this.cancelled.delete(wanted); if (owner === request.sessionId) return unavailable; }
+    if (this.closed) return this.refuse(request.sessionId, 'ledger closed', unavailable);
+    if (this.released.has(request.sessionId) || !Number.isFinite(request.amountUsd) || request.amountUsd < 0) return unavailable;
+    if (this.live.size >= MAX_RESERVATIONS) return this.refuse(request.sessionId, 'too many held overall', unavailable);
     let own = 0; for (const { reservation } of this.live.values()) if (reservation.sessionId === request.sessionId) own++;
-    if (own >= MAX_PER_SESSION || !this.takeRate(request.sessionId)) return unavailable;
+    if (own >= MAX_PER_SESSION) return this.refuse(request.sessionId, 'too many held for one agent', unavailable);
+    if (!this.takeRate(request.sessionId)) return this.refuse(request.sessionId, 'too many requests a minute', unavailable);
     const held = this.reserved();
     for (const [budget, limit, used] of [['daily', budgets.daily, spent.day], ['weekly', budgets.weekly, spent.week], ['monthly', budgets.monthly, spent.month]] as const)
       if (limit !== null && used + held + request.amountUsd > limit) return { refused: { budget, spent: used, reserved: held, limit } };
-    const reservation: Reservation = { id: randomUUID(), ...request, at: new Date().toISOString() };
+    const reservation: Reservation = { id: wanted ?? randomUUID(), ...fields, at: new Date().toISOString() };
     this.live.set(reservation.id, { reservation, timer: this.expire(reservation) });
     void this.persist();
     return { grant: { id: reservation.id } };
@@ -77,7 +101,12 @@ export class BudgetLedger {
   // Only the session that holds a reservation can settle it. worstCase: no usage will ever arrive for it.
   async settle(sessionId: string, id: string, worstCase: boolean, why: 'settled' | 'expired' | 'exited' = 'settled'): Promise<boolean> {
     const held = this.live.get(id);
-    if (!held || held.reservation.sessionId !== sessionId) return false;
+    if (!held) {
+      // A cancel ahead of its reserve: remembered so the late reserve is refused (only a release can cancel, never a booking).
+      if (!worstCase && why === 'settled' && isUUID(id)) { this.cancelled.set(id, sessionId); if (this.cancelled.size > MAX_CANCELLED) for (const old of this.cancelled.keys()) { this.cancelled.delete(old); break; } }
+      return false;
+    }
+    if (held.reservation.sessionId !== sessionId) return false;
     this.live.delete(id); clearTimeout(held.timer);
     if (why === 'expired') this.options.log.error('Budget reservation expired; booked at its worst case');
     // A booking that fails is logged and never rejects: callers settle without awaiting (exit, expiry), and an unhandled
@@ -95,6 +124,14 @@ export class BudgetLedger {
     if (this.released.size > MAX_RELEASED) for (const old of this.released) { this.released.delete(old); if (this.released.size <= MAX_RELEASED / 2) break; }
     for (const { reservation } of [...this.live.values()]) if (reservation.sessionId === sessionId) await this.settle(sessionId, reservation.id, true, 'exited');
   }
+  // The last write's end: a grant goes out only once its hold is on disk, so a daemon killed right after can still book it.
+  flushed(): Promise<void> { return this.writes; }
+  // Why a reserve was refused, logged once per agent and reason (the agent only says AI Term isn't answering).
+  private refuse(sessionId: string, reason: Refusal, answer: ReserveAnswer): ReserveAnswer {
+    const key = `${sessionId}:${reason}`;
+    if (!this.refusalsLogged.has(key)) { if (this.refusalsLogged.size >= MAX_REFUSAL_LOGS) this.refusalsLogged.clear(); this.refusalsLogged.add(key); this.options.log.error(`Budget reserve refused: ${reason}`); }
+    return answer;
+  }
   // Shutdown keeps the file: whatever is still held is booked at the next start.
   async close(): Promise<void> { this.closed = true; for (const { timer } of this.live.values()) clearTimeout(timer); await this.writes; }
   private takeRate(sessionId: string): boolean {
@@ -109,8 +146,8 @@ export class BudgetLedger {
     if (!file || this.writeQueued) return this.writes;
     this.writeQueued = true;
     // A failed write never stops the daemon or an agent (D33); the next change writes again.
-    this.writes = this.writes.then(() => { this.writeQueued = false; return atomicWrite(file, { v: 1, reservations: [...this.live.values()].map(({ reservation }) => reservation) }); })
-      .catch(() => { this.options.log.error('Budget reservations could not be saved; will retry on next change'); });
+    this.writes = this.writes.then(async () => { this.writeQueued = false; await atomicWrite(file, { v: 1, reservations: [...this.live.values()].map(({ reservation }) => reservation) }); if (this.saveWarned) { this.saveWarned = false; this.options.warn?.('save', null); } })
+      .catch(() => { this.options.log.error('Budget reservations could not be saved; will retry on next change'); if (!this.saveWarned) { this.saveWarned = true; this.options.warn?.('save', SAVE_WARNING); } });
     return this.writes;
   }
 }

@@ -59,9 +59,9 @@ it('LOW (code review): an agent titled with emoji can still hand off (lengths co
 });
 
 const snapshot: PriceSnapshot = { fetchedAt: '2026-10-12', providers: { anthropic: {}, openai: { 'gpt-6.1-mini': { input: 0.2, output: 0.8 } }, azure: {} } };
-async function handoffDaemon(options: { usage: boolean; startScript?: string }) {
+async function handoffDaemon(options: { usage: boolean; startScript?: string; budget?: boolean }) {
   const root = await tempDir('ai-gate06-'), paths = getPaths(root); await preparePaths(paths);
-  await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off', handoff: true, budgets: { daily: 0.000001, weekly: null, monthly: null } }), { mode: 0o600 });
+  await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off', handoff: true, ...(options.budget ? { budgets: { daily: 0.000001, weekly: null, monthly: null } } : {}) }), { mode: 0o600 });
   const log = new Logger(paths.log), usage = options.usage ? new UsageService(root, log) : undefined, vault = new Map<string, string>();
   const keys = new KeyStore(root, { vault: { read: async a => vault.get(a) ?? null, write: async (a, s) => { vault.set(a, s); }, remove: async a => { vault.delete(a); } } });
   const manager = new SessionManager(paths, log, undefined, undefined, undefined, keys, usage, '/opt/ai-term/dist/cli/index.js');
@@ -80,14 +80,13 @@ async function handoffDaemon(options: { usage: boolean; startScript?: string }) 
 }
 
 it('MEDIUM (silent failures): with no budget ledger a keyed handoff summary is refused, never sent unchecked', async () => {
-  const d = await handoffDaemon({ usage: false });
+  const d = await handoffDaemon({ usage: false, budget: true });
   await expect(d.manager.handoff(d.source.id, 'claude-code')).rejects.toThrow('Budget check unavailable; try again');
   expect(d.calls()).toBe(0);
 });
 
 it('LOW (code review): "handed off →" survives a daemon restart', async () => {
   const d = await handoffDaemon({ usage: true });
-  await writeFile(join(d.root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off', handoff: true }), { mode: 0o600 });
   const result = await d.manager.handoff(d.source.id, 'claude-code');
   expect(result.oldKeptRunning).toBe(false);
   await expect.poll(async () => (await readFile(d.paths.state, 'utf8')).includes('handoffTo')).toBe(true);
@@ -100,7 +99,6 @@ it('LOW (code review): "handed off →" survives a daemon restart', async () => 
 it('LOW (silent failures): a new agent that didn\'t start and couldn\'t be stopped says so, not "the old one keeps running" alone', async () => {
   SessionManager.handoffStartMs = 300; cleanups.push(async () => { SessionManager.handoffStartMs = 30_000; });
   const d = await handoffDaemon({ usage: true, startScript: 'sleep 30' });
-  await writeFile(join(d.root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off', handoff: true }), { mode: 0o600 });
   const realStop = d.manager.stop.bind(d.manager);
   vi.spyOn(d.manager, 'stop').mockImplementation(async id => { if (id !== d.source.id) throw new Error('Session stop timed out'); return realStop(id); });
   await expect(d.manager.handoff(d.source.id, 'claude-code')).rejects.toThrow("The new agent didn't start and couldn't be stopped; stop it with s");

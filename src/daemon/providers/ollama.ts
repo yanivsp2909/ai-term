@@ -5,7 +5,8 @@ import { isValidModelId } from '../../shared/validate.js';
 // v0.6.5: Ollama's models, from the local server's own list (GET /api/tags). Only http://127.0.0.1:<port>; no key, no
 // redirect (node's http client never follows one), a 5 s deadline and a 256 KiB cap on the reply. The names are
 // untrusted text from another program, so only valid model ids pass, at most 40 (like a Foundry key's deployments).
-export class OllamaError extends Error {}
+// detail: what went wrong, for the daemon's log only (a status, an error code, a fixed word): never the reply's text.
+export class OllamaError extends Error { constructor(message: string, readonly detail = 'refused') { super(message); } }
 export interface LocalReply { status: number; body: string }
 export type LocalGet = (url: URL, timeout: number) => Promise<LocalReply>;
 const MAX_REPLY = 256 * 1024, TIMEOUT_MS = 5000, MAX_MODELS = 40;
@@ -20,14 +21,18 @@ export const localGet: LocalGet = (url, timeout) => new Promise((resolve, reject
 });
 export const OLLAMA_ERRORS = ['Ollama must be at http://127.0.0.1:<port>', 'Ollama is not running; start it, then test again (t)', 'Ollama did not answer'] as const;
 export async function listOllama(endpoint: string, get: LocalGet = localGet): Promise<string[]> {
-  if (!isLocalEndpoint(endpoint)) throw new OllamaError('Ollama must be at http://127.0.0.1:<port>');
+  if (!isLocalEndpoint(endpoint)) throw new OllamaError('Ollama must be at http://127.0.0.1:<port>', 'not local');
   let reply: LocalReply;
   try { reply = await get(new URL(`${endpoint}/api/tags`), TIMEOUT_MS); }
-  catch (error) { throw new OllamaError(error && typeof error === 'object' && 'code' in error && error.code === 'ECONNREFUSED' ? 'Ollama is not running; start it, then test again (t)' : 'Ollama did not answer'); }
+  catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && /^E[A-Z]+$/.test(error.code) ? error.code : error instanceof OllamaError ? error.message.toLowerCase() : 'request failed';
+    throw new OllamaError(code === 'ECONNREFUSED' ? 'Ollama is not running; start it, then test again (t)' : 'Ollama did not answer', code);
+  }
+  if (reply.status !== 200) throw new OllamaError('Ollama did not answer', `status ${reply.status}`);
   let value: unknown;
-  try { value = reply.status === 200 ? JSON.parse(reply.body) : null; } catch { value = null; }
+  try { value = JSON.parse(reply.body); } catch { value = null; }
   const list = value && typeof value === 'object' && 'models' in value && Array.isArray(value.models) ? value.models as unknown[] : null;
-  if (!list) throw new OllamaError('Ollama did not answer');
+  if (!list) throw new OllamaError('Ollama did not answer', 'not a model list');
   const names = list.flatMap(entry => entry && typeof entry === 'object' && 'name' in entry && typeof entry.name === 'string' && isValidModelId(entry.name) ? [entry.name] : []);
   return [...new Set(names)].slice(0, MAX_MODELS);
 }

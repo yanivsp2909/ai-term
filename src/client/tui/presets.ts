@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
-import type { KeyView } from '../../shared/protocol.js';
+import type { CliEngine, KeyView } from '../../shared/protocol.js';
+import { accountAuthLabel } from './accounts.js';
 import { engineLabel } from '../../shared/models.js';
 import { keyAuthLabel } from '../../shared/providers.js';
 import { PRESET_NAME, type Preset } from '../../shared/presets.js';
@@ -29,13 +30,13 @@ export async function presetProblem(name: string, preset: Preset, keys: readonly
   catch (error) { return isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR') ? `preset ${name}: folder ${preset.cwd} is gone` : `preset ${name}: folder ${preset.cwd} can't be read`; }
   return null;
 }
-export function presetAuthLabel(preset: Preset, keys: readonly KeyView[]): string {
+export function presetAuthLabel(preset: Preset, keys: readonly KeyView[], defaults: Partial<Record<CliEngine, string>> = {}): string {
   const auth = preset.auth;
-  if (auth.kind === 'account') return 'own login';
+  if (auth.kind === 'account') return accountAuthLabel(auth, preset.engine, defaults, 'own login');
   const key = keys.find(k => k.id === auth.keyId);
   return key ? keyAuthLabel(key.provider, key.last4) : 'removed key';
 }
-export function presetLines(presets: Readonly<Record<string, Preset>>, keys: readonly KeyView[]): string[] {
+export function presetLines(presets: Readonly<Record<string, Preset>>, keys: readonly KeyView[], defaults: Partial<Record<CliEngine, string>> = {}): string[] {
   return Object.entries(presets).sort(([a], [b]) => a.localeCompare(b)).map(([name, p]) =>
-    `${name} · ${p.model ?? 'CLI default'} · ${engineLabel(p.engine)} · ${presetAuthLabel(p, keys)} · ${p.permission === 'dontAsk' ? "! don't ask" : p.permission} · ${p.cwd} · worktree ${p.worktree ? 'on' : 'off'}${p.firstMessage ? ` · first message: ${p.firstMessage.split('\n')[0] ?? ''}` : ''}`);
+    `${name} · ${p.model ?? 'CLI default'} · ${engineLabel(p.engine)} · ${presetAuthLabel(p, keys, defaults)} · ${p.permission === 'dontAsk' ? "! don't ask" : p.permission} · ${p.cwd} · worktree ${p.worktree ? 'on' : 'off'}${p.firstMessage ? ` · first message: ${p.firstMessage.split('\n')[0] ?? ''}` : ''}`);
 }

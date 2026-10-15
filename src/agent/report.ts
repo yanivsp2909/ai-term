@@ -1,6 +1,7 @@
 import { validateExtensionCatalog, validateExtensionFile } from '../shared/validate.js';
 import type { ExtensionAccess } from '../shared/extensions.js';
 import { request } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { mcpAccess } from '../client/mcp.js';
 import type { McpAccess, McpRequest } from '../shared/mcp.js';
 import { parseAgentFacts, parseBudgetAnswer, type AgentFacts, type BudgetAnswer } from '../shared/agent-facts.js';
@@ -74,9 +75,13 @@ export class HttpReporter implements Reporter, ExtensionAccess {
     const value = await this.query({model});
     return parseAgentFacts(value);
   }
+  // The id is ours (v0.6 gate): when no answer comes (the daemon was slow past our timeout), the grant it may still give
+  // is cancelled right behind, in the same queue, so it is never held for a request that wasn't sent.
   async reserve(model: string, amountUsd: number): Promise<BudgetAnswer | null> {
     if (!this.env) return null;
-    return parseBudgetAnswer(await this.query({ kind: 'budget.reserve', model, amountUsd }));
+    const id = randomUUID(), answer = parseBudgetAnswer(await this.query({ kind: 'budget.reserve', id, model, amountUsd }));
+    if (!answer) void this.settle(id, false);
+    return answer;
   }
   // In the queue right after the request's usage post: worstCase may wait for whether the daemon took that usage.
   async settle(id: string, worstCase: boolean | Promise<boolean>): Promise<void> {

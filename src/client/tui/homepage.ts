@@ -13,6 +13,7 @@ import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
 import { MAX_FIND_CHARS, type FindMatch, type SessionInfo, type SuccessResponse, type AgentEngine, type EnginesStatus, type AuthRef, type KeyView, type SystemStats, type UsageSummary, type Budgets, type Effort, type Permission, type KeysRunOn } from '../../shared/protocol.js';
 import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText, validateWorktreePreview, isCliEngine } from '../../shared/validate.js';
+import type { CliEngine } from '../../shared/protocol.js';
 import { getPaths } from '../../shared/paths.js';
 import { Logger, redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
@@ -43,8 +44,8 @@ import { FindPanel } from './find-panel.js';
 import { TextPanel } from './text-panel.js';
 import { usageDetailLines } from './usage-details.js';
 import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
-import { HandoffAsk, handoffDone } from './handoff-ask.js';
-import { parseAccountCommand, parseHandoffTarget } from './accounts.js';
+import { HandoffAsk, handoffDone, handoffRequest } from './handoff-ask.js';
+import { accountAuthLabel, parseAccountCommand, parseHandoffTarget } from './accounts.js';
 import { OWN_ACCOUNT, type AccountProfile } from '../../shared/accounts.js';
 import { validateHandoffPlan, validateHandoffSummary } from '../../shared/handoff.js';
 import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.js';
@@ -98,6 +99,7 @@ export class Homepage {
   private presetsEnabled = true;
   // v0.6.4 account profiles (D53), from settings: names and engines only.
   private accounts: AccountProfile[] = [];
+  private defaultAccounts: Partial<Record<CliEngine,string>> = {};
   private presets: Record<string, Preset> = {};
   private model: string | null = null;
   private folder: string;
@@ -158,7 +160,7 @@ export class Homepage {
       this.options.controls?.on('command', this.onAppCommand);
       this.enter();
       const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
-      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;this.taskCost=settings.taskCost!==false;this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};this.accounts=settings.accounts??[];
+      this.worktrees=settings.worktrees??'on';this.keysRunOn=settings.keysRunOn??'ai-term';this.contextWarning=settings.contextWarning!==false;this.taskCost=settings.taskCost!==false;this.presetsEnabled=settings.presetsEnabled!==false;this.presets=settings.presets??{};this.accounts=settings.accounts??[];this.defaultAccounts=settings.defaultAccounts??{};
       this.budgets=validateBudgets(settings.budgets??{});
       if (settings.defaultEngine) this.engine = settings.defaultEngine;
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
@@ -581,7 +583,7 @@ export class Homepage {
     let settings:import('../../shared/protocol.js').Settings;
     try{settings=validateSettings((await this.connection.request({kind:'settings.get'})).settings);}catch{this.showNote('accounts unavailable: settings could not be read');return;}
     const accounts=settings.accounts??[],defaults=settings.defaultAccounts??{},find=(name:string)=>accounts.find(a=>a.name===name);
-    const save=async(patch:import('../../shared/protocol.js').SettingsPatch,done:string)=>{try{const next=validateSettings((await this.connection.request({kind:'settings.set',patch})).settings);this.accounts=next.accounts??[];this.showNote(done);return true;}catch(error){this.showNote(`account not saved: ${error instanceof Error?error.message:'settings could not be saved'}`);return false;}};
+    const save=async(patch:import('../../shared/protocol.js').SettingsPatch,done:string)=>{try{const next=validateSettings((await this.connection.request({kind:'settings.set',patch})).settings);this.accounts=next.accounts??[];this.defaultAccounts=next.defaultAccounts??{};this.showNote(done);return true;}catch(error){this.showNote(`account not saved: ${error instanceof Error?error.message:'settings could not be saved'}`);return false;}};
     this.accounts=accounts;
     if(parsed.kind==='list'){this.showNote(accounts.length?accounts.map(a=>`${a.name} · ${a.engine==='codex'?'codex':'claude'}${defaults[a.engine]===a.name?' · default':''}`).join(' · ')+' · /account add claude|codex <name>':'no accounts yet · /account add claude|codex <name> logs a second account in through the CLI');return;}
     if(parsed.kind==='add'){
@@ -592,7 +594,7 @@ export class Homepage {
       catch(error){
         // Take the name back, so /account add can simply be run again.
         const reason=error instanceof Error?error.message:'request failed';
-        try{const next=validateSettings((await this.connection.request({kind:'settings.set',patch:{accounts}})).settings);this.accounts=next.accounts??[];}catch{this.showNote(`login didn't start: ${reason} · /account rm ${parsed.name}, then add it again`);return;}
+        try{const next=validateSettings((await this.connection.request({kind:'settings.set',patch:{accounts}})).settings);this.accounts=next.accounts??[];this.defaultAccounts=next.defaultAccounts??{};}catch{this.showNote(`login didn't start: ${reason} · /account rm ${parsed.name}, then add it again`);return;}
         this.showNote(`login didn't start: ${reason} · fix that, then /account add again`);
       }
       return;
@@ -627,7 +629,7 @@ export class Homepage {
     const ask:HandoffAsk=new HandoffAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
       this.showNote(`◐ handing off ${source.title} → ${engine==='codex'?'codex':'claude code'}`);
       let result:SuccessResponse;
-      try{result=await this.connection.request({kind:'sessions.handoff',sessionId:source.id,engine,writer:plan.writer,...(account?{account}:{})});}
+      try{result=await this.connection.request(handoffRequest(plan,source.id));}
       catch(error){this.showNote(`handoff stopped: ${error instanceof Error?error.message:'request failed'}`);return;}
       // From here the handoff happened; a problem showing it must not read as if it didn't.
       let session:SessionInfo|undefined,summary:import('../../shared/handoff.js').HandoffSummary|null=null;
@@ -652,7 +654,7 @@ export class Homepage {
     const find=(name:string):Preset|undefined=>Object.hasOwn(presets,name)?presets[name]:undefined;
     try{this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];}catch(error){this.showNote(`presets unavailable: ${error instanceof Error?error.message:'key list could not be read'}`);return;}
     if(parsed.kind==='list'){
-      const lines=presetLines(presets,this.keys);
+      const lines=presetLines(presets,this.keys,this.defaultAccounts);
       if(!lines.length){this.showNote("no presets yet · /preset save <name> keeps the next agent's setup");return;}
       const panel:TextPanel=new TextPanel('Presets',()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);});
       this.popup=panel;panel.set([...lines.map(line=>({text:line,tone:'ink-2' as const})),{text:'/preset <name> opens the start box · /preset rm <name>',tone:'ink-3'}]);return;
@@ -733,7 +735,7 @@ export class Homepage {
   // the keys setting, so the start box always shows the engine the daemon will start.
   private async refreshSettings():Promise<void>{
     const settings=(await this.connection.request({kind:'settings.get'})).settings;
-    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;this.taskCost=settings?.taskCost!==false;this.presetsEnabled=settings?.presetsEnabled!==false;this.presets=settings?.presets??{};this.accounts=settings?.accounts??[];
+    this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;this.taskCost=settings?.taskCost!==false;this.presetsEnabled=settings?.presetsEnabled!==false;this.presets=settings?.presets??{};this.accounts=settings?.accounts??[];this.defaultAccounts=settings?.defaultAccounts??{};
     if(this.auth.kind==='key'){const id=this.auth.keyId,provider=this.keys.find(k=>k.id===id)?.provider;if(provider){this.engine=keyEngine(provider,this.keysRunOn);this.compatibleDefaults(this.engine);}}
   }
   private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission))this.permission='ask';}
@@ -761,8 +763,7 @@ export class Homepage {
   }
   private nextAuthLabel():string {
     if(this.auth.kind==='key'){const id=this.auth.keyId,key=this.keys.find(k=>k.id===id);return key?keyAuthLabel(key.provider,key.last4):'key ····';}
-    const label=ownLoginLabel(this.engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod);
-    return this.auth.profile&&this.auth.profile!==OWN_ACCOUNT?`account ${this.auth.profile}`:label;
+    return accountAuthLabel(this.auth,this.engine,this.defaultAccounts,ownLoginLabel(this.engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod));
   }
   private allModelChoices():import('../../shared/models.js').ModelChoice[]{
     const b=this.box,choices=modelChoices(this.keys,this.engines,this.keysRunOn);if(!b)return choices;

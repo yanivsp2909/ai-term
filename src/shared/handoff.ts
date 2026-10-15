@@ -1,5 +1,6 @@
 import { stripVTControlCharacters } from 'node:util';
 import type { CliEngine, KeyProvider } from './protocol.js';
+import { redactSecrets } from './redact.js';
 
 // v0.6.3 engine handoff (D55, off by default: it spends tokens). An agent's screen text becomes a short summary that a new
 // agent of another engine starts from, in the same worktree. The summary is written by the cheapest keyed model AI Term
@@ -19,15 +20,16 @@ export function handoffInstructions(target: CliEngine): string {
   return `You are handing this work over to ${target === 'codex' ? 'Codex' : 'Claude Code'}, which starts fresh in the same folder and git worktree and sees nothing of this conversation. Write a handoff note with exactly these sections, short and concrete: ${HANDOFF_SECTIONS.map(s => `## ${s}`).join(', ')}. Name real files and commands. Do not include secrets, keys or tokens.`;
 }
 export function handoffPrompt(target: CliEngine, screen: string): string {
-  const tail = screen.length > HANDOFF_SOURCE_CHARS ? screen.slice(screen.length - HANDOFF_SOURCE_CHARS) : screen;
+  // v0.6 gate: secrets on the screen (a printed .env, a bearer header) never go to the provider that writes the note.
+  const tail = redactSecrets(screen.length > HANDOFF_SOURCE_CHARS ? screen.slice(screen.length - HANDOFF_SOURCE_CHARS) : screen);
   return `${handoffInstructions(target)}\n\nThe agent's terminal, most recent last:\n<terminal>\n${tail}\n</terminal>`;
 }
-// The note goes into the new CLI's argv: no escapes, C0/C1 controls, bidi overrides, BOM or line/paragraph separators,
+// The note goes into the new CLI's argv (which `ps` shows), so secrets are redacted first; and no escapes, C0/C1 controls, bidi overrides, BOM or line/paragraph separators,
 // only text, new lines and tabs (whatever wrote it: a provider, or the agent's own last reply). ZWJ, ZWNJ, emoji tag
 // characters and LRM/RLM stay: emoji sequences and Persian, Arabic and Indic text need them.
 export function cleanNote(text: string): string {
   // eslint-disable-next-line no-control-regex -- removing terminal controls is the point.
-  return stripVTControlCharacters(text).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2028\u2029]/g, '').trim();
+  return redactSecrets(stripVTControlCharacters(text)).replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069\u061c\ufeff\u2028\u2029]/g, '').trim();
 }
 // The new agent's first message: the cleaned note, cut on a character boundary to fit, under a fixed header.
 export function handoffMessage(from: string, summary: string): string {
@@ -41,12 +43,12 @@ const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isF
 const isRange = (v: unknown): v is { low: number; high: number } => !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 2 && 'low' in v && 'high' in v && isCount(v.low) && isCount(v.high) && v.low <= v.high;
 export function isHandoffWriter(value: unknown): value is HandoffWriter {
   const w = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
-  return !!w && (w.kind === 'agent' && Object.keys(w).length === 1 || w.kind === 'key' && Object.keys(w).length === 5 && ['anthropic', 'openai', 'foundry'].includes(String(w.provider)) && typeof w.model === 'string' && w.model.length <= 80 && typeof w.keyLabel === 'string' && w.keyLabel.length <= 80 && typeof w.last4 === 'string' && w.last4.length <= 4);
+  return !!w && (w.kind === 'agent' && Object.keys(w).length === 1 || w.kind === 'key' && Object.keys(w).length === 5 && ['anthropic', 'openai', 'foundry'].includes(String(w.provider)) && typeof w.model === 'string' && w.model.length <= 80 && typeof w.keyLabel === 'string' && [...w.keyLabel].length <= 80 && typeof w.last4 === 'string' && w.last4.length <= 4);
 }
 export function validateHandoffPlan(value: unknown): HandoffPlan {
   const p = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
   const writerOk = isHandoffWriter(p?.writer);
-  if (!p || Object.keys(p).length !== (p.account === undefined ? 7 : 8) || p.account !== undefined && (typeof p.account !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(p.account)) || typeof p.source !== 'string' || p.source.length > 60 || !HANDOFF_ENGINES.includes(p.engine as CliEngine) || !writerOk || !isRange(p.inputTokens) || !isRange(p.outputTokens) || !(p.priceUsd === null || isRange(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid handoff plan');
+  if (!p || Object.keys(p).length !== (p.account === undefined ? 7 : 8) || p.account !== undefined && (typeof p.account !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(p.account)) || typeof p.source !== 'string' || [...p.source].length > 60 || !HANDOFF_ENGINES.includes(p.engine as CliEngine) || !writerOk || !isRange(p.inputTokens) || !isRange(p.outputTokens) || !(p.priceUsd === null || isRange(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid handoff plan');
   return p as unknown as HandoffPlan;
 }
 export interface HandoffSummary { inputTokens: number; outputTokens: number; costUsd: number | null }

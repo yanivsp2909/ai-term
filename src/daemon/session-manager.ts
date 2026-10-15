@@ -78,9 +78,10 @@ const TASK_UPDATE_MS=1000;
 const LIMIT_CHECK_MS=1000,LIMIT_ROWS=60;
 // v0.6.3: a new engine has this long to start; a keyed summary this long to answer; an agent this long to write its note.
 export const HANDOFF_NOT_STARTED="The new agent didn't start; the old one keeps running";
+export const HANDOFF_NOT_STOPPED="The new agent didn't start and couldn't be stopped; stop it with s";
 export const HANDOFF_NOT_STARTED_PAID="The new agent didn't start; the old one keeps running · the note's tokens were spent";
 // Every handoff refusal is one of these fixed texts, so the socket can return it as written.
-export const HANDOFF_ERRORS=['Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done',"Agent hit its limit and can't write the note · add an API key for the summary",'Agent is being handed off'];
+export const HANDOFF_ERRORS=[HANDOFF_NOT_STOPPED,'Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done',"Agent hit its limit and can't write the note · add an API key for the summary",'Agent is being handed off'];
 const HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
 function sameWriter(approved:HandoffWriter,writer:import('./handoff.js').KeyedWriter|null):boolean{return approved.kind==='agent'?writer===null:writer!==null&&approved.provider===writer.key.provider&&approved.model===writer.model&&approved.last4===writer.key.last4;}
 export class SessionManager extends EventEmitter {
@@ -118,7 +119,7 @@ export class SessionManager extends EventEmitter {
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
         super();this.mcp=new McpService(new SettingsStore(paths.root),keys,log);
-        if(usage){this.ledger=new BudgetLedger({file:join(paths.root,'budget-reservations.json'),book:reservation=>usage.book(reservation),log,busy:id=>{const live=this.sessions.get(id);return !!live&&(live.info.status==='waiting'||(live.statusState?.toolsInFlight??0)>0);}});usage.on('record',(record:UsageRecord)=>this.addTask(record.sessionId,record.inputTokens+record.outputTokens,record.costUsd));usage.on('task',(id:string,tokens:number)=>this.addTask(id,tokens,undefined));}usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
+        if(usage){this.ledger=new BudgetLedger({file:join(paths.root,'budget-reservations.json'),book:reservation=>usage.book(reservation),log,warn:(key,text)=>{if(text)this.warning(`budget-${key}`,text);else this.clearWarning(`budget-${key}`);},busy:id=>{const live=this.sessions.get(id);return !!live&&(live.info.status==='waiting'||(live.statusState?.toolsInFlight??0)>0);}});usage.on('record',(record:UsageRecord)=>this.addTask(record.sessionId,record.inputTokens+record.outputTokens,record.costUsd));usage.on('task',(id:string,tokens:number)=>this.addTask(id,tokens,undefined));}usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
     warningText(): string | null { return this.warnings.size ? [...this.warnings.values()].join(' ') : null; }
@@ -187,7 +188,7 @@ export class SessionManager extends EventEmitter {
             if (!isUUID(r.id) || !isTitle(r.title) || !['shell','claude-code','codex','ai-term'].includes(String(r.engine)) || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
             const saved = validateSession(r);
-            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}), ...(saved.login?{login:true as const}:{}), ...(saved.taskUsage?{taskUsage:saved.taskUsage}:{}) });
+            sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}), ...(saved.login?{login:true as const}:{}), ...(saved.taskUsage?{taskUsage:saved.taskUsage}:{}),...(saved.handoffTo?{handoffTo:saved.handoffTo}:{}) });
         }
         return { sessions, worktrees: 'worktrees' in state && Array.isArray(state.worktrees) ? state.worktrees as unknown[] : [] };
     }
@@ -507,12 +508,16 @@ export class SessionManager extends EventEmitter {
             return {settled:await ledger.settle(id,raw.id,raw.worstCase)};
         }
         const amount=raw.amountUsd;
-        if(raw.kind!=='budget.reserve'||keys!=='amountUsd,kind,model'||typeof raw.model!=='string'||!live.agentModels?.includes(raw.model)||typeof amount!=='number'||!Number.isFinite(amount)||amount<0||amount>MAX_RECORD_COST_USD)return null;
+        // id (v0.6 gate): the agent's own, so it can cancel a grant it never got; older agents send none.
+        if(raw.kind!=='budget.reserve'||keys!=='amountUsd,kind,model'&&!(keys==='amountUsd,id,kind,model'&&isUUID(raw.id))||typeof raw.model!=='string'||!live.agentModels?.includes(raw.model)||typeof amount!=='number'||!Number.isFinite(amount)||amount<0||amount>MAX_RECORD_COST_USD)return null;
         const key=await this.keys.view(live.info.auth.keyId),settings=await new SettingsStore(this.paths.root).get();
         // Checked again after the reads: an agent that exited meanwhile must not leave a reservation behind.
         if(['exited','error'].includes(live.info.status))return null;
         const usage=this.usage?.summary(),budgets={daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null};
-        return ledger.reserve({sessionId:id,provider:key.provider,model:raw.model,amountUsd:amount},budgets,{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
+        const answer=ledger.reserve({sessionId:id,provider:key.provider,model:raw.model,amountUsd:amount,...(typeof raw.id==='string'?{id:raw.id}:{})},budgets,{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
+        // A grant goes out once its hold is on disk: a daemon killed in between must still book it at the next start.
+        if('grant' in answer)await ledger.flushed();
+        return answer;
     }
     // v0.6.4 (D53): a second after output settles, the agent's visible screen is read for an account limit. It is only
     // shown (card, homepage note); AI Term never switches accounts by itself.
@@ -590,7 +595,7 @@ export class SessionManager extends EventEmitter {
                 if(['running','waiting','done'].includes(status))break;
                 if(['exited','error'].includes(status)||waited>=SessionManager.handoffStartMs){
                     // Late is not never: a new agent left starting would later work on the same task beside the old one.
-                    try{await this.stop(next.id);}catch{this.log.error('Handoff: stopping the new agent that did not start failed');}
+                    try{await this.stop(next.id);}catch{this.log.error('Handoff: stopping the new agent that did not start failed');throw new Error(HANDOFF_NOT_STOPPED);}
                     throw new Error(written.summary?HANDOFF_NOT_STARTED_PAID:HANDOFF_NOT_STARTED);
                 }
                 await new Promise(resolve=>setTimeout(resolve,100));
@@ -608,9 +613,11 @@ export class SessionManager extends EventEmitter {
     private async keyedSummary(id:string,live:Live,engine:CliEngine,screen:string,writer:import('./handoff.js').KeyedWriter,settings:Settings):Promise<{text:string;summary:HandoffSummary}>{
         const plan=handoffPlan(live.info.title,engine,screen,writer,false),worst=plan.priceUsd?.high??0,usage=this.usage?.summary();
         this.lastHandoffWorst=worst;
-        const held=this.ledger?.reserve({sessionId:id,provider:writer.key.provider,model:writer.model,amountUsd:worst},{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
-        if(held&&'refused' in held)throw new Error(held.refused.budget==='unavailable'?'Budget check unavailable; try again':`The handoff would pass your ${held.refused.budget} budget`);
-        const grant=held&&'grant' in held?held.grant.id:null,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),HANDOFF_SUMMARY_MS);
+        // No ledger, no budget check: a keyed summary is never sent unchecked (v0.6 gate).
+        if(!this.ledger)throw new Error('Budget check unavailable; try again');
+        const held=this.ledger.reserve({sessionId:id,provider:writer.key.provider,model:writer.model,amountUsd:worst},{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0});
+        if('refused' in held)throw new Error(held.refused.budget==='unavailable'?'Budget check unavailable; try again':`The handoff would pass your ${held.refused.budget} budget`);
+        const grant=held.grant.id,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),HANDOFF_SUMMARY_MS);
         const settle=(worstCase:boolean):Promise<unknown>=>grant?this.ledger?.settle(id,grant,worstCase).catch(()=>{this.log.error('Budget reservation could not be booked');})??Promise.resolve():Promise.resolve();
         let result:import('./handoff.js').Summary;
         try{

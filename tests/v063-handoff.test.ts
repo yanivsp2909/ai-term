@@ -168,7 +168,8 @@ it('/handoff asks first with who writes the note, tokens and price; ⏎ runs it,
     type(tty, '/handoff fixer claude'); enter(tty); await shows(tty, 'Hand off fixer → claude code');
     enter(tty);
     await shows(tty, '✓ handed off fixer → fixer · claude code · summary 2.4K in · 310 out · $0.0007');
-    expect(requests.find(r => r.kind === 'sessions.handoff')).toEqual({ kind: 'sessions.handoff', sessionId: fixer.id, engine: 'claude-code', writer: { kind: 'key', provider: 'openai', model: 'gpt-6.1-mini', keyLabel: 'cheap', last4: 'oooo' } });
+    expect(requests.find(r => r.kind === 'sessions.handoff')).toEqual({ kind: 'sessions.handoff', sessionId: fixer.id, engine: 'claude-code', writer: { kind: 'key', provider: 'openai', model: 'gpt-6.1-mini', keyLabel: 'cheap', last4: 'oooo' }, account: 'own' });
+    // v0.6 gate: ⏎ sends the account the ask showed (own when none), so a default changed meanwhile can't move it.
   } finally { await home.stop(); }
 });
 it('/settings has its own switch for handoff, off by default; g toggles it', async () => {

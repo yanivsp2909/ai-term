@@ -103,7 +103,7 @@ it('an unknown price with limits set pauses once per model and run; with no limi
   const h = new Harness(stubFacts({ caps: { turns: null, spendUsd: 1 } }), [true]);
   const { agent: a } = await agent([toolStep('read', { path: '.' }), textStep('ok'), textStep('again')], h);
   expect(await a.turn('go', go())).toBe('done'); expect(await a.turn('more', go())).toBe('done');
-  expect(h.pauses).toHaveLength(1); expect(h.pauses[0]).toContain("no price known for m1, so spend limits can't be checked");
+  expect(h.pauses).toHaveLength(1); expect(h.pauses[0]).toContain("no price known for m1, so what it spends is not counted in this run's spend cap");
   const free = new Harness(stubFacts());
   expect(await (await agent([textStep('ok')], free)).agent.turn('go', go())).toBe('done'); expect(free.pauses).toEqual([]);
   // A daemon that doesn't answer is a pause too: nothing goes unchecked.

@@ -72,8 +72,12 @@ export class RunLimits {
     const limited = caps.spendUsd !== null || facts.budgets.daily !== null || facts.budgets.weekly !== null || facts.budgets.monthly !== null;
     // Unknown price: asked once per model and run; going on still sends the model's own allowance, never no limit.
     if (!facts.price) {
+      // A budget is a promise across agents and days: an unpriced model would spend outside it (v0.6 gate), so with any
+      // budget set it waits for a price (⏎ checks again). A spend cap alone is this run's, so you may go on without it.
+      if (facts.budgets.daily !== null || facts.budgets.weekly !== null || facts.budgets.monthly !== null)
+        return { text: `no price known for ${facts.model}, so your budgets can't count it · set its price in /settings (p, or m for a Foundry deployment), then ⏎ checks again · Esc stops` };
       if (!limited || this.unpriced.has(facts.model)) return null;
-      return { text: `no price known for ${facts.model}, so spend limits can't be checked · mark the deployment's model in /settings, or ⏎ goes on without them for this model this run (at most ${modelMax.toLocaleString('en-US')} output tokens a request) · Esc stops`, onContinue: () => { this.unpriced.add(facts.model); } };
+      return { text: `no price known for ${facts.model}, so what it spends is not counted in this run's spend cap · set its price in /settings (p, or m for a Foundry deployment), or ⏎ goes on for this model this run (at most ${modelMax.toLocaleString('en-US')} output tokens a request) · Esc stops`, onContinue: () => { this.unpriced.add(facts.model); } };
     }
     const price = facts.price, input = worstCase(price, inputTokens, 0), extra = this.ledger ? facts.reserved : this.unreported + this.reserved;
     const rooms: { room: number; pause: () => Pause }[] = [];

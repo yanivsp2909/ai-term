@@ -17,6 +17,7 @@ import { enginesStatus } from './engines.js';
 import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
 import { testDirect } from './providers/direct.js';
+import { PROFILE_OTHER_ENGINE } from './accounts.js';
 import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
 import { DIRECT_HOSTS } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
@@ -202,7 +203,7 @@ export class DaemonServer {
                     // Ollama: the local server's own list is the check; it has no key to send anywhere.
                     if(provider==='ollama'){
                         let models:string[];
-                        try{models=await listOllama(key.endpoint??'');}catch(error){throw new KeyError(error instanceof OllamaError?error.message:'Ollama did not answer');}
+                        try{models=await listOllama(key.endpoint??'');}catch(error){this.log.error(`Ollama list failed: ${error instanceof OllamaError?error.detail:'unexpected error'}`);throw new KeyError(error instanceof OllamaError?error.message:'Ollama did not answer');}
                         const saved=await this.keys.saveModels(key.id,models);this.control(peer,{id:request.id,ok:true,results:saved.lastTest??[]});break;
                     }
                     if(provider==='anthropic'||provider==='openai'||!key.deployments)throw new KeyError('Only Foundry keys have deployment tests');
@@ -341,7 +342,7 @@ export class DaemonServer {
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const fixed = new Set([
                 'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
-                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine',"Settings unreadable; can't tell which account to use",
+                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
                 'Resume needs a finished agent','A shell has no AI conversation to resume','This older Claude agent has no conversation ID',
                 'Conversation already running','Conversation already starting','Invalid session request','Invalid session or title',
                 'Invalid preview size','Invalid attach','Session unavailable','Invalid resize','Not attached',
