@@ -123,3 +123,29 @@ it('agents started afterwards get it (D55, on): Claude Code\'s argv names the fi
   expect(await d.manager.brainRemove(d.repo)).toBe(true);
   await expect(d.manager.brainShow(d.repo)).rejects.toThrow('No brain for this repository yet · /brain builds one');
 }, 30_000);
+
+// Part C review (typescript-reviewer): each failed before its fix.
+it('MEDIUM (review): a model pass that fails partway keeps what it already paid for; earlier design notes stay first; a plan made stale by rm is refused', async () => {
+  let calls = 0;
+  const d = await daemon({}, async (_writer, _secret, _endpoint, prompt) => {
+    calls++;
+    if (calls === 2) throw new Error('provider down');
+    const paths = [...prompt.matchAll(/<file path="([^"]+)">/g)].map(m => m[1]);
+    return { text: [...paths.map(p => `${p} :: Summary ${calls}.`), `DECISION :: Decision ${calls}.`].join('\n'), inputTokens: 900, outputTokens: 60 };
+  });
+  for (let i = 0; i < 6; i++) await writeFile(join(d.repo, 'src', `big${i}.ts`), `export const v${i} = 1;\n` + '// pad\n'.repeat(3000));
+  const plan = await d.manager.brainPlan(d.repo), model = plan.models[0];
+  if (!model) throw new Error('no model');
+  await expect(d.manager.buildBrain(d.repo, plan.fingerprint, { keyId: model.keyId, model: model.model })).rejects.toThrow('The brain request failed');
+  const kept = await readFile(join(d.home, 'brain', (await import('../src/daemon/worktrees.js')).repoDirectory(d.repo), 'brain.json'), 'utf8');
+  expect(kept).toContain('Summary 1.');
+  expect(kept).toContain('Decision 1.');
+  const again = await d.manager.brainPlan(d.repo);
+  expect(again.summarize).toBeLessThan(plan.summarize);
+  const third = await d.manager.buildBrain(d.repo, again.fingerprint, { keyId: model.keyId, model: model.model });
+  const text = await readFile(third.path, 'utf8');
+  expect(text.indexOf('Decision 1.')).toBeLessThan(text.indexOf('Decision 3.'));
+  const stale = await d.manager.brainPlan(d.repo);
+  await d.manager.brainRemove(d.repo);
+  await expect(d.manager.buildBrain(d.repo, stale.fingerprint)).rejects.toThrow('The repository changed since the plan was shown; run /brain again');
+}, 30_000);
