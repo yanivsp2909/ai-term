@@ -19,31 +19,34 @@ export class CheckpointError extends Error {}
 export const CHECKPOINT_ERRORS = ['Checkpoints are off · /settings u turns them on', 'Stop or wait for the agent first; it is running', 'Stop or wait for the agent first; it is asking',
   'This agent has no worktree; checkpoints need one', 'Undo unavailable; git could not read the worktree', 'Nothing to redo', 'No checkpoint to go back to', 'Nothing to change; the worktree already matches it',
   'Changed since you looked; run /undo again', 'Changed since you looked; run /redo again', 'A folder in the worktree is a symlink; nothing was restored', 'Invalid checkpoint name',
-  'Something in the worktree is in the way; nothing was restored', 'Nothing was restored; a checkpoint file could not be read', 'The restore stopped part way; /redo or /undo brings back a saved state'] as const;
-export interface CheckpointContext { repo: string; key: Buffer }
+  'Something in the worktree is in the way; nothing was restored', 'Nothing was restored; a checkpoint file could not be read', 'The restore stopped part way; /redo or /undo brings back a saved state',
+  'Nothing was restored; the worktree could not be written', 'An ignored file is where the checkpoint has one; nothing was restored'] as const;
+// scope: what makes this worktree's checkpoints its own (its record's creation time): a later worktree that reuses the
+// name never inherits an earlier one's refs, even if removing them failed.
+export interface CheckpointContext { repo: string; key: Buffer; scope?: string }
 const AUTHOR = { GIT_AUTHOR_NAME: 'AI Term', GIT_AUTHOR_EMAIL: 'checkpoint@ai-term.invalid', GIT_COMMITTER_NAME: 'AI Term', GIT_COMMITTER_EMAIL: 'checkpoint@ai-term.invalid' };
 const BIG = 16 * 1024 * 1024;
 type Kind = 'checkpoint' | 'redo';
 function slugOk(slug: string): void { if (!isWorktreeBranch(`ai/${slug}`)) throw new CheckpointError('Invalid checkpoint name'); }
 const refs = { checkpoint: (slug: string) => `refs/ai-term/checkpoints/${slug}/`, redo: (slug: string) => `refs/ai-term/redo/${slug}/`, at: (slug: string) => `refs/ai-term/at/${slug}` };
-const mac = (kind: Kind, slug: string, tree: string, key: Buffer) => createHmac('sha256', key).update(`${kind}\0${slug}\0${tree}`).digest('hex');
-export function checkpointMessage(kind: Kind, slug: string, tree: string, key: Buffer): string { return `AI Term ${kind}\n\nAI-Term-Check: ${mac(kind, slug, tree, key)}\n`; }
-function signed(kind: Kind, slug: string, tree: string, body: string, key: Buffer): boolean {
+const mac = (kind: Kind, slug: string, tree: string, key: Buffer, scope = '') => createHmac('sha256', key).update(`${kind}\0${slug}\0${scope}\0${tree}`).digest('hex');
+export function checkpointMessage(kind: Kind, slug: string, tree: string, key: Buffer, scope = ''): string { return `AI Term ${kind}\n\nAI-Term-Check: ${mac(kind, slug, tree, key, scope)}\n`; }
+function signed(kind: Kind, slug: string, tree: string, body: string, key: Buffer, scope = ''): boolean {
   const found = body.match(/^AI-Term-Check: ([0-9a-f]{64})$/m)?.[1];
-  return !!found && timingSafeEqual(Buffer.from(found), Buffer.from(mac(kind, slug, tree, key)));
+  return !!found && timingSafeEqual(Buffer.from(found), Buffer.from(mac(kind, slug, tree, key, scope)));
 }
 // Refs live in the shared repository folder; git is pointed at it directly, without a work tree. Nothing these commands
 // do reads attributes or runs a filter; hooks are off in run().
 const refsGit = (common: string, args: string[]) => runGit(common, [`--git-dir=${common}`, ...args], 'Git check failed', { maxBuffer: BIG });
 
 export interface Checkpoint { n: number; commit: string; tree: string; at: string }
-async function listSigned(common: string, slug: string, kind: Kind, key: Buffer): Promise<Checkpoint[]> {
+async function listSigned(common: string, slug: string, kind: Kind, key: Buffer, scope = ''): Promise<Checkpoint[]> {
   const prefix = refs[kind](slug);
   // Records end in \0\0\n (a commit body can hold new lines, never NUL).
   const out = await refsGit(common, ['for-each-ref', '--format=%(refname)%00%(objectname)%00%(tree)%00%(committerdate:iso-strict)%00%(contents)%00%00', '--', prefix]);
   return out.split('\0\0\n').filter(Boolean).flatMap(record => {
     const [ref, commit, tree, at, body] = record.split('\0'), n = Number(ref?.slice(prefix.length));
-    return Number.isSafeInteger(n) && n > 0 && COMMIT_ID.test(commit ?? '') && COMMIT_ID.test(tree ?? '') && signed(kind, slug, tree ?? '', body ?? '', key) ? [{ n, commit: commit ?? '', tree: tree ?? '', at: at ?? '' }] : [];
+    return Number.isSafeInteger(n) && n > 0 && COMMIT_ID.test(commit ?? '') && COMMIT_ID.test(tree ?? '') && signed(kind, slug, tree ?? '', body ?? '', key, scope) ? [{ n, commit: commit ?? '', tree: tree ?? '', at: at ?? '' }] : [];
   }).sort((a, b) => a.n - b.n);
 }
 async function cursor(common: string, slug: string): Promise<string | null> {
@@ -76,16 +79,16 @@ async function withGit<T>(path: string, ctx: CheckpointContext, use: (git: Isola
 }
 export async function listCheckpoints(path: string, slug: string, ctx: CheckpointContext): Promise<Checkpoint[]> {
   slugOk(slug);
-  return withGit(path, ctx, git => listSigned(git.common, slug, 'checkpoint', ctx.key));
+  return withGit(path, ctx, git => listSigned(git.common, slug, 'checkpoint', ctx.key, ctx.scope));
 }
 // A new checkpoint, unless nothing changed since the last one (then null). The oldest beyond 50 go; a new turn also
 // ends what /redo could bring back and where /undo had gone.
 export async function snapshot(path: string, slug: string, ctx: CheckpointContext): Promise<{ n: number; commit: string; tree: string } | null> {
   slugOk(slug);
   return withGit(path, ctx, async git => {
-    const tree = await currentTree(path, git), existing = await listSigned(git.common, slug, 'checkpoint', ctx.key), last = existing.at(-1);
+    const tree = await currentTree(path, git), existing = await listSigned(git.common, slug, 'checkpoint', ctx.key, ctx.scope), last = existing.at(-1);
     if (last?.tree === tree) return null;
-    const n = (last?.n ?? 0) + 1, commit = await commitTree(path, git, tree, checkpointMessage('checkpoint', slug, tree, ctx.key));
+    const n = (last?.n ?? 0) + 1, commit = await commitTree(path, git, tree, checkpointMessage('checkpoint', slug, tree, ctx.key, ctx.scope));
     await setRef(git.common, `${refs.checkpoint(slug)}${n}`, commit);
     for (const old of existing.slice(0, Math.max(0, existing.length + 1 - MAX_CHECKPOINTS))) await dropRef(git.common, `${refs.checkpoint(slug)}${old.n}`);
     await dropAll(git.common, refs.redo(slug)); if (await cursor(git.common, slug)) await dropRef(git.common, refs.at(slug));
@@ -107,27 +110,35 @@ async function changes(path: string, git: IsolatedGit, from: string, to: string)
 interface Resolved { current: string; target: { commit: string; tree: string; at: string; n: number | null }; redoN: number | null; all: UndoChange[]; fingerprint: string }
 // Undo goes back from where the worktree is: from the checkpoint the last /undo went to (the cursor), else from the
 // last checkpoint (or to it, if the worktree changed since). Redo: the newest state an /undo saved.
-async function resolve(path: string, slug: string, kind: 'undo' | 'redo', git: IsolatedGit, key: Buffer): Promise<Resolved> {
+async function resolve(path: string, slug: string, kind: 'undo' | 'redo', git: IsolatedGit, ctx: CheckpointContext): Promise<Resolved> {
   const current = await currentTree(path, git);
   let target: Resolved['target'], redoN: number | null = null;
   if (kind === 'redo') {
-    const top = (await listSigned(git.common, slug, 'redo', key)).at(-1);
+    const top = (await listSigned(git.common, slug, 'redo', ctx.key, ctx.scope)).at(-1);
     if (!top) throw new CheckpointError('Nothing to redo');
     target = { ...top, n: null }; redoN = top.n;
   } else {
-    const all = await listSigned(git.common, slug, 'checkpoint', key), at = await cursor(git.common, slug), here = all.findIndex(c => c.commit === at && c.tree === current);
-    const last = all.at(-1), pick = here >= 0 ? all[here - 1] : last && last.tree !== current ? last : all.at(-2);
+    // At the cursor: one further back. Moved off it (edited after an /undo): back to it, never forward to newer work.
+    const all = await listSigned(git.common, slug, 'checkpoint', ctx.key, ctx.scope), at = await cursor(git.common, slug), here = all.findIndex(c => c.commit === at);
+    const last = all.at(-1), pick = here >= 0 ? (all[here]?.tree === current ? all[here - 1] : all[here]) : last && last.tree !== current ? last : all.at(-2);
     if (!pick) throw new CheckpointError('No checkpoint to go back to');
     target = pick;
   }
   if (target.tree === current) throw new CheckpointError('Nothing to change; the worktree already matches it');
   const all = await changes(path, git, current, target.tree);
+  // A path the target restores where an ignored file is now: that file isn't in any snapshot, so replacing it would
+  // lose it for good. Refused, said plainly.
+  for (const change of all) {
+    if (change.change !== 'restored') continue;
+    try { if (!(await lstat(join(path, change.path))).isDirectory()) throw new CheckpointError('An ignored file is where the checkpoint has one; nothing was restored'); }
+    catch (error) { if (error instanceof CheckpointError) throw error; if (!isFsError(error, 'ENOENT') && !isFsError(error, 'ENOTDIR')) throw error; }
+  }
   return { current, target, redoN, all, fingerprint: createHash('sha256').update(`${kind}\0${current}\0${target.commit}`).digest('hex') };
 }
 export async function undoPlan(path: string, slug: string, kind: 'undo' | 'redo', ctx: CheckpointContext, title = slug): Promise<UndoPlan> {
   slugOk(slug);
   return withGit(path, ctx, async git => {
-    const r = await resolve(path, slug, kind, git, ctx.key);
+    const r = await resolve(path, slug, kind, git, ctx);
     return { kind, title, target: r.target.n, targetAt: r.target.at, changes: r.all.slice(0, UNDO_SHOWN), more: Math.max(0, r.all.length - UNDO_SHOWN), fingerprint: r.fingerprint };
   });
 }
@@ -146,7 +157,8 @@ async function parentsClear(root: string, name: string, removed: ReadonlySet<str
 // Files under a folder, relative to the root (for "does the restore empty this folder?"); capped, never followed.
 async function filesUnder(root: string, rel: string, out: string[] = []): Promise<string[]> {
   for (const entry of await readdir(join(root, rel), { withFileTypes: true })) {
-    if (out.length > 10_000) break;
+    // Past the cap the folder can't be checked whole, so it counts as in the way.
+    if (out.length > 10_000) throw new CheckpointError('Something in the worktree is in the way; nothing was restored');
     const child = `${rel}/${entry.name}`;
     if (entry.isDirectory()) await filesUnder(root, child, out); else out.push(child);
   }
@@ -177,7 +189,7 @@ async function makeFolders(root: string, rel: string): Promise<void> {
 export async function applyUndo(path: string, slug: string, kind: 'undo' | 'redo', fingerprint: string, ctx: CheckpointContext): Promise<{ restored: number }> {
   slugOk(slug);
   return withGit(path, ctx, async git => {
-    const r = await resolve(path, slug, kind, git, ctx.key).catch((error: unknown) => { throw error instanceof CheckpointError ? new CheckpointError(`Changed since you looked; run /${kind} again`) : error; });
+    const r = await resolve(path, slug, kind, git, ctx).catch((error: unknown) => { throw error instanceof CheckpointError ? new CheckpointError(`Changed since you looked; run /${kind} again`) : error; });
     if (r.fingerprint !== fingerprint) throw new CheckpointError(`Changed since you looked; run /${kind} again`);
     const removed = new Set(r.all.filter(c => c.change === 'removed').map(c => c.path)), writes = r.all.filter(c => c.change !== 'removed');
     for (const change of r.all) await parentsClear(path, change.path, removed);
@@ -193,6 +205,8 @@ export async function applyUndo(path: string, slug: string, kind: 'undo' | 'redo
       const match = record.match(/^(\d{6}) (blob|commit) ([0-9a-f]{40,64})\t(.+)$/s);
       if (match?.[1] && match[3] && match[4]) entries.set(match[4], { mode: match[1], hash: match[3] });
     }
+    // A staging folder a crash left behind goes first (only ours: that name, a real folder at the top).
+    for (const entry of await readdir(path, { withFileTypes: true })) if (entry.isDirectory() && /^\.ai-term-restore-[0-9a-f]{12}$/.test(entry.name)) await rm(join(path, entry.name), { recursive: true, force: true });
     const staging = join(path, `.ai-term-restore-${randomBytes(6).toString('hex')}`);
     await mkdir(staging, { mode: 0o700 });
     try {
@@ -213,17 +227,23 @@ export async function applyUndo(path: string, slug: string, kind: 'undo' | 'redo
         }
         staged.push({ change, file });
       }
-      if (kind === 'undo') {
-        const redo = await listSigned(git.common, slug, 'redo', ctx.key), n = (redo.at(-1)?.n ?? 0) + 1;
-        await setRef(git.common, `${refs.redo(slug)}${n}`, await commitTree(path, git, r.current, checkpointMessage('redo', slug, r.current, ctx.key)));
+      // The state before the undo is saved now (its commit exists before anything changes); its refs are set once the
+      // first change has landed, so a restore that changes nothing leaves the redo stack and cursor as they were.
+      const redoCommit = kind === 'undo' ? await commitTree(path, git, r.current, checkpointMessage('redo', slug, r.current, ctx.key, ctx.scope)) : null;
+      let saved = false;
+      const save = async () => {
+        if (saved) return; saved = true;
+        if (!redoCommit) return;
+        const redo = await listSigned(git.common, slug, 'redo', ctx.key, ctx.scope), n = (redo.at(-1)?.n ?? 0) + 1;
+        await setRef(git.common, `${refs.redo(slug)}${n}`, redoCommit);
         for (const old of redo.slice(0, Math.max(0, redo.length + 1 - MAX_REDO))) await dropRef(git.common, `${refs.redo(slug)}${old.n}`);
         await setRef(git.common, refs.at(slug), r.target.commit);
-      }
+      };
       let restored = 0;
       try {
         for (const name of removed) {
           await parentsClear(path, name, removed);
-          try { const info = await lstat(join(path, name)); if (!info.isDirectory()) await unlink(join(path, name)); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+          try { const info = await lstat(join(path, name)); if (!info.isDirectory()) { await unlink(join(path, name)); await save(); } } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
           await pruneEmpty(path, name); restored++;
         }
         for (const { change, file } of staged) {
@@ -231,16 +251,16 @@ export async function applyUndo(path: string, slug: string, kind: 'undo' | 'redo
           await makeFolders(path, change.path);
           // A folder still here was emptied by the removals above (checked before anything changed).
           try { const info = await lstat(target); if (info.isDirectory()) await rm(target, { recursive: true }); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
-          await rename(file, target); restored++;
+          await rename(file, target); await save(); restored++;
         }
       } catch (error) {
-        if (error instanceof CheckpointError && restored === 0) throw error;
+        if (!saved) throw error instanceof CheckpointError ? error : new CheckpointError('Nothing was restored; the worktree could not be written', { cause: error });
         throw new CheckpointError('The restore stopped part way; /redo or /undo brings back a saved state', { cause: error });
       }
       if (kind === 'redo' && r.redoN !== null) {
         await dropRef(git.common, `${refs.redo(slug)}${r.redoN}`);
         // Where the worktree now is among the checkpoints, for the next /undo; none matching: no cursor.
-        const match = [...await listSigned(git.common, slug, 'checkpoint', ctx.key)].reverse().find(c => c.tree === r.target.tree);
+        const match = [...await listSigned(git.common, slug, 'checkpoint', ctx.key, ctx.scope)].reverse().find(c => c.tree === r.target.tree);
         if (match) await setRef(git.common, refs.at(slug), match.commit); else if (await cursor(git.common, slug)) await dropRef(git.common, refs.at(slug));
       }
       return { restored };

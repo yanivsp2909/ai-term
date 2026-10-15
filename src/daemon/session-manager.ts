@@ -50,7 +50,7 @@ import { prepareProfile } from './accounts.js';
 import { parseLimit } from './limit-detect.js';
 import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
-import { lstat, open } from 'node:fs/promises';
+import { link, lstat, open, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { MAX_RECORD_COST_USD } from '../shared/validate.js';
@@ -833,23 +833,30 @@ export class SessionManager extends EventEmitter {
         if(!live.info.worktree||!live.info.branch?.startsWith('ai/'))throw new CheckpointError('This agent has no worktree; checkpoints need one');
         return live.info.branch.slice(3);
     }
-    // The key that signs AI Term's own checkpoint commits (another agent can write refs, not this file's contents from a
-    // sandbox): 32 random bytes in ~/.ai-term/checkpoint.key (0600), made once, read without following a symlink.
+    // The key that signs AI Term's own checkpoint commits, in ~/.ai-term/checkpoint.key (0600, 32 random bytes). It stops
+    // ref forgery by an agent that never reads it (a sandboxed one can't write the repository's refs anyway); a same-user
+    // process that reads it can sign refs (D35), and every restore is still confined to that agent's worktree and asked.
+    // Read without following a symlink or blocking on a FIFO; made once, atomically (a temp file linked into place);
+    // garbled: replaced (older checkpoints then no longer count, which only ever hides them).
     private checkpointKeyFile?:Promise<Buffer>;
     private checkpointKey():Promise<Buffer>{
-        this.checkpointKeyFile??=(async()=>{
-            const path=join(this.paths.root,'checkpoint.key');
-            try{const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);try{const text=(await file.readFile('utf8')).trim();if(/^[0-9a-f]{64}$/.test(text))return Buffer.from(text,'hex');}finally{await file.close();}throw new CheckpointError('Undo unavailable; git could not read the worktree');}
-            catch(error){
-                if(!isFsError(error,'ENOENT'))throw error;
-                const key=randomBytes(32),file=await open(path,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
-                try{await file.writeFile(key.toString('hex')+'\n');}finally{await file.close();}
-                return key;
-            }
-        })();
-        // A failure isn't kept: the next checkpoint tries again.
-        this.checkpointKeyFile.catch(()=>{this.checkpointKeyFile=undefined;});
-        return this.checkpointKeyFile;
+        const loading=this.checkpointKeyFile??(this.checkpointKeyFile=this.loadCheckpointKey());
+        loading.catch(()=>{if(this.checkpointKeyFile===loading)this.checkpointKeyFile=undefined;});
+        return loading;
+    }
+    private async loadCheckpointKey():Promise<Buffer>{
+        const path=join(this.paths.root,'checkpoint.key');
+        try{
+            const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+            try{const info=await file.stat();if(info.isFile()&&info.size<=128){const text=(await file.readFile('utf8')).trim();if(/^[0-9a-f]{64}$/.test(text))return Buffer.from(text,'hex');}}finally{await file.close();}
+            this.log.error('Checkpoint key unreadable; replaced');await unlink(path);
+        }catch(error){if(!isFsError(error,'ENOENT'))throw error;}
+        const key=randomBytes(32),temp=`${path}.${randomBytes(6).toString('hex')}`;
+        const file=await open(temp,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+        try{await file.writeFile(key.toString('hex')+'\n');await file.sync();}finally{await file.close();}
+        try{await link(temp,path);}catch(error){if(!isFsError(error,'EEXIST'))throw error;await unlink(temp);return this.loadCheckpointKey();}
+        await unlink(temp);
+        return key;
     }
     // The repository AI Term recorded for this agent's worktree, and the signing key: what every checkpoint step is bound to.
     async checkpointContext(id:string):Promise<CheckpointContext>{
@@ -857,7 +864,7 @@ export class SessionManager extends EventEmitter {
         this.checkpointSlug(live);
         const repo=live.info.worktree?this.worktreeRecords.get(live.info.worktree)?.repo:undefined;
         if(!repo)throw new CheckpointError('This agent has no worktree; checkpoints need one');
-        return {repo,key:await this.checkpointKey()};
+        return {repo,key:await this.checkpointKey(),scope:this.worktreeRecords.get(live.info.worktree??'')?.createdAt??''};
     }
     async checkpointTurn(id:string):Promise<void>{
         const live=this.sessions.get(id);if(!live||!live.info.worktree)return;
@@ -976,7 +983,7 @@ export class SessionManager extends EventEmitter {
     // v0.7.2: a worktree's checkpoints and redo go with it (after the unchanged v0.3.2 removal), from its repository.
     private async dropWorktreeCheckpoints(record:WorktreeRecord):Promise<void>{
         if(!record.repo||!record.branch.startsWith('ai/'))return;
-        try{await dropCheckpoints(record.repo,record.branch.slice(3),{repo:record.repo,key:await this.checkpointKey()});}catch{this.log.error('Checkpoints of a removed worktree could not be removed');}
+        try{await dropCheckpoints(record.repo,record.branch.slice(3),{repo:record.repo,key:await this.checkpointKey(),scope:record.createdAt});}catch{this.log.error('Checkpoints of a removed worktree could not be removed');}
     }
     async rename(id: string, title: string): Promise<SessionInfo> { if (this.closing) throw new Error('Background service is stopping'); const live = this.sessions.get(id); if (!live || !isTitle(title))
         throw new Error('Invalid session or title'); live.info.title = title; await this.persist(); this.event({ kind: 'session.updated', session: { ...live.info } }); return { ...live.info }; }

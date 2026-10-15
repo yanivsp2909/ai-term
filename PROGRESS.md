@@ -2,8 +2,53 @@
 
 ## Checkpoint
 Last commit: (see git log; this run started at 22669aa)
-Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1 done · D v0.7.2, E v0.7.3, F v0.7.4 in order (each section below says done or blocked).
+Roadmap step: run 2026-10-15 (Claude Code, Opus 5.5): A v0.6.5 done · B v0.6 gate done, **v0.6 closed** · C v0.7.1 done · D v0.7.2 done · E v0.7.3, F v0.7.4 in order (each section below says done or blocked).
 Branch: main, pushed after each part. Started clean at 22669aa after `git pull --ff-only` (already up to date). No other agent worked in this repo.
+
+## Part D: v0.7.2 checkpoints + /undo, /redo (D55, on) — done
+Commits: 73f74ba (RED) → 3cad3a4 (GREEN) → 7550ffd (review RED) → 88300d5 → 67e9d08 (fix-review RED) → its fix, plus this handover.
+
+What works:
+- **Checkpoints:** when an agent with a worktree ends a turn (finishes, or stops to ask), its worktree is snapshotted, in that agent's own queue, into `refs/ai-term/checkpoints/<slug>/<n>`: a private git dir (bound to the repository recorded for the worktree) with a temporary copy of the agent's index, `git add -A` (untracked files that aren't ignored included), `write-tree`, `commit-tree`. The agent's index, branch, HEAD and commits never change; nothing in the repo's config runs. Nothing changed: no new checkpoint. The last 50 kept; more than 10,000 untracked files skip it (logged). `/settings` u turns it off (D55, on by default).
+- **Signed:** every checkpoint and redo commit carries an HMAC of (kind, slug, tree) under `~/.ai-term/checkpoint.key` (0600); refs another agent writes are ignored.
+- **/undo [agent]:** refused while the agent runs or asks (checked again right before the restore). Goes back one checkpoint from where the last /undo went (else to the last checkpoint if the worktree changed since, else the one before). Shows each file that changes (`M`, `−` removed, `+` restored) and asks: `y` restores, `n` or Esc keeps everything. It reads and stages every file first (nothing changes if one can't be read), checks every path (no symlinked folder, nothing in the way), saves the current state on a redo stack, then removes files (and folders they empty) and renames staged files into place with pinned modes. Only the worktree is ever written.
+- **/redo [agent]:** brings back the state the last /undo replaced, one step at a time; a new turn's checkpoint ends the redo stack.
+- **With the worktree:** after the unchanged v0.3.2 removal succeeds, the slug's checkpoint, redo and cursor refs are deleted.
+- `/diff`, `/export`, `/undo`, `/redo` from the slash menu now run at once on the selected agent (their argument is optional), like `/copy` and `/open`.
+
+Prompt vs code:
+- "Refs are removed with the worktree" and "don't touch the worktree deletion logic": the refs are removed by the session manager after the unchanged deletion returns, not inside `worktree-removal.ts`.
+- "/undo restores the worktree to the previous checkpoint": repeated /undo walks further back through the checkpoints (a cursor); /redo walks forward again.
+
+Findings (fresh typescript-reviewer and security-reviewer on b0bf319..3cad3a4; a security fix review on 88300d5):
+- **HIGH (TS review):** a second /undo jumped forward again; folder/file swaps failed half way (wrong message, an empty folder left, no file); a restore deleted before it had read what it would write. Fixed: cursor + redo stack; staged, read-first restore with renames; pre-checks for folders in the way; emptied folders pruned.
+- **MEDIUM (security review):** checkpoint writes followed the agent-written `commondir` into any repository; another agent could forge this agent's checkpoint or redo refs. Fixed: the private git dir is bound to the recorded repository; commits are HMAC-signed.
+- **MEDIUM (TS review):** a restore could run under an agent that started a turn while /undo waited in the queue. Fixed: status re-checked inside the queue.
+- **MEDIUM/LOW:** huge untracked folders hashed every turn (now skipped past 10,000 files); the repo config read for the hash format could hang on a FIFO (now a small-file read); executable bits under a strict umask (now chmod after writing); a wrong "symlink" message for a file in the way (own message).
+- **Fix review (MEDIUM/LOW):** a restore that changed nothing still pushed a redo state and moved the cursor (now set only after the first change); a folder with more than 10,000 files counted as checked (now in the way); a manual edit after /undo then /undo went forward (now back to the cursor's checkpoint); an ignored file at a restored path was overwritten (now refused: it's in no snapshot); the key file could hang on a FIFO, stay garbled or be half written (now non-blocking, checked, replaced, written via a temp file and link); leftover restore folders entered checkpoints (now excluded and swept); a worktree path swapped for a symlink was followed (now refused); a reused name could inherit an earlier worktree's checkpoints (now signed per worktree record).
+- Not fixed, with reasons:
+  - The folder checks and each filesystem call are separate steps (Node has no openat): a same-user process racing in between could redirect one write or removal (D35); the agent itself is refused while it runs or asks, but a background process it left could still race.
+  - A mount point inside the worktree makes the final rename fail (EXDEV) after removals: reported as "stopped part way" with the saved state named.
+  - An empty nested repository (`git init sub` with no commit) makes `git add -A` fail, so that agent gets no checkpoints (logged); nested repositories' contents are never captured or written.
+  - An agent that reads `~/.ai-term/checkpoint.key` (same user, D35) can sign its own slug's refs; every restore is still confined to that worktree and shown before `y`.
+
+Checks (at the last Part D fix):
+```
+npm run typecheck   exit 0
+npm run lint        exit 0
+npm run build       ok
+npm run app:build   ok
+npm run app:test    9 passed (37.6s)
+npm test (1)        Test Files 216 passed · Tests 1405 passed | 2 skipped · 23.57s
+npm test (2)        Test Files 216 passed · Tests 1405 passed | 2 skipped · 24.77s
+```
+
+New dependencies: none.
+
+Concepts introduced:
+- **Temporary index (`GIT_INDEX_FILE` / a private git dir):** git's index is the list of files it is about to commit; giving git a throwaway copy lets AI Term record the worktree as a commit without disturbing the agent's own staged changes (`currentTree` in `src/daemon/checkpoints.ts`).
+- **HMAC:** a short code computed from data and a secret key; anyone can copy the data, but only the key's holder can make a matching code, so AI Term can tell its own checkpoint commits from look-alikes (`checkpointMessage` / `signed`).
+- **Stage, then rename:** writing every file to a private folder first and then moving each into place with one `rename` means a reader never sees a half-written file, and nothing changes until everything needed is in hand (`applyUndo`).
 
 ## Part C: v0.7.1 diff view, review queue, export — done
 Commits: 0fe0246 / fe1e6c3 (RED) → 13c98f8 (diff GREEN) → 228adfa (RED) → 1a1e45d (export GREEN) → d8a59da (review RED) → bc254d3 → ec2d6cd (RED) → 4f6d79c → 2dfdb20 (fix-review RED) → e9e9a58 → second fix review RED → its fix, plus this handover.

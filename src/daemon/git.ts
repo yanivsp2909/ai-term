@@ -254,6 +254,8 @@ export async function isolatedGitDir(path: string, base?: string, options: { wri
     const common = await readFile(join(gitDir, 'commondir'), 'utf8').then(text => resolve(gitDir, text.trim()), (error: unknown) => { if (isFsError(error, 'ENOENT')) return gitDir; throw error; });
     if (!isSafeAbsolutePath(gitDir) || !isSafeAbsolutePath(common)) throw new GitError('Git check failed');
     if (options.repo !== undefined) {
+        // The worktree folder itself must be the real one: a symlink in its place could lead to a sibling worktree.
+        if (await realpath(path) !== path) throw new GitError('Git check failed');
         const expected = await realpath(join(options.repo, '.git')), real = await realpath(common);
         if (real !== expected || gitDir !== dotGit && dirname(await realpath(gitDir)) !== join(expected, 'worktrees')) throw new GitError('Git check failed');
     }
@@ -267,6 +269,8 @@ export async function isolatedGitDir(path: string, base?: string, options: { wri
         // The repository's own ignore list (info/exclude) is plain text, copied so a snapshot skips what git status skips.
         await mkdir(join(temp, 'info'));
         try { const exclude = join(common, 'info', 'exclude'); if ((await lstat(exclude)).isFile()) await copyFile(exclude, join(temp, 'info', 'exclude')); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+        // AI Term's own restore staging folder (v0.7.2) is never part of a snapshot or a diff.
+        await writeFile(join(temp, 'info', 'exclude'), '\n/.ai-term-restore-*/\n', { flag: 'a', mode: 0o600 });
         await writeFile(join(temp, 'objects', 'info', 'alternates'), `${join(common, 'objects')}\n`, { mode: 0o600 });
         // The index tells git which files are tracked (and lets it skip unchanged ones); only a regular file is copied.
         const index = join(gitDir, 'index');
