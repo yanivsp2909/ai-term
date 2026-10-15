@@ -15,6 +15,7 @@ import { redact, Logger } from '../daemon/log.js';
 import { AttachError } from '../client/attach.js';
 import { ClientSignal } from '../client/signals.js';
 import {aiSubcommands,debugActions} from '../client/tui/commands.js';
+import { ownedByMe } from '../shared/owner.js';
 // Consume before any connection can spawn a daemon or agent child.
 const appToken = takeAppToken(process.env);
 const args = process.argv.slice(2), entry = fileURLToPath(import.meta.url);
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
             const lock = await open(paths.pid, constants.O_RDONLY | constants.O_NOFOLLOW);
             try {
                 const stat = await lock.stat();
-                if (!stat.isFile() || stat.uid !== process.getuid?.() || stat.size > 32 || Number((await lock.readFile('utf8')).trim()) !== hello.daemonPid)
+                if (!stat.isFile() || !ownedByMe(stat) || stat.size > 32 || Number((await lock.readFile('utf8')).trim()) !== hello.daemonPid)
                     throw new Error('Daemon PID does not match its private lock');
             }
             finally {

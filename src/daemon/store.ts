@@ -3,6 +3,7 @@ import { chmod, copyFile, lstat, open, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, basename } from 'node:path';
 import { isFsError } from '../shared/paths.js';
+import { ownedByMe } from '../shared/owner.js';
 export async function atomicWrite(path: string, value: unknown): Promise<void> {
     const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
     const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -43,7 +44,7 @@ export async function readState(path: string): Promise<unknown> {
     }
     try {
         const stat = await file.stat();
-        if (!stat.isFile() || stat.uid !== process.getuid?.() || stat.size > 16 * 1024 * 1024)
+        if (!stat.isFile() || !ownedByMe(stat) || stat.size > 16 * 1024 * 1024)
             throw new Error('Unsafe or oversized state file');
         await file.chmod(0o600);
         return JSON.parse(await file.readFile('utf8')) as unknown;
@@ -70,8 +71,8 @@ export async function moveAside(path: string, now = new Date()): Promise<{ path:
         // swap the name between lstat and chmod.
         try {
             const stat = await lstat(target);
-            if (stat.isFile() && stat.uid === process.getuid?.()) await chmod(target, 0o600);
-            return { path: target, private: stat.isFile() && stat.uid === process.getuid?.() };
+            if (stat.isFile() && ownedByMe(stat)) await chmod(target, 0o600);
+            return { path: target, private: stat.isFile() && ownedByMe(stat) };
         }
         catch { return { path: target, private: false }; }
     }

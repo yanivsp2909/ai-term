@@ -5,9 +5,10 @@ import {join} from 'node:path';
 import {privateDirectory,isFsError} from '../shared/paths.js';
 import type {UsageRecord,UsageSummary,UsagePeriod} from '../shared/protocol.js';
 import {validateUsageRecord} from '../shared/validate.js';
+import { ownedByMe } from '../shared/owner.js';
 async function append(path:string,record:UsageRecord):Promise<void>{
  const file=await open(path,constants.O_RDWR|constants.O_APPEND|constants.O_CREAT|constants.O_NOFOLLOW|constants.O_NONBLOCK,0o600);
- try{const stat=await file.stat();if(!stat.isFile()||stat.uid!==process.getuid?.())throw new Error('Unsafe usage file');await file.chmod(0o600);
+ try{const stat=await file.stat();if(!stat.isFile()||!ownedByMe(stat))throw new Error('Unsafe usage file');await file.chmod(0o600);
   // ENOSPC can leave half a JSON line. Roll back before retrying instead of corrupting the next record.
   try{await file.writeFile(JSON.stringify(record)+'\n');await file.sync();}catch(error){await file.truncate(stat.size);throw error;}
  }finally{await file.close();}
@@ -24,7 +25,7 @@ export class UsageStore extends EventEmitter {
   try{await privateDirectory(this.folder);names=(await readdir(this.folder)).sort();}catch(error){if(!isFsError(error,'ENOENT')){this.log.error('Usage history unavailable');this.loadFailed=true;this.warning();}return;}
   // One unsafe or unreadable month must not hide the others; its warning stays until the next start.
   for(const name of names)if(/^\d{4}-\d{2}\.jsonl$/.test(name)){
-   try{const file=await open(join(this.folder,name),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);try{const stat=await file.stat();if(!stat.isFile()||stat.uid!==process.getuid?.()||stat.size>64*1024*1024)throw new Error('Unsafe usage file');await file.chmod(0o600);for(const line of(await file.readFile('utf8')).split('\n'))if(line.trim()){try{this.aggregate(validateUsageRecord(JSON.parse(line)));}catch{this.log.error('Usage record unreadable; skipped');}}}finally{await file.close();}}
+   try{const file=await open(join(this.folder,name),constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);try{const stat=await file.stat();if(!stat.isFile()||!ownedByMe(stat)||stat.size>64*1024*1024)throw new Error('Unsafe usage file');await file.chmod(0o600);for(const line of(await file.readFile('utf8')).split('\n'))if(line.trim()){try{this.aggregate(validateUsageRecord(JSON.parse(line)));}catch{this.log.error('Usage record unreadable; skipped');}}}finally{await file.close();}}
    catch{this.log.error('Usage history file unavailable; skipped');this.loadFailed=true;this.warning();}
   }
  }

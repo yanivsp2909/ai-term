@@ -1,5 +1,6 @@
 import pty from 'node-pty';
 import { isFsError } from '../shared/paths.js';
+import { killGroup } from '../shared/kill-tree.js';
 export interface SpawnRecipe {
     executable: string;
     args: string[];
@@ -10,6 +11,8 @@ export class PtyHost {
     private exited = false;
     // A signal death the user asked for is an exit; any other one is a crash.
     stopRequested = false;
+    // Windows: taskkill reported a failure (it runs asynchronously, so it can't throw where the signal was sent).
+    stopFailed = false;
     private exitPromise: Promise<void>;
     constructor(recipe: SpawnRecipe, cwd: string, cols: number, rows: number, umask?: number) {
         // The child inherits the umask at fork; give it the user's, not the daemon's private 077.
@@ -54,8 +57,9 @@ export class PtyHost {
             if (this.exited)
                 return;
             // node-pty creates the session/process group; never signal a stored PID on restart.
+            // Windows: ConPTY has no process group; taskkill /T stops the CLI and what it started (kill-tree.ts).
             try {
-                process.kill(-this.pty.pid, name);
+                killGroup(this.pty.pid, name, () => { this.stopFailed = true; });
             }
             catch (error) {
                 if (!isFsError(error, 'ESRCH')) {

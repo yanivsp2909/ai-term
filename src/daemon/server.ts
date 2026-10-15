@@ -4,6 +4,7 @@ import { PRICE_ERRORS, savePrice } from './price-migration.js';
 import { createServer, type Socket, type Server } from 'node:net';
 import type { Paths } from '../shared/paths.js';
 import { listenPrivate, closePrivate, type SocketIdentity } from './private-socket.js';
+import { closePipe, helloAllowed, listenPipe, type PipeInfo } from './pipe-server.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type NotifierState,type NotificationAuthorization, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
 import { previewWorktree } from './worktrees.js';
 import { WORKTREE_DELETE_ERRORS } from './worktree-removal.js';
@@ -27,6 +28,7 @@ import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
 import { DIRECT_HOSTS } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
 import { currentAgentSandbox, AGENT_SANDBOX_ERRORS } from './agent-sandbox.js';
+import { CLI_LAUNCH_ERRORS } from './win-launch.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
     socket: Socket;
@@ -49,6 +51,7 @@ export class DaemonServer {
     private peers = new Set<Peer>();
     private owners=new Map<string,Peer>();
     private socketIdentity: SocketIdentity | undefined;
+    private pipe: PipeInfo | undefined;
     private readonly sampler: SystemSampler;
     private closed = false;
     constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService, private readonly notifier?:{state():NotifierState;permission?():NotificationAuthorization;refreshPermission?():Promise<NotificationAuthorization>}, private readonly activate=activateTerminal) {
@@ -93,6 +96,8 @@ export class DaemonServer {
     }
     async listen(): Promise<void> {
         await this.settings.get();
+        // Windows (v0.8.2): a named pipe and its token instead of a 0600 Unix socket.
+        if (process.platform === 'win32') { this.pipe = await listenPipe(this.server, this.paths.socket); return; }
         this.socketIdentity = await listenPrivate(this.server, this.paths.socket);
     }
     // Homepage clients that route notification clicks (they send clicks.subscribe). None open → the click opens Terminal.
@@ -177,6 +182,8 @@ export class DaemonServer {
             return;
         }
         if (request.kind === 'hello') {
+            // Windows: nothing for a client that can't show the pipe's token (other users can open the pipe for reading).
+            if (!helloAllowed(request.token, this.pipe?.token ?? null)) { peer.closing=true;peer.socket.destroy();return; }
             if (request.protocol !== PROTOCOL_VERSION) {
                 this.control(peer, { id: request.id, kind: 'helloMismatch', protocol: PROTOCOL_VERSION });
                 peer.closing=true;peer.socket.end();
@@ -416,7 +423,7 @@ export class DaemonServer {
                 'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
                 // AI Term's agent (v0.4.1–v0.4.2).
                 'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh",'Pick a model for AI Term agent','Unknown catalog model',
-                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,
+                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
@@ -449,6 +456,6 @@ export class DaemonServer {
         this.sampler.setSubscribers(0);
         for (const peer of this.peers)
             peer.socket.destroy();
-        await closePrivate(this.server, this.paths.socket, this.socketIdentity);
+        if (process.platform === 'win32') await closePipe(this.server, this.paths.socket, this.pipe); else await closePrivate(this.server, this.paths.socket, this.socketIdentity);
     }
 }

@@ -11,6 +11,8 @@ import type { Paths } from '../shared/paths.js';
 import { preparePaths, isFsError } from '../shared/paths.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, PROTOCOL_VERSION, MAX_COPY_BYTES, COPY_CHUNK_BYTES, type SessionText, type Request, type SuccessResponse } from '../shared/protocol.js';
 import packageInfo from '../../package.json' with { type: 'json' };
+import { ownedByMe } from '../shared/owner.js';
+import { readPipe } from '../daemon/pipe-server.js';
 export type RequestBody = Request extends infer R ? R extends Request ? Omit<R, 'id'> : never : never;
 export class DaemonRequestError extends Error {}
 // Source mode: a bare `--import tsx` resolves from the caller's folder, and tsx reads that folder's tsconfig.json. The absolute
@@ -55,7 +57,7 @@ export class Connection extends EventEmitter {
         copy?:{parts:string[];bytes:number;truncated:boolean;source?:SessionText['source']};
     }>();
     readonly hello: Promise<SuccessResponse>;
-    private constructor(readonly socket: Socket) {
+    private constructor(readonly socket: Socket, token?: string) {
         super();
         const decoder = new FrameDecoder();
         socket.on('error', error => this.fail(error));
@@ -103,7 +105,7 @@ export class Connection extends EventEmitter {
                 socket.destroy();
             }
         });
-        this.hello = this.request({ kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version });
+        this.hello = this.request({ kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version, ...(token ? { token } : {}) });
     }
     private fail(error: Error): void { for (const p of this.pending.values()) {
         clearTimeout(p.timer);
@@ -133,11 +135,18 @@ export class Connection extends EventEmitter {
     }): Promise<Connection> {
         if (!options.readOnly)
             await preparePaths(paths);
+        // Windows (v0.8.2): the pipe's name and token come from run/daemon.pipe (pipe-server.ts); a missing file or pipe
+        // reads as ENOENT, so the daemon is started as with a missing socket.
+        let token: string | undefined;
         const attempt = async () => {
-            const stat = await lstat(paths.socket);
-            if (!stat.isSocket() || stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o600)
-                throw new Error('Unsafe daemon socket');
-            return new Promise<Socket>((resolve, reject) => { const socket = createConnection(paths.socket); const timer = setTimeout(() => { socket.destroy(); reject(new Error('Daemon connect timeout')); }, 300); socket.once('error', error => { clearTimeout(timer); reject(error); }); socket.once('connect', () => { clearTimeout(timer); resolve(socket); }); });
+            let address = paths.socket;
+            if (process.platform === 'win32') { const pipe = await readPipe(paths.socket); address = pipe.name; token = pipe.token; }
+            else {
+                const stat = await lstat(paths.socket);
+                if (!stat.isSocket() || stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o600)
+                    throw new Error('Unsafe daemon socket');
+            }
+            return new Promise<Socket>((resolve, reject) => { const socket = createConnection(address); const timer = setTimeout(() => { socket.destroy(); reject(new Error('Daemon connect timeout')); }, 300); socket.once('error', error => { clearTimeout(timer); reject(error); }); socket.once('connect', () => { clearTimeout(timer); resolve(socket); }); });
         };
         let socket: Socket;
         try {
@@ -152,11 +161,11 @@ export class Connection extends EventEmitter {
             const file = await open(paths.log, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
             try {
                 const stat = await file.stat();
-                if (!stat.isFile() || stat.uid !== process.getuid?.())
+                if (!stat.isFile() || !ownedByMe(stat))
                     throw new Error('Unsafe daemon log', { cause: error });
                 await file.chmod(0o600);
                 const command = daemonCommand(options.entry);
-                const child = spawn(command.file ?? process.execPath, command.args, { detached: true, stdio: 'ignore', env: { ...process.env, AI_TERM_HOME: paths.root }, ...(command.cwd ? { cwd: command.cwd } : {}) });
+                const child = spawn(command.file ?? process.execPath, command.args, { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, AI_TERM_HOME: paths.root }, ...(command.cwd ? { cwd: command.cwd } : {}) });
                 child.on('error', error => { startupError = error; });
                 child.unref();
             }
@@ -180,7 +189,7 @@ export class Connection extends EventEmitter {
                 await new Promise(r => setTimeout(r, 50));
             }
         }
-        const connection = new Connection(socket);
+        const connection = new Connection(socket, token);
         try {
             const hello=await connection.hello;if(hello.kind!=='hello')throw new Error('Expected daemon hello');
             return connection;

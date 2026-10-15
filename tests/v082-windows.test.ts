@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ownedByMe, privateMode } from '../src/shared/owner.js';
 import { isSafeAbsolutePath } from '../src/shared/validate.js';
-import { aclArgs, ownerScript, parseWhoamiSid, parseAcl } from '../src/daemon/win-acl.js';
+import { aclArgs, ownerScript, parseWhoamiSid, parseAcl } from '../src/shared/win-acl.js';
 import { pipeName, isPipeName } from '../src/shared/pipe.js';
 import { parseNpmShim, windowsCommand, CliLaunchError } from '../src/daemon/win-launch.js';
 import { killTreeArgs } from '../src/shared/kill-tree.js';
@@ -67,7 +67,7 @@ it('stopping a process tree: taskkill /T /F on Windows, by number only', () => {
 
 it('git on Windows: git.exe and NUL; elsewhere /usr/bin/git and /dev/null', async () => {
   expect(nullDevice('win32')).toBe('NUL'); expect(nullDevice('linux')).toBe('/dev/null');
-  expect(await gitExecutable('darwin')).toBe('/usr/bin/git');
+  expect(gitExecutable('darwin')).toBe('/usr/bin/git');
 });
 
 it('bash on Windows uses Git for Windows\' bash.exe, never WSL\'s', async () => {
@@ -119,8 +119,15 @@ it('system stats on Windows: CPU and memory from the OS, no network or per-agent
 
 it.skipIf(!WIN)('Windows: the AI Term folder is yours alone (ACL), the daemon answers on its pipe, and a path with spaces and non-ASCII works', async () => {
   const { getPaths, preparePaths } = await import('../src/shared/paths.js');
-  const { checkMine } = await import('../src/daemon/win-acl.js');
+  const { checkMine } = await import('../src/shared/win-acl.js');
   const dir = await temp(), root = join(dir, 'Ünï côdé', '.ai-term'); await mkdir(join(dir, 'Ünï côdé'));
   const paths = getPaths(root); await preparePaths(paths);
   expect(await checkMine(root)).toBe(true);
 }, 60_000);
+
+it('env on Windows: Path is spelled PATH in a copy; a credential variable goes whatever its case', async () => {
+  const { buildShellEnv, buildSpawnEnv } = await import('../src/daemon/env.js');
+  expect(buildShellEnv({ Path: 'C:\\Windows' }, { platform: 'win32' }).PATH).toBe('C:\\Windows');
+  const env = buildSpawnEnv('claude-code', { kind: 'account' }, { Path: 'C:\\x', anthropic_api_key: 'sk-ant-x', Anthropic_Base_Url: 'http://evil' }, { platform: 'win32' });
+  expect(env.anthropic_api_key).toBeUndefined(); expect(env.Anthropic_Base_Url).toBeUndefined(); expect(env.PATH).toBe('C:\\x');
+});

@@ -1,6 +1,8 @@
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { lstat, mkdir, chmod } from 'node:fs/promises';
+import { ownedByMe } from './owner.js';
+import { checkMine, restrictToMe } from './win-acl.js';
 export interface Paths {
     root: string;
     run: string;
@@ -27,9 +29,20 @@ export async function privateDirectory(path: string): Promise<void> {
             throw error;
     }
     const stat = await lstat(path);
-    if (stat.isSymbolicLink() || !stat.isDirectory() || stat.uid !== process.getuid?.())
+    if (stat.isSymbolicLink() || !stat.isDirectory() || !ownedByMe(stat))
         throw new Error('Private directory must be a real directory owned by this user');
+    if (process.platform === 'win32') { await privateOnWindows(path); return; }
     await chmod(path, 0o700);
+}
+// Windows (v0.8.2): mode bits mean nothing there. The folder gets an ACL for your SID alone (icacls), then is read back:
+// owned by you with no other entry, or AI Term refuses to use it. Checked once per folder per process (PowerShell is slow).
+const checked = new Set<string>();
+async function privateOnWindows(path: string): Promise<void> {
+    if ([...checked].some(root => path.startsWith(`${root}\\`))) return;
+    if (checked.has(path)) return;
+    if (!await checkMine(path)) await restrictToMe(path);
+    if (!await checkMine(path)) throw new Error('Private directory must be a real directory owned by this user');
+    checked.add(path);
 }
 export async function preparePaths(paths: Paths): Promise<void> {
     await privateDirectory(paths.root);

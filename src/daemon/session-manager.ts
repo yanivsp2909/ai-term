@@ -41,6 +41,7 @@ import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type Us
 import { isYourPrice, MAX_PRICES, overridesFor, priceCount, PRICED_BY_YOU } from '../shared/prices.js';
 import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
 import { currentAgentSandbox, dontAskNote } from './agent-sandbox.js';
+import { windowsRecipe, windowsShell } from './win-launch.js';
 import { prepareSandbox, sandboxReady, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, forkTitle, type ForkPlan, type ForkTarget } from '../shared/fork.js';
@@ -72,8 +73,8 @@ import { parseLimit } from './limit-detect.js';
 import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
 import { link, lstat, open, unlink } from 'node:fs/promises';
-import { closeSync, constants, constants as fsConstants, openSync, unlinkSync, writeSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { closeSync, constants, constants as fsConstants, existsSync, openSync, unlinkSync, writeSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { MAX_RECORD_COST_USD, validatePriceOverrides } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
@@ -369,7 +370,9 @@ export class SessionManager extends EventEmitter {
                 authMethod='api-key';
                 recipe={executable:status.path,args:buildArgs({...agent,...argvRequest,engine,...(key.provider==='foundry'?{foundryEndpoint:key.endpoint}:{}),...(key.provider==='openai'?{openaiKey:true}:{})}),env:{}};
             }else recipe = { executable: status.path, args: agent.login ? (engine==='codex'?['--no-daemon','-c','check_for_update_on_startup=false','login']:['auth','login']) : buildArgs({...agent,...argvRequest,engine}), env: buildSpawnEnv(engine, {kind:'account'}, process.env, {keepElectronNode:electronNodeNeeded(process.execPath,process.versions.electron),...(profilePath?{profileDir:profilePath}:{})}) };
-        } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
+            // Windows (v0.8.2): an npm .cmd launcher becomes node + its script, the arguments still an array (win-launch.ts).
+            recipe = { ...recipe, ...await windowsRecipe({ executable: recipe.executable, args: recipe.args }, process.env.PATH ?? '') };
+        } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : process.platform==='win32' ? { executable: windowsShell(process.env, existsSync), args: [], env: buildShellEnv(process.env) } : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account',...(profile?{profile}:{}) }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
@@ -1023,10 +1026,10 @@ export class SessionManager extends EventEmitter {
     // folder's own); its command is kept in settings as an argument list and runs in the agent's worktree.
     private testRuns=new Map<string,AbortController>();
     private async projectOf(cwd:string):Promise<string>{
-        for(const [path,record]of this.worktreeRecords)if(record.repo&&(cwd===path||cwd.startsWith(path+'/')))return projectRepo(record.repo);
+        for(const [path,record]of this.worktreeRecords)if(record.repo&&(cwd===path||cwd.startsWith(path+sep)))return projectRepo(record.repo);
         // An agent's worktree AI Term has no record of: its .git file (the agent's to write) could name any repository.
         const worktrees=join(this.paths.root,'worktrees');
-        if(cwd===worktrees||cwd.startsWith(worktrees+'/'))throw new TestRunError("Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of");
+        if(cwd===worktrees||cwd.startsWith(worktrees+sep))throw new TestRunError("Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of");
         return projectRepo(cwd);
     }
     async testCommand(cwd:string):Promise<ProjectTestCommand>{
@@ -1246,7 +1249,7 @@ export class SessionManager extends EventEmitter {
         const record=live.info.worktree?this.worktreeRecords.get(live.info.worktree):undefined;
         if(!record?.repo||!record.baseCommit||!live.info.worktree)throw new ForkError('Fork needs an agent with a worktree, so the two can be compared');
         // The same folder inside the repository as the source (its worktree path swapped for your checkout's).
-        const inside=live.info.cwd===live.info.worktree?'':live.info.cwd.startsWith(live.info.worktree+'/')?live.info.cwd.slice(live.info.worktree.length+1):'';
+        const inside=live.info.cwd===live.info.worktree?'':live.info.cwd.startsWith(live.info.worktree+sep)?live.info.cwd.slice(live.info.worktree.length+1):'';
         return {live,record,firstMessage:live.firstMessage,cwd:inside?join(record.repo,inside):record.repo};
     }
     async forkPlan(id:string,target:ForkTarget):Promise<ForkPlan>{

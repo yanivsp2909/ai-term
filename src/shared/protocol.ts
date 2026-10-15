@@ -111,6 +111,8 @@ export type Request = {
     kind: 'hello';
     protocol: number;
     version: string;
+    // Windows (v0.8.2): the pipe's token from run/daemon.pipe (pipe-server.ts).
+    token?: string;
 } | {
     kind: 'settings.get';
     refreshNotifications?:boolean;

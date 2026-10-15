@@ -5,6 +5,7 @@ import { privateDirectory, isFsError } from '../shared/paths.js';
 import { availableWorktreeSlug, isSafeAbsolutePath, worktreeSlug } from '../shared/validate.js';
 import type { WorktreePreview } from '../shared/protocol.js';
 import { addWorktree, branchNames, checkoutDirty, currentBranch, deleteBranch, GitError, headCommit, isCommit, removeWorktree, repoTopLevel } from './git.js';
+import { ownedByMe } from '../shared/owner.js';
 
 const queues = new Map<string, Promise<unknown>>();
 export function repoDirectory(top: string): string {
@@ -15,7 +16,7 @@ async function occupied(root: string, top: string): Promise<Set<string>> {
     const names = new Set((await branchNames(top)).filter(b => b.startsWith('ai/')).map(b => b.slice(3)));
     try {
         for(const dir of [root,join(root,'worktrees'),join(root,'worktrees',repoDirectory(top))]){
-            const stat=await lstat(dir);if(stat.isSymbolicLink()||!stat.isDirectory()||stat.uid!==process.getuid?.())throw new Error('Unsafe worktree directory');
+            const stat=await lstat(dir);if(stat.isSymbolicLink()||!stat.isDirectory()||!ownedByMe(stat))throw new Error('Unsafe worktree directory');
         }
         for (const name of await readdir(join(root, 'worktrees', repoDirectory(top)))) names.add(name);
     }
@@ -77,7 +78,7 @@ async function create(root: string, cwd: string, title: string, log: (text: stri
             try { await mkdir(path, {mode: 0o700}); }
             catch (error) { if (isFsError(error, 'EEXIST')) continue; throw error; }
             const stat = await lstat(path);
-            if (stat.isSymbolicLink() || stat.uid !== process.getuid?.() || !inside(worktrees, await realpath(path))) throw new Error('Unsafe worktree path');
+            if (stat.isSymbolicLink() || !ownedByMe(stat) || !inside(worktrees, await realpath(path))) throw new Error('Unsafe worktree path');
             try { await addWorktree(plan.top, path, branch, plan.head); }
             catch (error) {
                 // A branch that existed before this attempt is a collision (another git process took the name): try the

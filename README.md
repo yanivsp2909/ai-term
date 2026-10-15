@@ -12,7 +12,7 @@ You type what you want built at the bottom, pick a model, and AI Term starts the
 
 Agents keep running in a background service when you leave them or close the terminal. Run `ai` again and they're all still there.
 
-Personal and learning project. macOS first; Linux from v0.8.1 (below); Windows by v0.8.2.
+Personal and learning project. macOS first; Linux from v0.8.1 and Windows from v0.8.2 (both below).
 
 ## Linux (v0.8.1)
 Everything above works on Linux too, with these differences:
@@ -36,6 +36,23 @@ Everything above works on Linux too, with these differences:
 - **Clipboard** (`y`, `Y`): `wl-copy` on Wayland, else `xclip` or `xsel`. With none of them, the copy says to install one.
 - **`/open`:** `xdg-open`. **This machine:** `/proc/meminfo`, `/proc/net/dev` (containers, bridges and VPN tunnels left out) and `ps` CPU time, measured as the change since the last look.
 - **Desktop app:** an AppImage and a .deb from `npm run app:dist` on Linux, unsigned. Each ⌘ key in the desktop key table below is Ctrl+Shift there (Ctrl+Shift+C copies, Ctrl+Shift+T starts an agent, and so on). There's no Hide, no Zoom and no `ai` command install from the app.
+
+## Windows (v0.8.2)
+Everything above works on Windows too, with these differences:
+- **AI Term's folder:** `%USERPROFILE%\.ai-term`. On creation `icacls` gives your account full control and removes every other entry. Each start reads the folder back (owner and entries, by SID) and refuses to run unless it is yours alone.
+- **Daemon:** a named pipe, `\\.\pipe\ai-term-<your id>-<random>`, a new random part each start. Its name and a token are written to `run\daemon.pipe` inside that folder.
+  - A pipe that already exists, whoever made it, makes the daemon stop rather than share it.
+  - Node can't narrow a pipe's own ACL, which lets other accounts open it for reading. So the daemon answers nothing until a client shows the token, which only your account can read.
+- **Keys:** Windows Credential Manager. If it can't be used, key features refuse with `Windows Credential Manager unavailable`.
+- **No sandbox:** auto-test asks every time (`tests need you · no sandbox`). AI Term's agent is Ask only: `ask · don't ask needs a sandbox, and Windows has none AI Term can use`.
+- **Claude Code and Codex:** a native `.exe` runs directly. npm's `.cmd` launcher is never run: AI Term reads the script it names and starts that with `node`, the arguments still an array. cmd.exe would read `%`, `&` and quotes in a first message as commands. A `.cmd` that isn't npm's is refused. `npm test` in `/test` works the same way (npm's own `npm.cmd`).
+- **Agent bash:** Git for Windows' `bash.exe` (never WSL's). Without Git for Windows, bash says it needs it. git itself is Git for Windows' `git.exe`.
+- **Shell agents:** PowerShell (7 when installed, else Windows PowerShell), started with no arguments.
+- **Stopping:** `taskkill /T /F` stops an agent's or a command's whole process tree.
+- **Not on Windows yet:** notifications (`/settings` says so), network and per-agent CPU in This machine (CPU and memory show), click-through.
+- **Clipboard:** `clip.exe` (sent as UTF-16, so non-ASCII text survives). **`/open`:** Explorer.
+- **Paths:** paths with spaces and non-ASCII names work. Worktrees stay under `%USERPROFILE%\.ai-term\worktrees`.
+- **Desktop app:** an NSIS installer from `npm run app:dist` on Windows. It is unsigned, so SmartScreen warns "Windows protected your PC" on first run (More info → Run anyway). The desktop keys are Ctrl+Shift, as on Linux.
 
 ## Status
 `ai` starts Claude Code and Codex on their own logins, and AI Term's own agent on any saved API key (see below). `/login` connects an account or saves a key in the macOS Keychain; `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage shows estimated API-key spend and tokens for today, this week and this month; subscriptions are excluded from those totals. Each agent's own total since it started (cost per task, v0.6.1) shows on its card and in `/usage`: dollars for API keys, tokens for subscriptions. `b` sets advisory budget limits; `/settings` offers Foundry deployment price overrides.

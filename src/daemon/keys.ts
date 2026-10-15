@@ -11,6 +11,7 @@ import { isExtensionId } from '../shared/extensions.js';
 import { isMcpHash, isMcpEnv, isMcpHeader } from '../shared/validate.js';
 import { lastFour } from '../shared/text-cut.js';
 import { hasModelList, isBedrockEndpoint, isBoundProvider, isLocalEndpoint } from '../shared/providers.js';
+import { ownedByMe } from '../shared/owner.js';
 export class KeyError extends Error {}
 // One clear line when the system's key store can't be used. Linux (v0.8.1) keeps keys only in the Secret Service
 // (GNOME Keyring, KWallet); headless, locked or missing, key features refuse, and there is never a file fallback.
@@ -136,7 +137,7 @@ export class KeyStore extends EventEmitter {
  async saveTest(id:string,results:DeploymentTest[]):Promise<void>{validateDeploymentTests(results);await this.serial(async()=>{await this.view(id);await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).map(k=>k.id===id?{...k,lastTest:results}:k)}));});}
  private async envFile(path:string):Promise<Map<string,string>>{
   const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
-  try{const stat=await file.stat();if(!stat.isFile()||stat.uid!==process.getuid?.()||stat.size>1024*1024)throw new KeyError('Env file must be a small regular file owned by you');
+  try{const stat=await file.stat();if(!stat.isFile()||!ownedByMe(stat)||stat.size>1024*1024)throw new KeyError('Env file must be a small regular file owned by you');
    const entries=new Map<string,string>();for(const line of (await file.readFile('utf8')).split(/\r?\n/)){
     const m=line.match(/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);if(!m)continue;
     const name=m[1]??'';if(!Object.hasOwn(ENV_KEY_NAMES,name)&&!['AZURE_OPENAI_ENDPOINT','AZURE_OPENAI_DEPLOYMENT'].includes(name))continue;

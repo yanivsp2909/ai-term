@@ -29,6 +29,7 @@ export async function copyText(text: string, execute: CopyExecutor = spawnCopy, 
     child.once('error', reject);
     child.once('close', code => { if (code === 0) resolve(); else reject(new Error('Copy failed')); });
     if (!child.stdin) { reject(new Error('Copy input unavailable')); return; }
-    child.stdin.once('error', reject); child.stdin.end(text);
+    // clip.exe reads its input as the console code page unless it starts with a UTF-16 byte order mark.
+    child.stdin.once('error', reject); child.stdin.end(system.platform === 'win32' ? Buffer.from(`\ufeff${text}`, 'utf16le') : text);
   });
 }

@@ -66,6 +66,7 @@ import { validateHandoffPlan, validateHandoffSummary } from '../../shared/handof
 import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.js';
 import { openFolder, OpenError, type FolderApp } from './open-folder.js';
 import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-command.js';
+import { sep } from 'node:path';
 interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawMode(raw: boolean): unknown; resume(): unknown; pause(): unknown }
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
@@ -523,7 +524,7 @@ export class Homepage {
   }
   private async openFolderOf(session:SessionInfo|null,app:FolderApp):Promise<void>{
     if(!session){this.showNote('select an agent first');return;}
-    const path=session.worktree??session.cwd,home=homedir(),shown=path.startsWith(`${home}/`)?`~${path.slice(home.length)}`:path;
+    const path=session.worktree??session.cwd,home=homedir(),shown=path.startsWith(`${home}${sep}`)?`~${path.slice(home.length)}`:path;
     try{const where=await (this.options.openFolder??openFolder)(path,app);this.showNote(`opened ${shown} in ${where}`,2000);}
     catch(error){
       // OpenError messages are fixed text, so they can go to the log as they are.

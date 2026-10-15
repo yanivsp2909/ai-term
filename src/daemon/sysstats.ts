@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { execFile } from 'node:child_process';
-import { cpus, totalmem, type CpuInfo } from 'node:os';
+import { cpus, freemem, totalmem, type CpuInfo } from 'node:os';
 import type { SessionStats, SystemStats } from '../shared/protocol.js';
 import { validateSystemStats } from '../shared/validate.js';
 // This machine (architecture §10): macOS, and Linux from v0.8.1. Samples run only while a client subscribes.
@@ -11,6 +11,7 @@ export interface SamplerDeps {
   run(file: string, args: string[]): Promise<string>;
   cpus(): CpuInfo[];
   totalmem(): number;
+  freemem?(): number;
   now(): number;
   sessions(): SessionRoot[];
   log: { info(message: string): void; error(message: string): void };
@@ -217,7 +218,7 @@ function reason(error: unknown): string {
 export function runCommand(file: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => execFile(file, args, { timeout: COMMAND_TIMEOUT_MS, maxBuffer: MAX_OUTPUT_BYTES, encoding: 'utf8' }, (error, stdout) => error ? reject(error) : resolve(stdout)));
 }
-export const defaultSamplerDeps = (sessions: () => SessionRoot[], log: SamplerDeps['log']): SamplerDeps => ({ run: runCommand, cpus, totalmem, now: () => performance.now(), sessions, log });
+export const defaultSamplerDeps = (sessions: () => SessionRoot[], log: SamplerDeps['log']): SamplerDeps => ({ run: runCommand, cpus, totalmem, freemem, now: () => performance.now(), sessions, log });
 
 interface Baseline { at: number; cpus: CpuInfo[]; net: Map<string, NetCounter>; times?: Map<number, number> }
 export class SystemSampler extends EventEmitter {
@@ -251,7 +252,18 @@ export class SystemSampler extends EventEmitter {
       if (!this.failing) { this.failing = true; this.deps.log.error(`System stats sample skipped (${reason(error)})`); }
     }).finally(() => { if (generation === this.generation) this.busy = false; });
   }
+  // Windows (v0.8.2): CPU and memory from the OS; there is no ps, and network and per-agent numbers would need a command
+  // per second (PowerShell), so they read 0 and none.
+  private sampleWindows(): SystemStats | null {
+    const at = this.deps.now(), cpuList = this.deps.cpus(), before = this.baseline;
+    this.baseline = { at, cpus: cpuList, net: new Map() };
+    if (!before) return null;
+    const machineCpu = cpuPercent(before.cpus, cpuList); if (machineCpu === null) return null;
+    const memTotal = this.deps.totalmem(), memFree = this.deps.freemem?.() ?? memTotal;
+    return validateSystemStats({ cpuPercent: machineCpu, memUsedBytes: Math.max(0, memTotal - memFree), memTotalBytes: memTotal, netRxBytesPerSec: 0, netTxBytesPerSec: 0, sessions: [] });
+  }
   private async sample(generation: number): Promise<SystemStats | null> {
+    if ((this.deps.platform ?? process.platform) === 'win32') return this.sampleWindows();
     const linux = (this.deps.platform ?? process.platform) === 'linux', { ps, memory, net: netCommand } = sampleCommands(linux ? 'linux' : 'darwin');
     const [psText, vmText, netText] = await Promise.all([this.deps.run(ps.file, [...ps.args]), this.deps.run(memory.file, [...memory.args]), this.deps.run(netCommand.file, [...netCommand.args])]);
     // Sampling stopped while the commands ran: leave no baseline, or the next run's first event would average over the gap.

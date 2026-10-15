@@ -6,6 +6,7 @@ import type { Frame } from './grid.js';
 import { marks } from './agent-card.js';
 import type { Theme } from './theme.js';
 import { WorktreeQuestion, agentText, lossText, overlay, type Line, type Request } from './worktree-question.js';
+import { sep } from 'node:path';
 
 // Every state carries a glyph and a word; the tone only repeats what the text already says.
 export function stateLine(view: WorktreeView): Line {
@@ -41,7 +42,7 @@ export class WorktreesPanel {
     const question: WorktreeQuestion = new WorktreeQuestion(view.path, this.request, this.changed, note => { if (this.question === question) this.question = undefined; this.note = note; void this.load(); });
     this.question = question; await question.load();
   }
-  private display(path: string): string { return path === this.home ? '~' : path.startsWith(`${this.home}/`) ? `~${path.slice(this.home.length)}` : path; }
+  private display(path: string): string { return path === this.home ? '~' : path.startsWith(`${this.home}${sep}`) ? `~${path.slice(this.home.length)}` : path; }
   draw(frame: Frame, theme: Theme): Frame {
     const grid = overlay(frame, theme), w = Math.min(grid.cols, 110), h = Math.max(8, grid.rows - 4), x = Math.floor((grid.cols - w) / 2), y = 1;
     const views = this.views, capacity = Math.max(1, Math.floor((h - 5) / 2)), start = Math.max(0, Math.min(this.row - capacity + 1, (views?.length ?? 0) - capacity));

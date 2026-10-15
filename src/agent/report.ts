@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { mcpAccess } from '../client/mcp.js';
 import type { McpAccess, McpRequest } from '../shared/mcp.js';
 import { parseAgentFacts, parseBudgetAnswer, type AgentFacts, type BudgetAnswer } from '../shared/agent-facts.js';
+import { ownedByMe, privateMode } from '../shared/owner.js';
 
 // What the agent tells the daemon, through the same local receiver the CLIs use (S12): status on /v1/status/ai-term with
 // the session's status credential, token usage on /v1/metrics with its usage credential. The daemon maps status onto the
@@ -30,7 +31,7 @@ export function readAgentSecrets(env: NodeJS.ProcessEnv, deleteIt = false): Reco
   try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { return {}; }
   try {
     const info = fstatSync(fd);
-    if (!info.isFile() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0 || info.size > 64 * 1024) return {};
+    if (!info.isFile() || !ownedByMe(info) || !privateMode(info) || info.size > 64 * 1024) return {};
     const parsed: unknown = JSON.parse(readFileSync(fd, 'utf8'));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && /^AITERM_[A-Z_]+$/.test(entry[0])));

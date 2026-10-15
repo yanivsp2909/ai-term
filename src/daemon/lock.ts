@@ -1,6 +1,10 @@
 import { constants, openSync, writeFileSync, fsyncSync, closeSync, readFileSync, lstatSync, unlinkSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { isFsError } from '../shared/paths.js';
+import { dirname, join } from 'node:path';
+import { readPipe } from './pipe-server.js';
+import { socketAnswers } from './private-socket.js';
+import { ownedByMe } from '../shared/owner.js';
 // When the process holding `pid` started, from ps's elapsed time (TZ/DST-proof); null if it is gone.
 function processStart(pid: number): Promise<number | null> {
     return new Promise((resolve, reject) => execFile('/bin/ps', ['-o', 'etime=', '-p', String(pid)], { timeout: 3000, env: { LC_ALL: 'C' } }, (error, stdout) => {
@@ -15,6 +19,11 @@ function processStart(pid: number): Promise<number | null> {
         resolve(now - ((((days ?? 0) * 24 + (hours ?? 0)) * 60 + (minutes ?? 0)) * 60 + (seconds ?? 0)) * 1000);
     }));
 }
+async function windowsDaemonStart(lock: string, written: number): Promise<number | null> {
+    const socketPath = join(dirname(lock), 'daemon.sock');
+    try { return await socketAnswers((await readPipe(socketPath)).name) ? written : null; }
+    catch (error) { if (isFsError(error, 'ENOENT')) return null; throw error; }
+}
 export async function acquireLock(path: string): Promise<() => void> {
     for (let attempt = 0; attempt < 3; attempt++) {
         let fd: number;
@@ -25,7 +34,7 @@ export async function acquireLock(path: string): Promise<() => void> {
             if (!isFsError(error, 'EEXIST'))
                 throw error;
             const stat = lstatSync(path);
-            if (!stat.isFile() || stat.uid !== process.getuid?.() || stat.size > 32)
+            if (!stat.isFile() || !ownedByMe(stat) || stat.size > 32)
                 throw new Error('Unsafe daemon lock', { cause: error });
             const text = readFileSync(path, 'utf8').trim();
             if (!/^[1-9][0-9]{0,9}$/.test(text))
@@ -46,7 +55,9 @@ export async function acquireLock(path: string): Promise<() => void> {
             // After a crash and reboot the stale PID can belong to any live process. A process that
             // started after the lock was written can't be its owner. ps rounds down to whole seconds,
             // so allow 2 s before calling it stale.
-            const started = await processStart(pid);
+            // Windows (v0.8.2): no ps. A live PID is this daemon only while its pipe answers; otherwise it is a stranger
+            // that reused the number after a crash.
+            const started = process.platform === 'win32' ? await windowsDaemonStart(path, stat.mtimeMs) : await processStart(pid);
             const current = lstatSync(path);
             if (current.ino !== stat.ino || current.dev !== stat.dev)
                 continue;

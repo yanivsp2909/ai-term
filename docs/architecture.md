@@ -847,6 +847,36 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
   - `/test` on Linux says 127.0.0.1 is always the tests' own, and `l` does nothing there.
   - Desktop: `scripts/app-config.mjs` makes AppImage and deb targets, unsigned. `runtimePaths` accepts `resources/app`, with no `ai-node` and no command install. Accelerators are Ctrl+Shift.
 
+### 12.21 v0.8.2 Windows (2026-10-15)
+- **Folder and files.**
+  - **The folder:** `privateDirectory` on win32 (`src/shared/paths.ts`, `src/shared/win-acl.ts`) runs `icacls <root> /inheritance:r /grant:r *<SID>:(OI)(CI)F /q`. The SID comes from `whoami /user /fo csv /nh`, validated. The folder is read back with a fixed PowerShell script whose path arrives in `AITERM_ACL_PATH`, never in the text. The owner and every entry must be that SID, or start fails. Subfolders inherit it, and the check runs once per process.
+  - **Files:** `ownedByMe` and `privateMode` (`src/shared/owner.ts`) answer true on win32, because `stat` has no owner there and invented modes; the folder ACL is the check.
+  - **Paths:** `isSafeAbsolutePath(…, 'win32')` accepts `X:\…` and refuses `\\?\`, `\\.\`, `C:x` and `.`/`..` parts.
+- **Pipe.**
+  - **Server:** `listenPipe` (`src/daemon/pipe-server.ts`) binds `pipeName(sid, root, random)`, which is `\\.\pipe\ai-term-<sha256(sid, root)[:16]>-<32 hex>`. libuv sets `FILE_FLAG_FIRST_PIPE_INSTANCE`, so an existing name fails to bind. It then writes `{name, token}` to `run\daemon.pipe` under a temp name and renames it.
+  - **Client:** `Connection.connect` reads that file (a missing file or pipe is ENOENT, so the daemon gets started) and sends `hello.token`.
+  - **Gate:** the server's `helloAllowed` compares the token in constant time before anything is answered. Without it the peer is dropped.
+  - **Why a token:** Node can't set the pipe's DACL, and Windows' default grants Everyone read.
+  - **Lock:** `acquireLock` on win32 treats a live PID as the daemon only while its pipe answers.
+- **Launching (`src/daemon/win-launch.ts`).**
+  - **Lookup:** `resolveExecutable(name, PATH, 'win32')` tries `name.exe`, then `name.cmd`, folder by folder.
+  - **Recipe:** `windowsRecipe` turns an npm launcher into `node <script> …args`. `parseNpmShim` reads cmd-shim's `"%_prog%" "%dp0%\<script>" %*` line, or npm's own `SET "NPM_CLI_JS=%~dp0\<script>"`. The script must stay inside the launcher's folder.
+  - **node:** the `node.exe` beside the launcher, else the first on PATH.
+  - **Refused:** any other `.cmd` (`CLI_LAUNCH_ERRORS`). cmd.exe and PowerShell are never given arguments, and the only exception is a shell session's PowerShell, started with none.
+  - **Where it applies:** `checkEngine`, session spawns and `runTests` (`windowsTestCommand`).
+- **Processes.**
+  - **Stopping:** `killGroup` (`src/shared/kill-tree.ts`) runs `taskkill /T /F /PID <n>` on win32, for PTYs, bash, test runs and MCP servers. Exit 128 means already gone; any other failure is reported.
+  - **What's skipped:** `ProcessTree` (ps) is skipped there.
+  - **Consoles:** `windowsHide` is set on the daemon start, git, engine checks, bash and test runs.
+- **Env.** `buildShellEnv` spells `Path` as `PATH`. `buildSpawnEnv` removes credential variables case-insensitively on win32. Bash and test envs add the Windows basics (`USERPROFILE`, `SystemRoot`, `TEMP`, `PATHEXT`, …).
+- **Elsewhere.**
+  - git: `GIT`/`GIT_PATH` (`src/daemon/git-path.ts`). Git for Windows maps `/dev/null`.
+  - Bash: Git Bash (`findGitBash`, never System32's WSL `bash.exe`).
+  - Stats: CPU and memory only.
+  - Clipboard: `clip.exe` with a UTF-16 BOM. `/open`: Explorer (its exit 1 is success).
+  - Notifications: none.
+  - Desktop: NSIS, unsigned; `runtimePaths` accepts `resources\app`.
+
 ## 13. Decisions log
 
 Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless he objects.
@@ -911,3 +941,4 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D56 | Code an agent wrote never runs outside a sandbox without asking. Auto-test runs the test process tree under macOS `sandbox-exec` with a deny-by-default profile built from checked paths (writes only in the worktree and a per-run temp folder; no network unless the project allows 127.0.0.1; no reads of the home folder beyond toolchains, nor of key folders); without a working sandbox it never runs by itself and `/test` asks every time (§12.18). | Pinned (Yaniv, 2026-10-15) |
 | D57 | AI Term's agent never holds its key or AI Term's credentials in its process environment (a 0600 file it reads and deletes carries them), and on macOS its bash commands run in a sandbox that can't read or write `~/.ai-term` (its own worktree excepted) or reach AI Term's sockets, so the agent can't change your prices, budgets or settings, or talk to AI Term as you; nor can it write the places that run later outside the sandbox (shell startup files, login items, `~/.ssh`, git's global config, Claude Code's and Codex's folders; B29) (§12.19). | Pinned (Yaniv, 2026-10-15) |
 | D58 | Linux sandboxes are bubblewrap from fixed paths, or none: tests get their own network (no 127.0.0.1 of yours even when allowed) and an empty home; agent bash gets its own PID view and a rebuilt home whose persistence spots are read-only (new entries at those levels vanish). No bwrap, or one that can't start: auto-test asks every time and AI Term's agent is Ask only, as anywhere a sandbox can't start (§12.20). | Proposed |
+| D59 | Windows: the daemon is a named pipe with a random per-start name and a token in the ACL'd AI Term folder (Node can't narrow a pipe's DACL); npm `.cmd` launchers are read and their script run with node, never through cmd.exe; no sandbox, so auto-test asks and AI Term's agent is Ask only (§12.21). | Proposed |

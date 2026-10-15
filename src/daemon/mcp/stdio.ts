@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { JSONRPCMessage, MCPTransport } from '@ai-sdk/mcp';
 import { MCP_MESSAGE_BYTES } from '../../shared/mcp.js';
+import { killGroup } from '../../shared/kill-tree.js';
 
 export function mcpMessage(value:unknown):JSONRPCMessage{
  if(!value||typeof value!=='object'||Array.isArray(value)||!('jsonrpc'in value)||value.jsonrpc!=='2.0'||!('method'in value)&&!('result'in value)&&!('error'in value))throw new Error('MCP transport failed');return value as JSONRPCMessage;
@@ -23,7 +24,7 @@ export class McpStdio implements MCPTransport {
  private fail():void{this.onerror?.(new Error('MCP transport failed'));void this.close();}
  send(message:JSONRPCMessage):Promise<void>{const child=this.child;if(!child||this.closed)return Promise.reject(new Error('MCP transport failed'));return new Promise((resolve,reject)=>{child.stdin.write(JSON.stringify(message)+'\n',error=>error?reject(new Error('MCP transport failed')):resolve());});}
  async close():Promise<void>{const wasClosed=this.closed;this.closed=true;const child=this.child;this.child=undefined;this.buffer=Buffer.alloc(0);this.env={};
-  if(this.group){try{process.kill(-this.group,'SIGKILL');}catch(error){if(!(error instanceof Error&&'code'in error&&error.code==='ESRCH'))this.onerror?.(new Error('MCP stop failed'));}this.group=undefined;}child?.stdin.destroy();child?.stdout.destroy();child?.stderr.destroy();
+  if(this.group){try{killGroup(this.group,'SIGKILL',()=>this.onerror?.(new Error('MCP stop failed')));}catch(error){if(!(error instanceof Error&&'code'in error&&error.code==='ESRCH'))this.onerror?.(new Error('MCP stop failed'));}this.group=undefined;}child?.stdin.destroy();child?.stdout.destroy();child?.stderr.destroy();
   if(!wasClosed)this.onclose?.();
  }
 }

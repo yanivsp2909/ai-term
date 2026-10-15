@@ -85,8 +85,8 @@ export async function validateRequest(value: unknown): Promise<Request> {
     let fields: string[];
     switch (v.kind) {
         case 'hello':
-            fields = ['protocol', 'version'];
-            if (!Number.isSafeInteger(v.protocol) || typeof v.version !== 'string' || !/^[A-Za-z0-9._-]{1,40}$/.test(v.version))
+            fields = ['protocol', 'version', 'token'];
+            if (!Number.isSafeInteger(v.protocol) || typeof v.version !== 'string' || !/^[A-Za-z0-9._-]{1,40}$/.test(v.version) || v.token !== undefined && (typeof v.token !== 'string' || !/^[0-9a-f]{64}$/.test(v.token)))
                 throw new ValidationError('Invalid hello');
             break;
         case 'settings.get':
@@ -503,7 +503,13 @@ export function isWorktreeBranch(value:unknown):value is string{return typeof va
 // The agent's folder in its extension and MCP queries: whatever validCwd let it start in, minus what could break a path
 // or a screen line. Format characters (the joiner inside 👨‍💻, a soft hyphen) are ordinary in folder names.
 export function isAgentFolder(value:unknown):value is string{return typeof value==='string'&&isAbsolute(value)&&value.length<=4096&&!/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
-export function isSafeAbsolutePath(value:unknown):value is string{return typeof value==='string'&&isAbsolute(value)&&value.length<=4096&&!/[\p{C}\p{Zl}\p{Zp}]/u.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
+// Windows (v0.8.2): a drive path (C:\\…) with spaces or non-ASCII names is fine; a device or long path (\\\\?\\, \\\\.\\), a
+// drive-relative one (C:x) and . or .. parts, by either slash, are not.
+export function isSafeAbsolutePath(value:unknown,platform:NodeJS.Platform=process.platform):value is string{
+ if(typeof value!=='string'||value.length>4096||/[\p{C}\p{Zl}\p{Zp}]/u.test(value))return false;
+ if(platform==='win32')return /^[A-Za-z]:\\/.test(value)&&!value.split(/[\\/]/).some(p=>p==='.'||p==='..');
+ return isAbsolute(value)&&!value.split('/').some(p=>p==='.'||p==='..');
+}
 const WORKTREE_NOTES=['worktree off: not a git repo','worktree off: repo has no commits','worktree off: git check failed','worktree off: creation failed'];
 export function isWorktreeNote(value:unknown):value is import('./protocol.js').WorktreeNote{return typeof value==='string'&&WORKTREE_NOTES.includes(value);}
 export function validateWorktreePreview(value:unknown):import('./protocol.js').WorktreePreview{

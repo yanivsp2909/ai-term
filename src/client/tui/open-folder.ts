@@ -33,7 +33,8 @@ export async function openFolder(path: string, app: FolderApp, runner: Runner = 
     return 'your file manager';
   }
   if (app === 'finder' && platform === 'win32') {
-    try { await runner(`${process.env.SystemRoot ?? 'C:\\Windows'}\\explorer.exe`, [path], {}); } catch { throw new OpenError("Explorer couldn't open it"); }
+    // explorer.exe exits 1 even when it opened the folder.
+    try { await runner(`${process.env.SystemRoot ?? 'C:\\Windows'}\\explorer.exe`, [path], {}); } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 1)) throw new OpenError("Explorer couldn't open it"); }
     return 'Explorer';
   }
   if (app === 'finder') {

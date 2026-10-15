@@ -9,6 +9,9 @@ import { BWRAP_PROBE } from '../daemon/agent-sandbox.js';
 import { visible } from './display.js';
 import { isFsError } from '../shared/paths.js';
 import { ToolError } from './tools.js';
+import { killGroup } from '../shared/kill-tree.js';
+import { findGitBash } from './win-bash.js';
+import { GIT } from '../daemon/git-path.js';
 
 // A command line longer than this is refused before any approval: a person can still read it whole.
 export const BASH_MAX_COMMAND_BYTES = 16 * 1024;
@@ -84,8 +87,9 @@ export function blockedPlace(output: string, cwd: string, user: string, guarded:
 interface Argv { program: string; args: string[]; guard?: { user: string; cwd: string; places: Persistence & { home: string } } }
 async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
   const plain: Argv = { program: '/bin/sh', args: ['-c', command] };
+  const platform = options.sandbox?.platform ?? process.platform, required = options.sandbox?.require === true;
+  if (platform === 'win32') { if (required) throw new ToolError("bash can't run in don't ask without a sandbox: Windows has none AI Term can use"); return windowsArgv(command); }
   if (!options.sandbox) return plain;
-  const platform = options.sandbox.platform ?? process.platform, required = options.sandbox.require === true;
   const without = (why: string): Argv => { if (required) throw new ToolError(`bash can't run in don't ask without a sandbox: ${why}`); return plain; };
   if (platform === 'linux') return linuxArgv(command, options, without);
   if (platform !== 'darwin') return without('this system has none AI Term can use');
@@ -100,6 +104,13 @@ async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
   return { program: SANDBOX_EXEC, args: ['-p', profile, '--', '/bin/sh', '-c', command], guard: { user: realUser, cwd, places: { ...persistence, home } } };
 }
 
+// Windows (v0.8.2): no sandbox (so Ask only); the command line goes to Git for Windows' bash.exe as one argv element, as
+// /bin/sh -c elsewhere. Without Git for Windows there is no bash to run it with.
+async function windowsArgv(command: string): Promise<Argv> {
+  const bash = await findGitBash(GIT);
+  if (!bash) throw new ToolError("bash needs Git for Windows (its bash.exe), which isn't installed");
+  return { program: bash, args: ['-c', command] };
+}
 // Linux (v0.8.1): bubblewrap with D57 + B29's rules (src/daemon/bwrap.ts). A refused write there reads as a read-only
 // file system, or busy for a folder that was rebuilt or pinned. Where bubblewrap can't start (user namespaces off, a
 // container) or its plan can't be made, Ask runs the command you approved as before and Don't ask refuses (TS review).
@@ -131,14 +142,14 @@ async function linuxArgv(command: string, options: BashOptions, without: (why: s
 const running = new Set<number>();
 export function killAllBash(): number {
   let count = 0;
-  for (const pid of running) { try { process.kill(-pid, 'SIGKILL'); count++; } catch (error) { if (!isFsError(error, 'ESRCH')) count++; } }
+  for (const pid of running) { try { killGroup(pid, 'SIGKILL'); count++; } catch (error) { if (!isFsError(error, 'ESRCH')) count++; } }
   return count;
 }
 export async function runBash(command: string, options: BashOptions): Promise<BashResult> {
   const timeoutMs = Math.min(BASH_MAX_TIMEOUT_MS, Math.max(1000, options.timeoutMs ?? BASH_DEFAULT_TIMEOUT_MS)), maxBytes = options.maxBytes ?? BASH_OUTPUT_MAX_BYTES;
   const { program, args, guard } = await bashArgv(command, options);
   return new Promise((resolve, reject) => {
-    const child = spawn(program, args, { cwd: options.cwd, env: options.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(program, args, { cwd: options.cwd, env: options.env, detached: true, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [], err: Buffer[] = [];
     if (child.pid !== undefined) running.add(child.pid);
     let outBytes = 0, errBytes = 0, cut = false, timedOut = false, interrupted = false, settled = false, stopFailed = false;
@@ -153,7 +164,7 @@ export async function runBash(command: string, options: BashOptions): Promise<Ba
     const stopGroup = (): void => {
       const pid = child.pid; if (pid === undefined) return;
       // ESRCH: the whole group already exited. Anything else means it may still run, and the report says so.
-      const signal = (name: NodeJS.Signals): void => { try { process.kill(-pid, name); } catch (error) { if (!isFsError(error, 'ESRCH')) stopFailed = true; } };
+      const signal = (name: NodeJS.Signals): void => { try { killGroup(pid, name, () => { stopFailed = true; }); } catch (error) { if (!isFsError(error, 'ESRCH')) stopFailed = true; } };
       signal('SIGTERM'); setTimeout(() => signal('SIGKILL'), KILL_GRACE_MS).unref();
     };
     const timer = setTimeout(() => { timedOut = true; stopGroup(); }, timeoutMs);

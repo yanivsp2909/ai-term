@@ -1,9 +1,12 @@
 // Only the architecture's always rules apply to the internal shell engine.
 // ELECTRON_RUN_AS_NODE comes from AI Term's own launcher (S25); keepElectronNode is only for a dev daemon running as the
 // plain Electron binary, whose status commands need it (electronNodeNeeded in runtime-paths.ts).
-export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNode?: boolean} = {}): Record<string, string> {
-    const result: Record<string, string> = {};
-    for (const [key, value] of Object.entries(base)) {
+// Windows (v0.8.2): names are case-insensitive there and a copy keeps the system's spelling (Path), so it is spelled PATH
+// here, where every reader looks for it.
+export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNode?: boolean; platform?: NodeJS.Platform} = {}): Record<string, string> {
+    const result: Record<string, string> = {}, windows = (options.platform ?? process.platform) === 'win32';
+    for (const [name, value] of Object.entries(base)) {
+        const key = windows && name.toUpperCase() === 'PATH' ? 'PATH' : name;
         if (value !== undefined && !/^npm_/.test(key) && !/^AI_TERM_/.test(key) && !['INIT_CWD', 'NODE_ENV','AITERM_STATUS_TOKEN','AITERM_STATUS_PORT'].includes(key) && (key !== 'ELECTRON_RUN_AS_NODE' || options.keepElectronNode))
             result[key] = value;
     }
@@ -28,9 +31,11 @@ const CODEX_KEY_EXTRA_VARS = ['AZURE_OPENAI_API_KEY'] as const;
 // Key rows are pure/tested only. No v0.1.6 handler accepts a key or invokes these rows.
 // profileDir (v0.6.4, D53): an account profile's own config folder; the CLI keeps that account's login there (Claude Code
 // also keys its Keychain entry to it). Set only here, and AI Term never reads what the CLI writes into it.
-export function buildSpawnEnv(engine: CliEngine, auth: {kind:'account'} | {kind:'key';secret:string;provider?:'openai'}, base: NodeJS.ProcessEnv, options: {keepElectronNode?: boolean; profileDir?: string} = {}): Record<string,string> {
+// Windows: a credential variable is removed whatever its case (anthropic_api_key is ANTHROPIC_API_KEY there).
+export function buildSpawnEnv(engine: CliEngine, auth: {kind:'account'} | {kind:'key';secret:string;provider?:'openai'}, base: NodeJS.ProcessEnv, options: {keepElectronNode?: boolean; profileDir?: string; platform?: NodeJS.Platform} = {}): Record<string,string> {
     const result=buildShellEnv(base,options), vars:readonly string[]=engine==='claude-code'?CLAUDE_AUTH_VARS:auth.kind==='key'?[...CODEX_AUTH_VARS,...CODEX_KEY_EXTRA_VARS]:CODEX_AUTH_VARS;
-    for(const key of Object.keys(result))if(vars.some(pattern=>pattern.endsWith('*')?key.startsWith(pattern.slice(0,-1)):key===pattern))delete result[key];
+    const fold=(options.platform??process.platform)==='win32'?(name:string)=>name.toUpperCase():(name:string)=>name;
+    for(const key of Object.keys(result))if(vars.some(pattern=>pattern.endsWith('*')?fold(key).startsWith(pattern.slice(0,-1)):fold(key)===pattern))delete result[key];
     if(auth.kind==='key')result[engine==='claude-code'?'ANTHROPIC_API_KEY':auth.provider==='openai'?'OPENAI_API_KEY':'AITERM_FOUNDRY_KEY']=auth.secret;
     if(auth.kind==='account'&&options.profileDir)result[engine==='claude-code'?'CLAUDE_CONFIG_DIR':'CODEX_HOME']=options.profileDir;
     return result;
@@ -130,8 +135,10 @@ export function buildAgentEnv(base:NodeJS.ProcessEnv,agent:{secret:string|null;e
 // The env of every command the agent's bash tool runs: an allowlist, so no API key, no AI Term credential and nothing the
 // daemon set can reach a command the model wrote. The name check is a second guard in case a base name ever carries one.
 const BASH_BASE_VARS=['PATH','HOME','USER','LOGNAME','SHELL','TMPDIR','LANG','LC_ALL','LC_CTYPE'] as const;
+// Windows (v0.8.2): what Git Bash and Windows programs need to find home, temp and the system folder.
+const WINDOWS_BASE_VARS=process.platform==='win32'?['USERPROFILE','SystemRoot','SystemDrive','TEMP','TMP','APPDATA','LOCALAPPDATA','PATHEXT','ComSpec','HOMEDRIVE','HOMEPATH','USERNAME','windir']:[];
 export function buildBashEnv(base:NodeJS.ProcessEnv):Record<string,string>{
-    const result=pick(base,BASH_BASE_VARS);
+    const result=pick(base,[...BASH_BASE_VARS,...WINDOWS_BASE_VARS]);
     for(const name of Object.keys(result))if(/KEY|TOKEN|SECRET|PASSWORD|AITERM|AI_TERM/i.test(name))delete result[name];
     // No pager or credential prompt may wait on a terminal the command doesn't have.
     return {...result,TERM:'dumb',PAGER:'cat',GIT_PAGER:'cat',GIT_TERMINAL_PROMPT:'0'};
@@ -141,7 +148,7 @@ export function buildBashEnv(base:NodeJS.ProcessEnv):Record<string,string>{
 // carries one), CI=1 so runners don't wait for a terminal or watch for changes, and no color codes in the output.
 const TEST_BASE_VARS=[...BASH_BASE_VARS,'TZ','JAVA_HOME','GOPATH','GOROOT','GOCACHE','GOMODCACHE','CARGO_HOME','RUSTUP_HOME','NVM_DIR','VOLTA_HOME','PNPM_HOME','BUN_INSTALL','DENO_DIR','PYENV_ROOT','VIRTUAL_ENV','CONDA_PREFIX','POETRY_HOME','PIPX_HOME','GEM_HOME','GEM_PATH','RBENV_ROOT','ANDROID_HOME','ANDROID_SDK_ROOT','DEVELOPER_DIR','SDKROOT','XDG_CACHE_HOME','XDG_CONFIG_HOME','XDG_DATA_HOME'] as const;
 export function buildTestEnv(base:NodeJS.ProcessEnv):Record<string,string>{
-    const result=pick(base,TEST_BASE_VARS);
+    const result=pick(base,[...TEST_BASE_VARS,...WINDOWS_BASE_VARS]);
     for(const name of Object.keys(result))if(/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AITERM|AI_TERM/i.test(name)||/sk-/.test(result[name]??''))delete result[name];
     return {...result,CI:'1',NO_COLOR:'1',FORCE_COLOR:'0',TERM:'dumb',PAGER:'cat',GIT_PAGER:'cat',GIT_TERMINAL_PROMPT:'0'};
 }

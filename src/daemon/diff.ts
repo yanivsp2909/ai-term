@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { DIFF_FILE_LINES, DIFF_LINE_CHARS, DIFF_MAX_FILES, DIFF_MAX_LINES, diffLine, diffPath, type AgentDiff, type DiffFile, type DiffStat, type DiffStatus } from '../shared/diff.js';
 import { isFsError } from '../shared/paths.js';
 import { diffNameStatus, diffNumstat, diffPatch, GitError, isolatedGitDir, untrackedFiles, type IsolatedGit, type NameStatus } from './git.js';
+import { sep } from 'node:path';
 
 // v0.7.1: an agent's worktree against the commit it started from: committed and uncommitted work from git's own diff,
 // untracked (not ignored) files read here as all-added. Text only: every line goes through diffLine; the totals keep
@@ -45,7 +46,7 @@ async function readUntracked(root: string, path: string): Promise<Omit<DiffFile,
   try { info = await lstat(path); } catch (error) { if (isFsError(error, 'ENOENT')) return { added: 0, removed: 0, lines: ['+(gone)'] }; throw error; }
   // O_NOFOLLOW guards the last part of the path only: a folder on the way that became a symlink would lead outside.
   const folder = await realpath(dirname(path)), top = await realpath(root);
-  if (folder !== top && !folder.startsWith(top + '/')) return { added: 0, removed: 0, lines: ['+(not shown)'] };
+  if (folder !== top && !folder.startsWith(top + sep)) return { added: 0, removed: 0, lines: ['+(not shown)'] };
   if (info.isSymbolicLink()) return { added: 1, removed: 0, lines: ['+→ symlink (not followed)'] };
   if (info.isDirectory()) return { added: 0, removed: 0, lines: ['+(a folder with its own git repository, not shown)'] };
   if (!info.isFile()) return { added: 0, removed: 0, lines: ['+(not a regular file)'] };

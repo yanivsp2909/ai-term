@@ -7,8 +7,11 @@ import { isFsError } from '../shared/paths.js';
 import { diffPath } from '../shared/diff.js';
 import { failingCount, isDependencyPath, isTestCommand, isTestConfig } from '../shared/test-run.js';
 import { ProcessTree } from './process-tree.js';
+import { killGroup } from '../shared/kill-tree.js';
+import { windowsTestCommand } from './win-launch.js';
 import { sandboxDenial, type PreparedSandbox } from './test-sandbox.js';
 import { diffNameStatus, GitError, insideWorktree, isolatedGitDir, repoCommonDir, repoTopLevel, runGit, untrackedFiles } from './git.js';
+import { sep } from 'node:path';
 
 // v0.7.4: one test run in an agent's worktree. argv only (spawn, no shell), stdin closed, its own process group so a
 // timeout or a cancel ends everything it started (npm starts node, node starts workers). Output is read to the end but
@@ -18,23 +21,27 @@ import { diffNameStatus, GitError, insideWorktree, isolatedGitDir, repoCommonDir
 export const TEST_TIMEOUT_MS = 10 * 60_000, TEST_OUTPUT_CAP = 16 * 1024 * 1024;
 const TAIL_BYTES = 64 * 1024, KILL_GRACE_MS = 2_000;
 export type TestOutcome = { state: 'pass' } | { state: 'fail'; failing: number | null } | { state: 'timeout' } | { state: 'error' } | { state: 'cancelled' } | { state: 'blocked'; what: string } | { state: 'nosandbox' };
-export interface TestRunOptions { timeoutMs?: number; outputCap?: number; signal?: AbortSignal; log?: (text: string) => void; sandbox?: Pick<PreparedSandbox, 'prefix' | 'spec'> }
+// resolved: the command was already looked up on PATH (Windows).
+export interface TestRunOptions { resolved?: boolean; timeoutMs?: number; outputCap?: number; signal?: AbortSignal; log?: (text: string) => void; sandbox?: Pick<PreparedSandbox, 'prefix' | 'spec'> }
 // sandbox-exec's own refusal (a profile the system rejects): EX_DATAERR or EX_OSERR, and its name on stderr.
 const SANDBOX_REFUSED = /^sandbox-exec: /m, BWRAP_REFUSED = /^bwrap: /m;
 
 export function runTests(command: readonly string[], cwd: string, env: Record<string, string>, options: TestRunOptions = {}): Promise<TestOutcome> {
   if (!isTestCommand(command)) return Promise.resolve({ state: 'error' });
+  // Windows (v0.8.2): `npm test` is npm.cmd, which only cmd.exe could run; it becomes node + npm's script (win-launch.ts).
+  if (process.platform === 'win32' && !options.resolved) return windowsTestCommand(command, env.PATH ?? env.Path ?? '').then(resolved => runTests(resolved, cwd, env, { ...options, resolved: true }), () => ({ state: 'error' as const }));
   const box = options.sandbox, argv = box ? [...box.prefix, ...command] : [...command];
   const [program, ...args] = argv;
   return new Promise(resolve => {
     let tail = Buffer.alloc(0), total = 0, ended: 'timeout' | 'cancelled' | 'capped' | null = null, settled = false;
-    const child = spawn(program ?? '', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
-    const tree = child.pid === undefined ? null : new ProcessTree(child.pid, options.log);
+    const child = spawn(program ?? '', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true, windowsHide: true });
+    // Windows has no ps; taskkill /T stops the run's whole tree instead (kill-tree.ts).
+    const tree = child.pid === undefined || process.platform === 'win32' ? null : new ProcessTree(child.pid, options.log);
     tree?.start();
     const group = (signal: NodeJS.Signals) => {
       // A negative pid signals the whole group; the child may already be gone (ESRCH), which is what we wanted.
       if (child.pid === undefined) return;
-      try { process.kill(-child.pid, signal); }
+      try { killGroup(child.pid, signal, () => options.log?.('Test run: stopping its processes failed')); }
       catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) options.log?.(`Test run: stopping its processes failed (${error instanceof Error && 'code' in error ? String(error.code) : 'unknown'})`); }
     };
     const stop = (why: 'timeout' | 'cancelled' | 'capped') => {
@@ -133,7 +140,7 @@ async function walkDigest(root: string, entries: readonly string[]): Promise<{ d
       let target: string;
       try { target = await realpath(path); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ELOOP')) { hash.update('dangling\n'); continue; } throw error; }
       hash.update(`→${await readlink(path)}\n`);
-      if (target !== top && !target.startsWith(top + '/')) unverifiable = true;
+      if (target !== top && !target.startsWith(top + sep)) unverifiable = true;
       continue;
     }
     if (info.isDirectory()) for (const name of (await readdir(path)).sort()) queue.push(`${relative}/${name}`);

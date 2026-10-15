@@ -5,6 +5,7 @@ import { isFsError } from '../shared/paths.js';
 import { validateSettings, validateSettingsPatch, validateKeyView } from '../shared/validate.js';
 import type { Settings, SettingsPatch } from '../shared/protocol.js';
 import { atomicWrite } from './store.js';
+import { ownedByMe } from '../shared/owner.js';
 
 const queues = new Map<string, Promise<unknown>>();
 export class SettingsStore {
@@ -17,7 +18,7 @@ export class SettingsStore {
     catch (error) { if (isFsError(error, 'ENOENT')) return {settings:{theme:'graphite'},skipped:[]}; throw error; }
     try {
       const stat = await file.stat();
-      if (!stat.isFile() || stat.uid !== process.getuid?.() || stat.size > 16384) throw new Error('Unsafe settings file');
+      if (!stat.isFile() || !ownedByMe(stat) || stat.size > 16384) throw new Error('Unsafe settings file');
       await file.chmod(0o600);
       const raw:unknown=JSON.parse(await file.readFile('utf8'));
       const skipped:unknown[]=[];

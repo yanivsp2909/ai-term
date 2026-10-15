@@ -1,6 +1,7 @@
 import { constants, openSync, closeSync, writeSync, fstatSync, fchmodSync, lstatSync, renameSync, unlinkSync } from 'node:fs';
 import { isFsError } from '../shared/paths.js';
 import { EventEmitter } from 'node:events';
+import { ownedByMe } from '../shared/owner.js';
 export function redact(text: string): string {
     return text.replace(/sk-[A-Za-z0-9_-]+/g, '[REDACTED]')
         .replace(/([A-Za-z0-9_-]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Za-z0-9_-]*["\x27]?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
@@ -16,7 +17,7 @@ export class Logger extends EventEmitter {
     private safe(path: string): boolean {
         try {
             const stat = lstatSync(path);
-            if (!stat.isFile() || stat.uid !== process.getuid?.())
+            if (!stat.isFile() || !ownedByMe(stat))
                 throw new Error('Unsafe log file');
             return true;
         }
@@ -48,7 +49,7 @@ export class Logger extends EventEmitter {
         }
         const fd = openSync(this.path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
         try {
-            if (fstatSync(fd).uid !== process.getuid?.())
+            if (!ownedByMe(fstatSync(fd)))
                 throw new Error('Log not owned by this user');
             fchmodSync(fd, 0o600);
             writeSync(fd, `${new Date().toISOString()} ${level} ${redact(message)}\n`);
