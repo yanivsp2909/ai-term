@@ -8,6 +8,7 @@ import { PROVIDER_LABELS, isBedrockEndpoint, isDirectProvider, isLocalEndpoint }
 import { isDiffStat, validateAgentDiff } from './diff.js';
 import { validateSessionExport } from './session-export.js';
 import { validateUndoPlan } from './checkpoints.js';
+import { validateMergePlan, validatePrPlan } from './merge.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
     // eslint-disable-next-line no-useless-escape
@@ -146,6 +147,11 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['sessionId','lastReply'];if(!isUUID(v.sessionId)||v.lastReply!==undefined&&typeof v.lastReply!=='boolean')throw new ValidationError('Invalid session UUID');break;
         case 'sessions.diff': case 'sessions.export':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.mergePlan': case 'sessions.prPlan':
+            fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.merge': case 'sessions.pr':
+            fields=['sessionId','fingerprint','override'];
+            if(!isUUID(v.sessionId)||typeof v.override!=='boolean'||typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint))throw new ValidationError('Invalid merge request');break;
         case 'sessions.undoPlan': case 'sessions.undo':
             fields=v.kind==='sessions.undo'?['sessionId','redo','fingerprint']:['sessionId','redo'];
             if(!isUUID(v.sessionId)||typeof v.redo!=='boolean'||v.kind==='sessions.undo'&&(typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint)))throw new ValidationError('Invalid undo request');break;
@@ -198,6 +204,10 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.diff!==undefined)validateAgentDiff(v.diff);
     if(v.exportData!==undefined)validateSessionExport(v.exportData);
     if(v.undoPlan!==undefined)validateUndoPlan(v.undoPlan);
+    if(v.mergePlan!==undefined)validateMergePlan(v.mergePlan);
+    if(v.prPlan!==undefined)validatePrPlan(v.prPlan);
+    if(v.merged!==undefined&&(!v.merged||typeof v.merged!=='object'||Object.keys(v.merged).length!==1||typeof (v.merged as {commit?:unknown}).commit!=='string'||!/^[0-9a-f]{40,64}$/.test((v.merged as {commit:string}).commit)))throw new ValidationError('Invalid merge result');
+    if(v.pr!==undefined&&(!v.pr||typeof v.pr!=='object'||Object.keys(v.pr).length!==1||typeof (v.pr as {url?:unknown}).url!=='string'||!/^https:\/\/\S{1,500}$/.test((v.pr as {url:string}).url)))throw new ValidationError('Invalid PR result');
     if(v.undone!==undefined&&(!v.undone||typeof v.undone!=='object'||Array.isArray(v.undone)||Object.keys(v.undone).length!==1||!Number.isSafeInteger((v.undone as {restored?:unknown}).restored)))throw new ValidationError('Invalid undo result');
     if(v.usage!==undefined)validateUsageSummary(v.usage);
     if(v.usageDiagnostics!==undefined)validateUsageDiagnostics(v.usageDiagnostics);
@@ -267,7 +277,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -285,6 +295,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.contextWarning!==undefined&&typeof v.contextWarning!=='boolean')throw new ValidationError('Invalid context warning');
     if(v.taskCost!==undefined&&typeof v.taskCost!=='boolean')throw new ValidationError('Invalid task cost setting');
     if(v.checkpoints!==undefined&&typeof v.checkpoints!=='boolean')throw new ValidationError('Invalid checkpoints setting');
+    if(v.secretScan!==undefined&&typeof v.secretScan!=='boolean')throw new ValidationError('Invalid secret scan setting');
     if(v.handoff!==undefined&&typeof v.handoff!=='boolean')throw new ValidationError('Invalid handoff setting');
     try{if(v.accounts!==undefined)validateAccounts(v.accounts);if(v.defaultAccounts!==undefined)validateDefaultAccounts(v.defaultAccounts);}catch{throw new ValidationError('Invalid accounts');}
     // Whole settings (not a patch): each default names an account of that engine.

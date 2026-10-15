@@ -30,6 +30,8 @@ export function requestTimeout(kind: RequestBody['kind']): number {
     if (kind === 'sessions.diff' || kind === 'sessions.export') return 60_000;
     // A snapshot hashes the worktree's files (git add has 120 s), then the restore writes them.
     if (kind === 'sessions.undoPlan' || kind === 'sessions.undo') return 5 * 60_000;
+    // A merge, a push and gh each have up to two minutes.
+    if (kind === 'sessions.mergePlan' || kind === 'sessions.prPlan' || kind === 'sessions.merge' || kind === 'sessions.pr') return 5 * 60_000;
     return ['keys.add', 'keys.importEnv', 'sessions.create', 'sessions.resume'].includes(kind) ? 60_000 : 5000;
 }
 export class Connection extends EventEmitter {

@@ -19,6 +19,7 @@ import { testFoundry } from './providers/foundry.js';
 import { testDirect } from './providers/direct.js';
 import { PROFILE_OTHER_ENGINE } from './accounts.js';
 import { CHECKPOINT_ERRORS } from './checkpoints.js';
+import { CHECKOUT_NOT_ON_BASE, MERGE_ERRORS, MergeError } from './merge.js';
 import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
 import { DIRECT_HOSTS } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
@@ -257,6 +258,18 @@ export class DaemonServer {
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
+                case 'sessions.mergePlan':
+                    this.control(peer,{id:request.id,ok:true,mergePlan:await this.manager.mergePlan(request.sessionId)});
+                    break;
+                case 'sessions.prPlan':
+                    this.control(peer,{id:request.id,ok:true,prPlan:await this.manager.prPlan(request.sessionId)});
+                    break;
+                case 'sessions.merge':
+                    this.control(peer,{id:request.id,ok:true,merged:await this.manager.merge(request.sessionId,request.fingerprint,request.override)});
+                    break;
+                case 'sessions.pr':
+                    this.control(peer,{id:request.id,ok:true,pr:await this.manager.pr(request.sessionId,request.fingerprint,request.override)});
+                    break;
                 case 'sessions.undoPlan':
                     this.control(peer,{id:request.id,ok:true,undoPlan:await this.manager.undoPlan(request.sessionId,request.redo?'redo':'undo')});
                     break;
@@ -355,7 +368,7 @@ export class DaemonServer {
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const fixed = new Set([
                 'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
-                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine','This agent has no worktree to diff',...CHECKPOINT_ERRORS,'This worktree has no recorded start to diff against','Diff unavailable; git could not read the worktree',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
+                'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine','This agent has no worktree to diff',...CHECKPOINT_ERRORS,...MERGE_ERRORS,'This worktree has no recorded start to diff against','Diff unavailable; git could not read the worktree',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
                 'Resume needs a finished agent','A shell has no AI conversation to resume','This older Claude agent has no conversation ID',
                 'Conversation already running','Conversation already starting','Invalid session request','Invalid session or title',
                 'Invalid preview size','Invalid attach','Session unavailable','Invalid resize','Not attached',
@@ -370,7 +383,7 @@ export class DaemonServer {
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
                 'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS
             ]);
-            const message = error instanceof Error && (fixed.has(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
+            const message = error instanceof Error && (fixed.has(error.message) || error instanceof MergeError && CHECKOUT_NOT_ON_BASE.test(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.
             this.log.error(`Operation failed: ${request.kind} (${message === 'Session operation failed' ? 'unexpected error' : message})`);
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });

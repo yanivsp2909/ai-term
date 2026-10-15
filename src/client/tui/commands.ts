@@ -23,6 +23,8 @@ export const commandRegistry:readonly Command[]=[
  {name:'/retry',description:'Restart the selected finished agent fresh',current:c=>c.selectedTitle??''},
  {name:'/diff',description:'What an agent changed in its worktree (d on a card)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/export',description:'Save a session as one HTML file (keys removed)',argumentHint:()=>'[agent] [folder]',current:c=>c.selectedTitle??''},
+ {name:'/merge',description:'Merge an agent\'s branch into your checkout (asks first; secret scan)',argumentHint:()=>'[agent] [rebase]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
+ {name:'/pr',description:'Push an agent\'s branch and open a pull request with gh (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/undo',description:'Restore an agent\'s worktree to its previous checkpoint (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/redo',description:'Bring back what the last /undo replaced (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/send',description:'Send text to a running agent',argumentHint:()=>'<agent> <text>',values:c=>c.agents??[],current:none},

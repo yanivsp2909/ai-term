@@ -47,6 +47,8 @@ import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
 import { HandoffAsk, handoffDone, handoffRequest } from './handoff-ask.js';
 import { DiffView } from './diff-view.js';
 import { UndoAsk } from './undo-ask.js';
+import { MergeAsk } from './merge-ask.js';
+import { validateMergePlan, validatePrPlan } from '../../shared/merge.js';
 import { validateUndoPlan } from '../../shared/checkpoints.js';
 import { exportHtml } from './export-html.js';
 import { saveExport } from '../export-file.js';
@@ -86,7 +88,9 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk;
+  // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
+  private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
   private marked=new Set<string>();
   private lastSplit:string[]=[];
@@ -379,7 +383,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -573,6 +577,7 @@ export class Homepage {
     if (command==='/diff') { await this.diffCommand(argument); return; }
     if (command==='/export') { await this.exportCommand(argument); return; }
     if (command==='/undo'||command==='/redo') { await this.undoCommand(command==='/redo',argument); return; }
+    if (command==='/merge'||command==='/pr') { await this.mergeCommand(command==='/pr'?'pr':'merge',argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
@@ -636,6 +641,47 @@ export class Homepage {
     const session=named[0];if(!session){this.showNote(`no agent named ${name}`);return;}
     await this.openDiff(session);
   }
+  // v0.7.3 /merge [agent] [rebase] and /pr [agent]: the agent named (like /send), else the selected one.
+  private async mergeCommand(kind:'merge'|'pr',argument:string):Promise<void>{
+    const words=argument.split(' ').filter(Boolean),rebase=kind==='merge'&&words.at(-1)==='rebase'&&words.length>1;
+    if(rebase)words.pop();
+    const name=words.join(' ');
+    let session:SessionInfo|undefined;
+    if(name){const named=this.sessions.filter(s=>s.title===name);if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return;}session=named[0];if(!session){this.showNote(`no agent named ${name}`);return;}}
+    else{session=this.sessions.find(s=>s.id===this.selectedId);if(!session){this.showNote(`select an agent, then /${kind}`);return;}}
+    if(rebase){await this.startRebase(session);return;}
+    await this.openMerge(kind,session);
+  }
+  private async openMerge(kind:'merge'|'pr',session:SessionInfo):Promise<void>{
+    let ask:import('./merge-ask.js').MergeAskPlan;
+    try{
+      if(kind==='merge')ask={kind,plan:validateMergePlan((await this.connection.request({kind:'sessions.mergePlan',sessionId:session.id})).mergePlan)};
+      else ask={kind,plan:validatePrPlan((await this.connection.request({kind:'sessions.prPlan',sessionId:session.id})).prPlan)};
+    }catch(error){this.showNote(error instanceof Error?error.message:`${kind==='merge'?'Merge':'Pull request'} unavailable`);return;}
+    // No gh, or not logged in: one line, with the push you can run yourself.
+    if(ask.kind==='pr'&&ask.plan.gh!=='ready'){this.showNote(ask.plan.gh==='missing'?`gh isn't installed · install the GitHub CLI, or run: git push -u -- origin ${ask.plan.branch}`:"gh isn't logged in · run gh auth login in a terminal, then /pr again");return;}
+    const plan=ask.plan;
+    const popup:MergeAsk=new MergeAsk(ask,()=>this.draw(true),()=>{if(this.popup===popup)this.popup=undefined;this.draw(true);},override=>{this.enqueue(async()=>{
+      this.showNote(kind==='merge'?`◐ merging ${plan.branch} into ${plan.base}`:`◐ pushing ${plan.branch} and opening a pull request`);
+      try{
+        if(kind==='merge'){await this.connection.request({kind:'sessions.merge',sessionId:session.id,fingerprint:plan.fingerprint,override});this.conflicts.delete(session.id);this.showNote(`✓ merged ${plan.branch} into ${plan.base} · the worktree stays (x in its diff removes it)`);}
+        else{const result=await this.connection.request({kind:'sessions.pr',sessionId:session.id,fingerprint:plan.fingerprint,override});this.showNote(`✓ pull request opened · ${result.pr?.url??''}`);}
+      }catch(error){
+        const message=error instanceof Error?error.message:'request failed';
+        if(message.startsWith('Merge conflict')){this.conflicts.set(session.id,plan.base);this.showNote(`conflict undone, checkout as it was · /merge ${session.title} rebase starts an agent to rebase ${plan.branch} onto ${plan.base}`);return;}
+        this.showNote(`${kind==='merge'?'merge':'pull request'} stopped: ${message}`);
+      }
+    });});
+    this.popup=popup;this.draw(true);
+  }
+  // After a conflict: a new agent in the same worktree (no new one), Ask, told to rebase the branch onto the base.
+  private async startRebase(session:SessionInfo):Promise<void>{
+    const base=this.conflicts.get(session.id);
+    if(!base||!session.worktree||!session.branch){this.showNote(`run /merge ${session.title} first; a rebase is offered after a conflict`);return;}
+    const firstMessage=`The branch ${session.branch} in this worktree conflicts with ${base}. Run git rebase ${base}, resolve each conflict keeping both sides' intent, run the tests, and stop when the rebase is done. Don't push, merge or force anything.`;
+    try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:this.engine,model:this.model,...(this.effort!==undefined?{effort:this.effort}:{}),auth:this.auth,cwd:session.worktree,permission:'ask',title:`${session.title} rebase`.slice(0,60),firstMessage,useWorktree:false}));}
+    catch(error){this.showNote(error instanceof Error?error.message:'Agent could not start');}
+  }
   // v0.7.2 /undo [agent] and /redo [agent]: the plan (what changes) first; y restores, n or Esc keeps everything.
   private async undoCommand(redo:boolean,name:string):Promise<void>{
     let session:SessionInfo|undefined;
@@ -673,7 +719,7 @@ export class Homepage {
     catch(error){this.showNote(error instanceof Error?error.message:'Diff unavailable');return;}
     const close=()=>{if(this.popup===view)this.popup=undefined;this.draw(true);};
     const view:DiffView=new DiffView(diff,{changed:()=>this.draw(true),close,
-      merge:()=>{this.showNote('merge arrives with /merge (v0.7.3)');},
+      merge:()=>{close();this.enqueue(()=>this.openMerge('merge',session));},
       discard:()=>{
         const current=this.sessions.find(s=>s.id===session.id);
         // The note line sits under the popup: it closes first, so the reason shows.

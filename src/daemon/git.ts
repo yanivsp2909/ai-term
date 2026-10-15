@@ -214,7 +214,7 @@ const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--no-color', '--find-rena
 // `isolatedGitDir`): a minimal config, the repo's objects through `alternates`, a copy of the worktree's index. No
 // filter, driver or hook can be defined there; attributes come from the empty tree and no attributes file is read.
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-export { run as runGit, COMMIT as COMMIT_ID };
+export { run as runGit, COMMIT as COMMIT_ID, EMPTY_TREE as EMPTY_TREE_ID };
 // A blob's exact bytes (v0.7.2 restore): same fixed env and options as run(), output kept as bytes, never decoded.
 export function blobBytes(cwd: string, args: string[], hash: string, env: Record<string, string>): Promise<Buffer> {
     if (!isSafeAbsolutePath(cwd) || !COMMIT.test(hash)) return Promise.reject(new GitError('Git check failed'));

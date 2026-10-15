@@ -30,6 +30,8 @@ import type { AgentDiff } from '../shared/diff.js';
 import { fitExport, redactExportMeta, transcriptFor } from './session-export.js';
 import { applyUndo, CheckpointError, dropCheckpoints, snapshot, undoPlan, type CheckpointContext } from './checkpoints.js';
 import type { UndoPlan } from '../shared/checkpoints.js';
+import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
+import type { MergePlan, PrPlan } from '../shared/merge.js';
 import { EXPORT_TEXT_CHARS, type SessionExport } from '../shared/session-export.js';
 import { redactSecrets } from '../shared/redact.js';
 import { prepareWorktree, serialize } from './worktrees.js';
@@ -903,6 +905,28 @@ export class SessionManager extends EventEmitter {
         this.log.error(`Undo failed: ${error instanceof GitError?error.message:'unexpected error'}`);
         return new CheckpointError('Undo unavailable; git could not read the worktree');
     }
+    // v0.7.3 /merge and /pr: your own git (global config, PATH, HOME, ssh agent), never a key. Tests set a temp one.
+    private userGit:UserGit={globalConfig:process.env.GIT_CONFIG_GLOBAL??join(homedir(),'.gitconfig'),env:Object.fromEntries(['PATH','HOME','USER','LOGNAME','SSH_AUTH_SOCK','LANG','LC_ALL','TMPDIR'].flatMap(name=>{const value=process.env[name];return value?[[name,value]]:[];}))};
+    setUserGit(user:UserGit):void{this.userGit=user;}
+    // The agent's branch, the base it started from and the repository recorded for its worktree; never while it works or asks.
+    private async mergeTarget(id:string):Promise<MergeTarget>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        this.undoIdle(live);
+        const record=live.info.worktree?this.worktreeRecords.get(live.info.worktree):undefined;
+        if(!record?.repo||!record.baseBranch||!live.info.branch||!live.info.worktree)throw new MergeError('This agent has no worktree branch to merge');
+        let settings:Settings|null=null;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; the secret scan stays on');}
+        return {title:live.info.title,repo:record.repo,worktree:live.info.worktree,branch:live.info.branch,base:record.baseBranch,scan:settings?.secretScan!==false};
+    }
+    private mergeError(error:unknown):Error{
+        if(error instanceof MergeError||error instanceof CheckpointError)return error;
+        this.log.error(`Merge or PR failed: ${error instanceof GitError?error.message:'unexpected error'}`);
+        return new MergeError('Merge unavailable; git could not read the repository');
+    }
+    async mergePlan(id:string):Promise<MergePlan>{const t=await this.mergeTarget(id);return this.inCheckpointQueue(id,()=>mergePlan(t).catch((e:unknown)=>{throw this.mergeError(e);}));}
+    async merge(id:string,fingerprint:string,override:boolean):Promise<{commit:string}>{const t=await this.mergeTarget(id);return this.inCheckpointQueue(id,()=>merge(t,fingerprint,override,this.userGit).catch((e:unknown)=>{throw this.mergeError(e);}));}
+    async prPlan(id:string):Promise<PrPlan>{const t=await this.mergeTarget(id);return this.inCheckpointQueue(id,()=>prPlan(t,this.userGit).catch((e:unknown)=>{throw this.mergeError(e);}));}
+    async pr(id:string,fingerprint:string,override:boolean):Promise<{url:string}>{const t=await this.mergeTarget(id);return this.inCheckpointQueue(id,()=>openPr(t,fingerprint,override,this.userGit).catch((e:unknown)=>{throw this.mergeError(e);}));}
     // v0.7.1 /export: the session's screen text (its end, ~1 MiB) and, for AI Term's own agent, its transcript, all redacted.
     async exportSession(id:string):Promise<SessionExport>{
         const text=await this.text(id),live=this.sessions.get(id);if(!live)throw new Error('Session not found');
