@@ -1,6 +1,7 @@
 import type { SessionInfo, Status, TaskUsage } from '../../shared/protocol.js';
 import { compactTokens } from './usage-panel.js';
 import { ownLoginLabel, engineLabel } from '../../shared/models.js';
+import { keyAuthLabel } from '../../shared/providers.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { ColorName } from './theme.js';
 // design.md status marks. The card says "done"; the top line counts the same agents as "to review".
@@ -70,7 +71,7 @@ export function cardText(session: SessionInfo, now: number, width: number, optio
   const percent = session.ctxPercent === null || shell || narrow ? null : `${Math.round(session.ctxPercent)}%`;
   const ctxText = percent === null ? null : [`ctx ${percent}`, percent].find(text => textWidth(model) + CTX_GAP + text.length <= width) ?? null;
   const ctx = ctxText ? { text: ctxText, color: (session.ctxPercent ?? 0) >= CTX_WARN ? 'status-waiting' as const : 'ink-3' as const } : null;
-  const login = session.auth.kind === 'key' ? `API key ····${session.auth.last4}` : shell ? '' : session.auth.profile ? ownLoginLabel(session.authMethod).replace(/^own login/, `account ${session.auth.profile}`) : ownLoginLabel(session.authMethod), cost = options.taskCost === false ? null : taskCostText(session.taskUsage);
+  const login = session.auth.kind === 'key' ? (session.auth.provider === 'ollama' ? keyAuthLabel('ollama', '') : `API key ····${session.auth.last4}`) : shell ? '' : session.auth.profile ? ownLoginLabel(session.authMethod).replace(/^own login/, `account ${session.auth.profile}`) : ownLoginLabel(session.authMethod), cost = options.taskCost === false ? null : taskCostText(session.taskUsage);
   const auth = cost && login ? `${login} · ${cost}` : login;
   if (shell) return { status, model, ctx, activity: null, auth, line3: session.statusDetail === word ? word : `${word} · ${session.statusDetail}` };
   if(session.worktreeNote)return {status,model,ctx,activity:null,auth,line3:session.worktreeNote};

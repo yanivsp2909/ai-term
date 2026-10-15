@@ -28,6 +28,7 @@ import { homepageLayout, renderHomepage, sortSessions, filteredCommands, visible
 import { nextCardTick } from './agent-card.js';
 import { CredentialsPanel } from './credentials.js';
 import { modelChoices, ownLoginLabel, engineTitle, keyEngine } from '../../shared/models.js';
+import { keyAuthLabel } from '../../shared/providers.js';
 import { drawAgentBox, type AgentBox, type NextAgent } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
 import { BudgetForm, PriceForm, CapsForm, drawUsageForm } from './usage-forms.js';
@@ -759,7 +760,7 @@ export class Homepage {
     b.error = ''; this.draw(true);
   }
   private nextAuthLabel():string {
-    if(this.auth.kind==='key'){const id=this.auth.keyId;return `key ····${this.keys.find(k=>k.id===id)?.last4??''}`;}
+    if(this.auth.kind==='key'){const id=this.auth.keyId,key=this.keys.find(k=>k.id===id);return key?keyAuthLabel(key.provider,key.last4):'key ····';}
     const label=ownLoginLabel(this.engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod);
     return this.auth.profile&&this.auth.profile!==OWN_ACCOUNT?`account ${this.auth.profile}`:label;
   }

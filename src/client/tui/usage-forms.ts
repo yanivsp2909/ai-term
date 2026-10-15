@@ -16,8 +16,8 @@ export class PriceForm {
  private fields=['','',''];private row=0;
  paste(text:string):void{this.fields[this.row]=((this.fields[this.row]??'')+text).slice(0,this.row===0?80:30);}
  key(key:string):void{if(key==='up'||key==='down')this.row=Math.max(0,Math.min(2,this.row+(key==='up'?-1:1)));else if(key==='backspace')this.fields[this.row]=(this.fields[this.row]??'').slice(0,-1);else if([...key].length===1)this.paste(key);}
- values():{model:string;price:ModelPrice}{const model=this.fields[0]??'',input=amount(this.fields[1]??''),output=amount(this.fields[2]??'');if(!isValidModelId(model)||input===null||output===null)throw new Error('Enter deployment and input/output prices');const price={input,output};validatePriceOverrides({[model]:price});return {model,price};}
- lines():string[]{return ['Foundry price override · USD per 1M tokens',...['deployment','input','output'].map((name,i)=>`${this.row===i?'›':' '} ${name}: ${this.fields[i]}█`),'↑↓ fields · ⏎ save · Esc cancel'];}
+ values():{model:string;price:ModelPrice}{const model=this.fields[0]??'',input=amount(this.fields[1]??''),output=amount(this.fields[2]??'');if(!isValidModelId(model)||input===null||output===null)throw new Error('Enter a deployment or model id and input/output prices');const price={input,output};validatePriceOverrides({[model]:price});return {model,price};}
+ lines():string[]{return ['Price override · USD per 1M tokens · a Foundry deployment or any keyed model',...['deployment or model','input','output'].map((name,i)=>`${this.row===i?'›':' '} ${name}: ${this.fields[i]}█`),'↑↓ fields · ⏎ save · Esc cancel'];}
 }
 // AI Term agent's per-run caps (D53): the defaults a new run starts with; /caps changes one run.
 export class CapsForm {

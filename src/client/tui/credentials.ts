@@ -1,4 +1,5 @@
-import type { AgentEngine, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings, NotifierState,NotificationAuthorization } from '../../shared/protocol.js';
+import type { AgentEngine, DeploymentTest, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings, NotifierState,NotificationAuthorization } from '../../shared/protocol.js';
+import { OLLAMA_DEFAULT_ENDPOINT, PROVIDER_LABELS, bedrockEndpoint, isDirectProvider, isLocalEndpoint } from '../../shared/providers.js';
 import { ownLoginLabel } from '../../shared/models.js';
 import { catalogIds } from '../../shared/model-catalog.js';
 import { DEFAULT_AGENT_CAPS, type AgentCaps } from '../../shared/agent-facts.js';
@@ -10,7 +11,12 @@ interface Actions {
  request(body:RequestBody):Promise<SuccessResponse>;changed():void;close():void;
  login(engine:AgentEngine):Promise<void>;defaults(kind:'model'|'folder'|'effort'):void;price?():void;caps?(current:AgentCaps|undefined):void;theme(theme:ThemeName):Promise<void>;
 }
-const providers:readonly [string,KeyProvider][]=[['Anthropic','anthropic'],['OpenAI','openai'],['Microsoft Foundry','foundry']];
+// v0.6.5 adds the providers only AI Term's agent can use (no CLI login exists for them) and Ollama on this Mac.
+const providerOrder:readonly KeyProvider[]=['anthropic','openai','foundry','xai','moonshot','zai','openrouter','bedrock','vertex','ollama'];
+const providers:readonly [string,KeyProvider][]=providerOrder.map(p=>[PROVIDER_LABELS[p],p]);
+const DEFAULT_LABELS:Partial<Record<KeyProvider,string>>={foundry:'Foundry',bedrock:'Bedrock',vertex:'Vertex'};
+// One line per tested model: status, then the HTTP status or a fixed reason (never the provider's text).
+const testText=(results:readonly DeploymentTest[])=>results.map(r=>`${r.model}: ${r.status}${r.httpStatus?' '+r.httpStatus:''}${r.errorCode?' '+r.errorCode:''}${r.reason?' · '+r.reason:''}`).join(' · ');
 const themes:ThemeName[]=['graphite','slate','ink','auto','light'];
 // The daemon answers with fixed texts only (KeyError or a generic fallback), so its reason is safe to show and says what to do.
 const reason=(error:unknown,fallback:string)=>error instanceof DaemonRequestError?error.message:fallback;
@@ -42,21 +48,22 @@ export class CredentialsPanel {
   catch(error){this.message=reason(error,'Deployment model could not be saved');}
   finally{this.busy=false;this.actions.changed();}
  }
- private fieldNames():string[]{return this.provider==='foundry'?['label','endpoint','secret','deployments']:['label','secret'];}
+ // region (Bedrock) and endpoint share one value; models (v0.6.5 providers) and deployments (Foundry) share another.
+ private fieldNames():string[]{const p=this.provider;return p==='foundry'?['label','endpoint','secret','deployments']:p==='bedrock'?['label','region','secret','models']:p==='ollama'?['label','endpoint']:isDirectProvider(p)?['label','secret','models']:['label','secret'];}
  private field():string{return this.screen==='import'?'path':this.fieldNames()[this.row]??'label';}
  paste(text:string):void{if(this.busy||this.disposed)return;const field=this.field();if(this.screen!=='form'&&this.screen!=='import')return;
   const safe=text.replace(/[\r\n]/g,'');if(field==='secret'){if(this.secret.length+safe.length>512){this.secret='';this.message='Key is too long; enter at most 512 characters';this.actions.changed();return;}this.secret+=safe;}
-  else if(field==='path')this.path=(this.path+safe).slice(0,4096);else if(field==='label')this.label=(this.label+safe).slice(0,60);else if(field==='endpoint')this.endpoint=(this.endpoint+safe).slice(0,2048);else this.deployments=(this.deployments+safe).slice(0,3200);
+  else if(field==='path')this.path=(this.path+safe).slice(0,4096);else if(field==='label')this.label=(this.label+safe).slice(0,60);else if(field==='endpoint'||field==='region')this.endpoint=(this.endpoint+safe).slice(0,2048);else this.deployments=(this.deployments+safe).slice(0,3200);
   this.message='';this.actions.changed();
  }
- private backspace():void{const f=this.field();if(f==='secret')this.secret=this.secret.slice(0,-1);else if(f==='path')this.path=this.path.slice(0,-1);else if(f==='label')this.label=this.label.slice(0,-1);else if(f==='endpoint')this.endpoint=this.endpoint.slice(0,-1);else this.deployments=this.deployments.slice(0,-1);}
- private form(provider:KeyProvider):void{this.provider=provider;this.screen='form';this.row=0;this.label=provider==='foundry'?'Foundry':provider==='openai'?'OpenAI':'Anthropic';this.endpoint='';this.deployments='';this.secret='';this.message='';}
+ private backspace():void{const f=this.field();if(f==='secret')this.secret=this.secret.slice(0,-1);else if(f==='path')this.path=this.path.slice(0,-1);else if(f==='label')this.label=this.label.slice(0,-1);else if(f==='endpoint'||f==='region')this.endpoint=this.endpoint.slice(0,-1);else this.deployments=this.deployments.slice(0,-1);}
+ private form(provider:KeyProvider):void{this.provider=provider;this.screen='form';this.row=0;this.label=DEFAULT_LABELS[provider]??PROVIDER_LABELS[provider];this.endpoint=provider==='ollama'?OLLAMA_DEFAULT_ENDPOINT:'';this.deployments='';this.secret='';this.message='';}
  async key(key:string):Promise<void>{
   if(this.disposed)return;
   if(key==='escape'){this.secret='';this.actions.close();return;}if(this.busy)return;
-  if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?this.keys.length+17:this.screen==='deployments'?this.mapping?.key.deployments?.length??0:this.screen==='catalog'?this.catalogRows().length:this.screen==='names'?this.names.length:this.screen==='providers'?3:2)-1,this.choice+delta));this.actions.changed();return;}
+  if(key==='up'||key==='down'){const delta=key==='up'?-1:1;if(this.screen==='form')this.row=Math.max(0,Math.min(this.fieldNames().length-1,this.row+delta));else this.choice=Math.max(0,Math.min((this.screen==='settings'?this.keys.length+17:this.screen==='deployments'?this.mapping?.key.deployments?.length??0:this.screen==='catalog'?this.catalogRows().length:this.screen==='names'?this.names.length:this.screen==='providers'?providers.length:2)-1,this.choice+delta));this.actions.changed();return;}
   if(key==='backspace'&&(this.screen==='form'||this.screen==='import')){this.backspace();this.actions.changed();return;}
-  if(this.screen==='providers'&&key==='enter'){this.provider=providers[this.choice]?.[1]??'anthropic';this.choice=0;if(this.provider==='foundry')this.form('foundry');else this.screen='method';this.actions.changed();return;}
+  if(this.screen==='providers'&&key==='enter'){this.provider=providers[this.choice]?.[1]??'anthropic';this.choice=0;if(this.provider==='anthropic'||this.provider==='openai')this.screen='method';else this.form(this.provider);this.actions.changed();return;}
   if(this.screen==='method'&&key==='enter'){if(this.choice===0){this.busy=true;this.actions.changed();try{await this.actions.login(this.provider==='anthropic'?'claude-code':'codex');this.actions.close();}catch(error){this.message=reason(error,'Login could not start');}finally{this.busy=false;this.actions.changed();}}else this.form(this.provider);this.actions.changed();return;}
   if(this.screen==='deployments'&&key==='enter'&&this.mapping){this.mapping={...this.mapping,deployment:this.mapping.key.deployments?.[this.choice]??''};this.screen='catalog';this.choice=0;this.actions.changed();return;}
   if(this.screen==='catalog'&&this.mapping){
@@ -91,7 +98,7 @@ export class CredentialsPanel {
    if(key==='n'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{notifications:this.settings?.notifications===false}})).settings;this.message='';}catch{this.message='Notifications setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    if(key==='d'||key==='f'||key==='e'){this.actions.defaults(key==='d'?'model':key==='e'?'effort':'folder');return;}
    if(key==='tab'){this.busy=true;try{const settings=(await this.actions.request({kind:'settings.get'})).settings;const index=themes.indexOf(settings?.theme??'graphite');await this.actions.theme(themes[(index+1)%themes.length]??'graphite');this.message='Theme saved';}catch{this.message='Theme could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
-   const selected=this.keys[this.choice];if(selected&&(key==='x'||key==='t'||key==='enter')){this.busy=true;try{if(key==='x'){await this.actions.request({kind:'keys.remove',keyId:selected.id});this.message='Key removed from the OS keychain';this.keys=this.keys.filter(k=>k.id!==selected.id);this.choice=Math.min(this.choice,Math.max(0,this.keys.length-1));}else{const r=await this.actions.request({kind:'keys.test',keyId:selected.id});this.message=(r.results??[]).map(r=>`${r.model}: ${r.status}${r.httpStatus?' '+r.httpStatus:''}${r.errorCode?' '+r.errorCode:''}${r.reason?' · '+r.reason:''}`).join(' · ');}}catch(error){this.message=reason(error,'Key operation failed');this.busy=false;this.actions.changed();return;}
+   const selected=this.keys[this.choice];if(selected&&(key==='x'||key==='t'||key==='enter')){this.busy=true;try{if(key==='x'){await this.actions.request({kind:'keys.remove',keyId:selected.id});this.message='Key removed from the OS keychain';this.keys=this.keys.filter(k=>k.id!==selected.id);this.choice=Math.min(this.choice,Math.max(0,this.keys.length-1));}else{const r=await this.actions.request({kind:'keys.test',keyId:selected.id});this.message=testText(r.results??[])||'no models found';}}catch(error){this.message=reason(error,'Key operation failed');this.busy=false;this.actions.changed();return;}
     try{this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}catch(error){this.message+=' · list not refreshed: '+reason(error,'keys unavailable');}finally{this.busy=false;this.actions.changed();}return;}
   }
   if(this.screen==='import'&&key==='enter'){this.busy=true;try{this.names=(await this.actions.request({kind:'keys.scanEnvFile',path:this.path})).found??[];this.selected=new Set(this.names.map(n=>n.name));this.screen='names';this.choice=0;this.message='';}catch(error){this.message=reason(error,'Env file could not be scanned');}finally{this.busy=false;this.actions.changed();}return;}
@@ -99,17 +106,29 @@ export class CredentialsPanel {
   if(this.screen==='names'&&key==='enter'){this.busy=true;try{const result=await this.actions.request({kind:'keys.importEnv',path:this.path,names:[...this.selected]});this.keys=result.keys??[];this.screen='result';this.message='✓ saved to the OS keychain · consider deleting the source .env file';}catch(error){this.message=reason(error,'Import failed; Foundry needs endpoint/deployment fields in the file');}finally{this.busy=false;this.actions.changed();}return;}
   if((this.screen==='form'||this.screen==='import')&&[...key].length===1)this.paste(key);
  }
+ // What the form must hold before anything is sent, or the words saying what's missing.
+ private formError(deployments:string[]):string|null{
+  const p=this.provider,keyOk=this.secret.length>0&&!/\s/.test(this.secret),modelsOk=deployments.length>0&&deployments.every(isValidModelId);
+  if(p==='ollama')return isLocalEndpoint(this.endpoint)?null:'Ollama runs at http://127.0.0.1:<port>';
+  if(p==='foundry')return keyOk&&isEndpoint(this.endpoint)&&modelsOk?null:'Enter a key and valid endpoint/deployments';
+  if(p==='bedrock')return keyOk&&bedrockEndpoint(this.endpoint)&&modelsOk?null:'Enter a key, a region like us-east-1 and model ids';
+  if(isDirectProvider(p))return keyOk&&modelsOk?null:'Enter a key and model ids, comma separated';
+  return keyOk?null:'Enter a key';
+ }
  private async save():Promise<void>{
-  const deployments=this.deployments.split(',').map(d=>d.trim()).filter(Boolean);
-  if(!this.secret||/\s/.test(this.secret)||this.provider==='foundry'&&(!isEndpoint(this.endpoint)||!deployments.length||deployments.some(m=>!isValidModelId(m)))){this.message='Enter a key and valid endpoint/deployments';this.actions.changed();return;}
-  const body:Extract<RequestBody,{kind:'keys.add'}>={kind:'keys.add',provider:this.provider,label:this.label,secret:this.secret,...(this.provider==='foundry'?{endpoint:this.endpoint,deployments}: {})};
+  const deployments=this.deployments.split(',').map(d=>d.trim()).filter(Boolean),p=this.provider;
+  const error=this.formError(deployments);if(error){this.message=error;this.actions.changed();return;}
+  const endpoint=p==='bedrock'?bedrockEndpoint(this.endpoint)??'':this.endpoint;
+  // Ollama has no key: the request carries none at all.
+  const body:Extract<RequestBody,{kind:'keys.add'}>={kind:'keys.add',provider:p,label:this.label,...(p!=='ollama'?{secret:this.secret}:{}),...(p==='foundry'||p==='bedrock'||p==='ollama'?{endpoint}:{}),...(p!=='anthropic'&&p!=='openai'&&p!=='ollama'?{deployments}:{})};
   this.secret='';this.busy=true;this.actions.changed();
   let saved:KeyView|undefined;
-  try{const pending=this.actions.request(body);body.secret='';saved=(await pending).key;}
+  try{const pending=this.actions.request(body);if(body.secret!==undefined)body.secret='';saved=(await pending).key;}
   catch(error){this.message=reason(error,'Key could not be saved; check OS keychain access');this.busy=false;this.actions.changed();return;}
   // From here the key is saved: a failed test or refresh must say so, or a retry saves it twice.
-  this.screen='result';this.message='✓ saved to the OS keychain';
-  try{if(saved){this.keys=[saved];if(saved.provider==='foundry'){const test=await this.actions.request({kind:'keys.test',keyId:saved.id});this.message+=' · '+(test.results??[]).map(r=>`${r.model}: ${r.status}${r.reason?' · '+r.reason:''}`).join(' · ');this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}}}
+  this.screen='result';this.message=saved?.provider==='ollama'?'✓ saved · no key, nothing in the OS keychain':'✓ saved to the OS keychain';
+  // Every key that carries models is tested at once: a model is offered only after its test passed (v0.6.5).
+  try{if(saved){this.keys=[saved];if(saved.provider!=='anthropic'&&saved.provider!=='openai'){const test=await this.actions.request({kind:'keys.test',keyId:saved.id});this.message+=' · '+(testText(test.results??[])||'no models found');this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}}}
   catch(error){this.message+=' · test failed: '+reason(error,'try t in /settings');}finally{this.busy=false;this.actions.changed();}
  }
  private notificationText():string{
@@ -120,15 +139,15 @@ export class CredentialsPanel {
   const lines:string[]=[];
   if(this.screen==='providers')lines.push('Connect a provider',...providers.map(([label],i)=>`${i===this.choice?'›':' '} ${label}`));
   if(this.screen==='method')lines.push(providers.find(p=>p[1]===this.provider)?.[0]??'',`${this.choice===0?'›':' '} ${this.provider==='anthropic'?'Claude Code':'Codex'} · ${ownLoginLabel(this.provider==='anthropic'?this.engines?.claudeCode.authMethod:this.engines?.codex.authMethod)} · official CLI login`,`${this.choice===1?'›':' '} API key · OS keychain`,'What happens: the CLI owns login; AI Term never reads its credentials');
-  if(this.screen==='form'){lines.push('Add API key');for(const [i,name]of this.fieldNames().entries()){const value=name==='secret'?'•'.repeat(this.secret.length):name==='label'?this.label:name==='endpoint'?this.endpoint:this.deployments;lines.push(`${i===this.row?'›':' '} ${name}: ${value}`);}lines.push('↑↓ fields · ⏎ next/save · key is masked');}
+  if(this.screen==='form'){lines.push(this.provider==='ollama'?'Add Ollama · this Mac, no key':`Add API key · ${PROVIDER_LABELS[this.provider]}`);for(const [i,name]of this.fieldNames().entries()){const value=name==='secret'?'•'.repeat(this.secret.length):name==='label'?this.label:name==='endpoint'||name==='region'?this.endpoint:this.deployments;lines.push(`${i===this.row?'›':' '} ${name}: ${value}`);}lines.push('↑↓ fields · ⏎ next/save · key is masked');}
   if(this.screen==='settings'){
    const action=(index:number,text:string)=>`${this.choice===this.keys.length+index?'›':' '} ${text}`;
    lines.push('KEYS · OS keychain');
    const keyStart=Math.max(0,Math.min(this.choice,this.keys.length-1)-2);
-   for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${k.provider} · key ····${k.last4}${k.endpoint?' · '+k.endpoint:''}`);
+   for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${PROVIDER_LABELS[k.provider]} · ${k.provider==='ollama'?'no key':`key ····${k.last4}`}${k.endpoint?' · '+k.endpoint:''}`);
    lines.push(action(0,'+ add key (a)'),action(1,'import from .env (i)'),action(2,'login (l)'),'ENGINES');
    for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(status?`${name}: ${status.installed?'✓ installed':'✗ not installed'} · ${status.loggedIn===null?'status unavailable':status.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status.authMethod)}${status.error?' · '+status.error:''}`:`${name}: status unavailable`);
-   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'Foundry input/output price per 1M · p override'),action(8,`notifications: ${this.settings?.notifications===false?'off':this.notificationText()} (n)`),action(9,`bar: ${this.settings?.bar??'off'} (h)`),action(10,`worktrees: ${this.settings?.worktrees??'on'} (w)`),action(11,`keys run on: ${this.settings?.keysRunOn==='cli'?'the cli':'ai term'} (r)`),action(12,`agent caps: ${this.capsText()} per run (c)`),action(13,`context warning at 85%: ${this.settings?.contextWarning===false?'off':'on'} (k)`),action(14,`cost per task: ${this.settings?.taskCost===false?'off':'on'} · cards and /usage (o)`),action(15,`presets: ${this.settings?.presetsEnabled===false?'off':'on'} · /preset (s)`),action(16,`handoff: ${this.settings?.handoff===true?'on':'off'} · /handoff spends tokens (g)`),'keys are never shown in full and never written to .env');
+   lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,'input/output price per 1M for a deployment or model · p override'),action(8,`notifications: ${this.settings?.notifications===false?'off':this.notificationText()} (n)`),action(9,`bar: ${this.settings?.bar??'off'} (h)`),action(10,`worktrees: ${this.settings?.worktrees??'on'} (w)`),action(11,`keys run on: ${this.settings?.keysRunOn==='cli'?'the cli':'ai term'} (r)`),action(12,`agent caps: ${this.capsText()} per run (c)`),action(13,`context warning at 85%: ${this.settings?.contextWarning===false?'off':'on'} (k)`),action(14,`cost per task: ${this.settings?.taskCost===false?'off':'on'} · cards and /usage (o)`),action(15,`presets: ${this.settings?.presetsEnabled===false?'off':'on'} · /preset (s)`),action(16,`handoff: ${this.settings?.handoff===true?'on':'off'} · /handoff spends tokens (g)`),'keys are never shown in full and never written to .env');
    // Fixed text only: the daemon reports one of three states.
    if(this.notifier==='not built')lines.push('notifications unavailable: helper not built · run npm run build:notifier');else if(this.notifier==='launch failed')lines.push('notifications unavailable: helper failed to launch');
   }
@@ -136,7 +155,7 @@ export class CredentialsPanel {
   if(this.screen==='catalog'&&this.mapping){const rows=this.catalogRows(),start=Math.max(0,this.choice-6);lines.push(`${this.mapping.deployment} is…`,`Filter: ${this.mapping.filter}█`,...rows.slice(start,start+12).map((id,i)=>`${start+i===this.choice?'›':' '} ${id}`),`${rows.length-1} catalog models · ↑↓ · ⏎ saves · Esc closes`);}
   if(this.screen==='import')lines.push('Import from .env',`path: ${this.path}█`,'Names only are shown; source file is never modified');
   if(this.screen==='names')lines.push('Select names to import',...this.names.map((n,i)=>`${i===this.choice?'›':' '} [${this.selected.has(n.name)?'x':' '}] ${n.name} · ${n.provider}`),'↑↓ select · Space toggle · ⏎ import');
-  if(this.screen==='result')lines.push('Keys',...this.keys.map(k=>`${k.label} · key ····${k.last4}`),...this.keys.flatMap(k=>(k.lastTest??[]).map(r=>`${r.model} · ${r.status}${r.reason?' · '+r.reason:''}`)));
+  if(this.screen==='result')lines.push('Keys',...this.keys.map(k=>`${k.label} · ${k.provider==='ollama'?'no key':`key ····${k.last4}`}`),...this.keys.flatMap(k=>(k.lastTest??[]).map(r=>`${r.model} · ${r.status}${r.reason?' · '+r.reason:''}`)));
   if(this.message)lines.push(this.message);if(this.busy)lines.push('◐ working');lines.push('Esc back');return lines;
  }
  draw(frame:Frame,theme:Theme):Frame{

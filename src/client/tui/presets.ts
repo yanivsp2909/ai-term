@@ -1,6 +1,7 @@
 import { stat } from 'node:fs/promises';
 import type { KeyView } from '../../shared/protocol.js';
 import { engineLabel } from '../../shared/models.js';
+import { keyAuthLabel } from '../../shared/providers.js';
 import { PRESET_NAME, type Preset } from '../../shared/presets.js';
 import { isFsError } from '../../shared/paths.js';
 
@@ -32,7 +33,7 @@ export function presetAuthLabel(preset: Preset, keys: readonly KeyView[]): strin
   const auth = preset.auth;
   if (auth.kind === 'account') return 'own login';
   const key = keys.find(k => k.id === auth.keyId);
-  return key ? `key ····${key.last4}` : 'removed key';
+  return key ? keyAuthLabel(key.provider, key.last4) : 'removed key';
 }
 export function presetLines(presets: Readonly<Record<string, Preset>>, keys: readonly KeyView[]): string[] {
   return Object.entries(presets).sort(([a], [b]) => a.localeCompare(b)).map(([name, p]) =>

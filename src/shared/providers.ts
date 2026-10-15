@@ -34,6 +34,8 @@ export function isBedrockEndpoint(v: unknown): v is string {
   const region = typeof v === 'string' ? v.match(/^https:\/\/bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com$/)?.[1] : undefined;
   return region !== undefined && bedrockEndpoint(region) === v;
 }
+// How a key is named on cards, the start box and presets: by its last 4, except Ollama, which has none.
+export function keyAuthLabel(provider: KeyProvider, last4: string): string { return provider === 'ollama' ? 'local · no key' : `key ····${last4}`; }
 // A model a key offers: for these providers, one whose own tiny test request (or Ollama's listing) succeeded.
 export function testedModels(key: KeyView): string[] {
   return (key.deployments ?? []).filter(model => key.lastTest?.some(r => r.model === model && r.status === 'ready'));

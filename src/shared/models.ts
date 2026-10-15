@@ -1,5 +1,5 @@
 import { catalogModels } from './model-catalog.js';
-import { CLI_KEY_PROVIDERS, PROVIDER_LABELS, testedModels } from './providers.js';
+import { CLI_KEY_PROVIDERS, PROVIDER_LABELS, keyAuthLabel, testedModels } from './providers.js';
 import type { AgentEngine, AuthRef, KeyView, KeyProvider, KeysRunOn, AuthMethod, EnginesStatus, DeploymentTest } from './protocol.js';
 export interface ModelChoice {engine:AgentEngine;model:string|null;label:string;auth?:AuthRef;authLabel?:string;group?:string}
 // Claude aliases come from installed --help; Codex id from the v0.1 CLI spike.
@@ -29,7 +29,7 @@ export function ownLoginLabel(method:AuthMethod|undefined):string{return method=
 export function modelChoices(keys:KeyView[],engines?:EnginesStatus,keysRunOn?:KeysRunOn):ModelChoice[]{
  const choices:ModelChoice[]=accountModels.map(c=>({...c,auth:{kind:'account'},authLabel:ownLoginLabel(c.engine==='codex'?engines?.codex.authMethod:engines?.claudeCode.authMethod),group:c.engine==='codex'?'OPENAI':'ANTHROPIC'}));
  for(const key of keys){
-  const auth:AuthRef={kind:'key',keyId:key.id},authLabel=`key ····${key.last4}`;
+  const auth:AuthRef={kind:'key',keyId:key.id},authLabel=keyAuthLabel(key.provider,key.last4);
   if(key.provider==='foundry'){
    const resource=key.endpoint?new URL(key.endpoint).hostname.split('.')[0]:'Foundry';
    const engine=keyEngine('foundry',keysRunOn);
@@ -38,7 +38,7 @@ export function modelChoices(keys:KeyView[],engines?:EnginesStatus,keysRunOn?:Ke
   }else if(key.provider!=='anthropic'&&key.provider!=='openai'){
    // v0.6.5: the key's own models, each only after its tiny test request (or Ollama's listing) succeeded.
    const group=key.provider==='bedrock'&&key.endpoint?`BEDROCK · ${new URL(key.endpoint).hostname.split('.')[1]??''}`:key.provider==='ollama'?'OLLAMA · this Mac':PROVIDER_LABELS[key.provider].toUpperCase();
-   for(const model of testedModels(key))choices.push({engine:'ai-term',model,label:model,auth,authLabel:key.provider==='ollama'?'local · no key':authLabel,group});
+   for(const model of testedModels(key))choices.push({engine:'ai-term',model,label:model,auth,authLabel,group});
   }else{
    const group=key.provider==='anthropic'?'ANTHROPIC':'OPENAI';
    // On AI Term's agent a key runs a named model from the catalog; on a CLI, the CLI's own aliases and default.

@@ -32,7 +32,8 @@ it('/login lists every provider; a new one goes straight to its form (no CLI log
 it('xAI: key and models saved, then each model tested at once; the key never shows', async () => {
   const { p, sent } = panel('login');
   await choose(p, 3); await p.key('enter'); await type(p, KEY); await p.key('enter'); await type(p, 'grok-5, grok-x'); await p.key('enter');
-  expect(sent.find(b => b.kind === 'keys.add')).toEqual({ kind: 'keys.add', provider: 'xai', label: 'xAI', secret: '', deployments: ['grok-5', 'grok-x'] });
+  // The request carries the key once; the panel's own copy is blanked as soon as it is sent.
+  expect(sent.find(b => b.kind === 'keys.add')).toEqual({ kind: 'keys.add', provider: 'xai', label: 'xAI', secret: KEY, deployments: ['grok-5', 'grok-x'] });
   expect(sent.map(b => b.kind)).toContain('keys.test');
   const text = p.lines().join('\n');
   expect(text).toContain('grok-5: ready'); expect(text).toContain('grok-x: error 404'); expect(text).not.toContain(KEY);
@@ -51,7 +52,7 @@ it('Bedrock: a region becomes the runtime host; anything else is refused before 
   expect(p.lines().slice(0, 5)).toEqual(['Add API key · Amazon Bedrock', '› label: Bedrock', '  region: ', '  secret: ', '  models: ']);
   await p.key('enter'); await type(p, 'us-east-1/evil'); await p.key('enter'); await type(p, KEY); await p.key('enter'); await type(p, 'us.anthropic.claude-sonnet-5-v1:0'); await p.key('enter');
   expect(sent.filter(b => b.kind === 'keys.add')).toEqual([]); expect(p.lines().join('\n')).toContain('Enter a key, a region like us-east-1 and model ids');
-  for (let i = 0; i < 3; i++) await p.key('up');
+  for (let i = 0; i < 2; i++) await p.key('up');
   for (let i = 0; i < 'us-east-1/evil'.length; i++) await p.key('backspace');
   await type(p, 'eu-west-1'); await p.key('down'); await p.key('down'); await p.key('enter');
   expect(sent.find(b => b.kind === 'keys.add')).toMatchObject({ provider: 'bedrock', endpoint: 'https://bedrock-runtime.eu-west-1.amazonaws.com', deployments: ['us.anthropic.claude-sonnet-5-v1:0'] });
@@ -61,7 +62,7 @@ it('Ollama: no key field, a local endpoint prefilled; any other URL is refused',
   const { p, sent } = panel('login');
   await choose(p, 9);
   expect(p.lines().slice(0, 3)).toEqual(['Add Ollama · this Mac, no key', '› label: Ollama', '  endpoint: http://127.0.0.1:11434']);
-  await p.key('enter'); for (let i = 0; i < 5; i++) await p.key('backspace'); await type(p, ':80'); await p.key('enter');
+  await p.key('enter'); for (let i = 0; i < 6; i++) await p.key('backspace'); await type(p, ':80'); await p.key('enter');
   // http://127.0.0.1:80 is still local; the request carries no secret at all.
   const added = sent.find(b => b.kind === 'keys.add');
   expect(added).toEqual({ kind: 'keys.add', provider: 'ollama', label: 'Ollama', endpoint: 'http://127.0.0.1:80' });
@@ -79,4 +80,13 @@ it('/settings shows each key by its last 4 (Ollama: no key) and removes and test
   await p.key('t'); expect(sent.at(-2)).toMatchObject({ kind: 'keys.test', keyId: keys[0]?.id });
   await p.key('down'); await p.key('x'); expect(sent.find(b => b.kind === 'keys.remove')).toMatchObject({ keyId: keys[1]?.id });
   expect(p.lines().join('\n')).toContain('Key removed');
+});
+
+it('an Ollama agent\'s card and start box say "local · no key", never an empty key suffix', async () => {
+  const { cardText } = await import('../src/client/tui/agent-card.js');
+  const { presetAuthLabel } = await import('../src/client/tui/presets.js');
+  const now = new Date().toISOString(), keyId = randomUUID();
+  const session = { id: randomUUID(), title: 'local', engine: 'ai-term' as const, model: 'qwen3:8b', auth: { kind: 'key' as const, keyId, provider: 'ollama' as const, keyLabel: 'Ollama', last4: '' }, authMethod: 'api-key' as const, cwd: '/tmp', permission: 'ask' as const, status: 'done' as const, statusDetail: 'done', statusSince: now, createdAt: now, lastOutputAt: null, exitCode: null, ctxPercent: null, lastActivity: null };
+  expect(cardText(session, Date.now(), 60).line3).toContain('local · no key'); expect(cardText(session, Date.now(), 60).line3).not.toContain('····');
+  expect(presetAuthLabel({ auth: { kind: 'key', keyId } } as unknown as Parameters<typeof presetAuthLabel>[0], [{ id: keyId, provider: 'ollama', label: 'Ollama', last4: '', endpoint: 'http://127.0.0.1:11434' }])).toBe('local · no key');
 });
