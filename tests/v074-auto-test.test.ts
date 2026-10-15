@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -184,4 +184,34 @@ it('LOW (both reviews): every relative path word is the command\'s script; more 
   const { home, m } = await setup();
   const stray = join(home, 'worktrees', 'other', 'x'); await mkdir(stray, { recursive: true }); await run('/usr/bin/git', ['init', '-q', '--', stray]);
   await expect(m.setTestCommand(stray, ['npm', 'test'])).rejects.toThrow("Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of");
+});
+
+// ---- Part F fix review ----
+it('MEDIUM-HIGH (fix review): dependency files that are untracked, committed or inside any other ignored folder count too; a run keeps its own output approved', async () => {
+  const { repo, m, agent, tree } = await setup('#!/bin/sh\nmkdir -p dist && date > dist/out.txt\nexit 0\n');
+  await writeFile(join(repo, '.git', 'info', 'exclude'), 'dist/\n');
+  await m.setTestCommand(repo, ['./check.sh']);
+  await mkdir(join(tree, 'node_modules', '.bin'), { recursive: true }); await writeFile(join(tree, 'node_modules', '.bin', 'jest'), '#!/bin/sh\n');
+  await m.afterTurn(agent.id);
+  expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['node_modules/.bin/jest'] });
+  const plan = await m.testPlan(agent.id); await m.runTestPlan(agent.id, plan.fingerprint);
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+  // The run wrote ignored output (dist/ is ignored in this worktree): the next turn still runs by itself.
+  await m.afterTurn(agent.id);
+  expect(result(m, agent.id)).toEqual({ state: 'pass' });
+});
+
+it('MEDIUM (fix review): a link out of the worktree in an ignored folder always asks, even after an approval', async () => {
+  const { dir, repo, m, agent, tree } = await setup('#!/bin/sh\nexit 0\n');
+  await writeFile(join(repo, '.gitignore'), 'node_modules\n'); await git(repo, 'add', '--', '.gitignore'); await git(repo, 'commit', '-qm', 'ignore', '--'); await git(tree, 'merge', '-q', '--ff-only', 'main');
+  await m.setTestCommand(repo, ['./check.sh']);
+  const outside = join(dir, 'outside'); await mkdir(join(outside, '.bin'), { recursive: true });
+  await symlink(outside, join(tree, 'node_modules'));
+  await m.afterTurn(agent.id);
+  expect(result(m, agent.id)).toMatchObject({ state: 'ask' });
+  const plan = await m.testPlan(agent.id); await m.runTestPlan(agent.id, plan.fingerprint);
+  await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
+  await writeFile(join(outside, '.bin', 'new'), '#!/bin/sh\n');
+  await m.afterTurn(agent.id);
+  expect(result(m, agent.id)).toMatchObject({ state: 'ask' });
 });

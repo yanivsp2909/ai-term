@@ -190,3 +190,13 @@ it('LOW (TS review): a review that ends after the agent went back to work doesn\
   await reviewing;
   expect(d.manager.get(d.agent.id).review).toBeUndefined();
 });
+
+it('MEDIUM (fix review): placeholder URL passwords are neither redacted nor secret-scan hits; real ones are', async () => {
+  const { redactSecrets } = await import('../src/shared/redact.js');
+  const { scanLine } = await import('../src/shared/secret-scan.js');
+  for (const text of ['postgres://${DB_USER}:${DB_PASS}@db/app', 'fmt.Sprintf("postgres://%s:%s@%s/db")', 'postgres://user:password@localhost:5432/test', 'https://u:<password>@host', 'https://x-access-token:$TOKEN@github.com/o/r', 'ftp://anonymous:me@example.com']) {
+    expect(redactSecrets(text), text).toBe(text); expect(scanLine(text), text).toBeNull();
+  }
+  expect(redactSecrets('postgres://admin:S3cretPw@host/app')).not.toContain('S3cretPw');
+  expect(scanLine('postgres://admin:S3cretPw@host/app')?.kind).toBe('URL password');
+});
