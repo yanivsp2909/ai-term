@@ -9,6 +9,7 @@ import { isDiffStat, validateAgentDiff } from './diff.js';
 import { validateSessionExport } from './session-export.js';
 import { validateUndoPlan } from './checkpoints.js';
 import { validateMergePlan, validatePrPlan } from './merge.js';
+import { isTestCommand, validateProjectTestCommand, validateTestPlan, validateTestResult } from './test-run.js';
 export function isValidModelId(id: string): boolean {
     // Keep the expression identical to the approved architecture §7.2.
     // eslint-disable-next-line no-useless-escape
@@ -147,6 +148,14 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['sessionId','lastReply'];if(!isUUID(v.sessionId)||v.lastReply!==undefined&&typeof v.lastReply!=='boolean')throw new ValidationError('Invalid session UUID');break;
         case 'sessions.diff': case 'sessions.export':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.testPlan':
+            fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
+        case 'sessions.test':
+            fields=['sessionId','fingerprint'];if(!isUUID(v.sessionId)||typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint))throw new ValidationError('Invalid test request');break;
+        case 'project.testCommand':
+            fields=['cwd'];if(!await validCwd(v.cwd))throw new ValidationError('Invalid test command request');break;
+        case 'project.setTestCommand':
+            fields=['cwd','command'];if(!await validCwd(v.cwd)||!(v.command===null||isTestCommand(v.command)))throw new ValidationError('Invalid test command request');break;
         case 'sessions.mergePlan': case 'sessions.prPlan':
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
         case 'sessions.merge': case 'sessions.pr':
@@ -205,6 +214,8 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.exportData!==undefined)validateSessionExport(v.exportData);
     if(v.undoPlan!==undefined)validateUndoPlan(v.undoPlan);
     if(v.mergePlan!==undefined)validateMergePlan(v.mergePlan);
+    if(v.testPlan!==undefined)validateTestPlan(v.testPlan);
+    if(v.testCommand!==undefined)validateProjectTestCommand(v.testCommand);
     if(v.prPlan!==undefined)validatePrPlan(v.prPlan);
     if(v.merged!==undefined&&(!v.merged||typeof v.merged!=='object'||Object.keys(v.merged).length!==1||typeof (v.merged as {commit?:unknown}).commit!=='string'||!/^[0-9a-f]{40,64}$/.test((v.merged as {commit:string}).commit)))throw new ValidationError('Invalid merge result');
     if(v.pr!==undefined&&(!v.pr||typeof v.pr!=='object'||Object.keys(v.pr).length!==1||typeof (v.pr as {url?:unknown}).url!=='string'||!/^https:\/\/\S{1,500}$/.test((v.pr as {url:string}).url)))throw new ValidationError('Invalid PR result');
@@ -277,7 +288,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -296,6 +307,9 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.taskCost!==undefined&&typeof v.taskCost!=='boolean')throw new ValidationError('Invalid task cost setting');
     if(v.checkpoints!==undefined&&typeof v.checkpoints!=='boolean')throw new ValidationError('Invalid checkpoints setting');
     if(v.secretScan!==undefined&&typeof v.secretScan!=='boolean')throw new ValidationError('Invalid secret scan setting');
+    if(v.autoTest!==undefined&&typeof v.autoTest!=='boolean')throw new ValidationError('Invalid auto-test setting');
+    // v0.7.4: set by the daemon only (project.setTestCommand), one argument list per repository.
+    if(v.testCommands!==undefined&&(!isRecord(v.testCommands)||Object.keys(v.testCommands).length>50||Object.entries(v.testCommands).some(([repo,command])=>['__proto__','prototype','constructor'].includes(repo)||!isAbsolute(repo)||repo.includes('\0')||repo.length>1024||!isTestCommand(command))))throw new ValidationError('Invalid test commands');
     if(v.handoff!==undefined&&typeof v.handoff!=='boolean')throw new ValidationError('Invalid handoff setting');
     try{if(v.accounts!==undefined)validateAccounts(v.accounts);if(v.defaultAccounts!==undefined)validateDefaultAccounts(v.defaultAccounts);}catch{throw new ValidationError('Invalid accounts');}
     // Whole settings (not a patch): each default names an account of that engine.
@@ -330,9 +344,10 @@ export function validateSession(value: unknown): import('./protocol.js').Session
         (typeof s.status !== 'string' || !['starting', 'running', 'waiting', 'done', 'exited', 'error'].includes(s.status)) ||
         typeof s.statusDetail !== 'string' || s.statusDetail.length > 4096 || !date(s.statusSince) || !date(s.createdAt) ||
         !(s.lastOutputAt === null || date(s.lastOutputAt)) || !(s.ctxPercent===null||isShare(s.ctxPercent)) || s.lastActivity!==undefined&&s.lastActivity!==null&&!isActivity(s.lastActivity) ||
-        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit) || s.diffStat!==undefined&&!isDiffStat(s.diffStat)) throw new ValidationError('Invalid daemon session');
+        !(s.exitCode === null || Number.isSafeInteger(s.exitCode)) || s.authMethod !== undefined && !['subscription','api-key','unknown'].includes(String(s.authMethod)) || s.taskUsage!==undefined&&!isTaskUsage(s.taskUsage) || s.handoffTo!==undefined&&!isTitle(s.handoffTo) || s.limit!==undefined&&!isLimit(s.limit) || s.diffStat!==undefined&&!isDiffStat(s.diffStat) || s.tests!==undefined&&!isTestResult(s.tests)) throw new ValidationError('Invalid daemon session');
     return s as unknown as import('./protocol.js').SessionInfo;
 }
+function isTestResult(value: unknown): boolean { try { validateTestResult(value); return true; } catch { return false; } }
 function isLimit(value: unknown): boolean { return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 && 'resets' in value && (value.resets === null || typeof value.resets === 'string' && /^\d{2}:\d{2}$/.test(value.resets)); }
 function isTaskUsage(value: unknown): boolean {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

@@ -1,4 +1,5 @@
 import type { SessionInfo, Status, TaskUsage } from '../../shared/protocol.js';
+import type { TestResult } from '../../shared/test-run.js';
 import { compactTokens } from './usage-panel.js';
 import { ownLoginLabel, engineLabel } from '../../shared/models.js';
 import { keyAuthLabel } from '../../shared/providers.js';
@@ -38,12 +39,26 @@ function activity(session: SessionInfo, now: number): Styled | null {
   if (session.status !== 'waiting' && session.limit && !['exited', 'error'].includes(session.status)) return { text: `⏸ limit${session.limit.resets ? ` · resets ${session.limit.resets}` : ''}`, color: 'status-waiting' };
   if (session.status === 'waiting') return { text: session.statusDetail === 'permission' || session.statusDetail === 'question' ? `asks: ${session.statusDetail}` : session.statusDetail, color: 'status-waiting' };
   // design.md: done reads `+N −M · ready to review` once the daemon has counted the worktree's changes (v0.7.1).
-  if (session.status === 'done') { const stat = session.diffStat; return { text: stat ? `${stat.files ? `+${stat.added} −${stat.removed}` : 'no changes'} · ready to review` : 'ready to review', color: 'ink-3' }; }
+  // v0.7.4: the project's tests, once they ran (or ask to), take the place of "ready to review"; a failure is red.
+  if (session.status === 'done') {
+    const stat = session.diffStat, change = stat ? (stat.files ? `+${stat.added} −${stat.removed}` : 'no changes') : null, tests = session.tests ? testsText(session.tests) : null;
+    return { text: [change, tests?.text ?? 'ready to review'].filter(Boolean).join(' · '), color: tests?.color ?? 'ink-3' };
+  }
   if (session.status === 'error') return { text: session.exitCode !== null && !session.statusDetail.startsWith('exit ') ? `exit ${session.exitCode} · ${session.statusDetail}` : session.statusDetail, color: 'status-error' };
   if (session.status !== 'running') return null;
   const quiet = quietSince(session);
   if (quiet !== null && now - quiet >= QUIET_AFTER_MS) return { text: `quiet ${compact(now - quiet, 's')}`, color: 'ink-3' };
   return session.lastActivity ? { text: session.lastActivity.tool, color: 'ink-3' } : null;
+}
+export function testsText(tests: TestResult): Styled {
+  switch (tests.state) {
+    case 'running': return { text: '◐ testing', color: 'status-running' };
+    case 'pass': return { text: '✓ tests pass', color: 'status-done' };
+    case 'fail': return { text: tests.failing === null ? '✗ tests fail' : `✗ ${tests.failing} failing`, color: 'status-error' };
+    case 'timeout': return { text: '✗ tests timed out', color: 'status-error' };
+    case 'error': return { text: "✗ tests couldn't start", color: 'status-error' };
+    case 'ask': return { text: '? test setup changed · /test', color: 'status-waiting' };
+  }
 }
 // Text for one agent card whose text area is `width` cells. Debug shells keep their v0.1 activity line.
 // D55: at 85% context a card says so once it gets there, in place of its activity, while the agent isn't waiting on you.

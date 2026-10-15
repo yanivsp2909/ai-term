@@ -45,7 +45,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
-export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<CliEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; testCommands?: Record<string, string[]>; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<CliEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -89,6 +89,7 @@ export interface SessionInfo {
     limit?:{resets:string|null}; // v0.6.4: its account hit a usage limit (read from its screen); resets HH:MM when it says.
     handoffTo?:string; // v0.6.3: the agent this one handed its work to (`handed off → <name>` on the card).
     diffStat?:import('./diff.js').DiffStat; // v0.7.1: its worktree's changes since it started, counted when it finished a turn.
+    tests?:import('./test-run.js').TestResult; // v0.7.4: the project's test command, run in its worktree when it finished a turn.
 }
 // v0.6.1 cost per task (D55): tokens always; dollars for API-key sessions only (null on a subscription, which bills
 // against the plan). unknownPrice: some of it had no price, so the dollars are a lower bound.
@@ -146,7 +147,13 @@ export type Request = {
     kind:'sessions.undo'; sessionId:string; redo:boolean; fingerprint:string;
 } | {
     // v0.7.3 /merge and /pr: the plan (exact commands, secret scan), then the action bound to it; override only when typed.
-    kind:'sessions.mergePlan' | 'sessions.prPlan'; sessionId:string;
+    kind:'sessions.mergePlan' | 'sessions.prPlan' | 'sessions.testPlan'; sessionId:string;
+} | {
+    kind:'sessions.test'; sessionId:string; fingerprint:string;
+} | {
+    kind:'project.testCommand'; cwd:string;
+} | {
+    kind:'project.setTestCommand'; cwd:string; command:string[]|null;
 } | {
     kind:'sessions.merge' | 'sessions.pr'; sessionId:string; fingerprint:string; override:boolean;
 } | {
@@ -218,6 +225,8 @@ export interface SuccessResponse {
     undoPlan?: import('./checkpoints.js').UndoPlan;
     undone?: {restored:number};
     mergePlan?: import('./merge.js').MergePlan;
+    testPlan?: import('./test-run.js').TestPlan;
+    testCommand?: import('./test-run.js').ProjectTestCommand;
     prPlan?: import('./merge.js').PrPlan;
     merged?: {commit:string};
     pr?: {url:string};

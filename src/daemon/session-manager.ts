@@ -31,6 +31,8 @@ import { fitExport, redactExportMeta, transcriptFor } from './session-export.js'
 import { applyUndo, CheckpointError, dropCheckpoints, snapshot, undoPlan, type CheckpointContext } from './checkpoints.js';
 import type { UndoPlan } from '../shared/checkpoints.js';
 import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
+import { changedTestConfig, runTests, testFingerprint, TestRunError, projectRepo } from './test-run.js';
+import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import type { MergePlan, PrPlan } from '../shared/merge.js';
 import { EXPORT_TEXT_CHARS, type SessionExport } from '../shared/session-export.js';
 import { redactSecrets } from '../shared/redact.js';
@@ -41,7 +43,7 @@ import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror, type MirrorSignal } from './mirror.js';
 import { electronNodeNeeded } from '../shared/runtime-paths.js';
-import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv } from './env.js';
+import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv,buildTestEnv } from './env.js';
 import { KeyStore, KeyError, type FoundryBinding } from './keys.js';
 import { CLI_KEY_PROVIDERS, isBoundProvider, isLocalEndpoint, testedModels } from '../shared/providers.js';
 import { checkEngine } from './engines.js';
@@ -702,10 +704,13 @@ export class SessionManager extends EventEmitter {
         Object.assign(live.info,{status:next.status,statusDetail:next.statusDetail,statusSince:next.statusSince,ctxPercent:next.ctxPercent,lastActivity:next.lastActivity});
         // v0.7.1: a finished turn counts what the worktree changed for the card (`+N −M · ready to review`).
         if(next.status==='done'&&previous.status!=='done'&&live.info.worktree)void this.refreshDiffStat(live);
-        // v0.7.2 (D55): a turn that ends (done, or waiting on you) is checkpointed, in the agent's own queue.
-        if(previous.status==='running'&&(next.status==='done'||next.status==='waiting')&&live.info.worktree)void this.checkpointTurn(live.info.id);
-        // Working again: the last count is stale until the next finished turn.
+        // v0.7.2 (D55): a turn that ends (done, or waiting on you) is checkpointed, in the agent's own queue; a finished one
+        // then runs the project's tests (v0.7.4), after the checkpoint has read the worktree.
+        const turnEnd=previous.status==='running'&&(next.status==='done'||next.status==='waiting')&&live.info.worktree?this.checkpointTurn(live.info.id):null;
+        if(turnEnd&&next.status==='done')void turnEnd.then(()=>this.afterTurn(live.info.id));
+        // Working again: the last count and test result are stale until the next finished turn; a test run still going stops.
         if(next.status==='running'&&live.info.diffStat){delete live.info.diffStat;live.diffStatSeq=(live.diffStatSeq??0)+1;}
+        if(next.status==='running')this.cancelTests(live.info.id,false);
         this.event({kind:'session.updated',session:{...live.info}});live.outputClock?.sent();
         // Notifications listen here; a listener failure must never stop status from applying.
         try{this.emit('statusChanged',{...live.info},previous,next,live.attached);}catch{this.log.error('Status listener failed');}
@@ -929,6 +934,83 @@ export class SessionManager extends EventEmitter {
     async merge(id:string,fingerprint:string,override:boolean):Promise<{commit:string}>{const t=await this.mergeTarget(id);return this.inCheckpointQueue(id,()=>merge(t,fingerprint,override,this.userGit).catch((e:unknown)=>{throw this.mergeError(e);}));}
     async prPlan(id:string):Promise<PrPlan>{const t=await this.mergeTarget(id);return this.inCheckpointQueue(id,()=>prPlan(t,this.userGit).catch((e:unknown)=>{throw this.mergeError(e);}));}
     async pr(id:string,fingerprint:string,override:boolean):Promise<{url:string}>{const t=await this.mergeTarget(id);return this.inCheckpointQueue(id,()=>openPr(t,fingerprint,override,this.userGit).catch((e:unknown)=>{throw this.mergeError(e);}));}
+    // v0.7.4 auto-test (D55, on). The project is your checkout (the repository AI Term recorded for a worktree, else the
+    // folder's own); its command is kept in settings as an argument list and runs in the agent's worktree.
+    private testRuns=new Map<string,AbortController>();
+    private async projectOf(cwd:string):Promise<string>{
+        for(const [path,record]of this.worktreeRecords)if(record.repo&&(cwd===path||cwd.startsWith(path+'/')))return projectRepo(record.repo);
+        return projectRepo(cwd);
+    }
+    async testCommand(cwd:string):Promise<ProjectTestCommand>{
+        const repo=await this.projectOf(cwd),settings=await new SettingsStore(this.paths.root).get();
+        return {repo,command:Object.hasOwn(settings.testCommands??{},repo)?settings.testCommands?.[repo]??null:null};
+    }
+    async setTestCommand(cwd:string,command:string[]|null):Promise<ProjectTestCommand>{
+        const repo=await this.projectOf(cwd);
+        await new SettingsStore(this.paths.root).update(async settings=>{const next={...settings.testCommands??{}};if(command)next[repo]=command;else delete next[repo];return {...settings,testCommands:next};});
+        return {repo,command};
+    }
+    // The agent's worktree, its recorded start and the project's command; null when there's nothing to run.
+    private async testTarget(live:Live):Promise<{path:string;base:string;repo?:string;command:string[]}|null>{
+        const record=live.info.worktree?this.worktreeRecords.get(live.info.worktree):undefined;
+        if(!record?.repo)return null;
+        const command=(await this.testCommand(record.repo)).command;
+        if(!command)return null;
+        const {path,base,repo}=await this.diffTarget(live);
+        return {path,base,...(repo?{repo}:{}),command};
+    }
+    private setTests(live:Live,tests:SessionInfo['tests']|undefined):void{
+        if(tests)live.info.tests=tests;else delete live.info.tests;
+        if(this.sessions.get(live.info.id)!==live)return;
+        this.event({kind:'session.updated',session:{...live.info}});void this.persist();
+    }
+    // After a finished turn: the tests, unless the agent changed the test setup (then the card asks for /test). Errors
+    // are logged and the agent goes on; tests are a check, never a reason to stop work.
+    async afterTurn(id:string):Promise<void>{
+        const live=this.sessions.get(id);if(!live||live.info.status!=='done')return;
+        let settings:Settings;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; auto-test skipped');return;}
+        if(settings.autoTest===false)return;
+        try{
+            const target=await this.testTarget(live);if(!target)return;
+            const changed=await changedTestConfig(target.path,target.base,target.repo,target.command);
+            if(changed.length){this.setTests(live,{state:'ask',changed:changed.slice(0,MAX_TEST_CHANGED)});return;}
+            await this.startTests(live,target.command,target.path);
+        }catch{this.log.error('Auto-test skipped; git could not read the worktree');}
+    }
+    async testPlan(id:string):Promise<TestPlan>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        this.undoIdle(live);
+        if(!live.info.worktree)throw new TestRunError('This agent has no worktree to test');
+        let target;
+        try{target=await this.testTarget(live);}catch(error){this.log.error('Test plan: git could not read the worktree');throw new TestRunError('Tests unavailable; git could not read the worktree',{cause:error});}
+        if(!target)throw new TestRunError('No test command for this project · /test-cmd <command>');
+        let changed:string[];
+        try{changed=(await changedTestConfig(target.path,target.base,target.repo,target.command)).slice(0,MAX_TEST_CHANGED);}catch(error){this.log.error('Test plan: git could not read the worktree');throw new TestRunError('Tests unavailable; git could not read the worktree',{cause:error});}
+        return {title:live.info.title,command:target.command,cwd:target.path,changed,fingerprint:await testFingerprint(target.command,target.path,changed)};
+    }
+    // Runs exactly what /test showed; the result arrives on the card.
+    async runTestPlan(id:string,fingerprint:string):Promise<void>{
+        const plan=await this.testPlan(id),live=this.sessions.get(id);
+        if(!live||plan.fingerprint!==fingerprint)throw new TestRunError('The test setup changed since it was shown; run /test again');
+        void this.startTests(live,plan.command,plan.cwd);
+    }
+    private async startTests(live:Live,command:string[],cwd:string):Promise<void>{
+        this.cancelTests(live.info.id,false);
+        const controller=new AbortController();this.testRuns.set(live.info.id,controller);
+        this.setTests(live,{state:'running'});
+        const outcome=await runTests(command,cwd,buildTestEnv(process.env),{signal:controller.signal,log:text=>this.log.error(text)});
+        if(this.testRuns.get(live.info.id)===controller)this.testRuns.delete(live.info.id);
+        // Cancelled: the agent works again (or went away); its result is cleared there.
+        if(outcome.state==='cancelled'||controller.signal.aborted)return;
+        if(outcome.state==='error')this.log.error('Test command could not start');
+        this.setTests(live,outcome);
+    }
+    // keep: a result already shown stays (the agent was removed or the daemon stops); else it is cleared with the run.
+    cancelTests(id:string,keep=false):void{
+        this.testRuns.get(id)?.abort();this.testRuns.delete(id);
+        const live=this.sessions.get(id);if(!keep&&live?.info.tests)this.setTests(live,undefined);
+    }
     // v0.7.1 /export: the session's screen text (its end, ~1 MiB) and, for AI Term's own agent, its transcript, all redacted.
     async exportSession(id:string):Promise<SessionExport>{
         const text=await this.text(id),live=this.sessions.get(id);if(!live)throw new Error('Session not found');
@@ -969,7 +1051,7 @@ export class SessionManager extends EventEmitter {
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
     async remove(id: string): Promise<void> { if (this.closing) throw new Error('Background service is stopping'); const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
-        throw new Error('Only exited sessions can be removed'); if(live.mirrorFailed)await this.stop(id); await live.output; await removeSessionFiles(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
+        throw new Error('Only exited sessions can be removed'); this.cancelTests(id,true); if(live.mirrorFailed)await this.stop(id); await live.output; await removeSessionFiles(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
     // A worktree shared by resumed agents belongs to whichever is still live, else the newest record.
     private worktreeAgent(path:string):SessionInfo|undefined{
         const agents=[...this.sessions.values()].map(s=>s.info).filter(info=>info.worktree===path);
@@ -1065,6 +1147,7 @@ export class SessionManager extends EventEmitter {
     }
     async shutdown(): Promise<void> {
         this.closing=true;
+        for(const id of [...this.testRuns.keys()])this.cancelTests(id,true);
         const ids=[...this.sessions.keys()];
         const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
         for(const [index,result]of stopped.entries())if(result.status==='rejected')this.log.error(`Session stop failed: ${ids[index]}`);

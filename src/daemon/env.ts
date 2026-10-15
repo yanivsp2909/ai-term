@@ -136,3 +136,12 @@ export function buildBashEnv(base:NodeJS.ProcessEnv):Record<string,string>{
     // No pager or credential prompt may wait on a terminal the command doesn't have.
     return {...result,TERM:'dumb',PAGER:'cat',GIT_PAGER:'cat',GIT_TERMINAL_PROMPT:'0'};
 }
+// v0.7.4 auto-test: the env a project's test command runs with. An allowlist like the bash tool's, plus the toolchain
+// locations test runners commonly need; no API key, token or AI Term variable (the name check guards a base name that
+// carries one), CI=1 so runners don't wait for a terminal or watch for changes, and no color codes in the output.
+const TEST_BASE_VARS=[...BASH_BASE_VARS,'TZ','JAVA_HOME','GOPATH','GOROOT','GOCACHE','GOMODCACHE','CARGO_HOME','RUSTUP_HOME','NVM_DIR','VOLTA_HOME','PNPM_HOME','BUN_INSTALL','DENO_DIR','PYENV_ROOT','VIRTUAL_ENV','CONDA_PREFIX','POETRY_HOME','PIPX_HOME','GEM_HOME','GEM_PATH','RBENV_ROOT','ANDROID_HOME','ANDROID_SDK_ROOT','DEVELOPER_DIR','SDKROOT','XDG_CACHE_HOME','XDG_CONFIG_HOME','XDG_DATA_HOME'] as const;
+export function buildTestEnv(base:NodeJS.ProcessEnv):Record<string,string>{
+    const result=pick(base,TEST_BASE_VARS);
+    for(const name of Object.keys(result))if(/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AITERM|AI_TERM/i.test(name)||/sk-/.test(result[name]??''))delete result[name];
+    return {...result,CI:'1',NO_COLOR:'1',FORCE_COLOR:'0',TERM:'dumb',PAGER:'cat',GIT_PAGER:'cat',GIT_TERMINAL_PROMPT:'0'};
+}

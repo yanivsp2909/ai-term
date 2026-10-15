@@ -47,6 +47,8 @@ import { parsePresetCommand, presetProblem, presetLines } from './presets.js';
 import { HandoffAsk, handoffDone, handoffRequest } from './handoff-ask.js';
 import { DiffView } from './diff-view.js';
 import { UndoAsk } from './undo-ask.js';
+import { TestAsk } from './test-ask.js';
+import { parseTestCommand, testCommandText, validateProjectTestCommand, validateTestPlan } from '../../shared/test-run.js';
 import { MergeAsk } from './merge-ask.js';
 import { validateMergePlan, validatePrPlan } from '../../shared/merge.js';
 import { validateUndoPlan } from '../../shared/checkpoints.js';
@@ -88,7 +90,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk;
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -383,7 +385,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -578,6 +580,8 @@ export class Homepage {
     if (command==='/export') { await this.exportCommand(argument); return; }
     if (command==='/undo'||command==='/redo') { await this.undoCommand(command==='/redo',argument); return; }
     if (command==='/merge'||command==='/pr') { await this.mergeCommand(command==='/pr'?'pr':'merge',argument); return; }
+    if (command==='/test-cmd') { await this.testCmdCommand(argument); return; }
+    if (command==='/test') { await this.testCommand(argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
     if (text.startsWith('/')) { this.showNote('Unknown command'); return; }
     this.openBox('start', text); await this.checkSelectedEngine();
@@ -690,6 +694,35 @@ export class Homepage {
     const auth:AuthRef=session.auth.kind==='key'?{kind:'key',keyId:session.auth.keyId}:{kind:'account',...(session.auth.profile?{profile:session.auth.profile}:{})};
     try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:session.engine,model:session.model,...(session.effort!==undefined?{effort:session.effort}:{}),auth,cwd:session.worktree,permission:'ask',title:`${session.title} rebase`.slice(0,60),firstMessage,useWorktree:false}));}
     catch(error){this.showNote(error instanceof Error?error.message:'Agent could not start');}
+  }
+  // An agent named in a command (like /send: a name two agents share is refused, never guessed), else the selected one.
+  private namedOrSelected(name:string,command:string):SessionInfo|undefined{
+    if(name){const named=this.sessions.filter(s=>s.title===name);if(named.length>1){this.showNote(`${named.length} agents are named ${name} · rename one with r`);return undefined;}if(!named[0])this.showNote(`no agent named ${name}`);return named[0];}
+    const session=this.sessions.find(s=>s.id===this.selectedId);if(!session)this.showNote(`select an agent, then ${command}`);return session;
+  }
+  // v0.7.4 /test-cmd [command|none]: the project of the selected agent (else of the next agent's folder).
+  private async testCmdCommand(argument:string):Promise<void>{
+    const selected=this.sessions.find(s=>s.id===this.selectedId),cwd=selected?.worktree??selected?.cwd??this.folder;
+    const command=argument===''||argument==='none'?null:parseTestCommand(argument);
+    if(argument&&argument!=='none'&&!command){this.showNote('/test-cmd <command> · none clears it; no shell: pipes and && are plain words');return;}
+    try{
+      const result=validateProjectTestCommand((await this.connection.request(argument?{kind:'project.setTestCommand',cwd,command}:{kind:'project.testCommand',cwd})).testCommand);
+      if(!argument)this.showNote(result.command?`test command for ${result.repo}: ${testCommandText(result.command)}`:`no test command for ${result.repo} · /test-cmd <command>`);
+      else this.showNote(result.command?`✓ test command for ${result.repo}: ${testCommandText(result.command)} · runs when an agent finishes`:`✓ no test command for ${result.repo}`);
+    }catch(error){this.showNote(error instanceof Error?error.message:'Test command unavailable');}
+  }
+  // v0.7.4 /test [agent]: the plan first (command, folder, changed setup files); y runs it, the card shows the result.
+  private async testCommand(name:string):Promise<void>{
+    const session=this.namedOrSelected(name,'/test');if(!session)return;
+    let plan:import('../../shared/test-run.js').TestPlan;
+    try{plan=validateTestPlan((await this.connection.request({kind:'sessions.testPlan',sessionId:session.id})).testPlan);}
+    catch(error){this.showNote(error instanceof Error?error.message:'Tests unavailable');return;}
+    if(this.popup){this.showNote('test plan ready · close the open popup and run /test again');return;}
+    const ask:TestAsk=new TestAsk(plan,()=>this.draw(true),()=>{if(this.popup===ask)this.popup=undefined;this.draw(true);},()=>{this.enqueue(async()=>{
+      try{await this.connection.request({kind:'sessions.test',sessionId:session.id,fingerprint:plan.fingerprint});this.showNote(`◐ testing ${session.title} · the card shows the result`);}
+      catch(error){this.showNote(`tests stopped: ${error instanceof Error?error.message:'request failed'}`);}
+    });});
+    this.popup=ask;this.draw(true);
   }
   // v0.7.2 /undo [agent] and /redo [agent]: the plan (what changes) first; y restores, n or Esc keeps everything.
   private async undoCommand(redo:boolean,name:string):Promise<void>{
