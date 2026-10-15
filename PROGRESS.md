@@ -1,8 +1,8 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: see the handover commit after e8fbb44 (Part D, v0.8 release gate)
-Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A done · B done · C done · D v0.8 release gate done, **v0.8 closed** · E v0.9.1 queue next
+Last commit: see the handover commit after 855adc0 (Part E, v0.9.1 queue)
+Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: A–D done (**v0.8 closed**) · E v0.9.1 queue done · F v0.9.2 dev servers next (spec written here, below)
 Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64); no Linux or Windows machine here (Docker/colima are installed but not running, and starting them would download a VM image, which the limits rule out), so Linux and Windows run for real only in GitHub Actions (Part D).
 
 | Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
@@ -10,9 +10,71 @@ Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-on
 | A B29, pin D56/D57 | done | fb31f36 | review: 0 / 2 fixed / 1 fixed + 3 explained / 3 explained |
 | B v0.8.1 Linux | done (Linux paths first run for real in Part D's CI) | 29cc615 | review: 0 / 4 fixed / 9 fixed + 2 explained / 7 fixed + 5 explained |
 | C v0.8.2 Windows | done | 3c4493c | review: 0 / 6 fixed / 11 fixed + 2 explained / 4 fixed + 6 explained |
-| D v0.8 release gate | done, **v0.8 closed** (no cloud CI, by Yaniv) | this push | CI run: 4 real bugs fixed; reviewers: 0 / 3 fixed / 12 fixed + 4 explained / 9 fixed + 6 explained |
+| D v0.8 release gate | done, **v0.8 closed** (no cloud CI, by Yaniv) | 8722739 | CI run: 4 real bugs fixed; reviewers: 0 / 3 fixed / 12 fixed + 4 explained / 9 fixed + 6 explained |
+| E v0.9.1 queue | done (spec completed where the prompt was cut) | this push | review: 0 / 5 fixed / 12 fixed + 2 explained / 5 fixed + 3 explained |
 
 **The prompt was cut off:** it ends inside Part E ("times passed while the"), and Part F (v0.9.2 dev servers per worktree) has no text at all. Part E will follow the visible text and the safer reading of the cut sentence; Part F can't be built from no spec, so the run stops before it.
+
+## Part E: v0.9.1 queue (D55, off by default) — done
+Commits: 9dd9a37 (RED) / a763dd1; tried end to end f01b52b; review 621402e (RED) / 855adc0.
+
+**The prompt was cut off here,** at "The queue survives a daemon restart; times passed while the". Everything visible was built. The rest is the safer reading:
+- **Missed times:** a time that passed while the daemon wasn't running, or by more than two minutes while it was (a sleeping Mac), is marked `missed` and never starts by itself.
+- **Choices the prompt didn't spell out:**
+  - **Finishing:** the `after` trigger counts an agent as finished when its turn ends (`done`) or it exits; an error doesn't start what waits.
+  - **AI Term's agent** needs both a turn cap and a $ budget.
+  - **Stop times** come within 12 hours.
+  - **A queue turned off** keeps its items but starts nothing.
+  - **`/settings` b** is the switch (`b` was free).
+
+**What was built:**
+- **Commands:**
+  - `/queue add` opens the start box as "Queue a new agent". ⏎ then asks `after <agent>` or `at HH:MM`, then the limit.
+  - `/queue` lists each item with its trigger, limit, engine, folder, mode and state, Don't ask in red; `x` removes, Esc closes.
+- **Limits:**
+  - **AI Term's agent:** turns and $ become that run's caps.
+  - **Key CLI:** $, stopped at the budget, at once if unpriceable, or after 3 minutes with no cost report. When keys run on AI Term's agent, the $ becomes its cap.
+  - **Subscription CLI:** stopped at the stop time, checked against the clock.
+- **Starting:** through the same `create()` as a manual start. A failed start shows on the item, never retried.
+- **Storage:** `~/.ai-term/queue.json` (0600, first messages included until the agent starts). An unreadable item is left out and the file kept beside it.
+- **Tried for real:**
+  - A daemon end to end over the socket: `queue.add`, a tick, a real session created with its stop time, `queue.list` showing it started.
+  - Typed on the homepage: `/queue add` → start box → `after fixer` → `until 23:00` → `queue.add`, then `/queue` → `x`.
+  - Trying it found and fixed two things: a bare `/queue` needed two Enters, and the list didn't refresh after `x`.
+
+**Fresh review (security-reviewer, typescript-reviewer):**
+- **HIGH fixed:**
+  - A key CLI that AI Term runs on its own agent (the default) lost its $ budget.
+  - Unreadable settings crashed the daemon within 15 s.
+  - Shutdown's agent exits started or failed `after` items.
+  - `at 21:30 until 21:00`, or a late start after sleep, could run 24 hours.
+  - The stop timer didn't run during sleep.
+- **MEDIUM fixed:**
+  - A key CLI with no cost reports ran unbounded.
+  - A late start after sleep; an item removed mid-start still started.
+  - A double Enter queued twice.
+  - A failed save said "✓ queued".
+  - One bad item dropped and then overwrote the whole file.
+  - A typo'd `after` name waited forever.
+  - Don't ask checked against the requested engine, not the one that runs.
+  - A tokens-only report counted as unpriced.
+- **LOW fixed:** saved as `started` before `create()` (no double start after a crash); a second `x`; `/queue add` over an open popup.
+- **Explained, not changed:**
+  - A trigger that fires while the queue is off is lost; the item waits for that agent's next finish.
+  - `after` matches by title, so a later agent with the same title fires it.
+  - A manual `/retry` or `/resume` of a queued agent starts without the queue's limit (your own action).
+  - Don't ask on a queued subscription CLI is allowed, as at a manual start, with a red warning in the form.
+  - No DST-specific test for `nextLocalTime` (JS dates handle the shift).
+
+**Checks (after 855adc0):**
+- typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 156ms`; app:build `✓ built in 70ms`.
+- npm test twice: `Test Files 237 passed (237)` · `Tests 1605 passed | 7 skipped (1612)` (37.93s, 41.37s).
+- app:test `9 passed (38.5s)`.
+- verification-loop clean.
+
+**New manual checks:**
+- `cd ~/ai-term && node dist/cli/index.js`: `/settings` → `b` turns the queue on. Then `/queue add` → ⏎ → `at <a minute from now>` → `until <an hour later>`. Within a minute the agent starts, and `/queue` shows `▶ started`.
+- `cd ~/ai-term && node dist/cli/index.js`: queue `after <an agent>` on a key with `$1`; when that agent's turn ends, the queued one starts and stops at $1 (the item says why).
 
 ## Part D: v0.8 release gate — done, **v0.8 closed**
 Commits:
