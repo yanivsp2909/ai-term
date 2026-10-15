@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, realpath } from 'node:fs/promises';
+import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
-import { failingCount, isTestCommand, isTestConfig } from '../shared/test-run.js';
-import { diffNameStatus, isolatedGitDir, repoCommonDir, repoTopLevel, untrackedFiles } from './git.js';
+import { failingCount, isDependencyPath, isTestCommand, isTestConfig } from '../shared/test-run.js';
+import { diffNameStatus, GitError, insideWorktree, isolatedGitDir, repoCommonDir, repoTopLevel, runGit, untrackedFiles } from './git.js';
 
 // v0.7.4: one test run in an agent's worktree. argv only (spawn, no shell), stdin closed, its own process group so a
 // timeout or a cancel ends everything it started (npm starts node, node starts workers). Output is read to the end but
@@ -53,24 +53,57 @@ export function runTests(command: readonly string[], cwd: string, env: Record<st
     child.on('error', () => finish({ state: 'error' }));
     // The command ended: anything it left in the background (holding the output pipes open) is stopped, so 'close' comes.
     let code: number | null = null;
-    child.on('exit', exitCode => { code = exitCode; group('SIGKILL'); });
-    child.on('close', () => {
+    child.on('exit', exitCode => {
+      code = exitCode; group('SIGKILL');
+      // A process that left the group (setsid) can hold the pipes open forever: past a grace period they are closed and
+      // the run ends anyway (that process is out of reach without a sandbox).
+      setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); conclude(); }, KILL_GRACE_MS).unref();
+    });
+    const conclude = () => {
       if (ended === 'timeout') finish({ state: 'timeout' });
       else if (ended === 'cancelled') finish({ state: 'cancelled' });
       else if (ended === 'capped') finish({ state: 'fail', failing: failingCount(tail.toString('utf8')) });
       else finish(code === 0 ? { state: 'pass' } : { state: 'fail', failing: failingCount(tail.toString('utf8')) });
-    });
+    };
+    child.on('close', conclude);
   });
 }
 
-// The test setup files this agent's work changed since it started (committed, uncommitted or new), from git's own lists in
-// a private git dir (git.ts), so the agent's repository config can't run anything while they are read.
-export async function changedTestConfig(path: string, base: string, repo: string | undefined, command: readonly string[]): Promise<string[]> {
+// The test setup this agent's work changed since it started: setup files it changed (committed, uncommitted or new), and
+// ignored dependency folders or setup files in its worktree (a fresh worktree has none). Read with git's own lists in a
+// private git dir (git.ts), so the agent's repository config can't run anything meanwhile. The fingerprint covers the
+// command, the folder, each changed file's content and every ignored entry's names, sizes and times; a run you approved
+// with /test lets later turns run while it stays the same.
+export interface TestSetup { changed: string[]; fingerprint: string }
+const WALK_LIMIT = 200_000;
+export async function testSetup(path: string, base: string, repo: string | undefined, command: readonly string[]): Promise<TestSetup> {
   const git = await isolatedGitDir(path, base, repo ? { repo } : {});
+  let configs: string[], ignored: string[];
   try {
     const names = [...(await diffNameStatus(path, base, git)).flatMap(entry => entry.from ? [entry.from, entry.path] : [entry.path]), ...await untrackedFiles(path, git)];
-    return [...new Set(names.filter(name => isTestConfig(name, command)))].sort();
+    configs = [...new Set(names.filter(name => isTestConfig(name, command)))].sort();
+    const listed = (await runGit(path, [...git.args, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z', '--'], 'Git check failed', { maxBuffer: 16 * 1024 * 1024 })).split('\0').filter(Boolean);
+    if (listed.some(name => !insideWorktree(name.replace(/\/$/, '')))) throw new GitError('Git check failed');
+    ignored = listed.filter(name => isDependencyPath(name.replace(/\/$/, '')) || isTestConfig(name.replace(/\/$/, ''), command)).sort();
   } finally { await git.dispose(); }
+  const digest = ignored.length ? await walkDigest(path, ignored) : 'none';
+  const fingerprint = createHash('sha256').update(await testFingerprint(command, path, configs)).update('\0').update(digest ?? randomUUID()).digest('hex');
+  return { changed: [...configs, ...ignored.map(name => `${name} (ignored)`)], fingerprint };
+}
+// Names, kinds, sizes and change times of everything under the entries, without following links; null past WALK_LIMIT
+// entries (then every turn asks: nothing too large to check runs unasked).
+async function walkDigest(root: string, entries: readonly string[]): Promise<string | null> {
+  const hash = createHash('sha256'), queue = entries.map(entry => entry.replace(/\/$/, ''));
+  let seen = 0;
+  while (queue.length) {
+    const relative = queue.shift() ?? '';
+    let info;
+    try { info = await lstat(join(root, relative)); } catch (error) { if (isFsError(error, 'ENOENT')) { hash.update(`${relative}\0gone\n`); continue; } throw error; }
+    if (++seen > WALK_LIMIT) return null;
+    hash.update(`${relative}\0${info.mode}\0${info.size}\0${info.mtimeMs}\0${info.ctimeMs}\n`);
+    if (info.isDirectory()) for (const name of (await readdir(join(root, relative))).sort()) queue.push(`${relative}/${name}`);
+  }
+  return hash.digest('hex');
 }
 // What /test showed: the command, the folder, and each changed setup file's name and content (a file the agent edits after
 // you saw the plan changes the fingerprint, so y never runs a setup you didn't see).

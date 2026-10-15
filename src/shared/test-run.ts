@@ -42,7 +42,8 @@ const COUNTS: readonly RegExp[] = [
 ];
 export function failingCount(output: string): number | null {
   const text = stripVTControlCharacters(output);
-  for (const pattern of COUNTS) { const match = text.match(pattern); if (match?.[1]) return Number(match[1]); }
+  // A count of 0 on a failed run says nothing useful (errors, not failures): unknown.
+  for (const pattern of COUNTS) { const match = text.match(pattern); if (match?.[1]) return Number(match[1]) || null; }
   const go = text.match(/^--- FAIL: /gm);
   return go ? go.length : null;
 }
@@ -53,19 +54,24 @@ const CONFIG_NAMES = new Set(['package.json', '.npmrc', '.yarnrc', '.yarnrc.yml'
   'conftest.py', 'pytest.ini', 'pyproject.toml', 'setup.cfg', 'setup.py', 'tox.ini', 'noxfile.py', '.coveragerc',
   'makefile', 'gnumakefile', 'justfile', 'rakefile', 'gemfile', '.rspec', 'cargo.toml', 'build.rs', 'go.mod', 'pom.xml', 'mvnw', 'gradlew', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'gradle.properties',
   'composer.json', 'phpunit.xml', 'phpunit.xml.dist', 'cmakelists.txt', 'meson.build', 'build.zig',
-  '.tool-versions', '.nvmrc', '.node-version', '.python-version', '.ruby-version', 'mise.toml', '.mise.toml', 'rust-toolchain', 'rust-toolchain.toml', '.envrc', '.env', '.env.test']);
+  '.tool-versions', '.nvmrc', '.node-version', '.python-version', '.ruby-version', 'mise.toml', '.mise.toml', 'rust-toolchain', 'rust-toolchain.toml', '.envrc', '.env', '.env.test',
+  '.gitignore', 'go.work', '.pnp.cjs', '.pnp.loader.mjs', 'sitecustomize.py', 'usercustomize.py']);
 const CONFIG_PATTERNS: readonly RegExp[] = [
   /^(?:vitest|vite|jest|babel|karma|playwright|cypress|ava|webpack|rollup|esbuild|tsup|nyc|c8|wdio|nightwatch)\.(?:config|setup|workspace)\.[a-z]+$/,
-  /^(?:jest|vitest)\.[a-z.]*\.[cm]?[jt]s$/, /^\.mocharc(?:\.[a-z]+)?$/, /^\.babelrc(?:\.[a-z]+)?$/, /^tsconfig(?:\.[\w-]+)?\.json$/, /^\.c8rc(?:\.json)?$/, /^\.nycrc(?:\.[a-z]+)?$/, /\.mk$/,
+  /^(?:jest|vitest)\.[a-z.]*\.[cm]?[jt]s$/, /\.pth$/, /\.gradle(?:\.kts)?$/, /^\.mocharc(?:\.[a-z]+)?$/, /^\.babelrc(?:\.[a-z]+)?$/, /^tsconfig(?:\.[\w-]+)?\.json$/, /^\.c8rc(?:\.json)?$/, /^\.nycrc(?:\.[a-z]+)?$/, /\.mk$/,
 ];
-const CONFIG_FOLDERS = /(?:^|\/)(?:\.cargo|\.mvn|\.husky|gradle)\//;
+const CONFIG_FOLDERS = /(?:^|\/)(?:\.cargo|\.mvn|\.husky|gradle|\.yarn|\.bundle)\//;
 export function isTestConfig(path: string, command: readonly string[]): boolean {
   const name = path.split('/').at(-1)?.toLowerCase() ?? '';
   if (CONFIG_NAMES.has(name) || CONFIG_PATTERNS.some(pattern => pattern.test(name)) || CONFIG_FOLDERS.test(path)) return true;
-  // `./scripts/test.sh` or `scripts/test.sh`: the script is part of the setup. A bare name (`npm`) is found on PATH.
-  const program = command[0] ?? '';
-  return program.includes('/') && !program.startsWith('/') && program.replace(/^\.\//, '') === path;
+  // `./scripts/test.sh`, `bash scripts/test.sh`, `node ./run.js`: a relative path word is part of the setup. A bare name
+  // (`npm`) is found on PATH; an absolute path is outside the worktree.
+  return command.some(word => !word.startsWith('/') && !word.startsWith('-') && (word.includes('/') || /\.[A-Za-z0-9]{1,8}$/.test(word)) && word.replace(/^\.\//, '') === path);
 }
+// Ignored folders package managers fill with code that test commands run (node_modules/.bin, a virtualenv): a fresh
+// worktree has none, so whatever is there came from the agent's turns (an install, or a planted file).
+const DEPENDENCY_FOLDERS = new Set(['node_modules', '.venv', 'venv', 'env', '.tox', '.nox', '__pypackages__', 'vendor', '.bundle', '.yarn', 'bower_components', 'jspm_packages', '.pnpm-store', '.gradle', '.m2']);
+export function isDependencyPath(path: string): boolean { return path.split('/').some(part => DEPENDENCY_FOLDERS.has(part)); }
 
 const isPath = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 1024 && !CONTROL.test(v);
 const exact = (v: Record<string, unknown>, keys: string[]) => Object.keys(v).length === keys.length && keys.every(k => k in v);

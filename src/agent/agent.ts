@@ -464,7 +464,13 @@ export class Agent {
       }
       if (controller.signal.aborted) { if (open) this.limits.chargeUnfinished(open); io.note('compact stopped; the conversation is unchanged'); return 'interrupted'; }
       if (error !== undefined || !summary.trim()) { if (open) this.limits.chargeUnfinished(open); io.note('compact failed; the conversation is unchanged', 'error'); return 'failed'; }
+      // A request the provider sent no usage for: unknown is not free, its worst case counts (D53).
+      if (open) { this.limits.chargeUnfinished(open); open = 0; }
       this.history = compactedHistory(this.options.redact(summary.trim()), split.kept);
+      // The context reading is the summary's now (an estimate until the next request reports it); the 85% note can come again.
+      this.warned = false;
+      const context = cleared.facts?.context;
+      void reporter.status({ event: 'context', percent: context ? Math.min(100, Math.round(estimateTokens(JSON.stringify(this.history)) / context * 100)) : 0 });
       void this.options.transcript.append({ kind: 'note', text: `compacted ${split.turns} older turns` });
       return 'done';
     } catch {

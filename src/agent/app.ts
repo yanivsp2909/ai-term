@@ -166,7 +166,9 @@ export class AgentApp implements AgentIO {
   // v0.7.4 /compact: the D49 ask (what is summarized, by which model, tokens and price), ⏎ compacts, Esc keeps it all.
   // Esc and Ctrl+K stop the request like a turn's (it runs as the turn).
   private async compact(): Promise<void> {
-    const screen = this.options.screen, plan = await this.agent.compactPlan();
+    const screen = this.options.screen;
+    let plan: Awaited<ReturnType<Agent['compactPlan']>>;
+    try { plan = await this.agent.compactPlan(); } catch { screen.note('compact unavailable: the conversation could not be read', 'error'); return; }
     if (!plan) { screen.note('nothing older to compact yet; the last two turns are always kept'); return; }
     const n = (v: number) => v.toLocaleString('en-US'), price = plan.priceUsd ? `$${plan.priceUsd.low.toFixed(4)}–$${plan.priceUsd.high.toFixed(4)}` : 'price unknown; spend limits will pause before a request';
     const turn = new AbortController(); this.turn = turn;

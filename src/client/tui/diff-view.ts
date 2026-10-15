@@ -7,7 +7,8 @@ import { overlay } from './worktree-question.js';
 // on the right (PgUp/PgDn); every line is text from the daemon, drawn as plain cells. design.md: added lines on accent at
 // 16% over the surface, removed on status-error at 16%; the +/- glyph stays, so color is never the only sign.
 // The review queue's choices sit in the footer: m merge, x discard (the v0.3.2 removal flow), Esc later.
-export interface DiffActions { changed(): void; close(): void; merge(): void; discard(): void }
+// A comparison of two agents (v0.7.4) has neither: it isn't one agent's work against its start.
+export interface DiffActions { changed(): void; close(): void; merge?(): void; discard?(): void }
 const LETTER: Record<DiffFile['status'], string> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R', untracked: 'U' };
 const counts = (added: number, removed: number) => `${added ? `+${added}` : ''}${removed ? `${added ? ' ' : ''}−${removed}` : ''}`;
 // Long paths keep their end (the file name), cut from the left.
@@ -22,8 +23,8 @@ export class DiffView {
   key(key: string): void {
     const files = this.diff.files.length;
     if (key === 'escape') { this.actions.close(); return; }
-    if (key === 'm') { this.actions.merge(); return; }
-    if (key === 'x') { this.actions.discard(); return; }
+    if (key === 'm' && this.actions.merge) { this.actions.merge(); return; }
+    if (key === 'x' && this.actions.discard) { this.actions.discard(); return; }
     if ((key === 'up' || key === 'down') && files) { this.selected = (this.selected + (key === 'up' ? -1 : 1) + files) % files; this.offset = 0; this.actions.changed(); return; }
     if (key === 'page-up' || key === 'page-down') { this.offset = Math.max(0, this.offset + (key === 'page-up' ? -this.page : this.page)); this.actions.changed(); }
   }
@@ -55,7 +56,7 @@ export class DiffView {
         grid.text(bodyX, y + 1 + i, line, fg, bg, false, bodyW);
       });
     }
-    grid.text(x + 2, y + h - 2, '↑↓ files · PgUp/PgDn scroll · m merge · x discard · Esc later', t['ink-3'], surface, false, w - 4);
+    grid.text(x + 2, y + h - 2, this.actions.merge ? '↑↓ files · PgUp/PgDn scroll · m merge · x discard · Esc later' : '↑↓ files · PgUp/PgDn scroll · Esc close', t['ink-3'], surface, false, w - 4);
     return grid.cells;
   }
 }

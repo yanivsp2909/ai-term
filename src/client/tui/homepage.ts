@@ -646,9 +646,10 @@ export class Homepage {
   // v0.7.1 /diff [agent]: the named agent (like /send, a name two agents share is refused), else the selected one.
   private async diffCommand(name:string):Promise<void>{
     // v0.7.4 `/diff <agent> vs <other>`: the first agent's worktree against the other's last checkpoint.
-    const versus=name.split(' vs ');
-    if(versus.length===2){
-      const [a,b]=versus.map(part=>this.namedOrSelected(part.trim(),'/diff <agent> vs <other>'));
+    // Split on the last " vs ", so an agent named "a vs b" can still be the first one.
+    const at=name.lastIndexOf(' vs ');
+    if(at>0&&!this.sessions.some(s=>s.title===name)){
+      const a=this.namedOrSelected(name.slice(0,at).trim(),'/diff <agent> vs <other>'),b=a?this.namedOrSelected(name.slice(at+4).trim(),'/diff <agent> vs <other>'):undefined;
       if(!a||!b)return;
       await this.openDiff(a,b);return;
     }
@@ -833,7 +834,7 @@ export class Homepage {
     try{diff=validateAgentDiff((await this.connection.request({kind:'sessions.diff',sessionId:session.id,...(against?{against:against.id}:{})})).diff);}
     catch(error){this.showNote(error instanceof Error?error.message:'Diff unavailable');return;}
     const close=()=>{if(this.popup===view)this.popup=undefined;this.draw(true);};
-    const view:DiffView=new DiffView(diff,{changed:()=>this.draw(true),close,
+    const view:DiffView=against?new DiffView(diff,{changed:()=>this.draw(true),close}):new DiffView(diff,{changed:()=>this.draw(true),close,
       merge:()=>{close();this.enqueue(()=>this.openMerge('merge',session));},
       discard:()=>{
         const current=this.sessions.find(s=>s.id===session.id);

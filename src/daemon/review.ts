@@ -50,7 +50,7 @@ export class AutoReviewLedger {
   private queue: Promise<unknown> = Promise.resolve();
   constructor(root: string) { this.path = join(root, 'auto-review.json'); }
   private static today(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
-  private async read(): Promise<number> {
+  private async read(day = AutoReviewLedger.today()): Promise<number> {
     let file;
     try { file = await open(this.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
     catch (error) { if (isFsError(error, 'ENOENT')) return 0; throw error; }
@@ -59,15 +59,16 @@ export class AutoReviewLedger {
       if (!info.isFile() || info.size > 4096) throw new Error('Unsafe auto-review file');
       const data: unknown = JSON.parse(await file.readFile('utf8'));
       const record = data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
-      return record.day === AutoReviewLedger.today() && typeof record.spentUsd === 'number' && Number.isFinite(record.spentUsd) && record.spentUsd >= 0 ? record.spentUsd : 0;
+      return record.day === day && typeof record.spentUsd === 'number' && Number.isFinite(record.spentUsd) && record.spentUsd >= 0 ? record.spentUsd : 0;
     } finally { await file.close(); }
   }
   private serial<T>(work: () => Promise<T>): Promise<T> { const next = this.queue.then(work, work); this.queue = next.then(() => undefined, () => undefined); return next; }
-  // Takes `worst` from today's room, or returns false when it doesn't fit; settle() replaces it with what was spent.
-  take(worst: number, dailyUsd: number): Promise<boolean> {
-    return this.serial(async () => { const spent = await this.read(); if (spent + worst > dailyUsd) return false; await atomicWrite(this.path, { day: AutoReviewLedger.today(), spentUsd: spent + worst }); return true; });
+  // Takes `worst` from today's room (null when it doesn't fit); settle() replaces it with what was spent. A hold settled
+  // after midnight leaves the new day alone: the old day's file is gone by then, and its spend went with it.
+  take(worst: number, dailyUsd: number): Promise<{ day: string; worst: number } | null> {
+    return this.serial(async () => { const day = AutoReviewLedger.today(), spent = await this.read(day); if (spent + worst > dailyUsd) return null; await atomicWrite(this.path, { day, spentUsd: spent + worst }); return { day, worst }; });
   }
-  settle(worst: number, spentUsd: number): Promise<void> {
-    return this.serial(async () => { const spent = await this.read(); await atomicWrite(this.path, { day: AutoReviewLedger.today(), spentUsd: Math.max(0, spent - worst + spentUsd) }); });
+  settle(hold: { day: string; worst: number }, spentUsd: number): Promise<void> {
+    return this.serial(async () => { if (hold.day !== AutoReviewLedger.today()) return; const spent = await this.read(hold.day); await atomicWrite(this.path, { day: hold.day, spentUsd: Math.max(0, spent - hold.worst + spentUsd) }); });
   }
 }

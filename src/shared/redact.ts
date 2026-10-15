@@ -24,6 +24,10 @@ export function isSecretValue(raw: string): boolean {
 export const SECRET_PATTERNS: readonly SecretPattern[] = [
   // A private key block, or its start when the text is cut before the end marker.
   { name: 'private key', pattern: /-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----|$)/g, replace: whole },
+  // v0.7.4: a password inside a URL (postgres://user:pass@host, https://user:pass@host): only the password goes.
+  { name: 'URL password', pattern: /\b([a-z][a-z0-9+.-]{1,20}:\/\/)([^\s:@/'"`]{1,128}):([^\s@/'"`]{1,256})@/gi, replace: (_match, scheme = '', user = '') => `${scheme}${user}:${REDACTED}@` },
+  { name: 'npm token', pattern: /\bnpm_[A-Za-z0-9]{36}\b/g, replace: whole },
+  { name: 'Stripe key', pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,247}/g, replace: whole },
   // NAME=value, NAME: value, "name": "value". The name is at most 64 characters, the separator on one line.
   { name: 'secret assignment', pattern: /(["']?)\b([A-Za-z][A-Za-z0-9_.-]{0,63})\1([ \t]*[=:][ \t]*)("[^"\n]{0,512}"|'[^'\n]{0,512}'|[^\s"',;\n]{1,512})/g,
     replace: (match, quote = '', name = '', separator = '', value = '') => isSecretName(name) && isSecretValue(value) ? `${quote}${name}${quote}${separator}${REDACTED}` : match },

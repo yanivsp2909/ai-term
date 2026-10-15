@@ -31,7 +31,7 @@ import { fitExport, redactExportMeta, transcriptFor } from './session-export.js'
 import { applyUndo, CheckpointError, dropCheckpoints, listCheckpoints, snapshot, undoPlan, type CheckpointContext } from './checkpoints.js';
 import type { UndoPlan } from '../shared/checkpoints.js';
 import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
-import { changedTestConfig, runTests, testFingerprint, TestRunError, projectRepo } from './test-run.js';
+import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, type ForkPlan, type ForkTarget } from '../shared/fork.js';
 import { ownLoginLabel } from '../shared/models.js';
@@ -71,6 +71,7 @@ export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry alrea
     'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
     'Agent does not accept pasted lines','Agent is printing too fast to check','Agent is running a tool','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
+    approvedSetup?: string; // v0.7.4: the test setup you ran with /test; later turns with the same setup run without asking
     firstMessage?: string; // v0.7.4 /fork: what it was started with (memory only: a prompt is never written to disk here)
     diffStatSeq?: number; // v0.7.1: which diff-stat count is the latest (a stale one never lands)
     info: SessionInfo;
@@ -104,7 +105,7 @@ export const HANDOFF_NOT_STOPPED="The new agent didn't start and couldn't be sto
 export const HANDOFF_NOT_STARTED_PAID="The new agent didn't start; the old one keeps running · the note's tokens were spent";
 // Every handoff refusal is one of these fixed texts, so the socket can return it as written.
 export class ForkError extends Error {}
-export const FORK_ERRORS=['Only an AI agent can be forked',"Fork needs the agent's first message; it started without one, or before the background service restarted",'Fork needs an agent with a worktree, so the two can be compared','Pick two different agents to compare','These agents are in different repositories'] as const;
+export const FORK_ERRORS=['Only an AI agent can be forked',"The fork's worktree couldn't be made (the start commit may be gone); nothing started","Fork needs the agent's first message; it started without one, or before the background service restarted",'Fork needs an agent with a worktree, so the two can be compared','Pick two different agents to compare','These agents are in different repositories'] as const;
 export const HANDOFF_ERRORS=[HANDOFF_NOT_STOPPED,'Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done',"Agent hit its limit and can't write the note · add an API key for the summary",'Agent is being handed off'];
 const HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
 function sameWriter(approved:HandoffWriter,writer:import('./handoff.js').KeyedWriter|null):boolean{return approved.kind==='agent'?writer===null:writer!==null&&approved.provider===writer.key.provider&&approved.model===writer.model&&approved.last4===writer.key.last4;}
@@ -357,6 +358,7 @@ export class SessionManager extends EventEmitter {
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account',...(profile?{profile}:{}) }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
+            const forkWorktree=fork!==undefined;
             // Isolation is the default: settings that can't be read keep it on rather than quietly turning it off.
             // v0.6.2: a preset's own worktree choice wins for this one agent.
             const isolate='useWorktree' in request&&request.useWorktree!==undefined?request.useWorktree:settings?.worktrees!=='off';
@@ -368,6 +370,8 @@ export class SessionManager extends EventEmitter {
             }
             // Not a repo and no commits are the user's situation; anything else lost isolation by failing, so it's an error.
             if(info.worktreeNote)(['worktree off: not a git repo','worktree off: repo has no commits'].includes(info.worktreeNote)?this.log.info:this.log.error).call(this.log,info.worktreeNote);
+            // v0.7.4: a fork runs in its own worktree or not at all (never in your checkout).
+            if(forkWorktree&&!info.worktree)throw new ForkError("The fork's worktree couldn't be made (the start commit may be gone); nothing started");
         }
         const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
         // Usage counts API-key sessions (D27). Cost per task (v0.6.1, D55, on by default) also asks a subscription or
@@ -659,7 +663,8 @@ export class SessionManager extends EventEmitter {
                 return this.handoffWriter.summarize(writer,secret,writer.key.provider==='foundry'?binding?.endpoint??null:null,prompt,controller.signal,job.maxOutput);
             });
         }catch(error){
-            await settle(true);
+            // A key problem stops before anything is sent: the hold is released, not booked.
+            await settle(!(error instanceof KeyError));
             if(error instanceof KeyError)throw error;
             this.log.error(`${label} request failed`);
             // eslint-disable-next-line preserve-caught-error -- provider errors may carry anything the provider sent; only fixed words leave.
@@ -958,6 +963,9 @@ export class SessionManager extends EventEmitter {
     private testRuns=new Map<string,AbortController>();
     private async projectOf(cwd:string):Promise<string>{
         for(const [path,record]of this.worktreeRecords)if(record.repo&&(cwd===path||cwd.startsWith(path+'/')))return projectRepo(record.repo);
+        // An agent's worktree AI Term has no record of: its .git file (the agent's to write) could name any repository.
+        const worktrees=join(this.paths.root,'worktrees');
+        if(cwd===worktrees||cwd.startsWith(worktrees+'/'))throw new TestRunError("Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of");
         return projectRepo(cwd);
     }
     async testCommand(cwd:string):Promise<ProjectTestCommand>{
@@ -985,18 +993,23 @@ export class SessionManager extends EventEmitter {
     }
     // After a finished turn: the tests, unless the agent changed the test setup (then the card asks for /test). Errors
     // are logged and the agent goes on; tests are a check, never a reason to stop work.
+    private turnEnds=new Set<string>();
     async afterTurn(id:string):Promise<void>{
-        const live=this.sessions.get(id);if(!live||live.info.status!=='done')return;
-        let settings:Settings;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; auto-test skipped');return;}
-        // Auto-review (off by default) reads the diff before the tests run (they may write files into the worktree).
-        if(settings.autoReview===true&&settings.reviewModel)await this.autoReview(live,settings,settings.reviewModel);
-        if(settings.autoTest===false)return;
+        const live=this.sessions.get(id);if(!live||live.info.status!=='done'||this.turnEnds.has(id))return;
+        this.turnEnds.add(id);
         try{
+            let settings:Settings;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; auto-test skipped');return;}
+            // Auto-review (off by default) reads the diff before the tests run (they may write files into the worktree).
+            if(settings.autoReview===true&&settings.reviewModel)await this.autoReview(live,settings,settings.reviewModel);
+            if(settings.autoTest===false)return;
             const target=await this.testTarget(live);if(!target)return;
-            const changed=await changedTestConfig(target.path,target.base,target.repo,target.command);
-            if(changed.length){this.setTests(live,{state:'ask',changed:changed.slice(0,MAX_TEST_CHANGED)});return;}
+            const setup=await testSetup(target.path,target.base,target.repo,target.command);
+            // The agent went back to work (or away) while this was checked: its next turn end decides.
+            if(live.info.status!=='done'||this.sessions.get(id)!==live)return;
+            if(setup.changed.length&&setup.fingerprint!==live.approvedSetup){this.setTests(live,{state:'ask',changed:setup.changed.slice(0,MAX_TEST_CHANGED)});return;}
             await this.startTests(live,target.command,target.path);
         }catch{this.log.error('Auto-test skipped; git could not read the worktree');}
+        finally{this.turnEnds.delete(id);}
     }
     async testPlan(id:string):Promise<TestPlan>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
@@ -1006,21 +1019,25 @@ export class SessionManager extends EventEmitter {
         let target;
         try{target=await this.testTarget(live);}catch(error){this.log.error('Test plan: git could not read the worktree');throw new TestRunError('Tests unavailable; git could not read the worktree',{cause:error});}
         if(!target)throw new TestRunError('No test command for this project · /test-cmd <command>');
-        let changed:string[];
-        try{changed=(await changedTestConfig(target.path,target.base,target.repo,target.command)).slice(0,MAX_TEST_CHANGED);}catch(error){this.log.error('Test plan: git could not read the worktree');throw new TestRunError('Tests unavailable; git could not read the worktree',{cause:error});}
-        return {title:live.info.title,command:target.command,cwd:target.path,changed,fingerprint:await testFingerprint(target.command,target.path,changed)};
+        let setup:import('./test-run.js').TestSetup;
+        try{setup=await testSetup(target.path,target.base,target.repo,target.command);}catch(error){this.log.error('Test plan: git could not read the worktree');throw new TestRunError('Tests unavailable; git could not read the worktree',{cause:error});}
+        return {title:live.info.title,command:target.command,cwd:target.path,changed:setup.changed.slice(0,MAX_TEST_CHANGED),fingerprint:setup.fingerprint};
     }
     // Runs exactly what /test showed; the result arrives on the card.
     async runTestPlan(id:string,fingerprint:string):Promise<void>{
         const plan=await this.testPlan(id),live=this.sessions.get(id);
         if(!live||plan.fingerprint!==fingerprint)throw new TestRunError('The test setup changed since it was shown; run /test again');
+        // You approved this setup: later turns that leave it as it is run without asking again.
+        live.approvedSetup=fingerprint;
         void this.startTests(live,plan.command,plan.cwd);
     }
     private async startTests(live:Live,command:string[],cwd:string):Promise<void>{
         this.cancelTests(live.info.id,false);
         const controller=new AbortController();this.testRuns.set(live.info.id,controller);
         this.setTests(live,{state:'running'});
-        const outcome=await runTests(command,cwd,buildTestEnv(process.env),{signal:controller.signal,log:text=>this.log.error(text)});
+        let outcome:import('./test-run.js').TestOutcome;
+        try{outcome=await runTests(command,cwd,buildTestEnv(process.env),{signal:controller.signal,log:text=>this.log.error(text)});}
+        catch{this.log.error('Test command could not start');outcome={state:'error'};}
         if(this.testRuns.get(live.info.id)===controller)this.testRuns.delete(live.info.id);
         // Cancelled: the agent works again (or went away); its result is cleared there.
         if(outcome.state==='cancelled'||controller.signal.aborted)return;
@@ -1067,17 +1084,21 @@ export class SessionManager extends EventEmitter {
         try{written=await this.keyedRequest(id,writer,prompt,{worst,maxOutput:REVIEW_OUTPUT_TOKENS,what:'review'},settings);}
         catch(error){
             // Refused before anything was sent (a budget, the key): the card keeps what it showed. A failed request says so.
-            this.setReview(live,error instanceof Error&&error.message==='The review request failed'?{state:'failed'}:before);
+            // An agent back at work meanwhile has no review on its card.
+            this.setReview(live,this.working(live)?undefined:error instanceof Error&&error.message==='The review request failed'?{state:'failed'}:before);
             throw error;
         }finally{this.reviewing.delete(id);}
         const text=reviewText(written.text),counts=countFindings(text);
         const result:ReviewResult={title:live.info.title,model:writer.model,text,counts,inputTokens:written.summary.inputTokens,outputTokens:written.summary.outputTokens,costUsd:written.summary.costUsd};
-        this.reviewResults.set(id,result);this.reviewedDiff.set(id,fingerprint);
-        this.setReview(live,{state:'done',...counts,...(auto?{auto:true as const}:{})});
+        this.reviewResults.set(id,result);
+        // Back at work meanwhile: the diff it read is stale, so the card shows nothing (/review show still has it).
+        if(this.working(live))this.setReview(live,undefined);
+        else{this.reviewedDiff.set(id,fingerprint);this.setReview(live,{state:'done',...counts,...(auto?{auto:true as const}:{})});}
         // The model you picked is the default next time, and the one auto-review uses.
         if(!auto)await new SettingsStore(this.paths.root).update(async current=>({...current,reviewModel:{keyId,model}})).catch(()=>{this.log.error('Review model could not be saved as the default');});
         return result;
     }
+    private working(live:Live):boolean{return ['starting','running','waiting'].includes(live.info.status);}
     async lastReview(id:string):Promise<ReviewResult>{
         const result=this.reviewResults.get(id);if(!result)throw new ReviewError('No review yet for this agent · /review <agent>');
         return result;
@@ -1097,10 +1118,13 @@ export class SessionManager extends EventEmitter {
             const model=plan.models.find(m=>m.keyId===pick.keyId&&m.model===pick.model);
             if(!model){this.log.error('Auto-review skipped: its model is no longer offered; pick one with /review');return;}
             const ledger=this.autoReviews??=new AutoReviewLedger(this.paths.root),worst=model.priceUsd.high;
-            if(!await ledger.take(worst,settings.autoReviewDailyUsd??1)){this.log.error("Auto-review skipped: today's auto-review budget is used");return;}
-            let spent=worst;
+            const hold=await ledger.take(worst,settings.autoReviewDailyUsd??1);
+            if(!hold){this.log.error("Auto-review skipped: today's auto-review budget is used");return;}
+            // Nothing sent (refused first): nothing spent. A request that failed after it was sent may have been billed.
+            let spent=0;
             try{spent=(await this.review(id,pick.keyId,pick.model,plan.fingerprint,true)).costUsd??worst;}
-            finally{await ledger.settle(worst,spent);}
+            catch(error){if(error instanceof Error&&error.message==='The review request failed')spent=worst;throw error;}
+            finally{await ledger.settle(hold,spent);}
         }catch(error){this.log.error(`Auto-review skipped (${error instanceof ReviewError||error instanceof CheckpointError?error.message:'unexpected error'})`);}
     }
     // v0.7.4 /fork: what would start (D49 asks with this), and the start itself. The new agent runs in its own worktree
@@ -1194,7 +1218,7 @@ export class SessionManager extends EventEmitter {
         throw new Error('Session not found'); await live.host?.stop(); await live.output; }
     async remove(id: string): Promise<void> { if (this.closing) throw new Error('Background service is stopping'); const live = this.sessions.get(id); if (!live)
         throw new Error('Session not found'); if (!['exited', 'error'].includes(live.info.status))
-        throw new Error('Only exited sessions can be removed'); this.cancelTests(id,true); if(live.mirrorFailed)await this.stop(id); await live.output; await removeSessionFiles(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
+        throw new Error('Only exited sessions can be removed'); this.cancelTests(id,true); this.reviewResults.delete(id); this.reviewedDiff.delete(id); if(live.mirrorFailed)await this.stop(id); await live.output; await removeSessionFiles(this.paths.root,id);live.outputClock?.dispose();live.lastReply=undefined;live.mirror.dispose(); this.sessions.delete(id); await this.persist(); this.event({ kind: 'session.removed', sessionId: id }); }
     // A worktree shared by resumed agents belongs to whichever is still live, else the newest record.
     private worktreeAgent(path:string):SessionInfo|undefined{
         const agents=[...this.sessions.values()].map(s=>s.info).filter(info=>info.worktree===path);

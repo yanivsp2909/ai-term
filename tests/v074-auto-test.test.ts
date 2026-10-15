@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getPaths, preparePaths } from '../src/shared/paths.js';
+import pty from 'node-pty';
+import * as engines from '../src/daemon/engines.js';
 import { Logger } from '../src/daemon/log.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
 import { SettingsStore } from '../src/daemon/settings.js';
@@ -29,6 +31,10 @@ async function setup(script = '#!/bin/sh\necho "Tests  2 failed | 5 passed"\nexi
   await writeFile(join(repo, 'package.json'), '{"scripts":{"test":"x"}}\n'); await writeFile(join(repo, 'check.sh'), script); await chmod(join(repo, 'check.sh'), 0o755);
   await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-qm', 'initial', '--');
   const paths = getPaths(home); await preparePaths(paths);
+  // The agent stays alive (a stub that waits), so its exit can't race the turn end the test simulates.
+  const real = pty.spawn;
+  vi.spyOn(pty, 'spawn').mockImplementation((_file, _args, options) => real('/bin/sh', ['-c', 'sleep 30'], { ...options, env: { PATH: '/usr/bin:/bin' } }));
+  vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
   const m = new SessionManager(paths, new Logger(paths.log)); managers.push(m); await m.load();
   const agent = await m.create({ engine: 'codex', model: 'gpt-test', auth: { kind: 'account' }, cwd: repo, permission: 'ask', title: 'fixer' });
   const live = (m as unknown as { sessions: Map<string, { info: SessionInfo }> }).sessions.get(agent.id);
@@ -142,7 +148,7 @@ it('HIGH (security review): ignored dependency folders the agent filled count as
   await m.setTestCommand(repo, ['./check.sh']);
   await mkdir(join(tree, 'node_modules', '.bin'), { recursive: true }); await writeFile(join(tree, 'node_modules', '.bin', 'vitest'), '#!/bin/sh\necho evil\n');
   await m.afterTurn(agent.id);
-  expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['node_modules/ (ignored)'] });
+  expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['.gitignore', 'node_modules/ (ignored)'] });
   const plan = await m.testPlan(agent.id);
   await m.runTestPlan(agent.id, plan.fingerprint);
   await vi.waitFor(() => expect(result(m, agent.id)).toEqual({ state: 'pass' }));
@@ -150,15 +156,16 @@ it('HIGH (security review): ignored dependency folders the agent filled count as
   expect(result(m, agent.id)).toEqual({ state: 'pass' });
   await writeFile(join(tree, 'node_modules', '.bin', 'vitest'), '#!/bin/sh\necho more evil\n');
   await m.afterTurn(agent.id);
-  expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['node_modules/ (ignored)'] });
+  expect(result(m, agent.id)).toEqual({ state: 'ask', changed: ['.gitignore', 'node_modules/ (ignored)'] });
 });
 
 it('MEDIUM (security review): a process that leaves the group (setsid) can\'t keep a run open past its limit', async () => {
   const dir = await temp(), started = Date.now();
-  const outcome = await runTests(['/bin/sh', '-c', "perl -e 'use POSIX; POSIX::setsid(); sleep 20' & sleep 1; exit 0"], dir, buildTestEnv(process.env), { timeoutMs: 2_000 });
+  const outcome = await runTests(['/bin/sh', '-c', "perl -e 'use POSIX; POSIX::setsid(); sleep 20' & sleep 1; exit 0"], dir, buildTestEnv(process.env), { timeoutMs: 15_000 });
+  // The command itself ended after a second; the escaped process can't keep the run open.
   expect(outcome).toEqual({ state: 'pass' });
   expect(Date.now() - started).toBeLessThan(6_000);
-}, 15_000);
+}, 20_000);
 
 it('MEDIUM (TS review): a turn that starts while the turn end is checked gets no test run or result', async () => {
   const { repo, m, agent, live } = await setup('#!/bin/sh\nexit 0\n');

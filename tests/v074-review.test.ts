@@ -12,6 +12,7 @@ import { UsageService } from '../src/daemon/usage-service.js';
 import { KeyStore } from '../src/daemon/keys.js';
 import { SettingsStore } from '../src/daemon/settings.js';
 import * as engines from '../src/daemon/engines.js';
+import pty from 'node-pty';
 import type { Summarize } from '../src/daemon/handoff.js';
 import { reviewCandidates } from '../src/daemon/review.js';
 import { countFindings, diffForReview, reviewPrompt, REVIEW_OUTPUT_TOKENS, validateReviewPlan, validateReviewResult, validateReviewState } from '../src/shared/review.js';
@@ -78,6 +79,9 @@ async function daemon(settings: Record<string, unknown> = {}, summarize?: Summar
   await usage.start(); await manager.load();
   cleanups.push(async () => { await manager.shutdown(); await usage.close(); });
   vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
+  // The agent stays alive (a stub that waits), so its exit can't race the turn end the test simulates.
+  const real = pty.spawn;
+  vi.spyOn(pty, 'spawn').mockImplementation((_file, _args, options) => real('/bin/sh', ['-c', 'sleep 30'], { ...options, env: { PATH: '/usr/bin:/bin' } }));
   const key = await keys.add({ provider: 'anthropic', label: 'work', secret: SECRET });
   const agent = await manager.create({ engine: 'codex', model: 'gpt-test', auth: { kind: 'account' }, cwd: repo, permission: 'ask', title: 'fixer' });
   const live = (manager as unknown as { sessions: Map<string, { info: SessionInfo }> }).sessions.get(agent.id);
