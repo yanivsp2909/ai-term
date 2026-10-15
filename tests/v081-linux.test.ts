@@ -25,7 +25,8 @@ import { appBuilderConfig } from '../scripts/app-config.mjs';
 const LINUX = process.platform === 'linux', roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function temp(): Promise<string> { const dir = await realpath(await mkdtemp(join(tmpdir(), 'ai-linux-'))); roots.push(dir); return dir; }
-const BWRAP = LINUX ? await findBwrap() : null;
+// Only where bubblewrap can actually make its namespaces (CI installs it and allows user namespaces).
+const BWRAP = LINUX && await findBwrap() !== null && (await agentSandbox('linux')).dontAsk;
 
 function fakeCopy(calls: { file: string; args: string[]; input: string }[]) {
   return (file: string, args: string[], _options: { timeout: number }, callback: (error: Error | null) => void) => {
@@ -43,7 +44,7 @@ it('clipboard: Linux uses wl-copy on Wayland, else xclip or xsel; none installed
   await copyText('x11', fakeCopy(calls), { platform: 'linux', env: { DISPLAY: ':0' }, find: found(['wl-copy', 'xclip']) });
   await copyText('sel', fakeCopy(calls), { platform: 'linux', env: { DISPLAY: ':0' }, find: found(['xsel']) });
   expect(calls).toEqual([{ file: '/usr/bin/wl-copy', args: [], input: 'hello' }, { file: '/usr/bin/xclip', args: ['-selection', 'clipboard'], input: 'x11' }, { file: '/usr/bin/xsel', args: ['--clipboard', '--input'], input: 'sel' }]);
-  await expect(copyText('x', fakeCopy(calls), { platform: 'linux', env: {}, find: found([]) })).rejects.toThrow('no clipboard tool: install wl-clipboard, xclip or xsel');
+  await expect(copyText('x', fakeCopy(calls), { platform: 'linux', env: {}, find: found([]) })).rejects.toThrow('no clipboard tool (install wl-clipboard, xclip or xsel)');
   await copyText('mac', fakeCopy(calls), { platform: 'darwin', env: {}, find: found([]) });
   expect(calls.at(-1)).toEqual({ file: '/usr/bin/pbcopy', args: [], input: 'mac' });
 });
@@ -190,3 +191,116 @@ it.skipIf(!BWRAP)('Linux bwrap: agent bash can\'t see AI Term\'s folder or other
   await expect(stat(join(home, '.zlogin'))).rejects.toThrow(); await expect(stat(join(home, '.config', 'fish'))).rejects.toThrow();
   expect(await readFile(join(cwd, 'own.txt'), 'utf8')).toBe('own\n');
 }, 60_000);
+
+// Part B review (typescript-reviewer, security-reviewer; fresh context): each failed before its fix.
+import { daemonCommand } from '../src/client/connection.js';
+import { parsePsTimes, psCpuShares } from '../src/daemon/sysstats.js';
+import { shortcutKey } from '../app/main/menus.js';
+import { testLines } from '../src/client/tui/test-ask.js';
+
+it('HIGH (TS review): in Ask, a bubblewrap that can\'t start, or a home it can\'t read, runs the command plainly after your yes; Don\'t ask refuses', async () => {
+  const dir = await temp(), home = join(dir, 'home'), cwd = join(dir, 'w');
+  await mkdir(join(home, '.config'), { recursive: true }); await mkdir(cwd);
+  const env = buildBashEnv(process.env);
+  const broken = { platform: 'linux' as const, linux: { bwrap: '/nonexistent/bwrap', ready: async () => false } };
+  expect((await runBash('echo plain', { cwd, env, sandbox: { home: join(home, '.ai-term'), user: home, ...broken } })).stdout).toBe('plain\n');
+  await expect(runBash('echo x', { cwd, env, sandbox: { home: join(home, '.ai-term'), user: home, require: true, ...broken } })).rejects.toThrow("bash can't run in don't ask without a sandbox");
+  await chmod(join(home, '.config'), 0o000);
+  try {
+    const unreadable = { platform: 'linux' as const, linux: { bwrap: '/nonexistent/bwrap', ready: async () => true } };
+    expect((await runBash('echo plain', { cwd, env, sandbox: { home: join(home, '.ai-term'), user: home, ...unreadable } })).stdout).toBe('plain\n');
+    await expect(runBash('echo x', { cwd, env, sandbox: { home: join(home, '.ai-term'), user: home, require: true, ...unreadable } })).rejects.toThrow("bash can't run in don't ask without a sandbox");
+  } finally { await chmod(join(home, '.config'), 0o755); }
+});
+
+it('HIGH (TS review): an entry of home that can\'t be read (a dead network mount) is left out, not a reason to refuse every command', async () => {
+  const dir = await temp(), home = join(dir, 'home'), aiTerm = join(home, '.ai-term'), cwd = join(aiTerm, 'w');
+  await mkdir(cwd, { recursive: true }); await mkdir(join(home, 'src'));
+  const fs = await import('node:fs/promises'), real = fs.lstat;
+  const plan = await bashSandboxPlan({ user: home, aiTermHome: aiTerm, cwd, protect: [], runtime: null, lstat: async path => { if (String(path).endsWith('/src')) throw Object.assign(new Error('dead mount'), { code: 'ENOTCONN' }); return real(path); } });
+  expect(plan.shadows[0]?.entries.map(entry => entry.path)).not.toContain(join(home, 'src'));
+});
+
+it('HIGH (TS review): from an AppImage the daemon starts from the AppImage file itself, never pinned to the app\'s temporary mount', () => {
+  const entry = '/tmp/.mount_AIabc/resources/app/dist/cli/index.js';
+  const command = daemonCommand(entry, { APPIMAGE: '/home/me/Apps/AI-Term.AppImage', APPDIR: '/tmp/.mount_AIabc' });
+  expect(command.file).toBe('/home/me/Apps/AI-Term.AppImage');
+  expect(command.args[0]).toBe('-e'); expect(command.args.at(-1)).toBe('daemon');
+  expect(command.args[1]).toContain('APPDIR');
+  expect(daemonCommand('/opt/ai-term/dist/cli/index.js', {})).toEqual({ args: ['/opt/ai-term/dist/cli/index.js', 'daemon'] });
+});
+
+it('MEDIUM (TS review): a test command bubblewrap can\'t find reads as tests couldn\'t start, not as no sandbox', async () => {
+  const dir = await temp(), fake = join(dir, 'bwrap');
+  await writeFile(fake, '#!/bin/sh\necho "bwrap: execvp pytest: No such file or directory" >&2\nexit 1\n'); await chmod(fake, 0o755);
+  const box = { prefix: [fake, '--'], spec: { worktree: dir, temp: dir, home: dir, private: [], loopback: false } };
+  expect(await runTests(['npm', 'test'], dir, { PATH: '/usr/bin:/bin' }, { sandbox: box, timeoutMs: 10_000 })).toEqual({ state: 'error' });
+  await writeFile(fake, '#!/bin/sh\necho "bwrap: setting up uid map: Permission denied" >&2\nexit 1\n');
+  expect(await runTests(['npm', 'test'], dir, { PATH: '/usr/bin:/bin' }, { sandbox: box, timeoutMs: 10_000 })).toEqual({ state: 'nosandbox' });
+});
+
+it('MEDIUM (TS review): Linux per-agent CPU is the change in CPU time since the last look, not ps\'s lifetime average; virtual interfaces don\'t count twice', () => {
+  const rows = parsePsTimes('  10   1  2000  100\n  11  10  1000   50\n');
+  expect(rows).toEqual([{ pid: 10, ppid: 1, rssKb: 2000, seconds: 100 }, { pid: 11, ppid: 10, rssKb: 1000, seconds: 50 }]);
+  expect(psCpuShares(rows, new Map([[10, 99], [11, 50]]), 2)).toEqual([{ pid: 10, ppid: 1, rssKb: 2000, cpu: 50 }, { pid: 11, ppid: 10, rssKb: 1000, cpu: 0 }]);
+  const net = parseProcNetDev('Inter-|   Receive |  Transmit\n face |bytes    packets errs drop fifo frame compressed multicast|bytes\n  eth0: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n  veth12ab: 900 9 0 0 0 0 0 0 900 9 0 0 0 0 0 0\n  docker0: 900 9 0 0 0 0 0 0 900 9 0 0 0 0 0 0\n  br-1a2b: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n  virbr0: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n');
+  expect(net && [...net.keys()]).toEqual(['eth0']);
+  expect(parseMeminfo('MemTotal: 100 kB\n')).toBeNull();
+});
+
+it('MEDIUM (TS review): a failed sandbox check is looked at again after 10 s, not a minute; LOW: the probes use /bin/sh (NixOS has no /bin/true)', async () => {
+  const { BWRAP_PROBE, cacheFor } = await import('../src/daemon/agent-sandbox.js');
+  expect(BWRAP_PROBE.slice(-3)).toEqual(['/bin/sh', '-c', ':']);
+  expect(cacheFor({ dontAsk: false, note: 'x' })).toBe(10_000); expect(cacheFor({ dontAsk: true })).toBe(60_000);
+});
+
+it('LOW (TS review): Ctrl+Shift+digit and punctuation keep their shortcut on Linux (the key reads as !, _, <); /test explains 127.0.0.1 on Linux', () => {
+  expect(shortcutKey({ key: '!', code: 'Digit1' }, 'linux')).toBe('1');
+  expect(shortcutKey({ key: '<', code: 'Comma' }, 'linux')).toBe(',');
+  expect(shortcutKey({ key: '_', code: 'Minus' }, 'linux')).toBe('-');
+  expect(shortcutKey({ key: 'T', code: 'KeyT' }, 'linux')).toBe('t');
+  expect(shortcutKey({ key: '1', code: 'Digit1' }, 'darwin')).toBe('1');
+  const plan = { title: 'fixer', command: ['npm', 'test'], cwd: '/tmp/t', changed: [], fingerprint: 'a'.repeat(64), sandbox: true, loopback: false };
+  expect(testLines(plan, 'linux').map(line => line.text)).toContain("127.0.0.1: only the tests' own on Linux · your machine's services stay closed");
+});
+
+it('HIGH (security review): every folder between a rebuilt one and a read-only place is pinned, so renaming an ancestor can\'t swap the place out; a missing hooks folder is made and protected', async () => {
+  const dir = await temp(), home = join(dir, 'home'), aiTerm = join(home, '.ai-term'), cwd = join(aiTerm, 'w'), git = join(home, 'work', 'proj', '.git');
+  await mkdir(cwd, { recursive: true }); await mkdir(git, { recursive: true }); await writeFile(join(git, 'config'), '[core]\n');
+  await mkdir(join(home, 'dotfiles', 'zsh'), { recursive: true }); await writeFile(join(home, 'dotfiles', 'zsh', 'zshrc'), ''); await symlink(join(home, 'dotfiles', 'zsh', 'zshrc'), join(home, '.zshrc'));
+  const plan = await bashSandboxPlan({ user: home, aiTermHome: aiTerm, cwd, protect: [git], runtime: null });
+  expect(plan.pinned).toEqual(expect.arrayContaining([join(home, 'work', 'proj'), git, join(home, 'dotfiles', 'zsh')]));
+  expect(plan.pinned).not.toContain(home);
+  expect(plan.readOnly).toEqual(expect.arrayContaining([join(git, 'hooks'), join(git, 'config')]));
+  expect((await stat(join(git, 'hooks'))).isDirectory()).toBe(true);
+  const args = bwrapBashArgs(plan).join(' ');
+  expect(args.indexOf(`--bind ${join(home, 'work', 'proj')} ${join(home, 'work', 'proj')}`)).toBeLessThan(args.indexOf(`--ro-bind ${join(git, 'hooks')}`));
+});
+
+it('MEDIUM (security review): helpers AI Term runs outside any sandbox (notify-send, xdg-open, the clipboard tools) are found only in system folders, never in a PATH folder an agent can write', async () => {
+  const { systemTool } = await import('../src/shared/executable.js');
+  const dir = await temp(); await mkdir(join(dir, 'bin')); await writeFile(join(dir, 'bin', 'xclip'), '#!/bin/sh\n'); await chmod(join(dir, 'bin', 'xclip'), 0o755);
+  expect(await systemTool('xclip', [join(dir, 'bin')])).toBe(join(dir, 'bin', 'xclip'));
+  expect(await systemTool('xclip', ['/nonexistent'])).toBeNull();
+  const { SYSTEM_TOOL_DIRS } = await import('../src/shared/executable.js');
+  expect(SYSTEM_TOOL_DIRS).toEqual(['/usr/local/bin', '/usr/bin', '/bin']);
+});
+
+it('MEDIUM (security review): Linux persistence places — systemd user units in ~/.local/share, X session files, PAM env, Plasma and window-manager autostart, PATH folders in home, gpg-agent', async () => {
+  const { PERSISTENCE_FILES: files, PERSISTENCE_DIRS: dirs } = await import('../src/daemon/sandbox-places.js');
+  for (const name of ['.xprofile', '.xsessionrc', '.xinitrc', '.pam_environment', '.gnupg/gpg-agent.conf']) expect(files).toContain(name);
+  for (const name of ['.local/share/systemd/user', '.config/plasma-workspace/env', '.config/autostart-scripts', '.config/i3', '.config/sway', '.config/hypr', '.local/bin', 'bin']) expect(dirs).toContain(name);
+});
+
+it('MEDIUM (security review): the session runtime folder is hidden by its real path and the usual /run/user/<uid> both, whatever the bash env says', async () => {
+  const { runtimeDirs } = await import('../src/daemon/bwrap.js');
+  const dir = await temp(); await mkdir(join(dir, 'real')); await symlink(join(dir, 'real'), join(dir, 'link'));
+  expect(await runtimeDirs({ XDG_RUNTIME_DIR: join(dir, 'link') }, 4242)).toEqual([join(dir, 'real')]);
+});
+
+it('LOW (security review): the subagent approval no longer says commands are unsandboxed; the probe uses the real namespace flags', async () => {
+  const text = await readFile(join(process.cwd(), 'src', 'agent', 'agent.ts'), 'utf8');
+  expect(text).not.toContain('commands are unsandboxed');
+  const { BWRAP_PROBE } = await import('../src/daemon/agent-sandbox.js');
+  for (const flag of ['--unshare-pid', '--unshare-ipc', '--unshare-uts', '--tmpfs']) expect(BWRAP_PROBE).toContain(flag);
+});
