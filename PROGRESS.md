@@ -1,9 +1,123 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: see the handover commit after 38ce471 (Part A of the v0.7 fix-and-gate run)
-Roadmap step: run 2026-10-15 (2), Claude Code, Opus 5.5: A (B26, B27, B28) done · B v0.7 gate: next
-Branch: main. Started at d3aeb15 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64) with `/usr/bin/sandbox-exec` present, so the real sandbox was tested here, not only its profile.
+Last commit: see the handover commit after fe7fb28 (Part B, v0.7 release gate)
+Roadmap step: run 2026-10-15 (2), Claude Code, Opus 5.5: A (B26, B27, B28) done · B v0.7 release gate done, **v0.7 closed**
+Branch: main, pushed after each part. Started at d3aeb15 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64) with `/usr/bin/sandbox-exec` present, so the real sandboxes were tested here, not only their profiles.
+
+| Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
+|---|---|---|---|
+| A B26, B27, B28 | done | 485b4d8 | review: 0 / 1 explained (closed in B by D57) / 6 fixed + 2 explained / 5 fixed + 3 explained |
+| B v0.7 gate | done, **v0.7 closed** | this push | 0 / 6 fixed / 9 fixed + 3 explained / 8 fixed + many explained (below) |
+
+## Part B: v0.7 release gate — done, **v0.7 closed**
+Seven fresh reviewers that hadn't seen the code, read-only:
+- security-reviewer ×3: diff view and checkpoints; /merge, /pr and the secret scan; /review, /export and /compact.
+- security-bounty-hunter (a general-purpose agent told to load the skill): auto-test after B26, and /fork.
+- silent-failure-hunter: all v0.7 code.
+- engineering:code-review (a general-purpose agent told to load the skill): the whole gate diff `3b89375..HEAD`.
+- A fresh security-reviewer on the fixes themselves.
+
+Every fix went in as a failing test commit, then a fix commit.
+
+Commits:
+- Yaniv's $0-price point: a670415 (RED) / f31e3af.
+- Gate fixes: a670415 (RED) / e504721; second batch 730d408 / c90ebea; third batch 9154de4 / 20f5856.
+- Fix review: d3196c7 / fe7fb28.
+- Docs 8790215; older tests moved to the secrets file 2523276.
+
+### Yaniv's point during the gate (fixed; D57, Proposed)
+"In Don't ask mode, a hijacked agent could set its own model's price to $0 and get past your budgets." Fixed in two layers:
+- **The agent's key, endpoint and receiver credentials never sit in its process environment.** Any program of yours could read them with `ps -E`. A 0600 file in the agent's private session folder carries them; the agent reads it and deletes it before anything runs, and the daemon removes it after a minute if the agent never started.
+- **On macOS every bash command the agent runs is sandboxed** (allow by default). It can't:
+  - read or write `~/.ai-term` (its own worktree excepted);
+  - connect to AI Term's sockets;
+  - attach a debugger to, or look into, your other processes (the fix review found lldb and vmmap could otherwise read the agent's and daemon's memory);
+  - write the repository's `.git/hooks` or `.git/config`.
+- **Checked here:** git, node, npm, python, make, `pgrep` and `pkill` work; `~/.ai-term` reads as closed; vmmap on another process fails.
+- **What remains, by design of Don't ask:** a command can still write elsewhere in your home (shell startup files, LaunchAgents) and so act later outside the sandbox. README says so.
+- **On other systems** bash runs as before.
+
+### Findings fixed
+- **HIGH:**
+  - `/pr` pushed to every push URL of origin while showing one (the agent can write the shared config): now refused.
+  - The test sandbox let tests write xcrun's shared cache, which unsandboxed tools trust: rule removed.
+  - File names with control characters broke test plans and results, undo plans and scan hits across the socket, and could make the saved state unloadable: cleaned for display.
+  - `/review`, `/fork` and `/test` used the 5 s client timeout while the daemon went on: up to 5 minutes now.
+  - The agent's key and tokens in its env, and bash reaching `~/.ai-term` (Yaniv): see above.
+  - Debugger attach from sandboxed bash (fix review).
+- **MEDIUM:**
+  - `/review` sent `.env`-like files and scan-flagged lines to the model.
+  - The secret scan missed NUL-byte files, `-diff` files and secrets removed later in the branch history.
+  - `/undo` could run while test code ran in the worktree (a link-swap race).
+  - An auto-test that couldn't run showed nothing.
+  - A turn end that came during the last one's handling was dropped.
+  - `/compact` kept a summary cut off by its length limit.
+  - A failed checkpoint later read as "no checkpoint".
+  - An unreadable diff file gave no reason.
+  - README said an old price record applies to Anthropic and OpenAI (it never did): text fixed.
+- **LOW:**
+  - The remote URL's password reached the client.
+  - gh wasn't pinned to the pushed repository (now `--repo`).
+  - A merge you had in progress could be aborted.
+  - v0.7 refusals didn't reach the client as written.
+  - A fork name could cut an emoji in half.
+  - The secrets-file timer could delete a restart's newer file.
+  - AI Term's folder as the agent's folder reopened all of it.
+
+### Explained, not changed
+- **MEDIUM:** sandboxed bash can still persist code elsewhere in your home. That is Don't ask by design (it writes without asking); a full fix is a deny-by-default bash sandbox, a bigger change than this gate.
+- **MEDIUM:** a process an idle agent left running could still race a restore (symlink swap between check and rename).
+  - Refused during test runs now. Node has no `openat`, so an fd-based write needs a native helper.
+  - The reviewer couldn't trigger it in about 10 tries; restore stops on any change it sees.
+- **MEDIUM (Part A):** the repository's `.git` stays readable to sandboxed tests; hiding `.git/config` makes git fatal (tested).
+- **LOW:**
+  - The test sandbox's denial wording is a heuristic both ways (output that merely looks like a denial, or an unfamiliar denial message).
+  - A diff of an old worktree record with no recorded repo trusts its `.git` file (display only, no execution).
+  - Restored files get 0644/0755.
+  - The index copy has no size cap.
+  - Temp folders left by a crash aren't swept.
+  - Any `gh auth status` error reads as logged out.
+  - An unreadable transcript exports as cut.
+  - A stale `+N −M` after a failed refresh.
+  - A prompt-injected diff can steer its own review (the `<diff>` tag can no longer be closed).
+  - The `/compact` summary sits as a user message (labeled as information; tools still ask).
+  - A review is priced at ⏎ time, not at the ask.
+  - Fixture paths skip the entropy check (patterns still apply).
+  - `ps` can't run in the agent's sandbox (setuid); `pgrep` works.
+  - A process that double-forks faster than 250 ms can outlive a test run, inside its sandbox.
+
+### Prompt vs code
+- **`security-bounty-hunter` and `engineering:code-review` are skills, not agent types.** They ran as fresh general-purpose agents told to load them, as in earlier gates.
+- **Two fixes went beyond the gate's list:** the agent's bash sandbox and the secrets file (D57). Yaniv asked for them mid-gate.
+
+### Checks (after fe7fb28)
+```
+npm run typecheck   exit 0
+npm run lint        ESLint: No issues found
+npm run build       ESM ⚡️ Build success
+npm run app:build   ✓ built
+npm test (1)        Test Files 230 passed · Tests 1519 passed | 2 skipped · 32.33s
+npm test (2)        Test Files 230 passed · Tests 1519 passed | 2 skipped · 31.57s
+npm run app:test    9 passed (38.4s)
+```
+
+### New manual checks (this run only, sandbox first)
+- `cd ~/ai-term && npm run build && node dist/cli/index.js daemon stop && node dist/cli/index.js`: restart onto this code (it stops running agents).
+- `cd ~/ai-term && node dist/cli/index.js`: the test sandbox in a real JS project.
+  - Run `/test-cmd npm test`, then let an agent finish a turn: the card shows `✓ tests pass` or `✗ N failing`, and `/test` shows `sandbox: …`.
+  - Then a test that reads `~/Documents/x` reads `✗ blocked by sandbox: ~/Documents/x`.
+- `cd ~/ai-term && node dist/cli/index.js`: the agent's bash sandbox, with a key agent in Ask.
+  - `! cat ~/.ai-term/settings.json` is refused with `Operation not permitted`.
+  - `git commit` in its worktree still works.
+  - `! echo x >> "$(git rev-parse --git-common-dir)/hooks/pre-commit"` is refused.
+- `cd ~/ai-term && node dist/cli/index.js`: in `/test` press `l`; `127.0.0.1: on for this project`, and a test that starts a local server passes.
+- `cd ~/ai-term && node dist/cli/index.js`: a Python, Go or Rust project under the test sandbox. If it reads `✗ blocked by sandbox: <path>`, tell me the path (a toolchain folder may need reopening).
+- `cd ~/ai-term && node dist/cli/index.js`: B28 for real: a daily budget (`b`), an unpriced OpenRouter or Foundry model; the pause offers `p` (and `m` on Foundry); ⏎ saves; the card says `price: yours`.
+- `cd ~/ai-term && node dist/cli/index.js`: `/settings` → `p` lists your prices once each, with older ones under their provider or `any provider`.
+- `cd ~/ai-term && gh auth status && node dist/cli/index.js`: `/pr` in a throwaway GitHub repo. The popup shows `gh pr create --repo github.com/<you>/<repo> …`. A second `git config --add remote.origin.pushurl …` makes `/pr` refuse.
+- `cd ~/ai-term && node dist/cli/index.js`: `/merge` while you have `git merge --no-commit` in progress is refused, and your merge is untouched.
+- `cd ~/ai-term && node dist/cli/index.js`: `/review` of an agent that wrote a `.env`: the review never quotes its values.
 
 ## Part A: B26, B27, B28 — done
 Commits: B26 974ecab (RED) / 7e7197e (GREEN, plus a symlinked key folder found while writing it); read-hiding follow-up (Yaniv, mid-run) 6d70bf7 (RED) / 003bd01; B27 889e4ce / 545373b; B28 1629236 / c02e239; docs ea59324, ux-copy ea7a0aa; review 31379ab (RED) / 38ce471; test timing 1 commit.
