@@ -126,6 +126,7 @@ export class SessionManager extends EventEmitter {
     static handoffStartMs = 30_000;
     // B26: the sandbox auto-test runs under (a test points it at a missing file to see the no-sandbox path).
     static sandboxExec = SANDBOX_EXEC;
+    private secretTimers=new Map<string,ReturnType<typeof setTimeout>>();
     private sessions = new Map<string, Live>();
     private size = { cols: 85, rows: 30 };
     private saving: Promise<void> = Promise.resolve();
@@ -417,6 +418,10 @@ export class SessionManager extends EventEmitter {
                 Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
             }
             const transcript=agent?.engine==='ai-term'?await agentTranscript(this.paths.root,info.id):null;
+            // The repository a worktree shares its .git with: its hooks and config are kept out of the agent's bash (fix review).
+            let gitCommon:string|undefined;
+            const gitRepo=agent?.engine==='ai-term'&&info.worktree?this.worktreeRecords.get(info.worktree)?.repo:undefined;
+            if(gitRepo)try{gitCommon=await repoCommonDir(gitRepo);}catch{this.log.error('Agent sandbox: the repository\'s git folder is unknown; its hooks are not protected');}
             if(agent?.engine==='ai-term'&&agent.auth.kind==='key'){const spawnAgent=(secret:string|null,binding:FoundryBinding|null)=>{
                 // B12: only the Keychain's bound endpoint and deployments decide where the key goes and which models it may run
                 // (Foundry, Bedrock). Fixed-host providers' hosts are in the agent's code; Ollama's endpoint is local only.
@@ -428,9 +433,10 @@ export class SessionManager extends EventEmitter {
                 const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
                 const file=join(dirname(transcript),'agent-secrets.json'),split=splitAgentSecrets(buildAgentEnv(process.env,{secret,endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry}),file,this.paths.root);
                 writeAgentSecrets(file,split.secrets);
-                // An agent that never started leaves no secret behind for long.
-                setTimeout(()=>{try{unlinkSync(file);}catch(error){if(!isFsError(error,'ENOENT'))this.log.error('Agent secrets file could not be removed');}},AGENT_SECRETS_TTL_MS).unref();
-                recipe={executable:built.executable,args:built.args,env:split.env};
+                // An agent that never started leaves no secret behind for long; a restart's newer file keeps its own timer.
+                clearTimeout(this.secretTimers.get(file));
+                this.secretTimers.set(file,setTimeout(()=>{this.secretTimers.delete(file);try{unlinkSync(file);}catch(error){if(!isFsError(error,'ENOENT'))this.log.error('Agent secrets file could not be removed');}},AGENT_SECRETS_TTL_MS).unref());
+                recipe={executable:built.executable,args:built.args,env:{...split.env,...(gitCommon?{AITERM_GIT_COMMON:gitCommon}:{})}};
                 try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
             };
                 // Ollama has no key: nothing is read from the Keychain for it.

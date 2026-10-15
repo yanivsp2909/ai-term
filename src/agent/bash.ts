@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
+import { join } from 'node:path';
 import { SANDBOX_EXEC, SandboxPathError, sandboxPath } from '../daemon/test-sandbox.js';
 import { visible } from './display.js';
 import { isFsError } from '../shared/paths.js';
@@ -15,10 +16,17 @@ export interface BashResult { exitCode: number | null; signal: string | null; st
 // lets it do what you could, except read or write that folder (its settings, budgets, keys' metadata, other agents'
 // files; the agent's own worktree in it stays open) or connect to AI Term's sockets there. Without sandbox-exec (another
 // OS) it runs as before.
-export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string } }
-export function bashProfile(home: string, cwd: string): string {
-  const own = cwd === home || cwd.startsWith(`${home}/`) ? [`(allow file-read-data file-read-xattr file-write* (subpath "${sandboxPath(cwd)}"))`, `(allow network-outbound (remote unix-socket (subpath "${sandboxPath(cwd)}")))`] : [];
-  return ['(version 1)', '(allow default)', `(deny file-read-data file-read-xattr file-write* (subpath "${sandboxPath(home)}"))`, `(deny network-outbound (remote unix-socket (subpath "${sandboxPath(home)}")))`, ...own, ''].join('\n');
+// protect: git folders whose hooks and config a command may not write (the repository a worktree shares its .git with:
+// a hook planted there would run unsandboxed at your next commit).
+export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string; protect?: readonly string[] } }
+export function bashProfile(home: string, cwd: string, protect: readonly string[] = []): string {
+  const own = cwd.startsWith(`${home}/`) ? [`(allow file-read-data file-read-xattr file-write* (subpath "${sandboxPath(cwd)}"))`, `(allow network-outbound (remote unix-socket (subpath "${sandboxPath(cwd)}")))`] : [];
+  return ['(version 1)', '(allow default)',
+    // No debugger attach (task ports) and no peeking into other processes: the agent's and daemon's memory hold the key and
+    // AI Term's credentials (fix review). Their own child processes stay visible.
+    '(deny mach-priv-task-port)', '(deny process-info* (target others))',
+    `(deny file-read-data file-read-xattr file-write* (subpath "${sandboxPath(home)}"))`, `(deny network-outbound (remote unix-socket (subpath "${sandboxPath(home)}")))`, ...own,
+    ...protect.map(dir => `(deny file-write* (subpath "${sandboxPath(join(dir, 'hooks'))}") (literal "${sandboxPath(join(dir, 'config'))}"))`), ''].join('\n');
 }
 // The argv that runs a command line: sandboxed when it can be; a folder no profile can hold is refused, never run bare.
 async function bashArgv(command: string, options: BashOptions): Promise<[string, string[]]> {
@@ -27,7 +35,7 @@ async function bashArgv(command: string, options: BashOptions): Promise<[string,
   try { await access(SANDBOX_EXEC, constants.X_OK); } catch { return plain; }
   const [home, cwd] = await Promise.all([realpath(options.sandbox.home).catch(() => options.sandbox?.home ?? ''), realpath(options.cwd)]);
   let profile: string;
-  try { profile = bashProfile(home, cwd); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a folder with quotes, parentheses or control characters in its path"); throw error; }
+  try { profile = bashProfile(home, cwd, await Promise.all((options.sandbox.protect ?? []).map(dir => realpath(dir).catch(() => dir)))); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a folder with quotes, parentheses or control characters in its path"); throw error; }
   return [SANDBOX_EXEC, ['-p', profile, '--', '/bin/sh', '-c', command]];
 }
 
