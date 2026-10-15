@@ -128,10 +128,15 @@ function registerIpc(): void {
     }
   });
 }
+const BACKGROUND = process.env.AI_TERM_BACKGROUND === '1';
+// No Dock icon and no app activation either (macOS), so a background run never comes to the front.
+if (BACKGROUND && process.platform === 'darwin') app.setActivationPolicy('prohibited');
 function createWindow(): Promise<void> {
   ended = false;
   const colors = tokenColors(nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
-  window = new BrowserWindow({ title: 'AI Term', width: 1100, height: 720, minWidth: 480, minHeight: 300, backgroundColor: colors.bg, titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 14 }, webPreferences: secureWebPreferences(join(here, '../preload/index.cjs')) });
+  // AI_TERM_BACKGROUND=1 (the smoke tests): the window is never shown and never takes focus, so checks run while Yaniv
+  // works; it still renders (no background throttling) for the tests to read.
+  window = new BrowserWindow({ title: 'AI Term', width: 1100, height: 720, minWidth: 480, minHeight: 300, backgroundColor: colors.bg, titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 14 }, ...(BACKGROUND ? { show: false, focusable: false } : {}), webPreferences: { ...secureWebPreferences(join(here, '../preload/index.cjs')), ...(BACKGROUND ? { backgroundThrottling: false } : {}) } });
   window.setMenu(null);
   denyPermissions(window.webContents.session);
   lockNavigation(window.webContents);

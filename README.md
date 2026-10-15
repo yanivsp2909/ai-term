@@ -73,7 +73,7 @@ For source development, install Node ≥22, `npm install`, then `npm exec -- ins
 | `npm run app:dev` | Build `ai` and the desktop bundles, then open the window |
 | `npm run app:build` | Build Electron main, sandbox preload, and renderer in `app/out/` |
 | `npm run app:dist` | Build/sign `build/desktop/dist/mac-arm64/AI Term.app` and `AI-Term-0.1.1-arm64.zip` on this arm64 Mac (host-architecture builds) |
-| `npm run app:test` | Playwright Electron smoke/security checks; disposable HOME and daemon |
+| `npm run app:test` | Playwright Electron smoke/security checks; disposable HOME and daemon. The app runs hidden (`AI_TERM_BACKGROUND=1`: no window, no Dock icon, never focused), so it never pops up while you work |
 | `AI_TERM_TEST_APP="$PWD/build/desktop/dist/mac-arm64/AI Term.app/Contents/MacOS/AI Term" npm run app:test` | Same smoke tests against the packaged app |
 | `npm exec -- tsx scripts/measure-packaged-latency.ts` | Same-session dev `11362d1` vs packaged arrival-time A/B, gate only on p95 difference ≤0.30 ms |
 | `npm exec -- tsx scripts/measure-app-latency.ts` | Disposable-home keydown/output-arrival measurement; writes `docs/testing/v0.5-native-app-latency.json`; compares the frozen v0.5.1 p95 |

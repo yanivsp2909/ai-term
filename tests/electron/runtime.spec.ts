@@ -22,7 +22,7 @@ test('runtime loads N-API bindings without a system Node and command symlinks pr
 test('window uses an existing protocol-compatible dev daemon without stopping its agents',async()=>{
  const home=await mkdtemp(join(tmpdir(),'ai-bundle-handoff-')),state=join(home,'.ai-term'),paths=getPaths(state);
  await mkdir(state,{mode:0o700});await writeFile(join(state,'settings.json'),JSON.stringify({theme:'graphite',notifications:false}));
- const env={HOME:home,AI_TERM_HOME:state,AI_TERM_APP_DATA:join(home,'electron'),PATH:'/usr/bin:/bin',SHELL:'/bin/sh',LANG:'en_US.UTF-8'};
+ const env={HOME:home,AI_TERM_HOME:state,AI_TERM_APP_DATA:join(home,'electron'),PATH:'/usr/bin:/bin',SHELL:'/bin/sh',LANG:'en_US.UTF-8',AI_TERM_BACKGROUND:'1'};
  const daemon=spawn(process.execPath,[resolve('dist/cli/index.js'),'daemon'],{env,stdio:['ignore','ignore','pipe']});let startup='';daemon.stderr?.on('data',(data:Buffer)=>{startup+=data.toString();});const exited=new Promise<void>(r=>daemon.once('exit',()=>r()));
  let client:Connection|undefined,application:Awaited<ReturnType<typeof electron.launch>>|undefined;
  try{

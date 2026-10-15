@@ -1,13 +1,74 @@
 # PROGRESS
 
 ## Checkpoint
-Last commit: see the handover commit after 3566fb0 (Part A, v0.9.3)
-Roadmap step: run 2026-10-15 (4), Claude Code, Opus 5.5 (the prompt was written for Codex; Yaniv asked Claude to run it), long run A–C: A v0.9.3 done · B v1.0.1 install and docs next · C v1.0.2 /brain after
+Last commit: see the handover commit after the queue-test fix (Part B, v1.0.1)
+Roadmap step: run 2026-10-15 (4), Claude Code, Opus 5.5 (the prompt was written for Codex; Yaniv asked Claude to run it), long run A–C: A v0.9.3 done · B v1.0.1 install and docs done · C v1.0.2 /brain next
 Branch: main, pushed after each part. Started at cf6e64e after `git pull --ff-only` (already up to date). macOS 26.5.1 (arm64); no CI by Yaniv's choice, every check runs on this Mac.
 
 | Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
 |---|---|---|---|
-| A v0.9.3 diagnostics, performance, polish | done | this push | review: 0 / 3 fixed / 3 fixed + 1 explained / 4 fixed + 2 explained |
+| A v0.9.3 diagnostics, performance, polish | done | 9da1447 | review: 0 / 3 fixed / 3 fixed + 1 explained / 4 fixed + 2 explained |
+| B v1.0.1 install and docs | done | this push | review: 0 / 2 fixed / 2 fixed / 1 explained |
+
+## Part B: v1.0.1 install and docs — done
+Commits:
+- **Doctor:** c55994e (RED) / b63c8bb.
+- **Docs:** cac0b41.
+- **Review:** f7889fb (RED) / edf1a0a.
+- **Queue test fix:** see the commit after edf1a0a.
+
+**What's new:**
+- **README rewrite.** It opens with what AI Term is (one paragraph), then:
+  - **Install:** from source (`npm install`, `npm run build`, `npm link`); the Mac app and its `ai` link; Linux notes (bubblewrap, Secret Service, notify-send, AppImage/.deb); Windows notes (Git for Windows, no sandbox, unsigned NSIS and the SmartScreen warning).
+  - **First run** in five steps.
+  - **Security model in plain words:** keys, Ask vs Don't ask per engine, what Don't ask can still do in your home, agent code you run, your checkout, the background service, and things that spend tokens.
+  - **Reference:** after those come the full command and key list, then the agent, skills and MCP sections, then the Linux and Windows details.
+- **`docs/user-guide.md`:** one section per area (agents, sessions, worktrees, review and merge, budgets, accounts, queue, dev servers, diagnostics, and brain, which Part C fills in).
+- **`CHANGELOG.md`:** v0.1 to v1.0 in plain words, from `git log` and this file.
+- **Drafting:** doc-updater drafted the guide and the changelog outside the repo. Every claim was checked against the code before it went in. Its draft said a crashed language server restarts on the next write, which v0.9.3's review fix changed.
+- **`ai doctor` adds four lines:**
+  - **Sandbox:** `sandbox-exec`, `bwrap`, or `none` and why.
+  - **Credential store:** asked of the daemon through the new `keys.health` request, which looks up a probe entry that never holds a key; only the daemon touches the keychain. It says `not checked` when no daemon is running. It's named "Credential store", not "Keychain:", because the report is redacted and `key…:` reads as a secret.
+  - **gh:** installed and logged in, from `gh auth status`'s exit code only. Its output, which names the account and part of the token, never reaches the report.
+  - **Notifier:** built, or `notify-send`, or none.
+- **Real run on this Mac** (temp home, so no daemon):
+  - `Sandbox: sandbox-exec · agent bash, tests and dev servers run in it`
+  - `Credential store: not checked · the daemon isn't running; start ai, then run ai doctor again`
+  - `gh: /opt/homebrew/bin/gh; logged in`
+  - `Notifier: built`
+- **No version bump:** package.json stays 0.1.1, as the prompt says; 1.0.0 comes after the v1.0 gate.
+
+**Fresh review (typescript-reviewer):**
+- **HIGH fixed:**
+  - An older daemon refusing `keys.health`, or one that died mid-report, made `ai doctor` lose every new line, and `/doctor` threw. It now costs one line.
+  - The README said dev servers always run sandboxed. They're sandboxed on macOS only, and run as you after a capital `Y` on Linux and Windows.
+- **MEDIUM fixed:**
+  - An offline `gh auth status` (timeout) read as "not logged in"; it now reads "status unavailable".
+  - The keychain probe now runs in turn with other keychain calls. It's best effort on Linux, where a locked collection may answer "absent".
+- **LOW explained:** doctor probes the sandbox from the CLI process, so it can briefly disagree with the daemon's 60 s cache.
+- **Also fixed:** `tests/v091-queue.test.ts` used the real clock with a 23:59 stop time, so it failed near midnight (the "load flake" from Part A). It now uses a fixed noon.
+
+**Checks (after the queue-test fix):**
+- typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 40ms`; app:build `✓ built in 58ms`.
+- npm test twice: `Test Files 248 passed (248)` · `Tests 1669 passed | 7 skipped (1676)` (32.13s, 33.67s).
+- app:test `9 passed (38.3s)`.
+- verification scan clean.
+
+**Out of date elsewhere (flagged, not changed; suggestions):**
+- AGENTS.md, Commands section: "Set up in v0.1.1. Until then, none exist".
+- docs/architecture.md:
+  - D27 says usage counts key sessions only.
+  - D44's worktree path is less specific than the README's.
+  - §12.4 is numbered twice.
+  - §12.24 and §12.25 sit after §13.
+  - D49 names `/brain` and `/init`, and D54 names `/remote`; only `/brain` is being built.
+- package.json `0.1.1`, and the README zip name that follows it.
+
+**Yaniv asked mid-part:** "stop opening the app". `npm run app:test` now launches the app hidden: `AI_TERM_BACKGROUND=1` means no window shown, never focusable, no Dock icon (activation policy `prohibited`), and no background throttling, so it still renders for the checks. A smoke test asserts that no window is visible or focused. All 9 pass hidden. Saved as a standing rule in memory.
+
+**New manual checks (B):**
+- `cd ~/ai-term && npm run build && node dist/cli/index.js doctor` with your daemon running: `Credential store: macOS Keychain reachable`, and `gh: …; logged in` or `not logged in · gh auth login`.
+- `cd ~/ai-term && npm link && ai doctor`: the README's from-source install, ending with `ai` on PATH (`npm unlink -g ai-term` undoes it).
 
 ## Part A: v0.9.3 LSP diagnostics, performance pass, consistency polish — done
 Commits:

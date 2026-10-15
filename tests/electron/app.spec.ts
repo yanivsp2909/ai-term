@@ -20,8 +20,12 @@ test.beforeEach(async () => {
   const launch=electronLaunch(resolve('app/out/main/index.js'),process.env.AI_TERM_TEST_APP);
   application = await electron.launch({ ...launch,args: [...launch.args, '--disable-background-networking', '--disable-component-update'], env: {
     HOME: home, AI_TERM_HOME: state, AI_TERM_APP_DATA: join(home, 'electron'), PATH: '/usr/bin:/bin', SHELL: '/bin/sh', LANG: 'en_US.UTF-8',
+    // Hidden, no Dock icon, never focused: the smoke tests never pop up in front of you.
+    AI_TERM_BACKGROUND: '1',
   } });
   await application.evaluate(async({app})=>{await app.whenReady();});
+  // Background mode: no window ever shows or takes focus while the smoke tests run (Yaniv asked).
+  expect(await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().map(w=>w.isVisible()||w.isFocused()))).not.toContain(true);
 });
 // eslint-disable-next-line no-empty-pattern -- Playwright requires fixture destructuring even when none are used.
 test.afterEach(async ({}, info) => {
