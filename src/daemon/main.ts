@@ -3,6 +3,7 @@ import { acquireLock } from './lock.js';
 import { Logger } from './log.js';
 import { SessionManager } from './session-manager.js';
 import { UsageService } from './usage-service.js';
+import { migratePrices } from './price-migration.js';
 import { DaemonServer } from './server.js';
 import { Notifier, notifierAppPath, notificationsSetting } from './notifier.js';
 import { ClickReceiver, CLICK_SOCKET } from './click-receiver.js';
@@ -67,6 +68,8 @@ export async function runDaemon(entry?:string): Promise<void> {
     try {
         notifier.start();
         await usage.start();
+        // B27: old price records keyed by model id alone move to their one provider (nothing is lost either way).
+        try { await migratePrices(paths.root); } catch { log.error('Price records could not be migrated; they keep applying as before'); }
         await manager.load();
         if (!closing)
             await server.listen();

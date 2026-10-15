@@ -5,6 +5,7 @@ import {UsageParser,type UsageContext} from './usage-parse.js';
 import {UsageStore} from './usage.js';
 import {SettingsStore} from './settings.js';
 import {findPrice,estimateCost,deploymentAlias,type PriceSnapshot} from './usage-prices.js';
+import { overridesFor } from '../shared/prices.js';
 import prices from '../../data/usage-prices.json' with {type:'json'};
 // Twenty records per normal ten-second export leaves room for multiple models while bounding disk writes.
 const RECORDS_PER_MINUTE=120;
@@ -20,11 +21,11 @@ export class UsageService extends EventEmitter {
  private midnight:ReturnType<typeof setTimeout>|undefined;
  constructor(root:string,private readonly log:{error(text:string):void}){super();this.store=new UsageStore(root,log);this.settings=new SettingsStore(root);this.parser=new UsageParser(entry=>{this.observations.push(entry);this.prune();});
   this.receiver=new UsageReceiver(async(route,raw,context)=>{
-   const settings=await this.readSettings(),overrides=settings.priceOverrides??{};
+   const settings=await this.readSettings();
    for(const record of this.parser.parse(route,raw,context)){
     if(!this.takeRecord(context.sessionId,context.engine==='ai-term'?AGENT_RECORDS_PER_MINUTE:RECORDS_PER_MINUTE))continue;
     if(context.taskOnly){const tokens=record.inputTokens+record.outputTokens;if(tokens>0)this.emit('task',context.sessionId,tokens);continue;}
-    if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overrides,record.provider==='foundry'?deploymentAlias(settings,record.model):undefined),record.inputTokens,record.outputTokens,record.cachedTokens??0);
+    if(record.costSource==='price-table')record.costUsd=estimateCost(findPrice(prices as PriceSnapshot,record.provider,record.model,overridesFor(settings,record.provider),record.provider==='foundry'?deploymentAlias(settings,record.model):undefined),record.inputTokens,record.outputTokens,record.cachedTokens??0);
     await this.add(record);
    }
   },log,async(id,body,seq,engine)=>{this.emit(engine==='codex'?'codex-status':engine==='ai-term'?'ai-term-status':'claude-status',id,body,seq);});

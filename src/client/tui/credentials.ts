@@ -9,7 +9,7 @@ import { Grid, type Frame } from './grid.js';
 import type { Theme } from './theme.js';
 interface Actions {
  request(body:RequestBody):Promise<SuccessResponse>;changed():void;close():void;
- login(engine:AgentEngine):Promise<void>;defaults(kind:'model'|'folder'|'effort'):void;price?():void;caps?(current:AgentCaps|undefined):void;theme(theme:ThemeName):Promise<void>;
+ login(engine:AgentEngine):Promise<void>;defaults(kind:'model'|'folder'|'effort'):void;price?(settings:Settings|undefined,keys:readonly KeyView[]):void;caps?(current:AgentCaps|undefined):void;theme(theme:ThemeName):Promise<void>;
 }
 // v0.6.5 adds the providers only AI Term's agent can use (no CLI login exists for them) and Ollama on this Mac.
 const providerOrder:readonly KeyProvider[]=['anthropic','openai','foundry','xai','moonshot','zai','openrouter','bedrock','vertex','ollama'];
@@ -79,7 +79,7 @@ export class CredentialsPanel {
    if(key==='a'||key==='+'){this.screen='providers';this.choice=0;this.actions.changed();return;}
    if(key==='i'){this.screen='import';this.path='';this.message='';this.actions.changed();return;}
    if(key==='l'){this.screen='providers';this.choice=0;this.actions.changed();return;}
-   if(key==='p'){this.actions.price?.();return;}
+   if(key==='p'){this.actions.price?.(this.settings,this.keys);return;}
    if(key==='w'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{worktrees:this.settings?.worktrees==='off'?'on':'off'}})).settings;this.message='';}catch{this.message='Worktrees setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}
    // D47's fallback: Foundry keys start AI Term's agent unless this says the CLI (Codex); accounts never change.
    if(key==='r'){this.busy=true;try{this.settings=(await this.actions.request({kind:'settings.set',patch:{keysRunOn:this.settings?.keysRunOn==='cli'?'ai-term':'cli'}})).settings;this.message='';}catch{this.message='Keys setting could not be saved';}finally{this.busy=false;this.actions.changed();}return;}

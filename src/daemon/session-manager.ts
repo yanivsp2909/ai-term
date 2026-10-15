@@ -31,6 +31,7 @@ import { fitExport, redactExportMeta, transcriptFor } from './session-export.js'
 import { applyUndo, CheckpointError, dropCheckpoints, listCheckpoints, snapshot, undoPlan, type CheckpointContext } from './checkpoints.js';
 import type { UndoPlan } from '../shared/checkpoints.js';
 import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
+import { overridesFor } from '../shared/prices.js';
 import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
 import { prepareSandbox, sandboxReady, SANDBOX_EXEC, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
@@ -524,7 +525,7 @@ export class SessionManager extends EventEmitter {
         const model=(raw as {model?:unknown}).model;
         if(typeof model!=='string'||!live.agentModels?.includes(model))return null;
         const key=await this.keys.view(live.info.auth.keyId),settings=await new SettingsStore(this.paths.root).get();
-        const alias=key.provider==='foundry'?deploymentAlias(settings,model):undefined,overrides=settings.priceOverrides??{};
+        const alias=key.provider==='foundry'?deploymentAlias(settings,model):undefined,overrides=overridesFor(settings,key.provider);
         const price=findPrice(PRICES,key.provider,model,overrides,alias)??null,limits=findLimits(PRICES,key.provider,model,alias),usage=this.usage?.summary();
         return {model,wire:key.provider==='foundry'?deploymentWire(key.lastTest?.find(r=>r.model===model)):null,context:limits.context??null,output:limits.output??null,price,
             spent:{day:usage?.today.costUsd??0,week:usage?.week.costUsd??0,month:usage?.month.costUsd??0},budgets:{daily:settings.budgets?.daily??null,weekly:settings.budgets?.weekly??null,monthly:settings.budgets?.monthly??null},
@@ -1186,7 +1187,7 @@ export class SessionManager extends EventEmitter {
         let authLabel:string,price:import('../shared/protocol.js').ModelPrice|undefined,subscription=false;
         if(target.auth.kind==='key'){
             const key=await this.keys.view(target.auth.keyId);authLabel=keyAuthLabel(key.provider,key.last4);
-            if(target.model){const settings=await new SettingsStore(this.paths.root).get();price=findPrice(this.handoffWriter.prices,key.provider,target.model,settings.priceOverrides??{},key.provider==='foundry'?deploymentAlias(settings,target.model):undefined);}
+            if(target.model){const settings=await new SettingsStore(this.paths.root).get();price=findPrice(this.handoffWriter.prices,key.provider,target.model,overridesFor(settings,key.provider),key.provider==='foundry'?deploymentAlias(settings,target.model):undefined);}
         }else{
             const engine=target.engine==='ai-term'?null:target.engine,status=engine?await checkEngine(engine,process.env).catch(()=>null):null;
             subscription=status?.authMethod==='subscription';authLabel=target.auth.profile&&target.auth.profile!==OWN_ACCOUNT?`account ${target.auth.profile}`:ownLoginLabel(status?.authMethod);

@@ -9,6 +9,7 @@ import { isDiffStat, validateAgentDiff } from './diff.js';
 import { validateSessionExport } from './session-export.js';
 import { validateUndoPlan } from './checkpoints.js';
 import { validateMergePlan, validatePrPlan } from './merge.js';
+import { MAX_PRICES, PRICED_BY_YOU, priceCount } from './prices.js';
 import { isTestCommand, validateProjectTestCommand, validateProjectTestLoopback, validateTestPlan, validateTestResult } from './test-run.js';
 import { validateReviewPlan, validateReviewResult, validateReviewState } from './review.js';
 import { isForkTarget, validateForkPlan } from './fork.js';
@@ -304,7 +305,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -340,6 +341,9 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.presets!==undefined)validatePresets(v.presets);
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);
+    if(v.providerPrices!==undefined)validateProviderPrices(v.providerPrices);
+    // B27: one hundred prices in all, old records included (settings.json stays small).
+    if(priceCount({priceOverrides:v.priceOverrides as Record<string,import('./protocol.js').ModelPrice>|undefined,providerPrices:v.providerPrices as import('./protocol.js').Settings['providerPrices']})>MAX_PRICES)throw new ValidationError('Too many prices; at most 100');
     return {...v};
 }
 export function validateSettings(value: unknown): import('./protocol.js').Settings {
@@ -439,6 +443,12 @@ export function validateBudgets(v:unknown):import('./protocol.js').Budgets{
  if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(k=>!['daily','weekly','monthly'].includes(k)))throw new ValidationError('Invalid budgets');
  const b=v as Record<string,unknown>;for(const amount of Object.values(b))if(amount!==null&&(!isAmount(amount)||amount>1e9))throw new ValidationError('Invalid budget amount');
  return {daily:b.daily as number|null??null,weekly:b.weekly as number|null??null,monthly:b.monthly as number|null??null};
+}
+// B27: {provider: {model id: price}}, only for providers whose prices you set (not Anthropic or OpenAI).
+export function validateProviderPrices(v:unknown):NonNullable<import('./protocol.js').Settings['providerPrices']>{
+ if(!v||typeof v!=='object'||Array.isArray(v))throw new ValidationError('Invalid prices');
+ for(const [provider,table]of Object.entries(v)){if(!(PRICED_BY_YOU as readonly string[]).includes(provider))throw new ValidationError('Invalid prices');validatePriceOverrides(table);}
+ return v as NonNullable<import('./protocol.js').Settings['providerPrices']>;
 }
 export function validatePriceOverrides(v:unknown):Record<string,import('./protocol.js').ModelPrice>{
  if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).length>100)throw new ValidationError('Invalid price overrides');

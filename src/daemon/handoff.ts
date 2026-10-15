@@ -6,11 +6,12 @@ import { HANDOFF_OUTPUT_TOKENS, HANDOFF_SOURCE_CHARS, handoffInstructions, hando
 import { estimateTokens } from '../agent/limits.js';
 import { makeModel } from '../agent/provider.js';
 import { deploymentAlias, estimateCost, findPrice, type PriceSnapshot } from './usage-prices.js';
+import { overridesFor } from '../shared/prices.js';
 
 // v0.6.3 engine handoff: who writes the summary and what it may cost (D49 asks with this before anything runs).
 export interface KeyedWriter { key: KeyView; model: string; price: ModelPrice; wire: 'responses' | 'chat' | null }
 // The cheapest model with a known price among your saved keys (input + output per 1M tokens), or none.
-export function cheapestWriter(keys: readonly KeyView[], settings: Pick<Settings, 'priceOverrides' | 'deploymentModels'>, prices: PriceSnapshot): KeyedWriter | null {
+export function cheapestWriter(keys: readonly KeyView[], settings: Pick<Settings, 'priceOverrides' | 'providerPrices' | 'deploymentModels'>, prices: PriceSnapshot): KeyedWriter | null {
   let best: KeyedWriter | null = null;
   for (const key of keys) {
     // Only the providers this one-shot request was reviewed for (v0.6.3); a v0.6.5 provider (or Ollama, free but slow to
@@ -18,7 +19,7 @@ export function cheapestWriter(keys: readonly KeyView[], settings: Pick<Settings
     if (key.provider !== 'foundry' && key.provider !== 'anthropic' && key.provider !== 'openai') continue;
     const models = key.provider === 'foundry' ? (key.deployments ?? []).filter(model => deploymentWire(key.lastTest?.find(r => r.model === model)) !== null) : Object.keys(prices.providers[key.provider] ?? {}).filter(isChatCatalogId);
     for (const model of models) {
-      const price = findPrice(prices, key.provider, model, settings.priceOverrides ?? {}, key.provider === 'foundry' ? deploymentAlias(settings, model) : undefined);
+      const price = findPrice(prices, key.provider, model, overridesFor(settings, key.provider), key.provider === 'foundry' ? deploymentAlias(settings, model) : undefined);
       if (!price) continue;
       if (!best || price.input + price.output < best.price.input + best.price.output) best = { key, model, price, wire: key.provider === 'foundry' ? deploymentWire(key.lastTest?.find(r => r.model === model)) : null };
     }

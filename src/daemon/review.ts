@@ -10,6 +10,7 @@ import { REVIEW_MAX_MODELS, type ReviewModel } from '../shared/review.js';
 import type { KeyedWriter } from './handoff.js';
 import { atomicWrite } from './store.js';
 import { deploymentAlias, estimateCost, findPrice, type PriceSnapshot } from './usage-prices.js';
+import { overridesFor } from '../shared/prices.js';
 
 // v0.7.4 /review: the models you can pick are your keys' chat models with a known price (so the ask shows a real price
 // range and budgets can hold its worst case), on the providers whose one-shot request needs only the key (and Foundry's
@@ -20,14 +21,14 @@ export const REVIEW_ERRORS = ['The diff changed since it was shown; run /review 
   'No review yet for this agent · /review <agent>', 'The review would pass your daily budget', 'The review would pass your weekly budget', 'The review would pass your monthly budget', 'The review request failed',
   'The diff is empty; nothing to review', 'A review of this agent is already running'] as const;
 
-export function reviewWriters(keys: readonly KeyView[], settings: Pick<Settings, 'priceOverrides' | 'deploymentModels'>, prices: PriceSnapshot): KeyedWriter[] {
+export function reviewWriters(keys: readonly KeyView[], settings: Pick<Settings, 'priceOverrides' | 'providerPrices' | 'deploymentModels'>, prices: PriceSnapshot): KeyedWriter[] {
   const writers: KeyedWriter[] = [];
   for (const key of keys) {
     if (!REVIEW_PROVIDERS.includes(key.provider)) continue;
     const models = key.provider === 'foundry' ? (key.deployments ?? []).filter(model => deploymentWire(key.lastTest?.find(r => r.model === model)) !== null)
       : key.provider === 'anthropic' || key.provider === 'openai' ? Object.keys(prices.providers[key.provider] ?? {}).filter(isChatCatalogId) : testedModels(key);
     for (const model of models) {
-      const price = findPrice(prices, key.provider, model, settings.priceOverrides ?? {}, key.provider === 'foundry' ? deploymentAlias(settings, model) : undefined);
+      const price = findPrice(prices, key.provider, model, overridesFor(settings, key.provider), key.provider === 'foundry' ? deploymentAlias(settings, model) : undefined);
       if (price) writers.push({ key, model, price, wire: key.provider === 'foundry' ? deploymentWire(key.lastTest?.find(r => r.model === model)) : null });
     }
   }
@@ -39,7 +40,7 @@ export function reviewModelView(writer: KeyedWriter, input: Range, output: Range
   return { keyId: writer.key.id, provider: writer.key.provider, keyLabel: writer.key.label, last4: writer.key.last4, model: writer.model,
     priceUsd: { low: estimateCost(writer.price, input.low, output.low) ?? 0, high: estimateCost(writer.price, input.high, output.high) ?? 0 } };
 }
-export function reviewCandidates(keys: readonly KeyView[], settings: Pick<Settings, 'priceOverrides' | 'deploymentModels'>, prices: PriceSnapshot, input: Range, output: Range): ReviewModel[] {
+export function reviewCandidates(keys: readonly KeyView[], settings: Pick<Settings, 'priceOverrides' | 'providerPrices' | 'deploymentModels'>, prices: PriceSnapshot, input: Range, output: Range): ReviewModel[] {
   return reviewWriters(keys, settings, prices).map(writer => reviewModelView(writer, input, output));
 }
 
