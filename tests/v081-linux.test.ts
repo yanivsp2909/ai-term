@@ -289,7 +289,9 @@ it('MEDIUM (security review): helpers AI Term runs outside any sandbox (notify-s
 it('MEDIUM (security review): Linux persistence places — systemd user units in ~/.local/share, X session files, PAM env, Plasma and window-manager autostart, PATH folders in home, gpg-agent', async () => {
   const { PERSISTENCE_FILES: files, PERSISTENCE_DIRS: dirs } = await import('../src/daemon/sandbox-places.js');
   for (const name of ['.xprofile', '.xsessionrc', '.xinitrc', '.pam_environment', '.gnupg/gpg-agent.conf']) expect(files).toContain(name);
-  for (const name of ['.local/share/systemd/user', '.config/plasma-workspace/env', '.config/autostart-scripts', '.config/i3', '.config/sway', '.config/hypr', '.local/bin', 'bin']) expect(dirs).toContain(name);
+  for (const name of ['.local/share/systemd/user', '.config/plasma-workspace/env', '.config/autostart-scripts', '.config/i3', '.config/sway', '.config/hypr']) expect(dirs).toContain(name);
+  // Yaniv (2026-10-15): the agent installs tools into ~/.local/bin and ~/bin, so those stay writable.
+  for (const name of ['.local/bin', 'bin']) expect(dirs).not.toContain(name);
 });
 
 it('MEDIUM (security review): the session runtime folder is hidden by its real path and the usual /run/user/<uid> both, whatever the bash env says', async () => {
