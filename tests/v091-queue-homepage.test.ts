@@ -4,14 +4,12 @@ import { EventEmitter } from 'node:events';
 import headless from '@xterm/headless';
 import { Homepage } from '../src/client/tui/homepage.js';
 import type { RequestBody } from '../src/client/connection.js';
-import { cardText } from '../src/client/tui/agent-card.js';
 import type { SessionInfo, SuccessResponse } from '../src/shared/protocol.js';
 
 // v0.9.1 /queue on the homepage, typed as you would: /queue add opens the start box as "Queue a new agent", its ⏎ asks when
 // it starts and its limit, then queue.add goes to the daemon; /queue lists, x removes.
 const now = new Date().toISOString();
 const fixer: SessionInfo = { id: randomUUID(), title: 'fixer', engine: 'codex', model: 'gpt', auth: { kind: 'account' }, cwd: '/tmp/trees/fixer', worktree: '/tmp/trees/fixer', branch: 'ai/fixer', permission: 'ask', status: 'done', statusDetail: 'done', statusSince: now, createdAt: now, lastOutputAt: now, exitCode: 0, ctxPercent: null, lastActivity: null, diffStat: { added: 3, removed: 1, files: 2 } };
-const fp = 'c'.repeat(64);
 class TTY extends EventEmitter { isTTY = true; isRaw = false; columns = 130; rows = 45; output = ''; setRawMode(v: boolean) { this.isRaw = v; } resume() {} pause() {} write(data: string | Buffer) { this.output += data.toString(); return true; } }
 async function screen(tty: TTY): Promise<string> { const terminal = new headless.Terminal({ cols: 130, rows: 45, allowProposedApi: true }); try { await new Promise<void>(resolve => terminal.write(tty.output, resolve)); return Array.from({ length: 45 }, (_, y) => terminal.buffer.active.getLine(y)?.translateToString(true) ?? '').join('\n'); } finally { terminal.dispose(); } }
 const shows = (tty: TTY, text: string) => vi.waitFor(async () => expect(await screen(tty)).toContain(text));

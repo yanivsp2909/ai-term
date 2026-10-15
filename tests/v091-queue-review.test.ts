@@ -89,7 +89,7 @@ it('MEDIUM (TS review): /queue add after <name> needs an agent by that name; a d
   const root = await temp();
   const queue = new QueueService(root, manager() as never, log(), () => new Date(), async () => true);
   await queue.load();
-  await expect(queue.add({ trigger: { kind: 'after', agent: 'fxier' }, limit: { until: '23:00' }, request: request() })).rejects.toThrow('No agent is named fxier');
+  await expect(queue.add({ trigger: { kind: 'after', agent: 'fxier' }, limit: { until: '23:00' }, request: request() })).rejects.toThrow('No agent has that name');
   const submit = vi.fn(async () => { await new Promise(resolve => setTimeout(resolve, 30)); return null; });
   const form = new QueueForm(request(), ['fixer'], () => {}, () => {}, submit);
   form.type('after fixer'); form.key('enter');

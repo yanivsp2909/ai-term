@@ -736,7 +736,7 @@ export class Homepage {
     if(argument&&argument!=='add'){this.showNote('/queue or /queue add');return;}
     let enabled:boolean;
     try{enabled=(await this.connection.request({kind:'settings.get'})).settings?.queue===true;}catch{this.showNote('Settings unavailable');return;}
-    if(argument==='add'){if(!enabled){this.showNote('the queue is off · turn it on in /settings (b)');return;}this.openBox('start');if(this.box)this.box.queue=true;this.draw(true);return;}
+    if(argument==='add'){if(this.popup){this.showNote('close the open popup first');return;}if(!enabled){this.showNote('the queue is off · turn it on in /settings (b)');return;}this.openBox('start');if(this.box)this.box.queue=true;this.draw(true);return;}
     if(this.popup){this.showNote('close the open popup first');return;}
     const panel:QueuePanel=new QueuePanel(()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},async id=>validateQueue((await this.connection.request({kind:'queue.remove',itemId:id})).queue),enabled);
     this.popup=panel;this.draw(true);

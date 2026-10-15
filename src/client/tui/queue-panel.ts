@@ -9,6 +9,7 @@ export class QueuePanel {
   private items: QueueItem[] = [];
   private choice = 0;
   private note = '';
+  private removing = false;
   private readonly panel: TextPanel;
   constructor(private readonly changed: () => void, private readonly close: () => void, private readonly remove: (id: string) => Promise<QueueItem[]>, private readonly enabled: boolean) {
     this.panel = new TextPanel('Queue', changed, close);
@@ -17,8 +18,9 @@ export class QueuePanel {
   key(key: string): void {
     if (key === 'up' || key === 'down') { this.choice = Math.max(0, Math.min(this.items.length - 1, this.choice + (key === 'up' ? -1 : 1))); this.render(); return; }
     if (key === 'x') {
-      const item = this.items[this.choice]; if (!item) return;
-      void this.remove(item.id).then(items => { this.note = '✓ removed from the queue'; this.set(items); }, (error: unknown) => { this.note = `✗ ${error instanceof Error ? error.message : 'not removed'}`; this.render(); });
+      const item = this.items[this.choice]; if (!item || this.removing) return;
+      this.removing = true;
+      void this.remove(item.id).then(items => { this.note = '✓ removed from the queue'; this.set(items); }, (error: unknown) => { this.note = `✗ ${error instanceof Error ? error.message : 'not removed'}`; this.render(); }).finally(() => { this.removing = false; });
       return;
     }
     this.panel.key(key);
@@ -62,6 +64,8 @@ export class QueueForm {
   private buffer = '';
   private error = '';
   private trigger: QueueTrigger | null = null;
+  // One queue.add at a time: a second ⏎ while it goes out would queue the agent twice (review).
+  private sending = false;
   private readonly panel: TextPanel;
   constructor(private readonly request: QueueRequest, private readonly agents: readonly string[], changed: () => void, private readonly back: () => void, private readonly submit: (trigger: QueueTrigger, limit: QueueLimit) => Promise<string | null>) {
     this.panel = new TextPanel('Queue this agent', changed, back);
@@ -83,8 +87,10 @@ export class QueueForm {
     }
     const limit = parseLimit(this.buffer, this.request);
     if (!limit || !this.trigger) { this.error = `it needs ${limitHint(this.request)}`; this.render(); return; }
-    const failed = await this.submit(this.trigger, limit);
-    if (failed) { this.error = failed; this.render(); }
+    if (this.sending) return;
+    this.sending = true;
+    try { const failed = await this.submit(this.trigger, limit); if (failed) { this.error = failed; this.render(); } }
+    finally { this.sending = false; }
   }
   private render(): void {
     const agents = this.agents.length ? ` (now: ${this.agents.slice(0, 5).join(', ')})` : '';

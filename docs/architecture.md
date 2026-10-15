@@ -926,7 +926,18 @@ The prompt's text for this part was cut off at "times passed while the". Everyth
   - **Key CLI:** `addTask` stops the session at `overLimit` (cost ≥ budget, or an unpriceable spend).
   - **Subscription CLI:** a timer stops the session at `until`.
   - **Notes:** the item's note says which limit stopped it.
-- **Protocol:** `queue.list`, `queue.add` and `queue.remove` (`QUEUE_ERRORS`), plus the event `queue.updated`. Don't ask for AI Term's agent is refused at add time where no sandbox exists.
+- **Protocol:** `queue.list`, `queue.add` and `queue.remove` (`QUEUE_ERRORS`), plus the event `queue.updated`. Don't ask is refused at add time where no sandbox exists, when the start would really run AI Term's agent (`effectiveEngine`, keys included).
+- **Review fixes (Part E):**
+  - **Unreadable settings** count as the queue being off; this is logged, never a crash.
+  - **On close:** `close()` comes first at shutdown, and nothing starts or fails after it.
+  - **Stop times:** `untilWithin`/`MAX_RUN_MS` keep a stop time within 12 hours (checked at add, and at start for `after` items). Stop times are checked against the wall clock every 15 s.
+  - **Late starts:** a due time more than two minutes late becomes `missed`.
+  - **$ budgets:** `limitCaps` keeps a key CLI's $ when the start runs on AI Term's agent. A tokens-only report isn't "unpriced", and a key CLI with no cost report in 3 minutes is stopped.
+  - **Starting:** an item is re-checked right before it starts, and saved as `started` before `create()`.
+  - **Saving:** a failed save rejects `add`/`remove`.
+  - **Bad items** are left out and the file is kept aside.
+  - **`after` names** must be a running agent's title.
+  - **The form** sends once.
 - **Client:**
   - **`/queue`** opens `QueuePanel` (`queueLines`; Don't ask and failures in red; `x` removes).
   - **`/queue add`** opens the start box as "Queue a new agent". Its ⏎ opens `QueueForm`: `after <agent>` or `at HH:MM`, then the limit, parsed by `parseTrigger` and `parseLimit`.

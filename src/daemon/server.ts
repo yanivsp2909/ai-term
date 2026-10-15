@@ -241,7 +241,7 @@ export class DaemonServer {
                 case 'queue.list': case 'queue.add': case 'queue.remove': {
                     const queue = this.queue; if (!queue) throw new Error(QUEUE_ERRORS[2]);
                     // Don't ask for AI Term's agent only where its bash can be sandboxed, said now rather than at start time.
-                    if (request.kind === 'queue.add' && request.request.engine === 'ai-term' && request.request.permission === 'dontAsk') { const note = dontAskNote(await currentAgentSandbox()); if (note) throw new Error(note); }
+                    if (request.kind === 'queue.add' && request.request.permission === 'dontAsk' && await this.manager.effectiveEngine({ ...request.request }) === 'ai-term') { const note = dontAskNote(await currentAgentSandbox()); if (note) throw new Error(note); }
                     if (request.kind === 'queue.add') await queue.add({ trigger: request.trigger, limit: request.limit, request: request.request });
                     if (request.kind === 'queue.remove') await queue.remove(request.itemId);
                     this.control(peer, { id: request.id, ok: true, queue: queue.list() }); break;

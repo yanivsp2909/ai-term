@@ -44,6 +44,7 @@ import { currentAgentSandbox, dontAskNote } from './agent-sandbox.js';
 import { windowsRecipe, windowsShell } from './win-launch.js';
 import { pathInside } from '../shared/path-inside.js';
 import { limitCaps, overLimit, stopDelayMs, type QueueLimit } from '../shared/queue.js';
+const QUEUE_CHECK_MS = 15_000, QUEUE_REPORT_MS = 3 * 60_000;
 import { prepareSandbox, sandboxReady, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, forkTitle, type ForkPlan, type ForkTarget } from '../shared/fork.js';
@@ -554,9 +555,19 @@ export class SessionManager extends EventEmitter {
     setQueueLimit(id:string,limit:QueueLimit,onStop:(note:string)=>void):void{
         const live=this.sessions.get(id);if(!live)return;
         live.queueLimit=limit;live.queueStop=onStop;
-        if(limit.until){const until=limit.until;setTimeout(()=>{const current=this.sessions.get(id);if(current!==live||['exited','error'].includes(live.info.status))return;
-            void this.stop(id).then(()=>onStop(`stopped at its stop time (${until})`),()=>{this.log.error('Queued agent could not be stopped at its stop time');onStop('its stop time came but it could not be stopped');});},stopDelayMs(until,new Date())).unref();}
+        // Checked against the wall clock every 15 s: a long timer doesn't run while a Mac sleeps, so it would stop late (review).
+        const gone=()=>this.sessions.get(id)!==live||['exited','error'].includes(live.info.status);
+        if(limit.until){const until=limit.until,deadline=Date.now()+stopDelayMs(until,new Date());const check=setInterval(()=>{if(gone()){clearInterval(check);return;}if(Date.now()<deadline)return;clearInterval(check);
+            void this.stop(id).then(()=>onStop(`stopped at its stop time (${until})`),()=>{this.log.error('Queued agent could not be stopped at its stop time');onStop('its stop time came but it could not be stopped');});},QUEUE_CHECK_MS);check.unref();}
+        // A CLI on a key whose cost never reports can't be held to its $ budget: stopped when nothing arrived in 3 minutes.
+        if(limit.usd!==undefined&&live.info.engine!=='ai-term'){const watch=setTimeout(()=>{if(gone()||live.info.taskUsage||live.queueStopping)return;live.queueStopping=true;
+            void this.stop(id).then(()=>onStop("stopped: no cost reports came in 3 minutes, so its $ budget couldn't be held"),()=>{this.log.error('Queued agent could not be stopped without cost reports');onStop('no cost reports came, and it could not be stopped');});},QUEUE_REPORT_MS);watch.unref();}
     }
+    // The agents running now, by title (queue: an `after` trigger must name one).
+    titles():string[]{return [...this.sessions.values()].filter(live=>!['exited','error'].includes(live.info.status)).map(live=>live.info.title);}
+    // The engine a start would really use: a key CLI request runs on AI Term's agent when keys do (queue: Don't ask is
+    // checked against that).
+    async effectiveEngine(request:Exclude<CreateSession,{engine:'shell'}>):Promise<import('../shared/protocol.js').AgentEngine>{return (await this.route(request)).engine;}
     async agentFacts(id:string,raw:unknown):Promise<AgentFacts|null>{
         const live=this.sessions.get(id);
         if(!live||live.info.engine!=='ai-term'||live.info.auth.kind!=='key'||['exited','error'].includes(live.info.status)||!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).length!==1)return null;

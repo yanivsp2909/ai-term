@@ -28,14 +28,24 @@ export function nextLocalTime(time: string, now: Date): Date {
   return next;
 }
 export function stopDelayMs(time: string, now: Date): number { return nextLocalTime(time, now).getTime() - now.getTime(); }
+// A stop time comes within 12 hours after the start (review: `at 21:30 until 21:00` would otherwise run 23½ hours).
+export const MAX_RUN_MS = 12 * 60 * 60_000;
+export function untilWithin(start: string, until: string): boolean {
+  const minutes = (time: string) => { const match = time.match(TIME); return match ? Number(match[1]) * 60 + Number(match[2]) : NaN; };
+  const span = ((minutes(until) - minutes(start)) % 1440 + 1440) % 1440;
+  return span > 0 && span * 60_000 <= MAX_RUN_MS;
+}
 // AI Term's agent: the item's turns and $ are this run's caps.
+// A key CLI request that AI Term runs on its own agent (keys run on AI Term's agent by default) keeps its $ as the run's
+// cap (review: it was dropped).
 export function limitCaps(limit: QueueLimit, defaults: AgentCaps): AgentCaps {
-  return limit.turns !== undefined && limit.usd !== undefined ? { turns: limit.turns, spendUsd: limit.usd } : defaults;
+  return { turns: limit.turns ?? defaults.turns, spendUsd: limit.usd ?? defaults.spendUsd };
 }
 // A key CLI past its $, or with spend AI Term can't price (it can't be held to a budget it can't count).
+// A tokens-only report (costUsd null, price known) is not yet priced: only a spend marked unpriceable stops it at once.
 export function overLimit(limit: QueueLimit, usage: TaskUsage | undefined): boolean {
   if (limit.usd === undefined || !usage) return false;
-  return usage.unknownPrice === true || usage.costUsd === null || usage.costUsd >= limit.usd;
+  return usage.unknownPrice === true || usage.costUsd !== null && usage.costUsd >= limit.usd;
 }
 function validateLimit(value: unknown, request: QueueRequest): QueueLimit {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid queue limit');

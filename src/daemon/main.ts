@@ -36,7 +36,7 @@ export async function runDaemon(entry?:string): Promise<void> {
     const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage,notifier);
     manager.on('statusChanged', (session: SessionInfo, previous: StatusState, next: StatusState, attached: boolean) => notifier.transition(session, previous, next, attached));
     // v0.9.1 queue (D55, off by default): starts through the same create() as a manual start.
-    const queue = new QueueService(paths.root, { create: request => manager.create({ ...request }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop) }, log);
+    const queue = new QueueService(paths.root, { create: request => manager.create({ ...request }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop), titles: () => manager.titles() }, log);
     server.setQueue(queue);
     // Notification clicks: select the agent in an open homepage, otherwise open Terminal inside it (D43).
     const launcher = entry && mac ? new TerminalLauncher(paths.root, { node: process.execPath, entry, ...(entry.endsWith('.ts') ? { loader: createRequire(import.meta.url).resolve('tsx') } : {}) }, log) : null;
@@ -62,7 +62,7 @@ export async function runDaemon(entry?:string): Promise<void> {
             process.exitCode = 1;
         }
         try {
-            for(const cleanup of [()=>clicks.close(),()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close(),()=>queue.close()]) {
+            for(const cleanup of [()=>queue.close(),()=>clicks.close(),()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close()]) {
                 try{await cleanup();}catch{try{log.error('Shutdown cleanup failed');}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
             }
         } finally {
