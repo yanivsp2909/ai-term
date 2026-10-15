@@ -48,3 +48,25 @@ it('a flood that starts before attach reaches the client whole and in order', as
   expect(after.at(-1)).toBe(30000);
   expect(snapshot.length).toBeGreaterThan(0);
 }, 30_000);
+
+// Review (typescript-reviewer, fresh context): a first chunk queued behind an attach waits on the state save before its
+// emit; the next chunk must not overtake it on the direct path.
+it('HIGH (review): a chunk waiting on the first state save is never overtaken by the next one', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ai-term-perf-')); roots.push(root);
+  const paths = getPaths(root); await preparePaths(paths);
+  let slow = false;
+  const { atomicWrite } = await import('../src/daemon/store.js');
+  const writer = async (path: string, data: unknown) => { if (slow) await new Promise(resolve => setTimeout(resolve, 500)); return atomicWrite(path, data as never); };
+  const m = new SessionManager(paths, new Logger(paths.log), { executable: '/bin/sh', args: ['-c', 'sleep 0.3; printf one; sleep 0.25; printf two; read x'], env: { PATH: '/usr/bin:/bin' } }, undefined, writer as never); managers.push(m); await m.load();
+  const live = await m.create({ cwd: root }), parts = ownerStream(m, live.id);
+  slow = true;
+  // An attach still in flight when the first chunk arrives (its turn in the output chain comes later).
+  const record = (m as unknown as { sessions: Map<string, { output: Promise<void> }> }).sessions.get(live.id);
+  if (!record) throw new Error('no live session');
+  record.output = record.output.then(() => new Promise(resolve => setTimeout(resolve, 400)));
+  await m.attach(live.id, 80, 24, () => undefined);
+  await expect.poll(() => parts.map(p => p.text).join(''), { timeout: 10_000 }).toContain('two');
+  await expect.poll(() => parts.map(p => p.text).join(''), { timeout: 10_000 }).toContain('one');
+  const text = parts.map(p => p.text).join('');
+  expect(text.indexOf('one')).toBeLessThan(text.indexOf('two'));
+}, 30_000);
