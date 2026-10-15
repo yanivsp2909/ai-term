@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -44,6 +44,9 @@ it.skipIf(!MAC)('MEDIUM: two writes at once start one server, and stopping leave
   const { pool, starts } = await setup("process.stdin.resume(); setInterval(() => {}, 1000);");
   const abort = new AbortController(); setTimeout(() => abort.abort(), 300);
   await Promise.all([pool.diagnose('a.ts', abort.signal), pool.diagnose('a.ts', abort.signal)]);
+  // A sandboxed node takes a moment to write its start line.
+  await vi.waitFor(async () => expect(await starts()).toBeGreaterThan(0), { timeout: 5000 });
+  await new Promise(resolve => setTimeout(resolve, 500));
   expect(await starts()).toBe(1);
   expect(pool.running()).toEqual(['typescript']);
 }, 20_000);

@@ -51,7 +51,7 @@ export interface AgentOptions {
   extensions?: ExtensionAccess; models?: readonly string[]; makeModel?(id: string): Promise<LanguageModel>;
   limits?: RunLimits; child?: boolean;
   // v0.9.3 (D55, off by default): a file's diagnostics after each write or edit.
-  diagnostics?: { diagnose(path: string): Promise<string> };
+  diagnostics?: { diagnose(path: string, signal?: AbortSignal): Promise<string> };
   mcp?:McpAccess; mcpSession?:{allowed:Set<string>;schemas:Set<string>};
 }
 export type TurnResult = 'done' | 'interrupted' | 'failed';
@@ -150,12 +150,12 @@ export class Agent {
     });
   }
   private gated<T extends { path: string }>(name: ToolName, summary: (input: T) => string, gatedTool: GatedTool<T>) {
-    return this.run<T>(name, summary, async input => {
+    return this.run<T>(name, summary, async (input, signal) => {
       const done = await gatedTool.run(this.options.root, input), diagnostics = this.options.diagnostics;
       if (!diagnostics) return done;
       // A server that fails costs the write nothing: the agent reads one plain line instead of its errors.
       let found: string;
-      try { found = await diagnostics.diagnose(input.path); } catch { found = "diagnostics couldn't run for this file"; }
+      try { found = await diagnostics.diagnose(input.path, signal); } catch { found = "diagnostics couldn't run for this file"; }
       return found ? `${done}\n${found}` : done;
     }, input => gatedTool.preview(this.options.root, input));
   }

@@ -1039,4 +1039,11 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 - **Which server:** by extension: `typescript-language-server --stdio`, `pyright-langserver --stdio`, `gopls`, `rust-analyzer`. `findServer` takes the first executable in PATH's absolute folders that isn't in the worktree or a `node_modules/.bin`, by its real path too (the agent can write those).
 - **Sandbox (D57):** `sandboxedArgv` in `bash.ts` wraps the server exactly like a bash command (sandbox-exec or bwrap profile, same protections). Its env is bash's (`buildBashEnv`) with anything key-, token- or AI Term-named removed again. If the sandbox can't start, no server starts and the agent reads one line saying why, once.
 - **Lifetime:** one server per language per agent, in its own process group. Stopped (shutdown, exit, then SIGKILL to the group after 1 s) when the agent quits or is signalled, or after 10 idle minutes (checked each minute). A server that dies or breaks its pipe answers every wait with nothing, and the next write starts a fresh one.
+- **Review fixes:**
+  - **Bounded waits:** every wait, including `initialize`, is bounded at 8 s. An interrupted turn stops waiting at once (the tool's `AbortSignal`).
+  - **Silent or crashed servers:** after 3 missed answers in a row, or a crash, the language is off until the agent restarts, said once.
+  - **One start per language:** each start is kept in a map before any await.
+  - **Agent crash:** the crash path SIGKILLs every server's group at once.
+  - **Plain fields:** odd columns, codes and severities are shown as plain values.
+- **Trust:** language servers may run project code (TypeScript loads the worktree's `node_modules/typescript`; rust-analyzer runs build scripts and proc macros; gopls and pyright read the project). That code is agent-written, so they run at bash's trust level: the same sandbox and env.
 - **Output:** `diagnostics for <path>: N errors` and one line per item (`line:col severity code message`, controls removed, 200 chars), at most 40 lines with `… N more`.

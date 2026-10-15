@@ -102,7 +102,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     // v0.9.3: language servers under bash's sandbox with bash's env (no keys), only when /settings z turned them on.
     const lsp = parsed.lsp ? new LspPool({ root, env: bashEnv, sandbox: bashSandbox }) : null;
     // A crash prints fixed words, never a stack or an error message, which could carry anything a provider sent.
-    const crash = () => { killAllBash(); void lsp?.stopAll(); restore(); terminal.stderr.write('\nai agent stopped after an internal error\n');void reporter.mcp.stop().then(()=>resolveExit(1),()=>resolveExit(1)); };
+    const crash = () => { killAllBash(); lsp?.killNow(); restore(); terminal.stderr.write('\nai agent stopped after an internal error\n');void reporter.mcp.stop().then(()=>resolveExit(1),()=>resolveExit(1)); };
     process.once('uncaughtException', crash); process.once('unhandledRejection', crash);
     // Stopped from the homepage (s), by the daemon or by a closed terminal: every running command's process group goes
     // with it (they run in their own groups, so the PTY's signal alone would leave them behind), then the agent exits.
