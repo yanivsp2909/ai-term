@@ -403,7 +403,8 @@ export class Homepage {
       case 'remove': { const session = this.sessions.find(s => s.id === this.selectedId); if (session && ['exited', 'error'].includes(session.status)) this.enqueue(() => this.removeSession(session.id)); break; }
       case 'mark': this.mark(); break;
       case 'split': this.enqueue(() => this.openSplit()); break;
-      case 'diff': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) this.enqueue(() => this.openDiff(session)); break; }
+      // With no agent selected there is nothing to diff: the d is typed (a task like "deploy it" keeps its letter).
+      case 'diff': { const session = this.sessions.find(s => s.id === this.selectedId); if (session) this.enqueue(() => this.openDiff(session)); else this.field.paste('d'); break; }
     }
     this.draw(true);
   }
