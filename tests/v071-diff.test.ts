@@ -192,3 +192,34 @@ it('HIGH (fix review): the diff never reads the repo\'s config at all, so swappi
   expect(diff.files.find(f => f.path === 'src/a.ts')?.lines).toContain('+changed'); expect(stat.files).toBeGreaterThan(0);
 }, 30_000);
 
+
+it('MEDIUM (second fix review): a repo with a split index still diffs', async () => {
+  const { dir, base } = await repo();
+  await git(dir, 'update-index', '--split-index'); await writeFile(join(dir, 'src', 'a.ts'), 'split\n');
+  const diff = await worktreeDiff(dir, base);
+  expect(diff.files.find(f => f.path === 'src/a.ts')?.lines).toContain('+split');
+});
+
+it('MEDIUM (second fix review): an index entry that leads outside the worktree refuses the diff, nothing outside is shown', async () => {
+  const { temp, dir, base } = await repo();
+  await writeFile(join(temp, 'secret.txt'), 'OUTSIDE SECRET\n');
+  // The agent can write its own index: an entry named ../secret.txt (git itself never adds one).
+  const blob = (await run('/usr/bin/git', ['hash-object', '-w', '--', join(temp, 'secret.txt')], { cwd: dir })).stdout.trim();
+  const crafted = await craftIndex(dir, blob);
+  await import('node:fs/promises').then(fs => fs.writeFile(join(dir, '.git', 'index'), crafted));
+  await expect(worktreeDiff(dir, base)).rejects.toThrow();
+  const { worktreeStat } = await import('../src/daemon/diff.js');
+  await expect(worktreeStat(dir, base)).rejects.toThrow();
+});
+// An index with one entry whose name is ../secret.txt: written by git's own plumbing into a scratch index with a safe
+// name of the same length, then the name bytes are swapped and the trailing checksum recomputed.
+async function craftIndex(dir: string, blob: string): Promise<Buffer> {
+  const scratch = join(dir, '.git', 'scratch-index'), name = '../secret.txt', stand = 'x'.repeat(name.length);
+  await run('/usr/bin/git', ['update-index', '--add', '--cacheinfo', `100644,${blob},${stand}`], { cwd: dir, env: { ...process.env, GIT_INDEX_FILE: scratch } });
+  const fs = await import('node:fs/promises'), { createHash } = await import('node:crypto');
+  const bytes = await fs.readFile(scratch), at = bytes.indexOf(Buffer.from(stand));
+  Buffer.from(name).copy(bytes, at);
+  createHash('sha1').update(bytes.subarray(0, bytes.length - 20)).digest().copy(bytes, bytes.length - 20);
+  await fs.rm(scratch);
+  return bytes;
+}
