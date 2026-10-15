@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import headless from '@xterm/headless';
-import { MAX_CHECKPOINTS, applyUndo, dropCheckpoints, listCheckpoints, snapshot, undoPlan } from '../src/daemon/checkpoints.js';
+import { MAX_CHECKPOINTS, applyUndo, dropCheckpoints, listCheckpoints, snapshot, undoPlan, type CheckpointContext } from '../src/daemon/checkpoints.js';
 import { getPaths, preparePaths } from '../src/shared/paths.js';
 import { Logger } from '../src/daemon/log.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
@@ -29,17 +29,18 @@ async function fixture() {
   await writeFile(join(repo, 'src', 'a.ts'), 'one\n'); await writeFile(join(repo, 'keep.txt'), 'keep\n'); await writeFile(join(repo, '.gitignore'), '*.log\n');
   await run('/usr/bin/git', ['init', '--', repo]); await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-m', 'initial', '--');
   await git(repo, 'worktree', 'add', '-bai/fixer', '--', tree, 'HEAD');
-  return { temp, repo, tree };
+  const ctx: CheckpointContext = { repo, key: Buffer.alloc(32, 7) };
+  return { temp, repo, tree, ctx };
 }
 // What the agent itself sees in git: its index, HEAD, branch and status, which a checkpoint or undo must never change.
 const agentGit = async (tree: string) => [await readFile(join((await git(tree, 'rev-parse', '--absolute-git-dir')).stdout.trim(), 'index')), (await git(tree, 'rev-parse', 'HEAD')).stdout, (await git(tree, 'branch', '--show-current')).stdout];
 
 it('a checkpoint holds tracked and untracked (not ignored) files and leaves the agent\'s index, HEAD and branch alone', async () => {
-  const { tree } = await fixture();
+  const { tree, ctx } = await fixture();
   await writeFile(join(tree, 'src', 'a.ts'), 'two\n'); await writeFile(join(tree, 'new.md'), 'new\n'); await writeFile(join(tree, 'debug.log'), 'ignored\n');
   // git status itself refreshes the index's stat data, so the index is read after it.
   const status = (await git(tree, 'status', '--porcelain')).stdout, before = await agentGit(tree);
-  const first = await snapshot(tree, 'fixer');
+  const first = await snapshot(tree, 'fixer', ctx);
   expect(first?.n).toBe(1);
   expect((await git(tree, 'show-ref', '--', 'refs/ai-term/checkpoints/fixer/1')).stdout).toContain(first?.commit ?? 'missing');
   const files = (await git(tree, 'ls-tree', '-r', '--name-only', first?.commit ?? '', '--')).stdout.split('\n').filter(Boolean);
@@ -47,63 +48,63 @@ it('a checkpoint holds tracked and untracked (not ignored) files and leaves the 
   expect((await git(tree, 'show', `${first?.commit}:src/a.ts`)).stdout).toBe('two\n');
   expect(await agentGit(tree)).toEqual(before); expect((await git(tree, 'status', '--porcelain')).stdout).toBe(status);
   // Nothing changed: no new checkpoint. A change: the next number.
-  expect(await snapshot(tree, 'fixer')).toBeNull();
+  expect(await snapshot(tree, 'fixer', ctx)).toBeNull();
   await writeFile(join(tree, 'new.md'), 'newer\n');
-  expect((await snapshot(tree, 'fixer'))?.n).toBe(2);
+  expect((await snapshot(tree, 'fixer', ctx))?.n).toBe(2);
 });
 
 it(`only the last ${MAX_CHECKPOINTS} checkpoints are kept`, async () => {
-  const { tree } = await fixture();
-  for (let i = 0; i < MAX_CHECKPOINTS + 3; i++) { await writeFile(join(tree, 'n.txt'), `${i}\n`); await snapshot(tree, 'fixer'); }
-  const list = await listCheckpoints(tree, 'fixer');
+  const { tree, ctx } = await fixture();
+  for (let i = 0; i < MAX_CHECKPOINTS + 3; i++) { await writeFile(join(tree, 'n.txt'), `${i}\n`); await snapshot(tree, 'fixer', ctx); }
+  const list = await listCheckpoints(tree, 'fixer', ctx);
   expect(list).toHaveLength(MAX_CHECKPOINTS); expect(list[0]?.n).toBe(4); expect(list.at(-1)?.n).toBe(MAX_CHECKPOINTS + 3);
 }, 60_000);
 
 it('/undo shows what changes, restores the previous checkpoint after a fresh snapshot, and /redo brings it back', async () => {
-  const { tree } = await fixture();
-  await writeFile(join(tree, 'src', 'a.ts'), 'turn one\n'); await snapshot(tree, 'fixer');
-  await writeFile(join(tree, 'src', 'a.ts'), 'turn two\n'); await writeFile(join(tree, 'added.md'), 'added\n'); await rm(join(tree, 'keep.txt')); await snapshot(tree, 'fixer');
+  const { tree, ctx } = await fixture();
+  await writeFile(join(tree, 'src', 'a.ts'), 'turn one\n'); await snapshot(tree, 'fixer', ctx);
+  await writeFile(join(tree, 'src', 'a.ts'), 'turn two\n'); await writeFile(join(tree, 'added.md'), 'added\n'); await rm(join(tree, 'keep.txt')); await snapshot(tree, 'fixer', ctx);
   const before = await agentGit(tree);
-  const plan = await undoPlan(tree, 'fixer', 'undo');
+  const plan = await undoPlan(tree, 'fixer', 'undo', ctx);
   expect(plan).toMatchObject({ kind: 'undo', target: 1, changes: expect.arrayContaining([{ path: 'src/a.ts', change: 'modified' }, { path: 'added.md', change: 'removed' }, { path: 'keep.txt', change: 'restored' }]) });
-  expect(await applyUndo(tree, 'fixer', 'undo', plan.fingerprint)).toEqual({ restored: 3 });
+  expect(await applyUndo(tree, 'fixer', 'undo', plan.fingerprint, ctx)).toEqual({ restored: 3 });
   expect(await readFile(join(tree, 'src', 'a.ts'), 'utf8')).toBe('turn one\n'); expect(await readFile(join(tree, 'keep.txt'), 'utf8')).toBe('keep\n');
   await expect(access(join(tree, 'added.md'))).rejects.toThrow();
   expect(await agentGit(tree)).toEqual(before);
-  const redo = await undoPlan(tree, 'fixer', 'redo');
+  const redo = await undoPlan(tree, 'fixer', 'redo', ctx);
   expect(redo.changes).toEqual(expect.arrayContaining([{ path: 'added.md', change: 'restored' }]));
-  await applyUndo(tree, 'fixer', 'redo', redo.fingerprint);
+  await applyUndo(tree, 'fixer', 'redo', redo.fingerprint, ctx);
   expect(await readFile(join(tree, 'src', 'a.ts'), 'utf8')).toBe('turn two\n'); expect(await readFile(join(tree, 'added.md'), 'utf8')).toBe('added\n');
-  await expect(undoPlan(tree, 'fixer', 'redo')).rejects.toThrow('Nothing to redo');
+  await expect(undoPlan(tree, 'fixer', 'redo', ctx)).rejects.toThrow('Nothing to redo');
 });
 
 it('a change after the preview refuses the undo; with no earlier checkpoint there is nothing to undo', async () => {
-  const { tree } = await fixture();
-  await expect(undoPlan(tree, 'fixer', 'undo')).rejects.toThrow('No checkpoint to go back to');
-  await writeFile(join(tree, 'src', 'a.ts'), 'x\n'); await snapshot(tree, 'fixer');
+  const { tree, ctx } = await fixture();
+  await expect(undoPlan(tree, 'fixer', 'undo', ctx)).rejects.toThrow('No checkpoint to go back to');
+  await writeFile(join(tree, 'src', 'a.ts'), 'x\n'); await snapshot(tree, 'fixer', ctx);
   await writeFile(join(tree, 'src', 'a.ts'), 'y\n');
   // Changed since the last checkpoint: undo goes back to it.
-  const plan = await undoPlan(tree, 'fixer', 'undo');
+  const plan = await undoPlan(tree, 'fixer', 'undo', ctx);
   expect(plan.target).toBe(1);
   await writeFile(join(tree, 'src', 'a.ts'), 'z\n');
-  await expect(applyUndo(tree, 'fixer', 'undo', plan.fingerprint)).rejects.toThrow('Changed since you looked; run /undo again');
+  await expect(applyUndo(tree, 'fixer', 'undo', plan.fingerprint, ctx)).rejects.toThrow('Changed since you looked; run /undo again');
   expect(await readFile(join(tree, 'src', 'a.ts'), 'utf8')).toBe('z\n');
 });
 
 it('restoring never writes through a symlinked folder or outside the worktree', async () => {
-  const { temp, tree } = await fixture();
+  const { temp, tree, ctx } = await fixture();
   const outside = join(temp, 'outside'); await mkdir(outside);
-  await writeFile(join(tree, 'src', 'a.ts'), 'mine\n'); await snapshot(tree, 'fixer');
+  await writeFile(join(tree, 'src', 'a.ts'), 'mine\n'); await snapshot(tree, 'fixer', ctx);
   await rm(join(tree, 'src'), { recursive: true }); await symlink(outside, join(tree, 'src'));
-  const plan = await undoPlan(tree, 'fixer', 'undo');
-  await expect(applyUndo(tree, 'fixer', 'undo', plan.fingerprint)).rejects.toThrow('A folder in the worktree is a symlink; nothing was restored');
+  const plan = await undoPlan(tree, 'fixer', 'undo', ctx);
+  await expect(applyUndo(tree, 'fixer', 'undo', plan.fingerprint, ctx)).rejects.toThrow('A folder in the worktree is a symlink; nothing was restored');
   await expect(access(join(outside, 'a.ts'))).rejects.toThrow();
 });
 
 it('checkpoint refs go away with the worktree', async () => {
-  const { repo, tree } = await fixture();
-  await writeFile(join(tree, 'x.txt'), 'x\n'); await snapshot(tree, 'fixer');
-  await dropCheckpoints(repo, 'fixer');
+  const { repo, tree, ctx } = await fixture();
+  await writeFile(join(tree, 'x.txt'), 'x\n'); await snapshot(tree, 'fixer', ctx);
+  await dropCheckpoints(repo, 'fixer', ctx);
   expect((await git(repo, 'for-each-ref', '--', 'refs/ai-term/')).stdout).toBe('');
 });
 
@@ -116,7 +117,7 @@ it('the daemon checkpoints a turn that ends, refuses /undo while the agent runs 
   const tree = agent.worktree ?? '', slug = (agent.branch ?? '').slice(3);
   await writeFile(join(tree, 'work.md'), 'work\n');
   await m.checkpointTurn(agent.id);
-  expect((await listCheckpoints(tree, slug)).map(c => c.n)).toEqual([1]);
+  expect((await listCheckpoints(tree, slug, await m.checkpointContext(agent.id))).map(c => c.n)).toEqual([1]);
   const live = (m as unknown as { sessions: Map<string, { info: SessionInfo }> }).sessions.get(agent.id);
   if (!live) throw new Error('no live');
   live.info.status = 'running';
@@ -128,7 +129,7 @@ it('the daemon checkpoints a turn that ends, refuses /undo while the agent runs 
   expect((await m.undoPlan(agent.id, 'undo')).target).toBe(1);
   await new SettingsStore(home).set({ checkpoints: false });
   await m.checkpointTurn(agent.id);
-  expect((await listCheckpoints(tree, slug)).map(c => c.n)).toEqual([1]);
+  expect((await listCheckpoints(tree, slug, await m.checkpointContext(agent.id))).map(c => c.n)).toEqual([1]);
   await expect(m.undoPlan(agent.id, 'undo')).rejects.toThrow('Checkpoints are off · /settings u turns them on');
 });
 
@@ -164,4 +165,63 @@ it('/undo on the homepage shows the plan and restores only on y; n and Esc keep 
     await vi.waitFor(() => expect(requests).toContainEqual({ kind: 'sessions.undo', sessionId: fixer.id, redo: false, fingerprint: plan.fingerprint }));
     await vi.waitFor(async () => expect(await screen(tty)).toContain('✓ undone · fixer is back at checkpoint 2 · /redo brings it back'));
   } finally { await home.stop(); }
+});
+
+// ---- Part D review findings (fresh typescript-reviewer and security-reviewer) ----
+it('HIGH (TS review): /undo twice goes back two checkpoints; /redo comes forward one at a time', async () => {
+  const { tree, ctx } = await fixture();
+  for (const v of ['1', '2', '3']) { await writeFile(join(tree, 'f.txt'), `${v}\n`); await snapshot(tree, 'fixer', ctx); }
+  const step = async (kind: 'undo' | 'redo') => { const plan = await undoPlan(tree, 'fixer', kind, ctx); await applyUndo(tree, 'fixer', kind, plan.fingerprint, ctx); return readFile(join(tree, 'f.txt'), 'utf8'); };
+  expect(await step('undo')).toBe('2\n'); expect(await step('undo')).toBe('1\n');
+  expect(await step('redo')).toBe('2\n'); expect(await step('redo')).toBe('3\n');
+  await expect(undoPlan(tree, 'fixer', 'redo', ctx)).rejects.toThrow('Nothing to redo');
+  // A new turn after an undo ends what /redo could bring back.
+  await step('undo'); await writeFile(join(tree, 'f.txt'), 'new turn\n'); await snapshot(tree, 'fixer', ctx);
+  await expect(undoPlan(tree, 'fixer', 'redo', ctx)).rejects.toThrow('Nothing to redo');
+});
+
+it('HIGH (TS review): a file that became a folder, or a folder that became a file, restores; emptied folders go', async () => {
+  const { tree, ctx } = await fixture();
+  await writeFile(join(tree, 'a'), 'file a\n'); await snapshot(tree, 'fixer', ctx);
+  await rm(join(tree, 'a')); await mkdir(join(tree, 'a', 'c'), { recursive: true }); await writeFile(join(tree, 'a', 'c', 'b'), 'deep\n'); await mkdir(join(tree, 'gone', 'x'), { recursive: true }); await writeFile(join(tree, 'gone', 'x', 'y'), 'y\n'); await snapshot(tree, 'fixer', ctx);
+  let plan = await undoPlan(tree, 'fixer', 'undo', ctx); await applyUndo(tree, 'fixer', 'undo', plan.fingerprint, ctx);
+  expect(await readFile(join(tree, 'a'), 'utf8')).toBe('file a\n'); await expect(access(join(tree, 'gone'))).rejects.toThrow();
+  plan = await undoPlan(tree, 'fixer', 'redo', ctx); await applyUndo(tree, 'fixer', 'redo', plan.fingerprint, ctx);
+  expect(await readFile(join(tree, 'a', 'c', 'b'), 'utf8')).toBe('deep\n');
+});
+
+it('HIGH (TS review): a restore that can\'t read what it would write changes nothing', async () => {
+  const { tree, ctx } = await fixture();
+  await writeFile(join(tree, 'keep.txt'), 'now\n'); await snapshot(tree, 'fixer', ctx);
+  // A checkpoint whose tree names a blob that doesn't exist (AI Term's own key signs it, so only the read can fail).
+  const { forgeCheckpoint } = await import('./fixtures/checkpoint-forge.js');
+  await forgeCheckpoint(tree, 'fixer', ctx, 'deadbeef'.repeat(5));
+  await writeFile(join(tree, 'keep.txt'), 'after\n');
+  const plan = await undoPlan(tree, 'fixer', 'undo', ctx);
+  await expect(applyUndo(tree, 'fixer', 'undo', plan.fingerprint, ctx)).rejects.toThrow('Nothing was restored; a checkpoint file could not be read');
+  expect(await readFile(join(tree, 'keep.txt'), 'utf8')).toBe('after\n');
+  await expect(undoPlan(tree, 'fixer', 'redo', ctx)).rejects.toThrow('Nothing to redo');
+});
+
+it('MEDIUM (security review): refs AI Term didn\'t make (another agent\'s forgery) are ignored', async () => {
+  const { tree, ctx } = await fixture();
+  await writeFile(join(tree, 'x.txt'), 'x\n'); await snapshot(tree, 'fixer', ctx);
+  const tree2 = (await git(tree, 'write-tree')).stdout.trim();
+  const forged = (await git(tree, 'commit-tree', '-m', 'AI Term checkpoint 99', tree2)).stdout.trim();
+  await git(tree, 'update-ref', 'refs/ai-term/checkpoints/fixer/99', forged); await git(tree, 'update-ref', 'refs/ai-term/redo/fixer/1', forged);
+  expect((await listCheckpoints(tree, 'fixer', ctx)).map(c => c.n)).toEqual([1]);
+  expect((await listCheckpoints(tree, 'fixer', { ...ctx, key: Buffer.alloc(32, 9) })).map(c => c.n)).toEqual([]);
+  await expect(undoPlan(tree, 'fixer', 'redo', ctx)).rejects.toThrow('Nothing to redo');
+});
+
+it('MEDIUM (security review): a worktree whose git files point at another repository is refused; that repository is never written', async () => {
+  const { temp, tree, ctx } = await fixture();
+  const victim = join(temp, 'victim'); await run('/usr/bin/git', ['init', '--', victim]);
+  const fake = join(tree, 'fake'); await mkdir(fake);
+  const admin = (await git(tree, 'rev-parse', '--absolute-git-dir')).stdout.trim();
+  for (const name of ['HEAD', 'index', 'gitdir']) await writeFile(join(fake, name), await readFile(join(admin, name)).catch(() => Buffer.from('')));
+  await writeFile(join(fake, 'commondir'), join(victim, '.git') + '\n'); await writeFile(join(tree, '.git'), `gitdir: ${fake}\n`);
+  await writeFile(join(tree, 'y.txt'), 'y\n');
+  await expect(snapshot(tree, 'fixer', ctx)).rejects.toThrow();
+  expect((await git(victim, 'for-each-ref')).stdout).toBe('');
 });
