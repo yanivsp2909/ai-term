@@ -85,7 +85,7 @@ async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
   const missing = (fallback: string) => (error: unknown) => { if (isFsError(error, 'ENOENT')) return fallback; throw error; };
   let home: string, cwd: string, realUser: string, persistence: Persistence;
   try { [home, cwd, realUser, persistence] = await Promise.all([realpath(options.sandbox.home).catch(missing(options.sandbox.home)), realpath(options.cwd), realpath(user).catch(missing(user)), persistencePaths(user, options.env)]); }
-  catch { throw new ToolError("bash can't run here: AI Term couldn't read the folders its sandbox protects"); }
+  catch { throw new ToolError("bash can't run here: AI Term couldn't check the folders its sandbox protects"); }
   let profile: string;
   try { profile = bashProfile(home, cwd, await Promise.all((options.sandbox.protect ?? []).map(dir => realpath(dir).catch(missing(dir)))), persistence); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a path with quotes, parentheses or control characters (this folder, or where one of your dotfile links leads)"); throw error; }
   return { program: SANDBOX_EXEC, args: ['-p', profile, '--', '/bin/sh', '-c', command], guard: { user: realUser, cwd, places: { ...persistence, home } } };
@@ -145,7 +145,7 @@ export function bashReport(result: BashResult, timeoutMs: number): string {
   if (result.stdout) parts.push(`stdout:\n${result.stdout}`);
   if (result.stderr) parts.push(`stderr:\n${result.stderr}`);
   if (result.stopFailed) parts.push('(some processes it started could not be stopped)');
-  if (result.blocked) parts.push(`✗ blocked by sandbox: ${result.blocked} · AI Term's agent can't change shell startup files, login items, ~/.ssh, git's global settings, Claude Code's or Codex's settings, or AI Term's own folder`);
+  if (result.blocked) parts.push(`✗ blocked by sandbox: ${result.blocked} · agent commands can't change startup files, login items, ~/.ssh, git's global settings, or Claude Code's, Codex's or AI Term's own files`);
   if (result.cut) parts.push(`(output cut at ${BASH_OUTPUT_MAX_BYTES} bytes per stream)`);
   return parts.join('\n');
 }
