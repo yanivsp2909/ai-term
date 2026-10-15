@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readdir, readlink, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
+import { diffPath } from '../shared/diff.js';
 import { failingCount, isDependencyPath, isTestCommand, isTestConfig } from '../shared/test-run.js';
 import { ProcessTree } from './process-tree.js';
 import { sandboxDenial, type PreparedSandbox } from './test-sandbox.js';
@@ -108,7 +109,8 @@ export async function testSetup(path: string, base: string, repo: string | undef
   } finally { await git.dispose(); }
   const walked = ignored.length ? await walkDigest(path, ignored) : { digest: 'none', unverifiable: false };
   const fingerprint = createHash('sha256').update(await testFingerprint(command, path, configs)).update('\0').update(walked.digest).digest('hex');
-  return { changed: [...configs, ...ignored.map(name => `${name} (ignored)`)], fingerprint, unverifiable: walked.unverifiable };
+  // Shown names only (gate): control characters can't cross the socket; the fingerprint above read the real ones.
+  return { changed: [...configs.map(diffPath), ...ignored.map(name => `${diffPath(name)} (ignored)`)], fingerprint, unverifiable: walked.unverifiable };
 }
 // Names, kinds, sizes and change times of everything under the entries, without following links. A link is hashed by
 // its target when that stays inside the worktree; one that leads out makes the setup unverifiable, like a tree past
@@ -154,7 +156,7 @@ async function contentHash(path: string): Promise<string> {
   } finally { await file.close(); }
 }
 export class TestRunError extends Error {}
-export const TEST_ERRORS = ['This agent has no worktree to test', 'Tests unavailable; git could not read the worktree', 'No test command for this project · /test-cmd <command>',
+export const TEST_ERRORS = ['This agent has no worktree to test', "Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of", 'Tests unavailable; git could not read the worktree', 'No test command for this project · /test-cmd <command>',
   'The test setup changed since it was shown; run /test again', "This folder isn't in a git repository; /test-cmd is per project"] as const;
 // A project is a repository: its main checkout's folder (a linked worktree's common git dir leads back to it), real path.
 export async function projectRepo(cwd: string): Promise<string> {

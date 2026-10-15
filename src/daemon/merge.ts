@@ -15,7 +15,7 @@ import { resolveExecutable } from './engines.js';
 // worktree, so a repo whose config or attributes name a filter or merge driver (commands git would run) is refused:
 // you merge it yourself. Your own global git config (identity, credentials, ssh) is used as is.
 export class MergeError extends Error {}
-export const MERGE_ERRORS = ['Your checkout has uncommitted changes; commit or stash them yourself first', 'This repo uses git filters or merge drivers; merge it yourself',
+export const MERGE_ERRORS = ['origin has more than one push URL; push it yourself', 'Your checkout is in the middle of a merge, cherry-pick, revert or rebase; finish it yourself first', 'Your checkout has uncommitted changes; commit or stash them yourself first', 'This repo uses git filters or merge drivers; merge it yourself',
   'Nothing to merge; the branch has no commits beyond the base', 'Changed since you looked; run /merge again', 'Changed since you looked; run /pr again',
   'Secret scan found possible secrets; type override to go on anyway', 'Merge conflict; it was undone and your checkout is as it was', 'Git refused the merge; your checkout is as it was',
   'Merge unavailable; git could not read the repository', 'This repo has no origin remote', 'gh is missing or not logged in', 'Push failed; nothing was opened',

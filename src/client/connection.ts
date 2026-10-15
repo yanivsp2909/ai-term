@@ -32,6 +32,10 @@ export function requestTimeout(kind: RequestBody['kind']): number {
     if (kind === 'sessions.undoPlan' || kind === 'sessions.undo') return 5 * 60_000;
     // A merge, a push and gh each have up to two minutes.
     if (kind === 'sessions.mergePlan' || kind === 'sessions.prPlan' || kind === 'sessions.merge' || kind === 'sessions.pr') return 5 * 60_000;
+    // Gate: a review waits up to 2 minutes for the provider; a fork makes a worktree and starts an engine; a test plan walks
+    // ignored folders (10 s) and probes the sandbox (10 s); a review plan reads the whole diff.
+    if (kind === 'sessions.review' || kind === 'sessions.fork') return 5 * 60_000;
+    if (kind === 'sessions.reviewPlan' || kind === 'sessions.forkPlan' || kind === 'sessions.testPlan' || kind === 'sessions.test') return 2 * 60_000;
     return ['keys.add', 'keys.importEnv', 'sessions.create', 'sessions.resume'].includes(kind) ? 60_000 : 5000;
 }
 export class Connection extends EventEmitter {

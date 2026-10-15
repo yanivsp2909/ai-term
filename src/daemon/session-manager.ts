@@ -42,7 +42,7 @@ import { isYourPrice, MAX_PRICES, overridesFor, priceCount, PRICED_BY_YOU } from
 import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
 import { prepareSandbox, sandboxReady, SANDBOX_EXEC, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
-import { FORK_PREVIEW_CHARS, type ForkPlan, type ForkTarget } from '../shared/fork.js';
+import { FORK_PREVIEW_CHARS, forkTitle, type ForkPlan, type ForkTarget } from '../shared/fork.js';
 import { ownLoginLabel } from '../shared/models.js';
 import { keyAuthLabel } from '../shared/providers.js';
 import { AutoReviewLedger, ReviewError, reviewModelView, reviewWriters } from './review.js';
@@ -958,10 +958,12 @@ export class SessionManager extends EventEmitter {
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         let settings:Settings|null=null;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; checkpoints stay on');}
         if(settings?.checkpoints===false)throw new CheckpointError('Checkpoints are off · /settings u turns them on');
-        this.undoIdle(live);
+        this.undoIdle(live);this.undoNoTests(id);
         const slug=this.checkpointSlug(live),path=live.info.worktree??'',ctx=await this.checkpointContext(id);
         return {live,path,slug,ctx};
     }
+    // Gate: test code runs in this worktree while its tests run, and could swap a folder for a link while a restore writes.
+    private undoNoTests(id:string):void{if(this.testRuns.has(id))throw new CheckpointError('Tests are running in this worktree; /undo or /redo when they finish');}
     private undoIdle(live:Live):void{
         if(['running','starting'].includes(live.info.status))throw new CheckpointError('Stop or wait for the agent first; it is running');
         if(live.info.status==='waiting')throw new CheckpointError('Stop or wait for the agent first; it is asking');
@@ -972,7 +974,7 @@ export class SessionManager extends EventEmitter {
     }
     async undo(id:string,kind:'undo'|'redo',fingerprint:string):Promise<{restored:number}>{
         const {live,path,slug,ctx}=await this.undoTarget(id);
-        return this.inCheckpointQueue(id,async()=>{this.undoIdle(live);return applyUndo(path,slug,kind,fingerprint,ctx).catch((error:unknown)=>{throw this.undoError(error);});});
+        return this.inCheckpointQueue(id,async()=>{this.undoIdle(live);this.undoNoTests(id);return applyUndo(path,slug,kind,fingerprint,ctx).catch((error:unknown)=>{throw this.undoError(error);});});
     }
     private undoError(error:unknown):Error{
         if(error instanceof CheckpointError)return error;
@@ -1060,12 +1062,14 @@ export class SessionManager extends EventEmitter {
     }
     // After a finished turn: the tests, unless the agent changed the test setup (then the card asks for /test). Errors
     // are logged and the agent goes on; tests are a check, never a reason to stop work.
-    private turnEnds=new Set<string>();
+    // A turn end that arrives while the last one is still handled (auto-review can take two minutes) runs right after it.
+    private turnEnds=new Set<string>();private turnEndsAgain=new Set<string>();
     async afterTurn(id:string):Promise<void>{
-        const live=this.sessions.get(id);if(!live||live.info.status!=='done'||this.turnEnds.has(id))return;
+        const live=this.sessions.get(id);if(!live||live.info.status!=='done')return;
+        if(this.turnEnds.has(id)){this.turnEndsAgain.add(id);return;}
         this.turnEnds.add(id);
         try{
-            let settings:Settings;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; auto-test skipped');return;}
+            let settings:Settings;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; auto-test skipped');this.testsFailed(live);return;}
             // Auto-review (off by default) reads the diff before the tests run (they may write files into the worktree).
             if(settings.autoReview===true&&settings.reviewModel)await this.autoReview(live,settings,settings.reviewModel);
             if(settings.autoTest===false)return;
@@ -1082,9 +1086,14 @@ export class SessionManager extends EventEmitter {
                 return;
             }
             await this.startTests(live,target.command,target.path,box,setup.unverifiable?undefined:target);
-        }catch{this.log.error('Auto-test skipped; git could not read the worktree');}
-        finally{this.turnEnds.delete(id);}
+        }catch(error){
+            // Said on the card (`✗ tests couldn't start`), not only in the log: a turn with no result reads as untested.
+            this.log.error(`Auto-test skipped (${error instanceof Error?error.constructor.name:'unknown'}${error instanceof Error&&'code' in error?` ${String(error.code)}`:''})`);
+            this.testsFailed(live);
+        }
+        finally{this.turnEnds.delete(id);if(this.turnEndsAgain.delete(id))void this.afterTurn(id);}
     }
+    private testsFailed(live:Live):void{if(live.info.status==='done'&&this.sessions.get(live.info.id)===live)this.setTests(live,{state:'error'});}
     async testPlan(id:string):Promise<TestPlan>{const {plan,box}=await this.testPlanSetup(id);await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));return plan;}
     private async testPlanSetup(id:string):Promise<{plan:TestPlan;unverifiable:boolean;setup:string;box:PreparedSandbox|null;target:{path:string;base:string;repo?:string;command:string[]}}>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
@@ -1244,7 +1253,7 @@ export class SessionManager extends EventEmitter {
     }
     async fork(id:string,target:ForkTarget):Promise<SessionInfo>{
         const {live,record,firstMessage,cwd}=this.forkSource(id);
-        const title=`${live.info.title} fork`.slice(0,60);
+        const title=forkTitle(live.info.title);
         return this.create({engine:target.engine,model:target.model,...(target.effort!==undefined?{effort:target.effort}:{}),auth:target.auth,cwd,permission:'ask',title,firstMessage,useWorktree:true},undefined,{startCommit:record.baseCommit??''});
     }
     // v0.7.1 /export: the session's screen text (its end, ~1 MiB) and, for AI Term's own agent, its transcript, all redacted.

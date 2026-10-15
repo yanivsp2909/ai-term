@@ -1,4 +1,5 @@
 import { SECRET_PATTERNS, isSecretName, isSecretValue, isUrlPassword } from './redact.js';
+import { diffPath } from './diff.js';
 
 // v0.7.3 secret scan (D55, on): before a merge or a PR, the lines an agent's branch adds are checked against the
 // redaction patterns (src/shared/redact.ts) plus an entropy check for long random-looking values in code. A hit says
@@ -76,7 +77,7 @@ export function scanPatch(patch: string, max = MAX_HITS): SecretHit[] {
       if (raw.startsWith('+')) {
         newLeft--;
         // Lockfiles and fixtures skip only the entropy check (random by design); every pattern still applies.
-        if (file) { const hit = scanLine(raw.slice(1), FIXTURES.test(file) || LOCKFILES.test(file)); if (hit) { hits.push({ file, line, ...hit }); if (hits.length >= max) return hits; } }
+        if (file) { const hit = scanLine(raw.slice(1), FIXTURES.test(file) || LOCKFILES.test(file)); if (hit) { hits.push({ file: diffPath(file), line, ...hit }); if (hits.length >= max) return hits; } }
         line++;
       } else if (raw.startsWith('-')) oldLeft--;
       else if (raw.startsWith(' ')) { oldLeft--; newLeft--; line++; }

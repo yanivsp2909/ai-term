@@ -22,3 +22,6 @@ export function validateForkPlan(value: unknown): ForkPlan {
     || !(p.tokens === null || isRange(p.tokens)) || !(p.priceUsd === null || isRange(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid fork plan');
   return p as unknown as ForkPlan;
 }
+
+// A fork's name: the source's name plus " fork", at most 60 characters, cut between whole characters (an emoji stays whole).
+export function forkTitle(source: string): string { return [...`${source} fork`].slice(0, 60).join(''); }

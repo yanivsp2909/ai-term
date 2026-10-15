@@ -1,3 +1,4 @@
+import { diffPath } from '../shared/diff.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readdir, rename, rm, rmdir, symlink, unlink } from 'node:fs/promises';
@@ -17,7 +18,7 @@ export const MAX_CHECKPOINTS = 50, MAX_REDO = 50, MAX_UNTRACKED = 10_000;
 export class CheckpointError extends Error {}
 // The fixed words a client may see (the server passes only these on).
 export const CHECKPOINT_ERRORS = ['Checkpoints are off · /settings u turns them on', 'Stop or wait for the agent first; it is running', 'Stop or wait for the agent first; it is asking',
-  'This agent has no worktree; checkpoints need one', 'Undo unavailable; git could not read the worktree', 'Nothing to redo', 'No checkpoint to go back to', 'Nothing to change; the worktree already matches it',
+  'This agent has no worktree; checkpoints need one', 'Tests are running in this worktree; /undo or /redo when they finish', 'Undo unavailable; git could not read the worktree', 'Nothing to redo', 'No checkpoint to go back to', 'Nothing to change; the worktree already matches it',
   'Changed since you looked; run /undo again', 'Changed since you looked; run /redo again', 'A folder in the worktree is a symlink; nothing was restored', 'Invalid checkpoint name',
   'Something in the worktree is in the way; nothing was restored', 'Nothing was restored; a checkpoint file could not be read', 'The restore stopped part way; /redo or /undo brings back a saved state',
   'Nothing was restored; the worktree could not be written', 'An ignored file is where the checkpoint has one; nothing was restored'] as const;
@@ -139,7 +140,7 @@ export async function undoPlan(path: string, slug: string, kind: 'undo' | 'redo'
   slugOk(slug);
   return withGit(path, ctx, async git => {
     const r = await resolve(path, slug, kind, git, ctx);
-    return { kind, title, target: r.target.n, targetAt: r.target.at, changes: r.all.slice(0, UNDO_SHOWN), more: Math.max(0, r.all.length - UNDO_SHOWN), fingerprint: r.fingerprint };
+    return { kind, title, target: r.target.n, targetAt: r.target.at, changes: r.all.slice(0, UNDO_SHOWN).map(change => ({ ...change, path: diffPath(change.path) })), more: Math.max(0, r.all.length - UNDO_SHOWN), fingerprint: r.fingerprint };
   });
 }
 // Every existing folder on the way to a path must be a real folder (not a symlink) inside the worktree; a file on the

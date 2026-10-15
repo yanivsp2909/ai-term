@@ -65,12 +65,12 @@ export function sandboxProfile(spec: SandboxSpec): string {
     // Rules apply last-match-wins: hide, open the toolchains, close the key folders again, open this run's own folders.
     ...spec.hidden?.length ? [`(deny file-read-data file-read-xattr ${spec.hidden.map(path => `(subpath ${q(path)})`).join(' ')})`] : [],
     ...spec.readable?.length ? [`(allow file-read-data file-read-xattr ${spec.readable.map(path => `(subpath ${q(path)})`).join(' ')})`] : [],
-    '(allow file-read-data file-read-xattr (regex #"^/private/var/folders/[^/]+/[^/]+/T/xcrun_db"))',
     `(deny file-read-data file-read-xattr ${secrets.map(path => `(subpath ${path})`).join(' ')})`,
     // The agent's own worktree is inside ~/.ai-term: readable again (only it, not the other agents' worktrees).
     `(allow file-read-data file-read-xattr (subpath ${worktree}) (subpath ${temp}))`,
-    // xcrun (behind make, cc, git on some setups) caches into the user temp folder whatever TMPDIR says.
-    `(allow file-write* (subpath ${worktree}) (subpath ${temp}) (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/") (regex #"^/private/var/folders/[^/]+/[^/]+/T/xcrun_db"))`,
+    // Not xcrun's cache in the user temp folder (gate): tools outside the sandbox trust it, so a test could point them at its
+    // own program. xcrun works without it (it notes the cache it couldn't write).
+    `(allow file-write* (subpath ${worktree}) (subpath ${temp}) (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))`,
     // Unix sockets only inside this run's own temp folder (test runners talk to their workers): nothing outside listens there.
     `(allow network-bind network-inbound network-outbound (local unix-socket (subpath ${temp})) (remote unix-socket (subpath ${temp})))`,
     ...spec.loopback ? ['(allow network-bind network-inbound (local ip "localhost:*"))', '(allow network-outbound (remote ip "localhost:*"))'] : [],
