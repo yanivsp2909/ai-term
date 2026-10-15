@@ -24,7 +24,8 @@ export const SECRET_PATHS: readonly string[] = ['.ssh', '.aws', '.gnupg', '.netr
   '.m2/settings.xml', '.m2/settings-security.xml', '.gradle/gradle.properties', '.gradle/init.d', '.config/mise/config.toml', '.bunfig.toml', '.pub-cache/credentials.json'];
 // hidden: folders whose contents tests can't read (your home, /Volumes, /tmp, the user temp area); readable: what inside
 // them stays open (the toolchains tests run, the repository's git folder). Key folders and private stay closed either way.
-export interface SandboxSpec { worktree: string; temp: string; home: string; private: readonly string[]; loopback: boolean; hidden?: readonly string[]; readable?: readonly string[] }
+// ports: with loopback, only these 127.0.0.1 ports (a dev server's own, v0.9.2 review) rather than every local service.
+export interface SandboxSpec { worktree: string; temp: string; home: string; private: readonly string[]; loopback: boolean; hidden?: readonly string[]; readable?: readonly string[]; ports?: readonly number[] }
 // Toolchains under your home a test command may need to read (version managers, language homes, git's own config). The
 // key folders stay unreadable inside them (.cargo/credentials, .gem/credentials, .config/git/credentials).
 const TOOLCHAINS = ['.nvm', '.volta', '.fnm', '.local/share/fnm', '.pyenv', '.rbenv', '.rustup', '.cargo', 'go', '.gradle', '.m2', '.bun', '.deno', '.local/share/pnpm', 'Library/pnpm',
@@ -78,7 +79,9 @@ export function sandboxProfile(spec: SandboxSpec): string {
     `(allow file-write* (subpath ${worktree}) (subpath ${temp}) (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))`,
     // Unix sockets only inside this run's own temp folder (test runners talk to their workers): nothing outside listens there.
     `(allow network-bind network-inbound network-outbound (local unix-socket (subpath ${temp})) (remote unix-socket (subpath ${temp})))`,
-    ...spec.loopback ? ['(allow network-bind network-inbound (local ip "localhost:*"))', '(allow network-outbound (remote ip "localhost:*"))'] : [],
+    ...spec.loopback ? spec.ports?.length
+      ? [`(allow network-bind network-inbound ${spec.ports.map(port => `(local ip "localhost:${Math.trunc(port)}")`).join(' ')})`, `(allow network-outbound ${spec.ports.map(port => `(remote ip "localhost:${Math.trunc(port)}")`).join(' ')})`]
+      : ['(allow network-bind network-inbound (local ip "localhost:*"))', '(allow network-outbound (remote ip "localhost:*"))'] : [],
     '',
   ].join('\n');
 }
@@ -127,7 +130,7 @@ export async function sandboxReady(profile: string, exec = SANDBOX_EXEC, prefix?
 // A fresh 0700 temp folder for the run (TMPDIR, caches), the profile, and its removal afterwards. Throws SandboxPathError
 // when a path can't go into a profile; the caller then treats the run as having no sandbox.
 // env: the test's env, for the toolchains on its PATH; readable: more folders to keep open (the repository's git folder).
-export async function prepareSandbox(worktree: string, options: { home: string; private: readonly string[]; loopback: boolean; program?: string; env?: Readonly<Record<string, string | undefined>>; readable?: readonly string[]; log?: (text: string) => void; platform?: NodeJS.Platform }): Promise<PreparedSandbox> {
+export async function prepareSandbox(worktree: string, options: { home: string; private: readonly string[]; loopback: boolean; ports?: readonly number[]; program?: string; env?: Readonly<Record<string, string | undefined>>; readable?: readonly string[]; log?: (text: string) => void; platform?: NodeJS.Platform }): Promise<PreparedSandbox> {
   const temp = await mkdtemp(join(await realpath(tmpdir()), 'ai-term-test-'));
   if ((options.platform ?? process.platform) === 'linux') return prepareLinux(worktree, temp, options);
   try {
@@ -142,7 +145,7 @@ export async function prepareSandbox(worktree: string, options: { home: string; 
     const readable = usable([...new Set((await Promise.all([...toolchainPaths(options.home, options.env ?? {}), ...toolchainPaths(realHome, options.env ?? {}), ...options.readable ?? []]
       .map(async path => [path, await realpath(path).catch(() => path)]))).flat())]);
     const spec: SandboxSpec = { worktree: await realpath(worktree), temp, home: realHome, private: [...new Set([...options.private, ...targets])].filter(path => !SECRET_PATHS.some(name => join(realHome, name) === path)), loopback: options.loopback,
-      hidden: [...new Set([realHome, '/Volumes', '/private/tmp', '/private/var/tmp', ...userTemp ? [userTemp] : []])], readable };
+      hidden: [...new Set([realHome, '/Volumes', '/private/tmp', '/private/var/tmp', ...userTemp ? [userTemp] : []])], readable, ...options.ports ? { ports: options.ports } : {} };
     // Fixed words: the path itself may be anything.
     if (dropped) options.log?.('Test sandbox: a folder with quotes, parentheses or control characters in its path stays closed to tests');
     const profile = sandboxProfile(spec), program = options.program ?? SANDBOX_EXEC;

@@ -957,6 +957,15 @@ The prompt's text for this part never arrived (it was cut off inside the queue p
   - **Ending:** a server that ends by itself sets `SessionInfo.dev = {state:'exited', code}`; a running one is `{state:'running', port}`. The card adds `▶ dev :port` or `✗ dev exited N`.
   - **Who stops it:** `remove()` and `shutdown()`. Nothing starts or restarts it by itself.
 - **Client:** `/dev-cmd`, `/dev [agent]` (`DevAsk`: `y` starts, `x` stops, `n`/Esc closes).
+- **Review fixes (Part F):**
+  - **Sandbox:** the profile's `ports` open `localhost:<port>` only.
+  - **Fingerprint:** it covers the setup files (`testSetup`, as `/test` does).
+  - **No sandbox:** the popup shows `runs: <package script>` (`scriptOf`) and takes a capital `Y`.
+  - **Output tail** (`appendTail`): escapes are stripped first; tabs become spaces; `\r` breaks lines; split chunks and UTF-8 are joined; bidi and zero-width marks are dropped; the last line is kept at close. So no output can make `/dev` unreadable and lose its `x`.
+  - **Start:** waits for spawn and reports a program that can't start. A second start is refused (and its sandbox folder removed), as is one after `close()` at shutdown or for a removed agent; one start runs at a time per agent.
+  - **Stop:** waits at most 5 s.
+  - **Ports and state:** a port is held only while its server runs. `dev` isn't saved to state. `remove()` stops the server only once the removal is allowed. The card shows the dev state in every status.
+  - **Popup lines:** live in `src/shared/dev.ts`, so the client imports no daemon code for them.
 
 ## 13. Decisions log
 

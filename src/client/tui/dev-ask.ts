@@ -1,7 +1,7 @@
 import type { Frame } from './grid.js';
 import type { Theme } from './theme.js';
 import { TextPanel } from './text-panel.js';
-import { devLines } from '../../daemon/dev-servers.js';
+import { devLines } from '../../shared/dev.js';
 import type { DevPlan } from '../../shared/dev.js';
 
 // v0.9.2 /dev [agent]: exactly what runs, where, on which port and in which sandbox. y starts it (only that plan); a running
@@ -13,7 +13,8 @@ export class DevAsk {
     this.panel.set(devLines(plan));
   }
   key(key: string): void {
-    if (key === 'y' && !this.plan.running) { this.close(); this.start(); return; }
+    // Without a sandbox it takes a capital Y (review): one easy key shouldn't run agent code with your rights.
+    if (key === (this.plan.sandbox ? 'y' : 'Y') && !this.plan.running) { this.close(); this.start(); return; }
     if (key === 'x' && this.plan.running) { this.close(); this.stop(); return; }
     if (key === 'n') { this.close(); return; }
     this.panel.key(key);
