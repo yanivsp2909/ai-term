@@ -60,16 +60,21 @@ export interface DoctorDeps {
 const STORE_NAME: Partial<Record<NodeJS.Platform, string>> = { darwin: 'macOS Keychain', linux: 'Secret Service', win32: 'Windows Credential Manager' };
 const SANDBOX_NAME: Partial<Record<NodeJS.Platform, string>> = { darwin: 'sandbox-exec · agent bash, tests and dev servers run in it', linux: 'bwrap · agent bash and tests run in it' };
 export async function extraLines(entry: string, deps: DoctorDeps): Promise<string[]> {
-    const sandbox = await deps.sandbox(), keychain = await deps.keychain(), gh = await deps.gh();
+    const sandbox = await deps.sandbox(), gh = await deps.gh();
+    // A daemon that refuses keys.health (an older one), times out or dies costs this one line, not the report (review).
+    let keychain: Awaited<ReturnType<DoctorDeps['keychain']>> | 'no answer';
+    try { keychain = await deps.keychain(); } catch { keychain = 'no answer'; }
     // gh's own words never reach the report: they name the account and may show part of its token. Only the exit code.
-    const ghLine = gh ? `gh: ${gh}; ${(await deps.ghStatus(gh, ['auth', 'status'])).code === 0 ? 'logged in' : 'not logged in · gh auth login'}` : 'gh: not found · /pr needs it';
+    // A check that never finished (gh validates over the network; offline it times out) says nothing about the login.
+    const ghCode = gh ? (await deps.ghStatus(gh, ['auth', 'status'])).code : null;
+    const ghLine = !gh ? 'gh: not found · /pr needs it' : `gh: ${gh}; ${ghCode === null ? 'status unavailable' : ghCode === 0 ? 'logged in' : 'not logged in · gh auth login'}`;
     const notifier = deps.platform === 'darwin' ? deps.notifier(entry) === 'built' ? 'Notifier: built' : 'Notifier: not built · npm run build:notifier'
         : deps.platform === 'linux' ? await deps.notifySend() ? 'Notifier: notify-send' : "Notifier: none · notify-send isn't installed"
             : "Notifier: none · notifications aren't available on Windows yet";
     return [
         sandbox.dontAsk ? `Sandbox: ${SANDBOX_NAME[deps.platform] ?? 'available'}` : `Sandbox: none · ${sandbox.note ?? "AI Term couldn't check for one"}`,
         // "Credential store", not "Keychain:": the report is redacted, and a word with "key" before a colon reads as a secret.
-        keychain === null ? `Credential store: not checked · the daemon isn't running; start ai, then run ai doctor again` : keychain.reachable ? `Credential store: ${STORE_NAME[deps.platform] ?? 'OS keychain'} reachable` : `Credential store: unavailable · ${keychain.note ?? 'no answer'}`,
+        keychain === 'no answer' ? "Credential store: not checked · the daemon didn't answer (an older one? ai daemon stop, then ai)" : keychain === null ? `Credential store: not checked · the daemon isn't running; start ai, then run ai doctor again` : keychain.reachable ? `Credential store: ${STORE_NAME[deps.platform] ?? 'OS keychain'} reachable` : `Credential store: unavailable · ${keychain.note ?? 'no answer'}`,
         ghLine,
         notifier,
     ];
@@ -86,7 +91,7 @@ export async function doctorLines(entry: string, each: (line: string) => void = 
         client = await Connection.connect(paths, { entry, autoStart: false, readOnly: true });
         print(`Daemon: running; protocol ${(await client.hello).protocol}`);
         const connection = client;
-        keychain = async () => (await connection.request({ kind: 'keys.health' })).keychain ?? { reachable: false, note: 'this daemon is older; ai daemon stop, then ai' };
+        keychain = async () => { const answer = (await connection.request({ kind: 'keys.health' })).keychain; if (!answer) throw new Error('No keychain answer'); return answer; };
     }
     catch (error) {
         if (isFsError(error, 'ENOENT') || isFsError(error, 'ECONNREFUSED'))

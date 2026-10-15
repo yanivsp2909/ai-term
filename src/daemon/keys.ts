@@ -73,9 +73,13 @@ export class KeyStore extends EventEmitter {
  // The key store's own failure, by kind only (its message could carry anything): the user sees the fixed line, the log
  // says which call failed and how (gate: every cause looked like a missing keyring).
  // v1.0.1 ai doctor: the keychain answers when looking up an entry that never holds a key works (absent is fine).
- async health():Promise<{reachable:boolean;note?:string}>{
-  try{await this.vault.read('doctor-probe');return {reachable:true};}
-  catch(error){this.vaultFailed('health',error);return {reachable:false,note:keychainUnavailable()};}
+ // In turn with every other keychain call (review: a locked Linux keyring could ask twice). Best effort on Linux: a
+ // locked collection may answer "absent" too, and the first real read then asks to unlock it.
+ health():Promise<{reachable:boolean;note?:string}>{
+  return this.serial(async()=>{
+   try{await this.vault.read('doctor-probe');return {reachable:true};}
+   catch(error){this.vaultFailed('health',error);return {reachable:false,note:keychainUnavailable()};}
+  });
  }
  private vaultFailed(call:string,error:unknown):void{const code=error instanceof Error&&'code' in error&&typeof error.code==='string'&&/^[A-Za-z_]{1,32}$/.test(error.code)?error.code:error instanceof Error?error.constructor.name.slice(0,32):'unknown';this.log.error(`Keychain ${call} failed (${code})`);}
  private serial<T>(work:()=>Promise<T>):Promise<T>{const next=this.queue.then(work);this.queue=next.then(()=>undefined,()=>undefined);return next;}
