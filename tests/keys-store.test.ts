@@ -3,7 +3,7 @@ if(process.env.AITERM_NATIVE_KEYCHAIN_TEST!=='1')process.stdout.write('Native Ke
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, stat, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { KeyStore } from '../src/daemon/keys.js';
+import { keychainUnavailable, KeyStore } from '../src/daemon/keys.js';
 const canary='sk-ant-'+'AITERMCANARY0000';
 function vault(){const values=new Map<string,string>();return {values,read:async(a:string)=>values.get(a)??null,write:async(a:string,s:string)=>{values.set(a,s);},remove:async(a:string)=>{values.delete(a);}};}
 it('stores only metadata and rolls back native entries when metadata cannot save',async()=>{
@@ -13,7 +13,7 @@ it('stores only metadata and rolls back native entries when metadata cannot save
  }finally{await rm(root,{recursive:true,force:true});}
 });
 it('refuses unavailable keychain without leaking errors or writing plain secrets',async()=>{
- const root=await mkdtemp('/tmp/ai-key-fail-');try{const native=vault();native.write=async()=>{throw new Error(canary);};const store=new KeyStore(root,{vault:native});await expect(store.add({provider:'anthropic',label:'test',secret:canary})).rejects.toThrow('OS keychain unavailable');expect(await store.list()).toEqual([]);}finally{await rm(root,{recursive:true,force:true});}
+ const root=await mkdtemp('/tmp/ai-key-fail-');try{const native=vault();native.write=async()=>{throw new Error(canary);};const store=new KeyStore(root,{vault:native});await expect(store.add({provider:'anthropic',label:'test',secret:canary})).rejects.toThrow(keychainUnavailable());expect(await store.list()).toEqual([]);}finally{await rm(root,{recursive:true,force:true});}
 });
 it('scan/import retains only selected names and never changes env content or mtime',async()=>{
  const root=await mkdtemp('/tmp/ai-env-import-'),native=vault(),store=new KeyStore(root,{vault:native}),path=join(root,'input.env');

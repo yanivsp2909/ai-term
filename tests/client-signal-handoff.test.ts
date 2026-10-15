@@ -25,6 +25,8 @@ it.each([['SIGTERM', 143], ['SIGHUP', 129]] as const)('%s while the homepage wai
     let output = ''; child.onData(data => { output += data; });
     const exited = new Promise<{ exitCode: number; signal?: number }>(r => child?.onExit(event => { finished = true; r(event); }));
     await expect.poll(() => output, { timeout: 10000 }).toContain('AI Term');
+    // The session list arrives after the first frame; ⏎ before it would attach nothing (seen on CI's slower machines).
+    await expect.poll(() => output, { timeout: 10000 }).toContain('shell');
     child.write('\r');
     // The daemon resizes the session to the client's terminal only once the attach is accepted.
     await expect.poll(() => events, { timeout: 10000 }).toContainEqual({ kind: 'session.previewResized', sessionId: session.id, cols: 130, rows: 45 });

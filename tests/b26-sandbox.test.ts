@@ -173,7 +173,7 @@ it('cards, results and the /test popup say it plainly; l switches 127.0.0.1 for 
   expect(() => validateTestResult({ state: 'blocked', what: 'x\u001b[2J' })).toThrow();
   expect(() => validateTestResult({ state: 'blocked', what: 'x'.repeat(200) })).toThrow();
   const plan = { title: 'fixer', command: ['npm', 'test'], cwd: '/tmp/t', changed: [], fingerprint: 'a'.repeat(64), sandbox: true, loopback: false };
-  const text = (p: typeof plan) => testLines(p).map(line => line.text).join('\n');
+  const text = (p: typeof plan) => testLines(p, 'darwin').map(line => line.text).join('\n');
   expect(text(plan)).toContain('sandbox: writes only in this worktree and a temp folder · no network');
   expect(text(plan)).toContain('127.0.0.1: off · l allows it for this project');
   expect(text({ ...plan, loopback: true })).toContain('127.0.0.1: on for this project · l turns it off');

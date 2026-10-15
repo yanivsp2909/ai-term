@@ -105,6 +105,7 @@ it('MEDIUM (both reviews): the blocked line names a relative or differently case
   const places = { files: ['/Users/me/.zshrc', '/Users/me/.gitconfig'], dirs: ['/Users/me/.ssh'], home: '/Users/me/.ai-term' };
   expect(blockedPlace('sh: .zshrc: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBe('~/.zshrc');
   expect(blockedPlace('touch: .ssh/config: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBe('~/.ssh/config');
-  expect(blockedPlace('sh: /Users/me/.ZSHRC: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBe('~/.ZSHRC');
+  // macOS file names ignore case; Linux's don't, so there ~/.ZSHRC is another file.
+  if (process.platform === 'darwin') expect(blockedPlace('sh: /Users/me/.ZSHRC: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBe('~/.ZSHRC');
   expect(blockedPlace('sh: notes.txt: Operation not permitted', '/Users/me/.ai-term/w', '/Users/me', places)).toBeNull();
 });

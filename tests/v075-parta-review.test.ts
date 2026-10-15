@@ -32,7 +32,7 @@ async function temp(): Promise<string> { const dir = await realpath(await mkdtem
 it('MEDIUM (security): credential files inside toolchain folders stay closed; /var/tmp is hidden too', async () => {
   for (const name of ['.m2/settings.xml', '.m2/settings-security.xml', '.gradle/gradle.properties', '.gradle/init.d', '.config/mise/config.toml']) expect(SECRET_PATHS).toContain(name);
   const dir = await temp(), tree = join(dir, 'tree'); await mkdir(tree);
-  const box = await prepareSandbox(tree, { home: join(dir, 'home'), private: [], loopback: false });
+  const box = await prepareSandbox(tree, { home: join(dir, 'home'), private: [], loopback: false, platform: 'darwin' });
   try { expect(box.spec.hidden).toContain('/private/var/tmp'); } finally { await box.dispose(); }
 });
 
@@ -52,7 +52,7 @@ it('LOW (TS review): a bin folder right under home opens only itself, not its pa
   expect(paths).toContain('/Users/me/Documents/bin'); expect(paths).not.toContain('/Users/me/Documents');
   expect(paths).toContain('/Users/me/.nvm/versions/node/v22'); expect(paths).toContain('/Users/me/.pub-cache');
   const dir = await temp(), tree = join(dir, 'tree'), log = vi.fn(); await mkdir(tree);
-  const box = await prepareSandbox(tree, { home: join(dir, 'home'), private: [], loopback: false, readable: [join(dir, 'odd "repo"', '.git')], log });
+  const box = await prepareSandbox(tree, { home: join(dir, 'home'), private: [], loopback: false, readable: [join(dir, 'odd "repo"', '.git')], log, platform: 'darwin' });
   await box.dispose();
   expect(log).toHaveBeenCalledWith('Test sandbox: a folder with quotes, parentheses or control characters in its path stays closed to tests');
   expect(JSON.stringify(log.mock.calls)).not.toContain('odd');
@@ -121,5 +121,5 @@ it('LOW (TS review): a paste into the price line drops control characters before
 
 it('LOW (security): the 127.0.0.1 switch says what it opens', () => {
   const plan = { title: 'fixer', command: ['npm', 'test'], cwd: '/tmp/t', changed: [], fingerprint: 'a'.repeat(64), sandbox: true, loopback: false };
-  expect(testLines(plan).map(line => line.text)).toContain('127.0.0.1: off · l allows it for this project (any local service, like a dev database)');
+  expect(testLines(plan, 'darwin').map(line => line.text)).toContain('127.0.0.1: off · l allows it for this project (any local service, like a dev database)');
 });

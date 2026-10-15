@@ -6,7 +6,7 @@ it('selection calls pbcopy through execFile with argv array and plain text on st
   let copied = ''; stdin.on('data', data => { copied += data.toString(); });
   const execute = vi.fn(() => { queueMicrotask(() => child.emit('close', 0)); return Object.assign(child, { stdin }); });
   const { copyText } = await import('../src/client/tui/clipboard.js');
-  await copyText('hello\nworld', execute);
+  await copyText('hello\nworld', execute, { platform: 'darwin', env: {}, find: async () => null });
   expect(execute).toHaveBeenCalledWith('/usr/bin/pbcopy', [], { timeout: 2000 }, expect.any(Function));
   expect(copied).toBe('hello\nworld');
 });

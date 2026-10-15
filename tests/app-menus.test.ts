@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import { appMenu, menuShortcut } from '../app/main/menus.js';
 it('menus expose the requested native accelerators and fixed actions', () => {
   const handlers = {command:vi.fn(),action:vi.fn(),theme:vi.fn(),themeSource:'system' as const};
-  const menus = appMenu(handlers);
+  const menus = appMenu(handlers, 'darwin');
   expect(menus.map(item=>item.label)).toEqual(['AI Term','File','Edit','View','Window']);
   const items = menus.flatMap(menu=>Array.isArray(menu.submenu)?menu.submenu:[]);
   for (const [key, action] of Object.entries({k:'palette',f:'find',t:'new-agent',d:'split',e:'home','1':'select 1','9':'select 9',w:'close',q:'quit'})) expect(menuShortcut(key)).toBe(action);

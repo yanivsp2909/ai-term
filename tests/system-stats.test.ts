@@ -35,7 +35,7 @@ const fake = (interval: number): MakeSampler => (manager, log) => {
       : file === SAMPLE_COMMANDS.vmStat.file ? 'Mach Virtual Memory Statistics: (page size of 4096 bytes)\nPages active: 10.\nAnonymous pages: 12.\nPages purgeable: 2.\nPages wired down: 10.\nPages occupied by compressor: 10.\n'
         : `Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll\nen0 1500 <Link#1> 00:00:00:00:00:01 1 0 ${1000 * ++tick} 1 0 0 0\n`,
     cpus: () => [{ model: 'm', speed: 1, times: { user: 10 * ++tick, nice: 0, sys: 0, idle: 30 * tick, irq: 0 } }], totalmem: () => 8 * 1024 ** 3, now: () => performance.now(),
-    sessions: () => manager.sessionRoots(), log,
+    sessions: () => manager.sessionRoots(), log, platform: 'darwin',
   };
   return new SystemSampler(deps, interval);
 };

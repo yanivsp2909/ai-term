@@ -16,6 +16,8 @@ import { createTheme } from '../src/client/tui/theme.js';
 import { cardText } from '../src/client/tui/agent-card.js';
 import { validateRequest } from '../src/shared/validate.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
+import { useFakeEngines } from './fixtures/fake-engines.js';
+useFakeEngines();
 
 // v0.7.1: a read-only diff of an agent's worktree against its base (committed + uncommitted + untracked), from git's own
 // output as text only, capped, in a popup; d on a card or /diff [agent].

@@ -16,6 +16,8 @@ import { Homepage } from '../src/client/tui/homepage.js';
 import type { RequestBody } from '../src/client/connection.js';
 import type { SessionInfo, SuccessResponse } from '../src/shared/protocol.js';
 import type { UndoPlan } from '../src/shared/checkpoints.js';
+import { useFakeEngines } from './fixtures/fake-engines.js';
+useFakeEngines();
 
 // v0.7.2 (D55, on): after every agent turn the worktree is snapshotted into refs/ai-term/checkpoints/<slug>/<n> through
 // a temporary index, so the agent's own index, branch and HEAD never change; /undo restores the previous one (asking

@@ -9,6 +9,8 @@ import { Logger } from '../src/daemon/log.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
 import { SettingsStore } from '../src/daemon/settings.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
+import { useFakeEngines } from './fixtures/fake-engines.js';
+useFakeEngines();
 
 // v0.7.3 /merge and /pr. /merge merges ai/<slug> into the base branch in YOUR checkout, only when that checkout is clean
 // and on the base branch, with exactly `git merge --no-ff -- ai/<slug>`; a conflict is aborted at once. /pr pushes the

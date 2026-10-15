@@ -3,12 +3,12 @@ import {runtimePaths,configureCliRuntime,runtimeEnv} from '../src/shared/runtime
 import {notifierAppPath} from '../src/daemon/notifier.js';
 import {terminalCommandFile} from '../src/daemon/terminal-launch.js';
 it('resolves development resources from the main module, never cwd or PATH',()=>{
- const paths=runtimePaths('/repo/app/out/main/index.js',false);
+ const paths=runtimePaths('/repo/app/out/main/index.js',false,'darwin');
  expect(paths.root).toBe('/repo');expect(paths.entry).toBe('/repo/dist/cli/index.js');
- expect(()=>runtimePaths('app/out/main/index.js',false)).toThrow();
+ expect(()=>runtimePaths('app/out/main/index.js',false,'darwin')).toThrow();
 });
 it('resolves packaged CLI, runtime and notifier inside the bundle',()=>{
- const paths=runtimePaths('/Applications/AI Term.app/Contents/Resources/app/app/out/main/index.js',true);
+ const paths=runtimePaths('/Applications/AI Term.app/Contents/Resources/app/app/out/main/index.js',true,'darwin');
  expect(paths.entry).toBe('/Applications/AI Term.app/Contents/Resources/app/dist/cli/index.js');
  expect(paths.node).toBe('/Applications/AI Term.app/Contents/MacOS/ai-node');
  expect(paths.command).toBe('/Applications/AI Term.app/Contents/MacOS/ai');

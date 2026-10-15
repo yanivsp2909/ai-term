@@ -39,7 +39,7 @@ it.skipIf(!built)('a cold launch with no argv and no click (as when opened by ha
  // macOS delivers a cold click while the app finishes launching; three seconds is the bounded wait for it.
  expect(Date.now()-started).toBeGreaterThanOrEqual(2900);expect(Date.now()-started).toBeLessThan(6000);
 },10000);
-it('without a Swift compiler the build prints a fixed message, builds nothing and leaves AI Term working',()=>{
+it.skipIf(process.platform!=='darwin')('macOS (the helper is macOS only; elsewhere the build says so and skips): without a Swift compiler the build prints a fixed message, builds nothing and leaves AI Term working',()=>{
  const result=spawnSync(process.execPath,['scripts/build-notifier.mjs'],{encoding:'utf8',timeout:10000,env:{PATH:'/usr/bin:/bin',HOME:process.env.HOME??'/tmp',DEVELOPER_DIR:'/nonexistent-ai-term-toolchain'}});
  expect(result.status).toBe(1);
  expect(result.stdout+result.stderr).toBe('Notifier not built: swiftc not found (install the Xcode Command Line Tools). AI Term works without notifications.\n');

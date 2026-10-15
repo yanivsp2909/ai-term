@@ -53,8 +53,9 @@ it('opens two panes side by side, each agent attached at its pane size minus the
  await ready(tty);
  expect(conn(0).requests[0]).toEqual({ kind:'sessions.attach', sessionId:infos[0]?.id, cols:65, rows:43 });
  expect(conn(1).requests[0]).toEqual({ kind:'sessions.attach', sessionId:infos[1]?.id, cols:64, rows:43 });
- const text = await screen(tty);
- for (const part of ['◐ running', 'agent1', 'opus · ai/agent1', 'agent2', 'hello from agent1', 'hello from agent2', '^\\ next pane · ^\\ ^\\ sends ^\\ · ^E home']) expect(text).toContain(part);
+ // The second pane's snapshot can land a frame later on a slower machine (CI).
+ const parts = ['◐ running', 'agent1', 'opus · ai/agent1', 'agent2', 'hello from agent1', 'hello from agent2', '^\\ next pane · ^\\ ^\\ sends ^\\ · ^E home'];
+ await expect.poll(async () => { const text = await screen(tty); return parts.filter(part => !text.includes(part)); }, { timeout: 5000 }).toEqual([]);
  expect(tty.output).toContain('\x1b[?1003h\x1b[?1006h');
  press(tty, [5]); await expect(run).resolves.toEqual({ reason:'home key', dropped:0 });
 });

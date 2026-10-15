@@ -147,17 +147,17 @@ it('openFolder runs exactly /usr/bin/open -- <path>, or code -- <path> without s
   const previous = process.env.ANTHROPIC_API_KEY; process.env.ANTHROPIC_API_KEY = 'sk-ant-canary';
   try {
     const runs: [string, readonly string[], NodeJS.ProcessEnv][] = [], runner = async (f: string, a: readonly string[], e: NodeJS.ProcessEnv) => { runs.push([f, a, e]); };
-    expect(await openFolder(dir, 'finder', runner)).toBe('Finder');
+    expect(await openFolder(dir, 'finder', runner, undefined, 'darwin')).toBe('Finder');
     expect(runs[0]).toEqual(['/usr/bin/open', ['--', dir], { PATH: '/usr/bin:/bin' }]);
     expect(await openFolder(dir, 'code', runner, async name => `/opt/bin/${name}`)).toBe('VS Code');
     expect(runs[1]?.slice(0, 2)).toEqual(['/opt/bin/code', ['--', dir]]);
     expect(runs[1]?.[2]).not.toHaveProperty('ANTHROPIC_API_KEY'); expect(runs[1]?.[2]).toHaveProperty('PATH');
     await expect(openFolder(dir, 'code', runner, async () => null)).rejects.toThrow(new OpenError("VS Code's code command isn't on PATH"));
     await writeFile(file, 'x');
-    await expect(openFolder(file, 'finder', runner)).rejects.toThrow('folder is gone');
-    await expect(openFolder(join(dir, 'missing'), 'finder', runner)).rejects.toThrow('folder is gone');
-    await expect(openFolder('relative/path', 'finder', runner)).rejects.toThrow('folder path is not absolute');
-    await expect(openFolder(dir, 'finder', async () => { throw new Error('raw child error /secret/path'); })).rejects.toThrow("Finder couldn't open it");
+    await expect(openFolder(file, 'finder', runner, undefined, 'darwin')).rejects.toThrow('folder is gone');
+    await expect(openFolder(join(dir, 'missing'), 'finder', runner, undefined, 'darwin')).rejects.toThrow('folder is gone');
+    await expect(openFolder('relative/path', 'finder', runner, undefined, 'darwin')).rejects.toThrow('folder path is not absolute');
+    await expect(openFolder(dir, 'finder', async () => { throw new Error('raw child error /secret/path'); }, undefined, 'darwin')).rejects.toThrow("Finder couldn't open it");
     expect(runs).toHaveLength(2);
   } finally { if (previous === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = previous; await rm(dir, { recursive: true, force: true }); }
 });
@@ -191,7 +191,7 @@ it('review L3: an app bundle folder is revealed in Finder, never launched', asyn
   try {
     await import('node:fs/promises').then(fs => fs.mkdir(app));
     const runs: [string, readonly string[]][] = [];
-    await openFolder(app, 'finder', async (f, a) => { runs.push([f, a]); });
+    await openFolder(app, 'finder', async (f, a) => { runs.push([f, a]); }, undefined, 'darwin');
     expect(runs).toEqual([['/usr/bin/open', ['-R', '--', app]]]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

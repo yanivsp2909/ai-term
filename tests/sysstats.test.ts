@@ -120,7 +120,7 @@ describe('SystemSampler', () => {
       rx += 4000; return NETSTAT(rx, 500);
     });
     const id = randomUUID();
-    const deps: SamplerDeps = { run, cpus: () => { tick++; return [cpu(100 * tick, 300 * tick)]; }, totalmem: () => 64 * 1024 ** 3, now: () => Date.now(), sessions: () => [{ sessionId: id, pid: 200 }], log: { info: m => logs.push(m), error: m => logs.push(m) } };
+    const deps: SamplerDeps = { platform: 'darwin', run, cpus: () => { tick++; return [cpu(100 * tick, 300 * tick)]; }, totalmem: () => 64 * 1024 ** 3, now: () => Date.now(), sessions: () => [{ sessionId: id, pid: 200 }], log: { info: m => logs.push(m), error: m => logs.push(m) } };
     const sampler = new SystemSampler(deps), events: SystemStats[] = [];
     sampler.on('stats', (s: SystemStats) => events.push(s));
     return { sampler, run, calls, logs, events, id };

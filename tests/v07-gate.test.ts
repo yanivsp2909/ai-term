@@ -10,6 +10,8 @@ import { SessionManager } from '../src/daemon/session-manager.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 import { diffForReview } from '../src/shared/review.js';
 import type { AgentDiff, DiffFile } from '../src/shared/diff.js';
+import { useFakeEngines } from './fixtures/fake-engines.js';
+useFakeEngines();
 
 // v0.7 release gate (Part B): fresh reviewers that hadn't seen the code (security-reviewer ×3, security-bounty-hunter,
 // silent-failure-hunter, engineering:code-review). Each finding fixed here failed before its fix.
