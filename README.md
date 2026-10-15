@@ -39,19 +39,30 @@ Everything above works on Linux too, with these differences:
 
 ## Windows (v0.8.2)
 Everything above works on Windows too, with these differences:
-- **AI Term's folder:** `%USERPROFILE%\.ai-term`. On creation `icacls` gives your account full control and removes every other entry. Each start reads the folder back (owner and entries, by SID) and refuses to run unless it is yours alone.
+- **AI Term's folder:** `%USERPROFILE%\.ai-term`. On creation `icacls` gives your account full control and removes every other entry. Each daemon start reads the folder and each folder in it back (owner and entries, by SID) and refuses to run unless they are yours alone. An Administrators owner, as an elevated terminal makes, counts as yours.
 - **Daemon:** a named pipe, `\\.\pipe\ai-term-<your id>-<random>`, a new random part each start. Its name and a token are written to `run\daemon.pipe` inside that folder.
   - A pipe that already exists, whoever made it, makes the daemon stop rather than share it.
   - Node can't narrow a pipe's own ACL, which lets other accounts open it for reading. So the daemon answers nothing until a client shows the token, which only your account can read.
+  - Pipe names can be listed, so the client also checks the daemon: the daemon must answer a fresh nonce with proof of the token before anything else is sent. If it can't, the pipe file is removed and `ai` says so.
+  - `ai daemon stop` asks the daemon to stop, so it removes its pipe file. The file also goes whenever a stale lock shows the daemon is gone.
+  - A daemon may take a few seconds to start (it checks the ACL first). The client waits up to 20 s, and a second start doesn't take over one that is still starting.
 - **Keys:** Windows Credential Manager. If it can't be used, key features refuse with `Windows Credential Manager unavailable`.
 - **No sandbox:** auto-test asks every time (`tests need you · no sandbox`). AI Term's agent is Ask only: `ask · don't ask needs a sandbox, and Windows has none AI Term can use`.
-- **Claude Code and Codex:** a native `.exe` runs directly. npm's `.cmd` launcher is never run: AI Term reads the script it names and starts that with `node`, the arguments still an array. cmd.exe would read `%`, `&` and quotes in a first message as commands. A `.cmd` that isn't npm's is refused. `npm test` in `/test` works the same way (npm's own `npm.cmd`).
-- **Agent bash:** Git for Windows' `bash.exe` (never WSL's). Without Git for Windows, bash says it needs it. git itself is Git for Windows' `git.exe`.
+- **Claude Code and Codex:** a native `.exe` runs directly. npm's `.cmd` launcher is never run: AI Term reads the script (or native `.exe`) it names and starts that with `node` (or directly), the arguments still an array. cmd.exe would read `%`, `&` and quotes in a first message as commands. A `.cmd` that isn't npm's, and any `.bat`, is refused, and so is a launcher that can't be read.
+  - `npm test` in `/test` and `npx` MCP servers work the same way (npm's own `npm.cmd`, `npx.cmd`).
+  - A first message that starts and ends with `"` and contains a space reaches the CLI split into words (a node-pty quirk); it stays the message, never options.
+- **Agent bash:** Git for Windows' `bash.exe` (never WSL's). Without Git for Windows, bash says it needs it.
+- **git:** Git for Windows' `git.exe`, from Program Files or else PATH. Without it, git features say so; AI Term never runs a bare `git.exe`, which Windows would first look for in the repository's own folder.
+- **AI Term's agent** keeps the Windows basics it needs (`SystemRoot`, `TEMP`, `USERPROFILE`, …) and nothing else of your env.
+- **Paths:** checks of worktree paths ignore case and slash style, as NTFS does. Device names (`NUL`, `CON`…), alternate data streams (`file:stream`) and network paths (`\\server\share`) are refused.
 - **Shell agents:** PowerShell (7 when installed, else Windows PowerShell), started with no arguments.
 - **Stopping:** `taskkill /T /F` stops an agent's or a command's whole process tree.
 - **Not on Windows yet:** notifications (`/settings` says so), network and per-agent CPU in This machine (CPU and memory show), click-through.
 - **Clipboard:** `clip.exe` (sent as UTF-16, so non-ASCII text survives). **`/open`:** Explorer.
 - **Paths:** paths with spaces and non-ASCII names work. Worktrees stay under `%USERPROFILE%\.ai-term\worktrees`.
+- **Known gaps:**
+  - An env file you import from anywhere isn't owner-checked (Windows `stat` has no owner); pick your own.
+  - PowerShell's Constrained Language Mode (AppLocker, WDAC) blocks the ACL check, so the daemon won't start there.
 - **Desktop app:** an NSIS installer from `npm run app:dist` on Windows. It is unsigned, so SmartScreen warns "Windows protected your PC" on first run (More info → Run anyway). The desktop keys are Ctrl+Shift, as on Linux.
 
 ## Status

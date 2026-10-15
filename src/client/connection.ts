@@ -2,7 +2,7 @@ import { createConnection, type Socket } from 'node:net';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { open, lstat } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, resolve } from 'node:path';
@@ -12,9 +12,13 @@ import { preparePaths, isFsError } from '../shared/paths.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, PROTOCOL_VERSION, MAX_COPY_BYTES, COPY_CHUNK_BYTES, type SessionText, type Request, type SuccessResponse } from '../shared/protocol.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 import { ownedByMe } from '../shared/owner.js';
-import { readPipe } from '../daemon/pipe-server.js';
+import { proofValid, readPipe, removeStalePipe } from '../daemon/pipe-server.js';
 export type RequestBody = Request extends infer R ? R extends Request ? Omit<R, 'id'> : never : never;
 export class DaemonRequestError extends Error {}
+// How long a client waits for a daemon it started. Windows: the daemon checks its folder's ACL (PowerShell) before it
+// listens, which can take seconds on a cold start (review).
+export function daemonStartDeadline(platform: NodeJS.Platform = process.platform): number { return platform === 'win32' ? 20_000 : 3000; }
+export const UNPROVEN_DAEMON = "The process on AI Term's pipe couldn't prove it is your daemon; its pipe file was removed, run ai again";
 // Source mode: a bare `--import tsx` resolves from the caller's folder, and tsx reads that folder's tsconfig.json. The absolute
 // loader and AI Term's own folder (two levels above src/cli/index.ts) keep both inside AI Term.
 // AppImage (v0.8.1, TS review): the app runs from a temporary mount that goes when it quits, and the daemon outlives it.
@@ -105,7 +109,13 @@ export class Connection extends EventEmitter {
                 socket.destroy();
             }
         });
-        this.hello = this.request({ kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version, ...(token ? { token } : {}) });
+        // Windows: the daemon must answer the nonce with proof of the token before anything else goes out (pipe-server.ts).
+        const nonce = token ? randomBytes(32).toString('hex') : undefined;
+        const hello = this.request({ kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version, ...(token && nonce ? { token, nonce } : {}) });
+        this.hello = token && nonce ? hello.then(response => {
+            if (!proofValid(token, nonce, response.proof)) { socket.destroy(); throw new Error(UNPROVEN_DAEMON); }
+            return response;
+        }) : hello;
     }
     private fail(error: Error): void { for (const p of this.pending.values()) {
         clearTimeout(p.timer);
@@ -172,7 +182,7 @@ export class Connection extends EventEmitter {
             finally {
                 await file.close();
             }
-            const deadline = Date.now() + 3000;
+            const wait = daemonStartDeadline(), deadline = Date.now() + wait;
             while (true) {
                 if (startupError)
                     throw startupError;
@@ -185,7 +195,7 @@ export class Connection extends EventEmitter {
                         throw retryError;
                 }
                 if (Date.now() >= deadline)
-                    throw new Error(`Daemon did not start within 3 s; see ${paths.log}`, { cause: error });
+                    throw new Error(`Daemon did not start within ${wait / 1000} s; see ${paths.log}`, { cause: error });
                 await new Promise(r => setTimeout(r, 50));
             }
         }
@@ -196,6 +206,7 @@ export class Connection extends EventEmitter {
         }
         catch (error) {
             connection.close();
+            if (error instanceof Error && error.message === UNPROVEN_DAEMON) await removeStalePipe(paths.socket);
             throw error;
         }
     }

@@ -849,6 +849,7 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
 
 ### 12.21 v0.8.2 Windows (2026-10-15)
 - **Folder and files.**
+  - **Review fixes:** see below.
   - **The folder:** `privateDirectory` on win32 (`src/shared/paths.ts`, `src/shared/win-acl.ts`) runs `icacls <root> /inheritance:r /grant:r *<SID>:(OI)(CI)F /q`. The SID comes from `whoami /user /fo csv /nh`, validated. The folder is read back with a fixed PowerShell script whose path arrives in `AITERM_ACL_PATH`, never in the text. The owner and every entry must be that SID, or start fails. Subfolders inherit it, and the check runs once per process.
   - **Files:** `ownedByMe` and `privateMode` (`src/shared/owner.ts`) answer true on win32, because `stat` has no owner there and invented modes; the folder ACL is the check.
   - **Paths:** `isSafeAbsolutePath(…, 'win32')` accepts `X:\…` and refuses `\\?\`, `\\.\`, `C:x` and `.`/`..` parts.
@@ -858,6 +859,16 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
   - **Gate:** the server's `helloAllowed` compares the token in constant time before anything is answered. Without it the peer is dropped.
   - **Why a token:** Node can't set the pipe's DACL, and Windows' default grants Everyone read.
   - **Lock:** `acquireLock` on win32 treats a live PID as the daemon only while its pipe answers.
+- **Review fixes (Part C).**
+  - **Paths:** `isSafeAbsolutePath`/`isAgentFolder` accept `C:/…` (Git for Windows' output) and refuse `:` past the drive and device names. `pathInside` folds case and slashes for worktree guards.
+  - **ACL:** `preparePaths(paths, {daemon})` runs icacls when a client makes the folder; only the daemon verifies the root and each folder in it (`checkMine([...])`, one PowerShell run, `parseAcls`). The owner may be Administrators or SYSTEM when every entry is yours (`aclIsMine`).
+  - **Hello:** the hello carries a client nonce. The daemon answers `proof = HMAC-SHA256(token, nonce)`, and `Connection` checks it before anything else is sent. A failed proof removes `run\daemon.pipe` (`UNPROVEN_DAEMON`). Pipe names are enumerable, so a squatter on a stale name is caught here.
+  - **Stop and lock:** `daemon.stop` makes `ai daemon stop` graceful on Windows. `lockState`: a live PID whose lock is under 30 s old is still starting. A stale lock removes the pipe file. The client waits 20 s for a Windows daemon start.
+  - **Env:** `windowsBaseVars()` reaches the agent, bash and test envs; git gets `SystemRoot`, `TEMP` and `USERPROFILE`.
+  - **git:** `GIT` is `null` without Git for Windows, and git calls then fail as `GitError`; there's never a bare name.
+  - **Launchers:** `.bat` and unreadable launchers are refused; an npm launcher of a native `.exe` runs the `.exe`. MCP stdio resolves `npx`/`uvx` the same way.
+  - **Failures:** taskkill failures reach the caller (PTY stop says `Session stop signal failed`).
+  - **Residual:** an imported env file has no owner check on Windows, and `O_NOFOLLOW` doesn't exist there; node-pty splits an argument that starts and ends with `"` and holds a space (still positional after `--`); a PATH `git.exe` is trusted like a PATH CLI; pre-hello connections cost a little until their 5 s timeout; UNC paths are refused; Constrained Language Mode blocks the ACL check.
 - **Launching (`src/daemon/win-launch.ts`).**
   - **Lookup:** `resolveExecutable(name, PATH, 'win32')` tries `name.exe`, then `name.cmd`, folder by folder.
   - **Recipe:** `windowsRecipe` turns an npm launcher into `node <script> …args`. `parseNpmShim` reads cmd-shim's `"%_prog%" "%dp0%\<script>" %*` line, or npm's own `SET "NPM_CLI_JS=%~dp0\<script>"`. The script must stay inside the launcher's folder.

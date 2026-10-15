@@ -2,7 +2,7 @@ import { constants, openSync, writeFileSync, fsyncSync, closeSync, readFileSync,
 import { execFile } from 'node:child_process';
 import { isFsError } from '../shared/paths.js';
 import { dirname, join } from 'node:path';
-import { readPipe } from './pipe-server.js';
+import { readPipe, removeStalePipe } from './pipe-server.js';
 import { socketAnswers } from './private-socket.js';
 import { ownedByMe } from '../shared/owner.js';
 // When the process holding `pid` started, from ps's elapsed time (TZ/DST-proof); null if it is gone.
@@ -19,10 +19,21 @@ function processStart(pid: number): Promise<number | null> {
         resolve(now - ((((days ?? 0) * 24 + (hours ?? 0)) * 60 + (minutes ?? 0)) * 60 + (seconds ?? 0)) * 1000);
     }));
 }
+// Windows: a live PID whose pipe answers is the daemon; one whose lock is younger than the start window is still starting
+// (it checks its folder's ACL before it listens); otherwise the PID is a stranger that reused the number. A pipe file that
+// can't be read counts as no pipe. A stale lock takes its pipe file with it, so the old name leads nowhere (review).
+export const WINDOWS_START_WINDOW_MS = 30_000;
+export function lockState(facts: { alive: boolean; pipeAnswers: boolean; lockAgeMs: number }): 'running' | 'stale' {
+    return facts.alive && (facts.pipeAnswers || facts.lockAgeMs < WINDOWS_START_WINDOW_MS) ? 'running' : 'stale';
+}
 async function windowsDaemonStart(lock: string, written: number): Promise<number | null> {
     const socketPath = join(dirname(lock), 'daemon.sock');
-    try { return await socketAnswers((await readPipe(socketPath)).name) ? written : null; }
-    catch (error) { if (isFsError(error, 'ENOENT')) return null; throw error; }
+    let answers = false;
+    try { answers = await socketAnswers((await readPipe(socketPath)).name); }
+    catch (error) { if (!isFsError(error, 'ENOENT') && !(error instanceof SyntaxError) && !(error instanceof Error && error.message === 'Unsafe daemon pipe file')) throw error; }
+    if (lockState({ alive: true, pipeAnswers: answers, lockAgeMs: Date.now() - written }) === 'running') return written;
+    await removeStalePipe(socketPath);
+    return null;
 }
 export async function acquireLock(path: string): Promise<() => void> {
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -48,8 +59,10 @@ export async function acquireLock(path: string): Promise<() => void> {
                 if (!isFsError(probeError, 'ESRCH') && !isFsError(probeError, 'EPERM'))
                     throw new Error('Daemon PID is alive or inaccessible', { cause: probeError });
                 const current = lstatSync(path);
-                if (current.ino === stat.ino && current.dev === stat.dev)
+                if (current.ino === stat.ino && current.dev === stat.dev) {
                     unlinkSync(path);
+                    if (process.platform === 'win32') await removeStalePipe(join(dirname(path), 'daemon.sock'));
+                }
                 continue;
             }
             // After a crash and reboot the stale PID can belong to any live process. A process that

@@ -142,7 +142,8 @@ async function linuxArgv(command: string, options: BashOptions, without: (why: s
 const running = new Set<number>();
 export function killAllBash(): number {
   let count = 0;
-  for (const pid of running) { try { killGroup(pid, 'SIGKILL'); count++; } catch (error) { if (!isFsError(error, 'ESRCH')) count++; } }
+  // The kill switch counts what it stopped; a failure taskkill reports later goes to stderr, never a silent miss.
+  for (const pid of running) { try { killGroup(pid, 'SIGKILL', () => { process.stderr.write('ai agent: a command could not be stopped\n'); }); count++; } catch (error) { if (!isFsError(error, 'ESRCH')) count++; } }
   return count;
 }
 export async function runBash(command: string, options: BashOptions): Promise<BashResult> {

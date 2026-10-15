@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
-import { GIT, GIT_PATH } from './git-path.js';
+import { GIT, GIT_PATH, GIT_SYSTEM } from './git-path.js';
 
 export class GitError extends Error {
     constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed' | 'Not a git repo' | 'Diff too large') { super(message); }
@@ -17,13 +17,15 @@ const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // env: extra variables for one call (v0.7.2 checkpoints: GIT_OBJECT_DIRECTORY and a fixed author), on top of the fixed env.
 interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; literal?: boolean; notRepo?: boolean; env?: Record<string, string> }
 function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true, notRepo = false, env: extra = {} }: RunOptions = {}): Promise<string> {
-    if (!isSafeAbsolutePath(cwd)) return Promise.reject(new GitError(failure));
+    // No git found (Windows without Git for Windows): fail plainly rather than run a bare name.
+    const git = GIT;
+    if (!isSafeAbsolutePath(cwd) || !git) return Promise.reject(new GitError(failure));
     return new Promise((resolve, reject) => {
         // log.showSignature off: with it a repo's config would make show run gpg.program.
-        const child = execFile(GIT, ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', '-c', 'log.showSignature=false', ...args], {
+        const child = execFile(git, ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', '-c', 'log.showSignature=false', ...args], {
             // Optional locks off: a read-only status must not rewrite the agent's index while it is inspected.
             // Literal pathspecs: file names from a repo reach ls-files/check-ignore after --, and ":(...)" magic must stay a name.
-            cwd, windowsHide: true, env: { PATH: GIT_PATH, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}), ...extra },
+            cwd, windowsHide: true, env: { PATH: GIT_PATH, ...GIT_SYSTEM, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}), ...extra },
             timeout, maxBuffer, encoding: 'utf8',
         // The env has no LANG, so git's messages are its fixed English ones; stderr is matched here and never logged.
         }, (error, stdout, stderr) => error ? reject(new GitError(notRepo && typeof error.code === 'number' && /not a git repository/.test(stderr) ? 'Not a git repo' : error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'Diff too large' : failure)) : resolve(stdout));
@@ -224,10 +226,11 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 export { run as runGit, COMMIT as COMMIT_ID, EMPTY_TREE as EMPTY_TREE_ID };
 // A blob's exact bytes (v0.7.2 restore): same fixed env and options as run(), output kept as bytes, never decoded.
 export function blobBytes(cwd: string, args: string[], hash: string, env: Record<string, string>): Promise<Buffer> {
-    if (!isSafeAbsolutePath(cwd) || !COMMIT.test(hash)) return Promise.reject(new GitError('Git check failed'));
+    const git = GIT;
+    if (!isSafeAbsolutePath(cwd) || !COMMIT.test(hash) || !git) return Promise.reject(new GitError('Git check failed'));
     return new Promise((resolve, reject) => {
-        execFile(GIT, ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', '-c', 'log.showSignature=false', ...args, 'cat-file', 'blob', hash], {
-            cwd, windowsHide: true, env: { PATH: GIT_PATH, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...env },
+        execFile(git, ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'submodule.recurse=false', '-c', 'log.showSignature=false', ...args, 'cat-file', 'blob', hash], {
+            cwd, windowsHide: true, env: { PATH: GIT_PATH, ...GIT_SYSTEM, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...env },
             timeout: 60_000, maxBuffer: 256 * 1024 * 1024, encoding: 'buffer',
         }, (error, stdout) => error ? reject(new GitError('Git check failed')) : resolve(stdout));
     });

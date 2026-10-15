@@ -7,7 +7,8 @@ export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNod
     const result: Record<string, string> = {}, windows = (options.platform ?? process.platform) === 'win32';
     for (const [name, value] of Object.entries(base)) {
         const key = windows && name.toUpperCase() === 'PATH' ? 'PATH' : name;
-        if (value !== undefined && !/^npm_/.test(key) && !/^AI_TERM_/.test(key) && !['INIT_CWD', 'NODE_ENV','AITERM_STATUS_TOKEN','AITERM_STATUS_PORT'].includes(key) && (key !== 'ELECTRON_RUN_AS_NODE' || options.keepElectronNode))
+        const plain = windows ? key.toUpperCase() : key;
+        if (value !== undefined && !(windows ? /^NPM_/ : /^npm_/).test(plain) && !/^AI_TERM_/.test(plain) && !['INIT_CWD', 'NODE_ENV','AITERM_STATUS_TOKEN','AITERM_STATUS_PORT'].includes(plain) && (key !== 'ELECTRON_RUN_AS_NODE' || options.keepElectronNode))
             result[key] = value;
     }
     Object.assign(result, { TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'AITerm' });
@@ -18,7 +19,7 @@ export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNod
 
 import { dirname, resolve } from 'node:path';
 import type { AgentEngine, CliEngine, Permission, Effort, ThemeName, KeyProvider } from '../shared/protocol.js';
-import { isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath, isValidModelId, isThemeName, isEndpoint, isSecret, isKeyProvider } from '../shared/validate.js';
+import { isSafeAbsolutePath, isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath, isValidModelId, isThemeName, isEndpoint, isSecret, isKeyProvider } from '../shared/validate.js';
 import { isLocalEndpoint } from '../shared/providers.js';
 export const CLAUDE_AUTH_VARS = ['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','CLAUDE_CODE_OAUTH_TOKEN','CLAUDE_CODE_OAUTH_REFRESH_TOKEN','CLAUDE_CODE_OAUTH_SCOPES','ANTHROPIC_PROFILE','ANTHROPIC_FEDERATION_RULE_ID','ANTHROPIC_ORGANIZATION_ID','ANTHROPIC_WORKSPACE_ID','ANTHROPIC_AWS_*','ANTHROPIC_BEDROCK_*','ANTHROPIC_VERTEX_*','ANTHROPIC_FOUNDRY_*','AWS_BEARER_TOKEN_BEDROCK','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY','CLAUDE_CODE_SIMPLE',
     // B21 (code.claude.com/docs/en/env-vars, 2026-10-13): provider switches, auth skips, auth-capable headers, host routing, mTLS.
@@ -104,7 +105,7 @@ export function buildStatusArgs(path:string):string[]{if(!path.startsWith('/')||
 export interface AgentCommand {node:string;entry:string;loader?:string}
 // /model choices passed to the agent: a Foundry key's tested deployments (at most 40) or a provider's catalog models.
 const MAX_AGENT_MODELS=200;
-const absolute=(path:unknown):path is string=>typeof path==='string'&&path.startsWith('/')&&!path.includes('\0')&&path.length<=4096;
+const absolute=(path:unknown):path is string=>typeof path==='string'&&(path.startsWith('/')||process.platform==='win32'&&isSafeAbsolutePath(path))&&!path.includes('\0')&&path.length<=4096;
 // `ai agent` runs like the status commands: node plus AI Term's entry (source mode adds the tsx loader). No shell, no secret:
 // the model, the deployments it may switch to and the mode are plain argv; the key goes only into buildAgentEnv.
 export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvider;model:string;models:readonly string[];permission:Permission;theme:ThemeName;transcript:string;firstMessage?:string}):{executable:string;args:string[]}{
@@ -124,7 +125,7 @@ function pick(base:NodeJS.ProcessEnv,names:readonly string[]):Record<string,stri
 export function buildAgentEnv(base:NodeJS.ProcessEnv,agent:{secret:string|null;endpoint:string|null;status?:UsageTelemetry;usage?:UsageTelemetry;entry:string}):Record<string,string>{
     const keyed=agent.secret!==null&&isSecret(agent.secret)&&(agent.endpoint===null||isEndpoint(agent.endpoint)),local=agent.secret===null&&isLocalEndpoint(agent.endpoint);
     if(!keyed&&!local||!absolute(agent.entry))throw new Error('Invalid agent env');
-    const result:Record<string,string>={...pick(base,AGENT_BASE_VARS),TERM:'xterm-256color',COLORTERM:'truecolor',TERM_PROGRAM:'AITerm'};
+    const result:Record<string,string>={...pick(base,[...AGENT_BASE_VARS,...windowsBaseVars()]),TERM:'xterm-256color',COLORTERM:'truecolor',TERM_PROGRAM:'AITerm'};
     if(!result.LANG&&!result.LC_ALL&&!result.LC_CTYPE)result.LANG='en_US.UTF-8';
     // Source mode: tsx would read tsconfig.json from the agent's folder, whose `paths` could swap AI Term's imports.
     if(agent.entry.endsWith('.ts'))result.TSX_TSCONFIG_PATH=sourceTsconfig(agent.entry);
@@ -135,8 +136,10 @@ export function buildAgentEnv(base:NodeJS.ProcessEnv,agent:{secret:string|null;e
 // The env of every command the agent's bash tool runs: an allowlist, so no API key, no AI Term credential and nothing the
 // daemon set can reach a command the model wrote. The name check is a second guard in case a base name ever carries one.
 const BASH_BASE_VARS=['PATH','HOME','USER','LOGNAME','SHELL','TMPDIR','LANG','LC_ALL','LC_CTYPE'] as const;
-// Windows (v0.8.2): what Git Bash and Windows programs need to find home, temp and the system folder.
-const WINDOWS_BASE_VARS=process.platform==='win32'?['USERPROFILE','SystemRoot','SystemDrive','TEMP','TMP','APPDATA','LOCALAPPDATA','PATHEXT','ComSpec','HOMEDRIVE','HOMEPATH','USERNAME','windir']:[];
+// Windows (v0.8.2): what Node, Git Bash, npm and node-gyp need to find home, temp, the system and program folders (without
+// SystemRoot Node's DNS and TLS fail). No credential is among them.
+export function windowsBaseVars(platform:NodeJS.Platform=process.platform):string[]{return platform==='win32'?['USERPROFILE','SystemRoot','SystemDrive','TEMP','TMP','APPDATA','LOCALAPPDATA','PATHEXT','ComSpec','HOMEDRIVE','HOMEPATH','USERNAME','windir','ProgramFiles','ProgramFiles(x86)','ProgramData','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','OS']:[];}
+const WINDOWS_BASE_VARS=windowsBaseVars();
 export function buildBashEnv(base:NodeJS.ProcessEnv):Record<string,string>{
     const result=pick(base,[...BASH_BASE_VARS,...WINDOWS_BASE_VARS]);
     for(const name of Object.keys(result))if(/KEY|TOKEN|SECRET|PASSWORD|AITERM|AI_TERM/i.test(name))delete result[name];

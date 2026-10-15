@@ -73,7 +73,8 @@ export class PtyHost {
         if (!this.exited) {
             signal('SIGKILL');
             await this.waitForExit();
-            if(!this.exited)throw new Error('Session stop timed out');
+            // Windows: taskkill's own failure (stopFailed) reads as the signal failing, not as a mere timeout (review).
+            if(!this.exited)throw new Error(this.stopFailed?'Session stop signal failed':'Session stop timed out');
         }
     }
 }

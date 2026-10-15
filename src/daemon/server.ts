@@ -4,7 +4,7 @@ import { PRICE_ERRORS, savePrice } from './price-migration.js';
 import { createServer, type Socket, type Server } from 'node:net';
 import type { Paths } from '../shared/paths.js';
 import { listenPrivate, closePrivate, type SocketIdentity } from './private-socket.js';
-import { closePipe, helloAllowed, listenPipe, type PipeInfo } from './pipe-server.js';
+import { closePipe, helloAllowed, helloProof, listenPipe, type PipeInfo } from './pipe-server.js';
 import { FrameDecoder, encodeControl, encodeData, decodeControl, ProtocolError, PROTOCOL_VERSION, MAX_FRAME_BYTES, COPY_CHUNK_BYTES, type NotifierState,type NotificationAuthorization, type SessionText, type Request, type SessionEvent, type SystemStats } from '../shared/protocol.js';
 import { previewWorktree } from './worktrees.js';
 import { WORKTREE_DELETE_ERRORS } from './worktree-removal.js';
@@ -52,6 +52,8 @@ export class DaemonServer {
     private owners=new Map<string,Peer>();
     private socketIdentity: SocketIdentity | undefined;
     private pipe: PipeInfo | undefined;
+    // Set by main.ts: a daemon.stop request shuts the daemon down the way SIGTERM does.
+    onStop: (() => void) | undefined;
     private readonly sampler: SystemSampler;
     private closed = false;
     constructor(private readonly paths: Paths, private readonly manager: SessionManager, private readonly log: Logger, sampler?: SystemSampler, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService, private readonly notifier?:{state():NotifierState;permission?():NotificationAuthorization;refreshPermission?():Promise<NotificationAuthorization>}, private readonly activate=activateTerminal) {
@@ -191,7 +193,7 @@ export class DaemonServer {
             }
             peer.hello = true;
             peer.socket.setTimeout(0);
-            this.control(peer, { id: request.id, ok: true, kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version, daemonPid: process.pid });
+            this.control(peer, { id: request.id, ok: true, kind: 'hello', protocol: PROTOCOL_VERSION, version: packageInfo.version, daemonPid: process.pid, ...(this.pipe && request.nonce ? { proof: helloProof(this.pipe.token, request.nonce) } : {}) });
             const warning = this.manager.warningText();
             if (warning) this.control(peer, { kind: 'daemon.warning', text: warning });
             return;
@@ -229,6 +231,9 @@ export class DaemonServer {
                     });
                     await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
                 }
+                case 'daemon.stop':
+                    // Answered first: the daemon then shuts down as it does on SIGTERM (main.ts), pipe file and all.
+                    this.control(peer, { id: request.id, ok: true }); this.onStop?.(); break;
                 case 'engines.status':
                     this.control(peer, { id: request.id, ok: true, engines: await enginesStatus(), notifier: this.notifier?.state() ?? 'not built', agentSandbox: await currentAgentSandbox() });
                     break;

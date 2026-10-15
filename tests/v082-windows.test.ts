@@ -201,8 +201,8 @@ it('MEDIUM (TS review): worktree checks on Windows ignore case and slash style',
 it('MEDIUM (TS review): a failed stop on Windows is reported; killGroup takes its error handler', async () => {
   const text = await (await import('node:fs/promises')).readFile(join(process.cwd(), 'src', 'shared', 'kill-tree.ts'), 'utf8');
   expect(text).not.toContain('onError: (error: unknown) => void = () => {}');
-  const sm = await (await import('node:fs/promises')).readFile(join(process.cwd(), 'src', 'daemon', 'session-manager.ts'), 'utf8');
-  expect(sm).toContain('stopFailed');
+  const host = await (await import('node:fs/promises')).readFile(join(process.cwd(), 'src', 'daemon', 'pty-host.ts'), 'utf8');
+  expect(host).toContain("this.stopFailed?'Session stop signal failed'");
 });
 
 it('HIGH (security review): the client checks the daemon answers with proof of the token (HMAC of its nonce) before sending anything else', async () => {

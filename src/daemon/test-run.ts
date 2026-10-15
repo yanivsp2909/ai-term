@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readdir, readlink, realpath } from 'node:fs/promises';
@@ -29,12 +29,15 @@ const SANDBOX_REFUSED = /^sandbox-exec: /m, BWRAP_REFUSED = /^bwrap: /m;
 export function runTests(command: readonly string[], cwd: string, env: Record<string, string>, options: TestRunOptions = {}): Promise<TestOutcome> {
   if (!isTestCommand(command)) return Promise.resolve({ state: 'error' });
   // Windows (v0.8.2): `npm test` is npm.cmd, which only cmd.exe could run; it becomes node + npm's script (win-launch.ts).
-  if (process.platform === 'win32' && !options.resolved) return windowsTestCommand(command, env.PATH ?? env.Path ?? '').then(resolved => runTests(resolved, cwd, env, { ...options, resolved: true }), () => ({ state: 'error' as const }));
+  if (process.platform === 'win32' && !options.resolved) return windowsTestCommand(command, env.PATH ?? env.Path ?? '').then(resolved => runTests(resolved, cwd, env, { ...options, resolved: true }), () => { options.log?.("Test run: Windows can't run this test command without cmd.exe (a .bat, or a .cmd that isn't npm's)"); return { state: 'error' as const }; });
   const box = options.sandbox, argv = box ? [...box.prefix, ...command] : [...command];
   const [program, ...args] = argv;
   return new Promise(resolve => {
     let tail = Buffer.alloc(0), total = 0, ended: 'timeout' | 'cancelled' | 'capped' | null = null, settled = false;
-    const child = spawn(program ?? '', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true, windowsHide: true });
+    // spawn throws at once for some programs (Windows refuses a .bat or .cmd without a shell): the tests couldn't start.
+    let child: ChildProcessWithoutNullStreams;
+    try { child = spawn(program ?? '', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true }); child.stdin.end(); }
+    catch { options.log?.('Test run: its command could not be started'); resolve({ state: 'error' }); return; }
     // Windows has no ps; taskkill /T stops the run's whole tree instead (kill-tree.ts).
     const tree = child.pid === undefined || process.platform === 'win32' ? null : new ProcessTree(child.pid, options.log);
     tree?.start();

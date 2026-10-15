@@ -24,7 +24,7 @@ export async function runDaemon(entry?:string): Promise<void> {
     // Private files for the daemon; sessions get the user's own umask back (session-manager).
     const userUmask = process.umask(0o077);
     const paths = getPaths();
-    await preparePaths(paths);
+    await preparePaths(paths, { daemon: true });
     const log = new Logger(paths.log), release = await acquireLock(paths.pid);
     const usage=new UsageService(paths.root,log);
     // macOS: the signed helper app, with click-through. Linux (v0.8.1): notify-send when installed, no click-through.
@@ -65,6 +65,7 @@ export async function runDaemon(entry?:string): Promise<void> {
         }
     };
     const onSignal = () => { void shutdown(); };
+    server.onStop = onSignal;
     const onFailure = (error:unknown) => { void shutdown(error); };
     process.on('uncaughtException',onFailure);process.on('unhandledRejection',onFailure);
     process.on('SIGTERM', onSignal);

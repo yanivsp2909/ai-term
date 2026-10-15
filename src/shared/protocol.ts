@@ -111,8 +111,13 @@ export type Request = {
     kind: 'hello';
     protocol: number;
     version: string;
-    // Windows (v0.8.2): the pipe's token from run/daemon.pipe (pipe-server.ts).
+    // Windows (v0.8.2): the pipe's token from run/daemon.pipe, and a fresh nonce the daemon must answer with proof of the
+    // token (pipe-server.ts), so a squatter on a stale pipe name is found out before anything else is sent.
     token?: string;
+    nonce?: string;
+} | {
+    // Windows: a graceful stop (TerminateProcess would skip the cleanup and leave the pipe file behind).
+    kind: 'daemon.stop';
 } | {
     kind: 'settings.get';
     refreshNotifications?:boolean;
@@ -218,6 +223,7 @@ export interface SuccessResponse {
     protocol?: number;
     version?: string;
     daemonPid?: number;
+    proof?: string;
     usage?:UsageSummary;usageDiagnostics?:UsageDiagnostics;
     worktreePreview?: WorktreePreview;
     keptWorktree?: string;

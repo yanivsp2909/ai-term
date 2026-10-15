@@ -42,6 +42,7 @@ import { isYourPrice, MAX_PRICES, overridesFor, priceCount, PRICED_BY_YOU } from
 import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
 import { currentAgentSandbox, dontAskNote } from './agent-sandbox.js';
 import { windowsRecipe, windowsShell } from './win-launch.js';
+import { pathInside } from '../shared/path-inside.js';
 import { prepareSandbox, sandboxReady, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, forkTitle, type ForkPlan, type ForkTarget } from '../shared/fork.js';
@@ -1026,10 +1027,10 @@ export class SessionManager extends EventEmitter {
     // folder's own); its command is kept in settings as an argument list and runs in the agent's worktree.
     private testRuns=new Map<string,AbortController>();
     private async projectOf(cwd:string):Promise<string>{
-        for(const [path,record]of this.worktreeRecords)if(record.repo&&(cwd===path||cwd.startsWith(path+sep)))return projectRepo(record.repo);
+        for(const [path,record]of this.worktreeRecords)if(record.repo&&pathInside(path,cwd))return projectRepo(record.repo);
         // An agent's worktree AI Term has no record of: its .git file (the agent's to write) could name any repository.
         const worktrees=join(this.paths.root,'worktrees');
-        if(cwd===worktrees||cwd.startsWith(worktrees+sep))throw new TestRunError("Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of");
+        if(pathInside(worktrees,cwd))throw new TestRunError("Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of");
         return projectRepo(cwd);
     }
     async testCommand(cwd:string):Promise<ProjectTestCommand>{

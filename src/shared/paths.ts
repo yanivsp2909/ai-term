@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
-import { lstat, mkdir, chmod } from 'node:fs/promises';
+import { lstat, mkdir, chmod, readdir } from 'node:fs/promises';
 import { ownedByMe } from './owner.js';
 import { checkMine, restrictToMe } from './win-acl.js';
 export interface Paths {
@@ -20,32 +20,43 @@ export function getPaths(root = process.env.AI_TERM_HOME ?? join(homedir(), '.ai
 export function isFsError(error: unknown, code: string): boolean {
     return error instanceof Error && 'code' in error && error.code === code;
 }
-export async function privateDirectory(path: string): Promise<void> {
+// Returns whether it was made just now. On Windows (v0.8.2) mode bits mean nothing and the folder inherits the AI Term
+// folder's ACL, which preparePaths sets and checks.
+export async function privateDirectory(path: string): Promise<boolean> {
+    let created = true;
     try {
         await mkdir(path, { mode: 0o700 });
     }
     catch (error) {
         if (!isFsError(error, 'EEXIST'))
             throw error;
+        created = false;
     }
     const stat = await lstat(path);
     if (stat.isSymbolicLink() || !stat.isDirectory() || !ownedByMe(stat))
         throw new Error('Private directory must be a real directory owned by this user');
-    if (process.platform === 'win32') { await privateOnWindows(path); return; }
-    await chmod(path, 0o700);
+    if (process.platform !== 'win32') await chmod(path, 0o700);
+    return created;
 }
-// Windows (v0.8.2): mode bits mean nothing there. The folder gets an ACL for your SID alone (icacls), then is read back:
-// owned by you with no other entry, or AI Term refuses to use it. Checked once per folder per process (PowerShell is slow).
-const checked = new Set<string>();
-async function privateOnWindows(path: string): Promise<void> {
-    if ([...checked].some(root => path.startsWith(`${root}\\`))) return;
-    if (checked.has(path)) return;
-    if (!await checkMine(path)) await restrictToMe(path);
-    if (!await checkMine(path)) throw new Error('Private directory must be a real directory owned by this user');
-    checked.add(path);
+// Windows: a client that makes the AI Term folder gives it an ACL for your SID alone (icacls); the daemon reads the folder
+// and each folder in it back (one PowerShell run: owned by you, every entry yours) and won't run on anything else. Only
+// the daemon pays for PowerShell, once per start (review), so typing `ai` stays quick.
+export function aclPlan(state: { created: boolean; daemon: boolean }): 'restrict' | 'verify' | 'none' {
+    return state.daemon ? 'verify' : state.created ? 'restrict' : 'none';
 }
-export async function preparePaths(paths: Paths): Promise<void> {
-    await privateDirectory(paths.root);
+const NOT_PRIVATE = 'Private directory must be a real directory owned by this user';
+export async function preparePaths(paths: Paths, options: { daemon?: boolean } = {}): Promise<void> {
+    const created = await privateDirectory(paths.root);
     await privateDirectory(paths.run);
     await privateDirectory(paths.logs);
+    if (process.platform !== 'win32') return;
+    const plan = aclPlan({ created, daemon: options.daemon === true });
+    if (plan === 'none') return;
+    if (created) await restrictToMe(paths.root);
+    if (plan === 'restrict') return;
+    const folders = async () => [paths.root, ...(await readdir(paths.root, { withFileTypes: true })).filter(entry => entry.isDirectory() || entry.isSymbolicLink()).map(entry => join(paths.root, entry.name))];
+    if (await checkMine(await folders())) return;
+    // A folder made before v0.8.2 (or by hand) gets the ACL once; one someone else made inside it can't be fixed this way.
+    await restrictToMe(paths.root);
+    if (!await checkMine(await folders())) throw new Error(NOT_PRIVATE);
 }

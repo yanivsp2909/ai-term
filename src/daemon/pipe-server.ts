@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, rename, unlink, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:net';
@@ -24,7 +24,10 @@ export async function listenPipe(server: Server, socketPath: string): Promise<Pi
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(name, () => { server.off('error', reject); resolve(); }); });
   const file = pipeFile(socketPath), temp = `${file}.${randomBytes(4).toString('hex')}`;
   try { await writeFile(temp, JSON.stringify({ name, token }), { flag: 'wx', mode: 0o600 }); await rename(temp, file); }
-  catch (error) { await new Promise<void>(resolve => server.close(() => resolve())); throw error; }
+  catch (error) {
+    await unlink(temp).catch((cleanup: unknown) => { if (!isFsError(cleanup, 'ENOENT')) throw cleanup; });
+    await new Promise<void>(resolve => server.close(() => resolve())); throw error;
+  }
   return { name, token };
 }
 // The client's side: the pipe to dial and the token to show. A missing file reads as ENOENT (no daemon yet).
@@ -43,4 +46,15 @@ export async function closePipe(server: Server, socketPath: string, info: PipeIn
   if (!info) return;
   try { if ((await readPipe(socketPath)).name === info.name) await unlink(pipeFile(socketPath)); }
   catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+}
+// The daemon's half of the hello: HMAC-SHA256(token, the client's nonce). Only the daemon that wrote the token can make it;
+// a squatter on a stale pipe name (pipe names can be listed) can't (security review).
+export function helloProof(token: string, nonce: string): string { return createHmac('sha256', token).update(nonce).digest('hex'); }
+export function proofValid(token: string, nonce: string, proof: unknown): boolean {
+  if (typeof proof !== 'string' || !/^[0-9a-f]{64}$/.test(proof)) return false;
+  return timingSafeEqual(Buffer.from(proof), Buffer.from(helloProof(token, nonce)));
+}
+// run/daemon.pipe of a daemon known to be gone: removed, so its old name leads nowhere.
+export async function removeStalePipe(socketPath: string): Promise<void> {
+  try { await unlink(pipeFile(socketPath)); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
 }

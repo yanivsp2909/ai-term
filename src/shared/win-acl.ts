@@ -2,7 +2,9 @@ import { execFile } from 'node:child_process';
 // v0.8.2 Windows: the AI Term folder (%USERPROFILE%\.ai-term) is made yours alone with icacls (argv only): inherited
 // entries removed, one entry granting your SID full control, inherited by everything inside. At each start the owner and
 // the entries are read back (PowerShell, a fixed script; the path comes in an environment variable, never in the text).
-const SID = /^S-1-5-21(?:-\d{1,10}){3,5}$|^S-1-5-(?:18|19|20)$|^S-1-12-1(?:-\d{1,10}){4}$/;
+const SID = /^S-1-5-21(?:-\d{1,10}){3,5}$|^S-1-5-(?:18|19|20)$|^S-1-5-32-544$|^S-1-12-1(?:-\d{1,10}){4}$/;
+// An elevated process makes folders owned by Administrators (or SYSTEM): still yours when every entry is yours (review).
+const OWNERS_TOO = ['S-1-5-32-544', 'S-1-5-18'];
 export function parseWhoamiSid(text: string): string | null {
   const sid = text.trim().match(/^"[^"]*","(S-[0-9-]+)"$/)?.[1];
   return sid && SID.test(sid) ? sid : null;
@@ -11,8 +13,16 @@ export function aclArgs(path: string, sid: string): string[] {
   if (!SID.test(sid)) throw new Error('Invalid SID');
   return [path, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '/q'];
 }
-export const ownerScript = "$a = Get-Acl -LiteralPath $env:AITERM_ACL_PATH; $s = [System.Security.Principal.SecurityIdentifier]; $a.GetOwner($s).Value; $a.GetAccessRules($true, $true, $s) | ForEach-Object { $_.IdentityReference.Value }";
-export function parseAcl(text: string): { owner: string; entries: string[] } | null {
+// One run for several folders (AITERM_ACL_PATHS, split on |, which a Windows path can't hold): '#', the owner, the entries.
+export const ownerScript = "$s = [System.Security.Principal.SecurityIdentifier]; foreach ($p in ($env:AITERM_ACL_PATHS -split '\\|')) { $a = Get-Acl -LiteralPath $p; '#'; $a.GetOwner($s).Value; $a.GetAccessRules($true, $true, $s) | ForEach-Object { $_.IdentityReference.Value } }";
+export interface Acl { owner: string; entries: string[] }
+export function parseAcls(text: string): (Acl | null)[] {
+  return text.split(/^#\r?$/m).slice(1).map(part => parseAcl(part));
+}
+export function aclIsMine(acl: Acl | null, me: string): boolean {
+  return acl !== null && (acl.owner === me || OWNERS_TOO.includes(acl.owner)) && acl.entries.length > 0 && acl.entries.every(entry => entry === me);
+}
+export function parseAcl(text: string): Acl | null {
   const [owner, ...entries] = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   return owner && SID.test(owner) && entries.every(entry => SID.test(entry)) ? { owner, entries: [...new Set(entries)] } : null;
 }
@@ -27,9 +37,11 @@ export function currentSid(): Promise<string> {
 }
 // Makes the folder yours alone (its contents inherit it).
 export async function restrictToMe(path: string): Promise<void> { await run(system32('icacls.exe'), aclArgs(path, await currentSid())); }
-// Yours alone: you own it and every entry is yours.
-export async function checkMine(path: string): Promise<boolean> {
-  const acl = parseAcl(await run(system32('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', ownerScript], { AITERM_ACL_PATH: path }));
+// Yours alone, every one of them: owned by you (or Administrators, when elevated) and every entry is yours.
+export async function checkMine(paths: string | readonly string[]): Promise<boolean> {
+  const list = typeof paths === 'string' ? [paths] : [...paths];
+  if (!list.length || list.some(path => path.includes('|'))) return false;
+  const acls = parseAcls(await run(system32('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', ownerScript], { AITERM_ACL_PATHS: list.join('|') }));
   const me = await currentSid();
-  return acl !== null && acl.owner === me && acl.entries.length > 0 && acl.entries.every(entry => entry === me);
+  return acls.length === list.length && acls.every(acl => aclIsMine(acl, me));
 }

@@ -1,4 +1,4 @@
-import { isKeyProvider, isValidModelId, validateExtensionCatalog, validateExtensionFile } from '../shared/validate.js';
+import { isKeyProvider, isSafeAbsolutePath, isValidModelId, validateExtensionCatalog, validateExtensionFile } from '../shared/validate.js';
 import type { KeyProvider, ModelPrice } from '../shared/protocol.js';
 import type { ExtensionAccess } from '../shared/extensions.js';
 import { request } from 'node:http';
@@ -26,7 +26,7 @@ const REQUEST_TIMEOUT_MS = 1000, FACTS_MAX_BYTES = 2 * 1024 * 1024;
 // link, ours, small; {} when there is none (an env from before it, or a test). deleteIt: the agent's own start removes it.
 export function readAgentSecrets(env: NodeJS.ProcessEnv, deleteIt = false): Record<string, string> {
   const path = env.AITERM_AGENT_SECRETS;
-  if (!path || !path.startsWith('/') || path.includes('\0')) return {};
+  if (!path || !(path.startsWith('/') || process.platform === 'win32' && isSafeAbsolutePath(path)) || path.includes('\0')) return {};
   let fd: number;
   try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); } catch { return {}; }
   try {

@@ -116,8 +116,10 @@ async function main(): Promise<void> {
             finally {
                 await lock.close();
             }
+            // Windows: SIGTERM is TerminateProcess there, which skips the daemon's cleanup; it is asked to stop instead.
+            if (process.platform === 'win32') await client.request({ kind: 'daemon.stop' });
             client.close();
-            process.kill(hello.daemonPid, 'SIGTERM');
+            if (process.platform !== 'win32') process.kill(hello.daemonPid, 'SIGTERM');
             const end = Date.now() + 5000;
             while (Date.now() < end) {
                 try {

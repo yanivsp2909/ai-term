@@ -85,9 +85,13 @@ export async function validateRequest(value: unknown): Promise<Request> {
     let fields: string[];
     switch (v.kind) {
         case 'hello':
-            fields = ['protocol', 'version', 'token'];
+            fields = ['protocol', 'version', 'token', 'nonce'];
+            if (v.nonce !== undefined && (typeof v.nonce !== 'string' || !/^[0-9a-f]{64}$/.test(v.nonce))) throw new ValidationError('Invalid hello');
             if (!Number.isSafeInteger(v.protocol) || typeof v.version !== 'string' || !/^[A-Za-z0-9._-]{1,40}$/.test(v.version) || v.token !== undefined && (typeof v.token !== 'string' || !/^[0-9a-f]{64}$/.test(v.token)))
                 throw new ValidationError('Invalid hello');
+            break;
+        case 'daemon.stop':
+            fields = [];
             break;
         case 'settings.get':
             if(v.refreshNotifications!==undefined&&typeof v.refreshNotifications!=='boolean')throw new ValidationError('Invalid notification refresh');
@@ -222,6 +226,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(!value||typeof value!=='object'||Array.isArray(value))throw new ValidationError('Invalid daemon response');
     const v=value as Record<string,unknown>;
     if(!isUUID(v.id)||v.ok!==true)throw new ValidationError('Invalid daemon response');
+    if(v.proof!==undefined&&(typeof v.proof!=='string'||!/^[0-9a-f]{64}$/.test(v.proof)))throw new ValidationError('Invalid daemon hello');
     if(v.kind!==undefined && (v.kind!=='hello'||v.protocol!==1||typeof v.version!=='string'||!/^[A-Za-z0-9._-]{1,40}$/.test(v.version)||!Number.isSafeInteger(v.daemonPid)||Number(v.daemonPid)<2))throw new ValidationError('Invalid daemon hello');
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
     if(v.copy!==undefined)validateSessionText(v.copy);
@@ -502,12 +507,14 @@ export function availableWorktreeSlug(name:string,occupied:ReadonlySet<string>):
 export function isWorktreeBranch(value:unknown):value is string{return typeof value==='string'&&value.startsWith('ai/')&&isWorktreeSlug(value.slice(3));}
 // The agent's folder in its extension and MCP queries: whatever validCwd let it start in, minus what could break a path
 // or a screen line. Format characters (the joiner inside 👨‍💻, a soft hyphen) are ordinary in folder names.
-export function isAgentFolder(value:unknown):value is string{return typeof value==='string'&&isAbsolute(value)&&value.length<=4096&&!/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
-// Windows (v0.8.2): a drive path (C:\\…) with spaces or non-ASCII names is fine; a device or long path (\\\\?\\, \\\\.\\), a
+export function isAgentFolder(value:unknown,platform:NodeJS.Platform=process.platform):value is string{if(platform==='win32')return isSafeAbsolutePath(value,'win32');return typeof value==='string'&&isAbsolute(value)&&value.length<=4096&&!/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u.test(value)&&!value.split('/').some(p=>p==='.'||p==='..');}
+// Windows (v0.8.2): a drive path (C:\\… or C:/…) with spaces or non-ASCII names is fine; a device or long path (\\\\?\\, \\\\.\\), a
 // drive-relative one (C:x) and . or .. parts, by either slash, are not.
 export function isSafeAbsolutePath(value:unknown,platform:NodeJS.Platform=process.platform):value is string{
  if(typeof value!=='string'||value.length>4096||/[\p{C}\p{Zl}\p{Zp}]/u.test(value))return false;
- if(platform==='win32')return /^[A-Za-z]:\\/.test(value)&&!value.split(/[\\/]/).some(p=>p==='.'||p==='..');
+ // Git for Windows prints C:/… (review): either slash after the drive. No ':' past it (an alternate data stream) and no
+ // device name (NUL, CON, COM1…) as a part, which Windows opens as the device whatever folder it is in.
+ if(platform==='win32')return /^[A-Za-z]:[\\/]/.test(value)&&!value.slice(2).includes(':')&&!value.split(/[\\/]/).some(p=>p==='.'||p==='..'||/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(p));
  return isAbsolute(value)&&!value.split('/').some(p=>p==='.'||p==='..');
 }
 const WORKTREE_NOTES=['worktree off: not a git repo','worktree off: repo has no commits','worktree off: git check failed','worktree off: creation failed'];
