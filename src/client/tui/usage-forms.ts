@@ -41,7 +41,7 @@ export class PriceForm {
    `${this.row===0?'›':' '} provider: ‹ ${PROVIDER_LABELS[this.provider]} ›`,
    ...['model or deployment','input','output','cache read (empty: the input price)'].map((name,i)=>`${this.row===i+1?'›':' '} ${name}: ${this.fields[i+1]??''}█`),
    '← → provider · ↑↓ fields · ⏎ save · Esc cancel',
-   ...rows.length?['YOUR PRICES · USD per 1M in / out / cache',...shown.map(r=>`  ${r.provider==='any'?'any provider':PROVIDER_LABELS[r.provider]} · ${r.model} · ${usdText(r.price.input)} / ${usdText(r.price.output)} / ${r.price.cacheRead===undefined?'same as input':usdText(r.price.cacheRead)}`),...rows.length>shown.length?[`  +${rows.length-shown.length} more`]:[]]:[]];
+   ...rows.length?['YOUR PRICES · USD per 1M in / out / cache read',...shown.map(r=>`  ${r.provider==='any'?'any provider':PROVIDER_LABELS[r.provider]} · ${r.model} · ${usdText(r.price.input)} / ${usdText(r.price.output)} / ${r.price.cacheRead===undefined?'same as input':usdText(r.price.cacheRead)}`),...rows.length>shown.length?[`  +${rows.length-shown.length} more`]:[]]:[]];
  }
 }
 // AI Term agent's per-run caps (D53): the defaults a new run starts with; /caps changes one run.
