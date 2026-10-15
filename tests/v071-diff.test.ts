@@ -165,7 +165,7 @@ it('MEDIUM (TS review): an unreadable untracked file or an unprintable name does
   await writeFile(join(dir, 'locked.txt'), 'secret\n', { mode: 0o000 });
   await writeFile(join(dir, '​'), 'zero width name\n');
   const diff = await worktreeDiff(dir, base);
-  expect(diff.files.find(f => f.path === 'locked.txt')?.lines).toEqual(['+(unreadable)']);
+  expect(diff.files.find(f => f.path === 'locked.txt')?.lines).toEqual(['+(unreadable: no permission)']);
   expect(diff.files.map(f => f.path)).toContain('(unprintable name)');
   expect(() => validateAgentDiff({ title: 't', branch: 'ai/t', base: 'b', ...diff })).not.toThrow();
 });

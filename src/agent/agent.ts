@@ -475,11 +475,13 @@ export class Agent {
       const cleared = await this.clearance(estimateTokens(prompt), controller);
       grant = cleared.grant; open = this.limits.lastWorst;
       const result = streamText({ model: this.options.model, prompt, maxOutputTokens: Math.min(COMPACT_OUTPUT_TOKENS, this.limits.lastMaxOutput), abortSignal: controller.signal, maxRetries: 0 });
-      let summary = '', error: unknown;
+      let summary = '', error: unknown, cut = false;
       for await (const part of result.fullStream) {
         if (part.type === 'text-delta') summary += part.text;
         else if (part.type === 'error') { error = part.error; break; }
         else if (part.type === 'finish-step') {
+          // A summary the output limit cut off would replace the older turns with half of them (gate): never kept.
+          if (part.finishReason === 'length') cut = true;
           const input = part.usage.inputTokens ?? 0, output = part.usage.outputTokens ?? 0, cost = requestCost(cleared.facts?.price ?? null, input, 0, output);
           if (part.usage.inputTokens === undefined && part.usage.outputTokens === undefined) { this.limits.chargeUnfinished(open); settle(true); }
           else { this.limits.record(cost); const taken = reporter.usage(this.options.modelId, { input, cached: 0, output, reasoning: 0 }); void taken.then(r => { if (r === false) this.usageLost(cost); }); settle(taken.then(r => r === false)); io.note(`compacted ${split.turns} older turn${split.turns === 1 ? '' : 's'} · ${input} in · ${output} out · ${cost === null ? 'price ?' : `$${cost.toFixed(4)}`}`); }
@@ -487,6 +489,7 @@ export class Agent {
         }
       }
       if (controller.signal.aborted) { if (open) this.limits.chargeUnfinished(open); io.note('compact stopped; the conversation is unchanged'); return 'interrupted'; }
+      if (cut) { if (open) this.limits.chargeUnfinished(open); io.note('compact failed: the summary was cut off at its length limit; the conversation is unchanged', 'error'); return 'failed'; }
       if (error !== undefined || !summary.trim()) { if (open) this.limits.chargeUnfinished(open); io.note('compact failed; the conversation is unchanged', 'error'); return 'failed'; }
       // A request the provider sent no usage for: unknown is not free, its worst case counts (D53).
       if (open) { this.limits.chargeUnfinished(open); open = 0; }

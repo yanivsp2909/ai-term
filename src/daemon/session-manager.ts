@@ -80,7 +80,8 @@ export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry alrea
     'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
     'Agent does not accept pasted lines','Agent is printing too fast to check','Agent is running a tool','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
-    approvedSetup?: string; // v0.7.4: the test setup you ran with /test; later turns with the same setup run without asking
+    approvedSetup?: string;
+    checkpointFailed?: boolean; // gate: the last turn's checkpoint failed, so /undo says so instead of "no checkpoint" // v0.7.4: the test setup you ran with /test; later turns with the same setup run without asking
     firstMessage?: string; // v0.7.4 /fork: what it was started with (memory only: a prompt is never written to disk here)
     diffStatSeq?: number; // v0.7.1: which diff-stat count is the latest (a stale one never lands)
     info: SessionInfo;
@@ -947,8 +948,9 @@ export class SessionManager extends EventEmitter {
         let settings:Settings|null=null;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; checkpoints stay on');}
         if(settings?.checkpoints===false)return;
         await this.inCheckpointQueue(id,async()=>{
-            try{const path=live.info.worktree;if(!path)return;await snapshot(path,this.checkpointSlug(live),await this.checkpointContext(id));}
-            catch{this.log.error('Checkpoint failed; the agent goes on');}
+            try{const path=live.info.worktree;if(!path)return;await snapshot(path,this.checkpointSlug(live),await this.checkpointContext(id));live.checkpointFailed=false;}
+            // The reason goes to the log (an error class and code, never a path); /undo says a checkpoint failed (gate).
+            catch(error){live.checkpointFailed=true;this.log.error(`Checkpoint failed; the agent goes on (${error instanceof Error?error.constructor.name:'unknown'}${error instanceof Error&&'code' in error?` ${String(error.code)}`:''})`);}
         });
     }
     // Refused while the agent works or asks you something: checked when asked, and again in the agent's queue right
@@ -970,7 +972,9 @@ export class SessionManager extends EventEmitter {
     }
     async undoPlan(id:string,kind:'undo'|'redo'):Promise<UndoPlan>{
         const {live,path,slug,ctx}=await this.undoTarget(id);
-        return this.inCheckpointQueue(id,()=>undoPlan(path,slug,kind,ctx,live.info.title).catch((error:unknown)=>{throw this.undoError(error);}));
+        return this.inCheckpointQueue(id,()=>undoPlan(path,slug,kind,ctx,live.info.title).catch((error:unknown)=>{
+            if(error instanceof CheckpointError&&error.message==='No checkpoint to go back to'&&live.checkpointFailed)throw new CheckpointError("No checkpoint to go back to; the last checkpoint failed (AI Term's log says why)");
+            throw this.undoError(error);}));
     }
     async undo(id:string,kind:'undo'|'redo',fingerprint:string):Promise<{restored:number}>{
         const {live,path,slug,ctx}=await this.undoTarget(id);

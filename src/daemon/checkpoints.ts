@@ -18,7 +18,7 @@ export const MAX_CHECKPOINTS = 50, MAX_REDO = 50, MAX_UNTRACKED = 10_000;
 export class CheckpointError extends Error {}
 // The fixed words a client may see (the server passes only these on).
 export const CHECKPOINT_ERRORS = ['Checkpoints are off · /settings u turns them on', 'Stop or wait for the agent first; it is running', 'Stop or wait for the agent first; it is asking',
-  'This agent has no worktree; checkpoints need one', 'Tests are running in this worktree; /undo or /redo when they finish', 'Undo unavailable; git could not read the worktree', 'Nothing to redo', 'No checkpoint to go back to', 'Nothing to change; the worktree already matches it',
+  'This agent has no worktree; checkpoints need one', 'Tests are running in this worktree; /undo or /redo when they finish', "No checkpoint to go back to; the last checkpoint failed (AI Term's log says why)", 'Undo unavailable; git could not read the worktree', 'Nothing to redo', 'No checkpoint to go back to', 'Nothing to change; the worktree already matches it',
   'Changed since you looked; run /undo again', 'Changed since you looked; run /redo again', 'A folder in the worktree is a symlink; nothing was restored', 'Invalid checkpoint name',
   'Something in the worktree is in the way; nothing was restored', 'Nothing was restored; a checkpoint file could not be read', 'The restore stopped part way; /redo or /undo brings back a saved state',
   'Nothing was restored; the worktree could not be written', 'An ignored file is where the checkpoint has one; nothing was restored'] as const;

@@ -30,12 +30,15 @@ function sections(patch: string): Section[] {
   }
   return out;
 }
+const UNREADABLE: Record<string, string> = { EACCES: 'no permission', EPERM: 'no permission', EMFILE: 'too many open files', ENFILE: 'too many open files', EISDIR: 'a folder', ELOOP: 'a link' };
 // An untracked file as git would show a new one, without following a symlink or reading past a cap.
 async function untracked(root: string, name: string): Promise<Omit<DiffFile, 'path' | 'status'>> {
   if (isAbsolute(name) || name.split('/').includes('..')) return { added: 0, removed: 0, lines: ['+(not shown)'] };
   const path = join(root, name);
-  // Unreadable is shown as such: one file (mode 000, a race, too many open files) never breaks the whole diff.
-  try { return await readUntracked(root, path); } catch { return { added: 0, removed: 0, lines: ['+(unreadable)'] }; }
+  // Unreadable is shown as such, with the reason (gate): one file (mode 000, a race, too many open files) never breaks the
+  // whole diff, and the reader (you, or the /review model) knows why it is empty.
+  try { return await readUntracked(root, path); }
+  catch (error) { return { added: 0, removed: 0, lines: [`+(unreadable: ${UNREADABLE[error instanceof Error && 'code' in error ? String(error.code) : ''] ?? 'read failed'})`] }; }
 }
 async function readUntracked(root: string, path: string): Promise<Omit<DiffFile, 'path' | 'status'>> {
   let info;
