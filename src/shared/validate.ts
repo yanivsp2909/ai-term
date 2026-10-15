@@ -257,7 +257,8 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.extension!==undefined)validateExtensionFile(v.extension);
     if(v.settings!==undefined)validateSettings(v.settings);
     if(v.engines!==undefined) { if (!v.engines || typeof v.engines !== 'object' || !('claudeCode' in v.engines) || !('codex' in v.engines)) throw new ValidationError('Invalid engines status'); validateEngineStatus(v.engines.claudeCode); validateEngineStatus(v.engines.codex); }
-    if(v.notifier!==undefined&&!['ready','not built','launch failed'].includes(String(v.notifier)))throw new ValidationError('Invalid notifier state');
+    if(v.agentSandbox!==undefined&&(!v.agentSandbox||typeof v.agentSandbox!=='object'||Array.isArray(v.agentSandbox)||typeof (v.agentSandbox as Record<string,unknown>).dontAsk!=='boolean'||Object.keys(v.agentSandbox).some(k=>k!=='dontAsk'&&k!=='note')||(v.agentSandbox as Record<string,unknown>).note!==undefined&&(typeof (v.agentSandbox as Record<string,unknown>).note!=='string'||String((v.agentSandbox as Record<string,unknown>).note).length>120||/[\p{C}]/u.test(String((v.agentSandbox as Record<string,unknown>).note)))))throw new ValidationError('Invalid agent sandbox state');
+    if(v.notifier!==undefined&&!['ready','not built','launch failed','none'].includes(String(v.notifier)))throw new ValidationError('Invalid notifier state');
     if(v.notificationPermission!==undefined&&!['allowed','denied','not-asked','unknown'].includes(String(v.notificationPermission)))throw new ValidationError('Invalid notification permission');
     if(v.modes!==undefined)validateModes(v.modes);
     const session=(x:unknown)=>{try{validateSession(x);return true;}catch{return false;}};

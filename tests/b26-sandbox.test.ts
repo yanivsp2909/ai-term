@@ -26,7 +26,7 @@ import type { SessionInfo } from '../src/shared/protocol.js';
 // Without a working sandbox nothing runs by itself: the card says `tests need you · no sandbox` and /test asks each time.
 const MAC = process.platform === 'darwin';
 const run = promisify(execFile), roots: string[] = [], managers: SessionManager[] = [];
-afterEach(async () => { for (const m of managers.splice(0)) await m.shutdown(); vi.restoreAllMocks(); SessionManager.sandboxExec = '/usr/bin/sandbox-exec'; for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { for (const m of managers.splice(0)) await m.shutdown(); vi.restoreAllMocks(); SessionManager.sandboxExec = null; for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function temp(): Promise<string> { const dir = await realpath(await mkdtemp(join(tmpdir(), 'ai-b26-'))); roots.push(dir); return dir; }
 const spec: SandboxSpec = { worktree: '/Users/me/.ai-term/worktrees/r/my tree; $x ü', temp: '/private/var/folders/x/T/ai-term-test-1', home: '/Users/me', private: ['/Users/me/.ai-term'], loopback: false };
 

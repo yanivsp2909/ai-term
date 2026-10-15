@@ -1,8 +1,15 @@
 import {dirname,isAbsolute,join,resolve} from 'node:path';
 export interface RuntimePaths {root:string;entry:string;node:string;command:string}
-export function runtimePaths(main:string,packaged:boolean):RuntimePaths {
+// Linux and Windows (v0.8): electron-builder puts the app in resources/app; there is no ai-node launcher, so AI Term's own
+// processes run on the Electron binary itself in Node mode (runtimeEnv sets ELECTRON_RUN_AS_NODE), and no ai command
+// is installed from the app (command is empty).
+export function runtimePaths(main:string,packaged:boolean,platform:NodeJS.Platform=process.platform,execPath:string=process.execPath):RuntimePaths {
  if(!isAbsolute(main)||main.includes('\0'))throw new Error('Runtime module path must be absolute');
  const root=resolve(dirname(main),'../../..');
+ if(platform!=='darwin'){
+  if(packaged&&!/[\\/]resources[\\/]app$/.test(root))throw new Error('Invalid packaged runtime layout');
+  return {root,entry:join(root,'dist','cli','index.js'),node:execPath,command:''};
+ }
  if(packaged&&!root.endsWith('/Contents/Resources/app'))throw new Error('Invalid packaged runtime layout');
  const macos=resolve(root,'../../MacOS');
  return {root,entry:join(root,'dist/cli/index.js'),node:join(macos,'ai-node'),command:join(macos,'ai')};

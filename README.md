@@ -12,7 +12,23 @@ You type what you want built at the bottom, pick a model, and AI Term starts the
 
 Agents keep running in a background service when you leave them or close the terminal. Run `ai` again and they're all still there.
 
-Personal and learning project. macOS first; Linux and Windows by v0.8.
+Personal and learning project. macOS first; Linux from v0.8.1 (below); Windows by v0.8.2.
+
+## Linux (v0.8.1)
+Everything above works on Linux too, with these differences:
+- **Daemon socket:** `~/.ai-term/run/daemon.sock`, with the same rules as on macOS (folder 0700, socket 0600, refused if the folder is a link or someone else's). `XDG_RUNTIME_DIR` isn't used.
+- **Keys:** kept in the Secret Service (GNOME Keyring, KWallet) through the same library as macOS's Keychain. With no keyring running, or a locked one, key features refuse with `No Secret Service keyring (none running, or it is locked); API keys need one, and AI Term never stores them in a file`. There is no file fallback.
+- **Sandboxes:** through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`, in `/usr/bin`, `/usr/local/bin` or `/bin`; `sudo apt install bubblewrap`).
+  - **Tests (D56):** the system is read-only. Your home, other homes, `/tmp`, `/var/tmp`, `/run`, `/media` and `/mnt` are hidden. Toolchains and the repository's git folder come back read-only, key folders stay hidden, and only the worktree and a temp folder are writable.
+  - **Test network:** a test run gets its own network, so only its own 127.0.0.1 works. Your machine's services stay closed even with `l` on, which only matters on macOS.
+  - **What a block looks like:** a hidden file reads as missing, so a blocked write or network shows `✗ blocked by sandbox`, and a blocked read shows as a test failure.
+  - **Agent bash (D57, B29):** AI Term's agent's bash gets its own process list, so it can't see or attach to your other processes. It can't see `~/.ai-term` (its own worktree excepted), AI Term's sockets, or your session's runtime folder (where the D-Bus session bus would hand out Secret Service keys).
+  - **Persistence spots:** read-only. Home, `~/.config` and the like are rebuilt for each command with every entry put back, so a startup file that doesn't exist yet can't be created either. Anything new at those levels vanishes when the command ends.
+  - **Without bubblewrap** (or where it can't start, for example with user namespaces turned off): auto-test asks every time (`tests need you · no sandbox`). AI Term's agent offers Ask only, and the start box and `/mode` show why in one line (`don't ask needs bubblewrap (bwrap), which isn't installed`). The same goes anywhere a sandbox can't start, macOS included.
+- **Notifications:** through `notify-send` when it is installed, else none (`/settings` says `notifications unavailable: notify-send isn't installed`). Clicking one does nothing on Linux.
+- **Clipboard** (`y`, `Y`): `wl-copy` on Wayland, else `xclip` or `xsel`. With none of them, the copy says to install one.
+- **`/open`:** `xdg-open`. **This machine:** `/proc/meminfo`, `/proc/net/dev` and `ps`.
+- **Desktop app:** an AppImage and a .deb from `npm run app:dist` on Linux, unsigned. Each ⌘ key in the desktop key table below is Ctrl+Shift there (Ctrl+Shift+C copies, Ctrl+Shift+T starts an agent, and so on). There's no Hide, no Zoom and no `ai` command install from the app.
 
 ## Status
 `ai` starts Claude Code and Codex on their own logins, and AI Term's own agent on any saved API key (see below). `/login` connects an account or saves a key in the macOS Keychain; `/settings` lists masked key metadata, tests Foundry deployments, imports selected keys from an env file without modifying it, and edits defaults/theme. This Mac updates once per second. Usage shows estimated API-key spend and tokens for today, this week and this month; subscriptions are excluded from those totals. Each agent's own total since it started (cost per task, v0.6.1) shows on its card and in `/usage`: dollars for API keys, tokens for subscriptions. `b` sets advisory budget limits; `/settings` offers Foundry deployment price overrides.
@@ -57,6 +73,7 @@ For source development, install Node ≥22, `npm install`, then `npm exec -- ins
 | ⌘M | Minimize (Window menu); Zoom is also available there |
 | ⌘H / ⌥⌘H | Hide AI Term / hide other apps (App menu) |
 | Option+← / Option+→ | Meta word movement, enabled in the app |
+| Ctrl+Shift+key (Linux, Windows) | The same action as ⌘+key above (Ctrl+Shift+C copy, Ctrl+Shift+V paste, Ctrl+Shift+T new agent, Ctrl+Shift+1–9, Ctrl+Shift+W close, Ctrl+Shift+Q quit…); plain Ctrl keys go to `ai` |
 
 Other terminal keys go straight to `ai`. Web links open only http/https in your default browser. The hidden title bar keeps inset traffic lights above the terminal; solid colors follow macOS live, including the TUI's palette after a new OSC 11 probe. View → Light / Dark / Use System Appearance changes the app's appearance. App launches use an automatic palette without changing the saved Terminal.app theme. The installed JetBrains Mono font is preferred, then SF Mono/Menlo/system monospace; no font is bundled. Ligatures and vibrancy are omitted. Nothing animates. The first launch shows “Closing or quitting keeps your agents running.”
 

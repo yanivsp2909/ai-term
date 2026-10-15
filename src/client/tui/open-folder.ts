@@ -17,12 +17,24 @@ const run: Runner = (file, args, env) => new Promise((resolve, reject) => {
 });
 // /open: the agent's folder in Finder (/usr/bin/open) or VS Code (`code` from PATH). execFile with an argv array and
 // `--` before the path, so the path is only ever a path.
-export async function openFolder(path: string, app: FolderApp, runner: Runner = run, find = findExecutable): Promise<'Finder' | 'VS Code'> {
+// Linux (v0.8.1): xdg-open takes no `--`, so only an absolute path (checked above) reaches it, which can't read as an
+// option. Windows: explorer.exe with the path as its one argument.
+export async function openFolder(path: string, app: FolderApp, runner: Runner = run, find: (name: string) => Promise<string | null> = name => findExecutable(name), platform: NodeJS.Platform = process.platform): Promise<'Finder' | 'VS Code' | 'your file manager' | 'Explorer'> {
   if (!isAbsolute(path) || path.includes('\0')) throw new OpenError('folder path is not absolute');
   let folder;
   try { folder = await stat(path); }
   catch (error) { throw new OpenError(isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR') ? 'folder is gone' : 'folder is unavailable'); }
   if (!folder.isDirectory()) throw new OpenError('folder is gone');
+  if (app === 'finder' && platform === 'linux') {
+    const opener = await find('xdg-open');
+    if (!opener) throw new OpenError("xdg-open isn't installed");
+    try { await runner(opener, [path], { PATH: '/usr/bin:/bin' }); } catch { throw new OpenError("your file manager couldn't open it"); }
+    return 'your file manager';
+  }
+  if (app === 'finder' && platform === 'win32') {
+    try { await runner(`${process.env.SystemRoot ?? 'C:\\Windows'}\\explorer.exe`, [path], {}); } catch { throw new OpenError("Explorer couldn't open it"); }
+    return 'Explorer';
+  }
   if (app === 'finder') {
     // open launches a folder with an extension as a package (Tool.app, X.xcodeproj); -R only reveals it in Finder.
     const reveal = /\.[A-Za-z0-9]+$/.test(basename(path)) ? ['-R'] : [];

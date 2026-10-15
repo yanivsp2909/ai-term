@@ -810,6 +810,35 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
   - An unreadable diff file says why.
   - Every new refusal is in its module's error list, so it reaches the client.
 
+### 12.20 v0.8.1 Linux (2026-10-15)
+- **Socket and files.** Unchanged: `~/.ai-term` (0700, owner and not-a-link checked), `run/daemon.sock` (0600, bound under a temp name and renamed). `XDG_RUNTIME_DIR` isn't used, so no second set of checks is needed.
+- **Keys.** `@napi-rs/keyring` with `linux:{store:'secret-service'}`, as before. Any vault failure becomes `keychainUnavailable('linux')`, one line that says keys need a running, unlocked Secret Service. There's no file fallback anywhere (`KEYCHAIN_ERRORS` reach the client).
+- **Sandboxes: `src/daemon/bwrap.ts`.** bwrap is looked up only in `/usr/bin`, `/usr/local/bin` and `/bin`. Paths are argv elements, checked by `bwrapPath`: absolute, normalized, no control characters.
+  - **Tests (`bwrapTestArgs`, used by `prepareSandbox` on Linux):**
+    - **Flags:** `--die-with-parent --new-session --unshare-all`. The run has its own network, so only its own 127.0.0.1 works, whatever `testLoopback` says.
+    - **Mounts:** `--ro-bind / /`, `--dev`, `--proc`. Then `--tmpfs` over home, `/home`, `/root`, `/tmp`, `/var/tmp`, `/run` (sockets aren't stopped by a network namespace), `/media` and `/mnt`.
+    - **Reopened:** `--ro-bind` for toolchains and the git dir. Key folders stay hidden (`--tmpfs`, or `/dev/null` for a file).
+    - **Writable:** `--bind` the worktree and the temp folder only, and `--chdir` into the worktree.
+    - **Use:** `PreparedSandbox.prefix` is the argv before the test command. `sandboxReady` runs it with `/bin/true`. A `bwrap:` failure (exit 1) is `nosandbox`. `EROFS` and `ENETUNREACH` read as `blocked`.
+  - **Agent bash (`bwrapBashArgs` + `bashSandboxPlan`, used by `linuxArgv` in `src/agent/bash.ts`):**
+    - **Flags:** `--unshare-pid` with its own `/proc` (no attaching to the agent or the daemon), plus ipc, uts, cgroup and user. The network is shared.
+    - **Writable:** `--bind / /` (allow by default).
+    - **Rebuilt folders:** home, and each real folder between home and a persistence spot, become `--tmpfs` with each entry bound back. Persistence spots are `--ro-bind`, links are recreated with `--symlink`, and a dangling persistence link is left out. So a missing startup file can only be "created" in the tmpfs, and new top-level entries vanish when the command ends.
+    - **Hidden:** `--tmpfs` over the runtime dir (D-Bus session bus, so no Secret Service requests) and over `AITERM_HOME`, with the agent's worktree bound back.
+    - **Read-only:** `--ro-bind` link targets and the repository's `hooks/` and `config`.
+    - **Limits:** more than 2000 entries in a rebuilt folder refuses the command. A blocked write reads as `EROFS` or `EBUSY` (`blockedPlace`).
+- **Ask only without a sandbox (`src/daemon/agent-sandbox.ts`).**
+  - `agentSandbox()` checks for a sandbox: macOS needs `sandbox-exec` and a probe; Linux needs bwrap and a probe with `--unshare-pid`; Windows and other systems have none.
+  - The result is cached for a minute and sent with `engines.status` as `agentSandbox {dontAsk, note}`.
+  - **Client:** the homepage offers only `ask` for AI Term's agent (`modeValues(engine, dontAsk)`); the start box's mode row and `/mode` show the note.
+  - **Daemon:** `create` refuses `dontAsk` for `ai-term` with the same note (`AGENT_SANDBOX_ERRORS`).
+  - **Agent:** in Don't ask its bash runs with `require`, so a command never runs without its sandbox there.
+- **Notifications.** `Notifier` with a `NotifierSystem`. Linux runs `notify-send --app-name=AI Term -- AI Term <body>`, with markup escaped, and its env holds only the D-Bus and display variables. The state is `none` without it. Clicks and the Terminal launcher are macOS only.
+- **Elsewhere.**
+  - Clipboard: `wl-copy`, `xclip` or `xsel`. `/open`: `xdg-open`.
+  - Stats: `sampleCommands('linux')` reads `/proc/meminfo` and `/proc/net/dev` through `cat`. `ps -Ao` works on both systems.
+  - Desktop: `scripts/app-config.mjs` makes AppImage and deb targets, unsigned. `runtimePaths` accepts `resources/app`, with no `ai-node` and no command install. Accelerators are Ctrl+Shift.
+
 ## 13. Decisions log
 
 Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless he objects.
@@ -873,3 +902,4 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D55 | Every optional feature has its own on/off in `/settings`; anything that spends tokens by itself defaults to off. | Pinned (Yaniv, 2026-10-14) |
 | D56 | Code an agent wrote never runs outside a sandbox without asking. Auto-test runs the test process tree under macOS `sandbox-exec` with a deny-by-default profile built from checked paths (writes only in the worktree and a per-run temp folder; no network unless the project allows 127.0.0.1; no reads of the home folder beyond toolchains, nor of key folders); without a working sandbox it never runs by itself and `/test` asks every time (§12.18). | Pinned (Yaniv, 2026-10-15) |
 | D57 | AI Term's agent never holds its key or AI Term's credentials in its process environment (a 0600 file it reads and deletes carries them), and on macOS its bash commands run in a sandbox that can't read or write `~/.ai-term` (its own worktree excepted) or reach AI Term's sockets, so the agent can't change your prices, budgets or settings, or talk to AI Term as you; nor can it write the places that run later outside the sandbox (shell startup files, login items, `~/.ssh`, git's global config, Claude Code's and Codex's folders; B29) (§12.19). | Pinned (Yaniv, 2026-10-15) |
+| D58 | Linux sandboxes are bubblewrap from fixed paths, or none: tests get their own network (no 127.0.0.1 of yours even when allowed) and an empty home; agent bash gets its own PID view and a rebuilt home whose persistence spots are read-only (new entries at those levels vanish). No bwrap, or one that can't start: auto-test asks every time and AI Term's agent is Ask only, as anywhere a sandbox can't start (§12.20). | Proposed |

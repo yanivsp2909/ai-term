@@ -1,6 +1,7 @@
 // A separate staging tree prevents packaging/rebuild tools from mutating the
 // system-Node CLI dependencies. Both pinned native bindings use stable N-API.
 import {build} from 'electron-builder';
+import {appBuilderConfig} from './app-config.mjs';
 import {cpSync,mkdirSync,readFileSync,rmSync,symlinkSync,writeFileSync} from 'node:fs';
 import {dirname,join} from 'node:path';import {fileURLToPath} from 'node:url';import {spawnSync} from 'node:child_process';
 const root=join(dirname(fileURLToPath(import.meta.url)),'..'),out=join(root,'build/desktop'),stage=join(out,'stage');
@@ -16,9 +17,12 @@ process.env.HOME=join(out,'home');process.env.ELECTRON_BUILDER_CACHE=join(out,'c
 // A local ad-hoc build must not discover certificates or publish/notarize just
 // because the caller also has release credentials in their environment.
 for(const name of ['CSC_LINK','CSC_KEY_PASSWORD','CSC_KEYCHAIN','CSC_NAME','APPLE_ID','APPLE_APP_SPECIFIC_PASSWORD','APPLE_TEAM_ID'])delete process.env[name];
-await build({publish:'never',projectDir:stage,config:{appId:'local.aiterm.desktop',productName:'AI Term',asar:false,npmRebuild:false,electronVersion:info.dependencies.electron.replace(/^[^0-9]+/,''),electronDist:join(root,'node_modules/electron/dist'),directories:{output:join(out,'dist')},files:['app/out/**/*','dist/**/*','data/**/*','package.json'],extraFiles:[{from:join(root,'build/notifier/AI Term.app'),to:'Helpers/AI Term.app'}],mac:{target:[{target:'dir',arch:[process.arch]},{target:'zip',arch:[process.arch]}],identity:'-',hardenedRuntime:false,notarize:false,gatekeeperAssess:false,artifactName:'AI-Term-${version}-${arch}.${ext}'},afterPack:async context=>{
+const mac=process.platform==='darwin';
+const config=appBuilderConfig({platform:process.platform,root,out,version:info.dependencies.electron.replace(/^[^0-9]+/,''),arch:process.arch});
+// The ai launchers and the notification helper are macOS's; Linux and Windows packages carry the app alone.
+await build({publish:'never',projectDir:stage,config:{...config,...(mac?{afterPack:async context=>{
  const bundle=join(context.appOutDir,'AI Term.app'),contents=join(bundle,'Contents'),resources=join(contents,'Resources/app');
  mkdirSync(join(resources,'build/notifier'),{recursive:true});symlinkSync('../../../../Helpers/AI Term.app',join(resources,'build/notifier/AI Term.app'));
  for(const command of ['ai','ai-node'])run('/usr/bin/xcrun',['clang','-O2','-Wall','-Wextra','-Werror',...(command==='ai'?['-DAI_COMMAND']:[]),join(root,'native/desktop/launcher.c'),'-o',join(contents,'MacOS',command)]);
- },afterSign:async context=>{const bundle=join(context.appOutDir,'AI Term.app');run('/usr/bin/codesign',['--verify','--deep','--strict','--verbose=2',bundle]);run('/usr/bin/codesign',['--verify','--strict','--verbose=2',join(bundle,'Contents/Helpers/AI Term.app')]);}}});
-process.stdout.write(`Packaged app and zip: ${join(out,'dist')}\n`);
+ },afterSign:async context=>{const bundle=join(context.appOutDir,'AI Term.app');run('/usr/bin/codesign',['--verify','--deep','--strict','--verbose=2',bundle]);run('/usr/bin/codesign',['--verify','--strict','--verbose=2',join(bundle,'Contents/Helpers/AI Term.app')]);}}:{})}});
+process.stdout.write(`Packaged app: ${join(out,'dist')}\n`);

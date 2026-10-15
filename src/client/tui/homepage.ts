@@ -11,7 +11,7 @@ import { type AttachReason } from '../attach.js';
 import { split, type SplitResult } from '../split.js';
 import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
-import { MAX_FIND_CHARS, type FindMatch, type SessionInfo, type SuccessResponse, type AgentEngine, type EnginesStatus, type AuthRef, type KeyView, type SystemStats, type UsageSummary, type Budgets, type Effort, type Permission, type KeysRunOn } from '../../shared/protocol.js';
+import { MAX_FIND_CHARS, type FindMatch, type SessionInfo, type SuccessResponse, type AgentEngine, type EnginesStatus, type AuthRef, type KeyView, type SystemStats, type UsageSummary, type Budgets, type Effort, type Permission, type KeysRunOn, type AgentSandbox } from '../../shared/protocol.js';
 import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText, validateWorktreePreview, isCliEngine } from '../../shared/validate.js';
 import type { CliEngine } from '../../shared/protocol.js';
 import { getPaths } from '../../shared/paths.js';
@@ -123,6 +123,7 @@ export class Homepage {
   private worktrees:'on'|'off'='on';
   private readonly terminal:import('../../shared/protocol.js').TerminalBundle|undefined;
   private engines?: EnginesStatus;
+  private agentSandbox:AgentSandbox={dontAsk:true};
   private box?: AgentBox;
   private returnToStart = false;
   private credentials?:CredentialsPanel;
@@ -189,7 +190,7 @@ export class Homepage {
       const result = await this.connection.request({ kind: 'sessions.list' });
       if (!Array.isArray(result.sessions)) throw new Error('Missing daemon sessions');
       this.sessions = result.sessions.map(validateSession); this.selectedId = sortSessions(this.sessions)[0]?.id ?? null;
-      const engines=(await this.connection.request({kind:'engines.status'})).engines;this.engines=engines;
+      const engines=await this.loadEngines();
       this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];
       if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length)await this.openCredentials('login');
       this.draw(true);await this.updatePreview(true);await this.subscribeStats(true);await this.subscribeUsage(true);
@@ -538,11 +539,11 @@ export class Homepage {
     if(this.ended)return;
     const text=copy.source==='last-reply'?copy.text:cleanSessionText(copy.text);
     try{await (this.options.copy??copyText)(text);}
-    catch{(this.options.copyLog??new Logger(getPaths().log)).error('Clipboard copy failed');this.showNote('Copy failed: clipboard unavailable');return;}
+    catch(error){(this.options.copyLog??new Logger(getPaths().log)).error('Clipboard copy failed');this.showNote(error instanceof Error&&error.message.startsWith('no clipboard tool')?`Copy failed: ${error.message}`:'Copy failed: clipboard unavailable');return;}
     const lines=text?text.split('\n').length:0;
     if(!this.ended)this.showNote(`✓ copied ${lines} lines from ${session.title}${copy.truncated?' (oldest lines cut at 5 MB)':''}${all||copy.source==='last-reply'?'':' · last reply only comes with v0.2'}`,2000,true);
   }
-  private commandContext():CommandContext{return {engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title,agents:sortSessions(this.sessions).filter(s=>!['exited','error'].includes(s.status)).map(s=>s.title)};}
+  private commandContext():CommandContext{return {dontAsk:this.agentSandbox.dontAsk,engine:this.engine,model:this.model,cwd:this.folder,theme:this.theme.name,effort:this.effort,permission:this.permission,selectedTitle:this.sessions.find(s=>s.id===this.selectedId)?.title,agents:sortSessions(this.sessions).filter(s=>!['exited','error'].includes(s.status)).map(s=>s.title)};}
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
   private queueSubmit(text:string,message?:MessageField):void{const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.submit(text,selected,message));}
   private async submit(text: string, copyTarget:SessionInfo|null=null,message?:MessageField): Promise<void> {
@@ -566,7 +567,7 @@ export class Homepage {
     if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));}catch(error){this.showNote(error instanceof Error?error.message:'Shell could not start');}return;}
     if(command==='/resume'){if(argument){this.showNote('/resume uses the selected agent');return;}const session=this.sessions.find(s=>s.id===this.selectedId);if(!session||!['exited','error'].includes(session.status)){this.showNote('Select an exited or failed agent to resume');return;}if(session.engine==='shell'){this.showNote('A shell has no AI conversation to resume');return;}if(session.engine==='claude-code'&&!session.conversationId){this.showNote('This older Claude agent has no conversation ID');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.resume',sessionId:session.id}));if(session.engine==='codex')this.showNote('Codex resume picker · choose its conversation');}catch(error){this.showNote(error instanceof Error?error.message:'Resume failed');}return;}
     if(command==='/effort'){if(!argument){this.openBox('effort');return;}const effort=argument==='CLI default'?null:argument;if(!isEffortForEngine(this.engine,effort)){this.showNote('/effort '+effortValues(this.engine).join('|'));return;}this.effort=effort;this.showNote('');return;}
-    if(command==='/mode'){if(!argument){this.openBox('mode');return;}const permission=argument==="don't ask"||argument==='dontAsk'?'dontAsk':argument;if(!isPermissionForEngine(this.engine,permission)){this.showNote(this.engine==='codex'&&permission==='auto'?'Codex has no distinct auto mode; choose ask or don\'t ask':'/mode ask|auto|don\'t ask');return;}this.permission=permission;this.showNote('');return;}
+    if(command==='/mode'){if(!argument){this.openBox('mode');return;}const permission=argument==="don't ask"||argument==='dontAsk'?'dontAsk':argument;if(!isPermissionForEngine(this.engine,permission)){this.showNote(this.engine==='codex'&&permission==='auto'?'Codex has no distinct auto mode; choose ask or don\'t ask':'/mode ask|auto|don\'t ask');return;}if(permission==='dontAsk'&&!modeValues(this.engine,this.agentSandbox.dontAsk).includes('dontAsk')){this.showNote(this.agentSandbox.note??"don't ask needs a sandbox");return;}this.permission=permission;this.showNote('');return;}
     if (text === '/exit') { await this.stop(); return; }
     const theme = text.match(/^\/theme (graphite|slate|ink|auto|light)$/)?.[1];
     if (isThemeName(theme)) {
@@ -576,7 +577,7 @@ export class Homepage {
       this.theme = createTheme(theme, this.background); this.previewCells = undefined; this.previous = null; this.forceRedraw = true; this.showNote(''); return;
     }
     if (text.startsWith('/theme')) { this.showNote('/theme graphite|slate|ink|auto|light'); return; }
-    if (text === '/model' || text === '/cd') { this.engines=(await this.connection.request({kind:'engines.status'})).engines;this.keys=(await this.connection.request({kind:'keys.list'})).keys??[]; this.openBox(text === '/model' ? 'model' : 'folder'); return; }
+    if (text === '/model' || text === '/cd') { this.engines=await this.loadEngines();this.keys=(await this.connection.request({kind:'keys.list'})).keys??[]; this.openBox(text === '/model' ? 'model' : 'folder'); return; }
     if (text==='/settings'||text==='/login') { await this.openCredentials(text==='/settings'?'settings':'login'); return; }
     if (command==='/preset') { await this.presetCommand(text); return; }
     if (command==='/handoff') { await this.handoffCommand(argument); return; }
@@ -789,7 +790,7 @@ export class Homepage {
     if(!model){this.showNote('/fork [agent] <model> · the same first message on another model');return;}
     const source=this.namedOrSelected(words.join(' '),'/fork <model>');if(!source)return;
     if(source.engine==='shell'){this.showNote('a shell has no first message to fork');return;}
-    try{this.engines=(await this.connection.request({kind:'engines.status'})).engines;this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];}
+    try{this.engines=await this.loadEngines();this.keys=(await this.connection.request({kind:'keys.list'})).keys??[];}
     catch(error){this.showNote(error instanceof Error?error.message:'Models unavailable');return;}
     const target=forkTarget(source,model,modelChoices(this.keys,this.engines,this.keysRunOn));
     if(typeof target==='string'){this.showNote(target);return;}
@@ -967,7 +968,7 @@ export class Homepage {
     this.box = {kind,engine:this.engine,model:this.model,cwd:this.folder,permission:this.permission,effort:this.effort,message,messageField:draft,error:'',checking:false,row:0,filter:'',choices:modelChoices(this.keys,this.engines,this.keysRunOn),choice:0,path:'',completions:[],auth:this.auth,authLabel:this.nextAuthLabel(),...(this.auth.kind==='account'&&this.auth.profile?{accountLabel:this.auth.profile===OWN_ACCOUNT?'own login':this.auth.profile}:{})};
     this.returnToStart = false;if(kind==='effort'||kind==='mode')this.valueChoices();else this.resetModelTabs();this.draw(true);
   }
-  private valueChoices():void{const b=this.box;if(!b)return;b.values=b.kind==='effort'?effortValues(b.engine):modeValues(b.engine).map(modeLabel);const value=b.kind==='effort'?b.effort??'CLI default':modeLabel(b.permission);b.choice=Math.max(0,b.values.indexOf(value));}
+  private valueChoices():void{const b=this.box;if(!b)return;b.values=b.kind==='effort'?effortValues(b.engine):modeValues(b.engine,this.agentSandbox.dontAsk).map(modeLabel);const value=b.kind==='effort'?b.effort??'CLI default':modeLabel(b.permission);b.choice=Math.max(0,b.values.indexOf(value));}
   // After /settings closes: worktrees and D47's keys setting may have changed. A key picked for the next agent follows
   // the keys setting, so the start box always shows the engine the daemon will start.
   private async refreshSettings():Promise<void>{
@@ -975,12 +976,14 @@ export class Homepage {
     this.worktrees=settings?.worktrees??'on';this.keysRunOn=settings?.keysRunOn??'ai-term';this.contextWarning=settings?.contextWarning!==false;this.taskCost=settings?.taskCost!==false;this.presetsEnabled=settings?.presetsEnabled!==false;this.presets=settings?.presets??{};this.accounts=settings?.accounts??[];this.defaultAccounts=settings?.defaultAccounts??{};
     if(this.auth.kind==='key'){const id=this.auth.keyId,provider=this.keys.find(k=>k.id===id)?.provider;if(provider){this.engine=keyEngine(provider,this.keysRunOn);this.compatibleDefaults(this.engine);}}
   }
-  private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission))this.permission='ask';}
+  private compatibleDefaults(engine:AgentEngine):void{if(!isEffortForEngine(engine,this.effort))this.effort=null;if(!isPermissionForEngine(engine,this.permission)||!modeValues(engine,this.agentSandbox.dontAsk).includes(this.permission))this.permission='ask';}
+  // engines.status also says whether AI Term's agent may run in Don't ask here (v0.8.1).
+  private async loadEngines():Promise<EnginesStatus|undefined>{const status=await this.connection.request({kind:'engines.status'});this.agentSandbox=status.agentSandbox??{dontAsk:true};this.engines=status.engines;return status.engines;}
   private async checkSelectedEngine(): Promise<void> {
     const box = this.box; if (!box) return;
     box.checking = true; box.error = ''; this.draw(true);
     try {
-      this.engines = (await this.connection.request({kind:'engines.status'})).engines;box.authLabel=this.nextAuthLabel();
+      this.engines = await this.loadEngines();box.authLabel=this.nextAuthLabel();
       if(box.kind==='start'){
         try{box.worktreePreview=validateWorktreePreview((await this.connection.request({kind:'worktrees.preview',cwd:box.cwd,title:engineTitle(box.engine)})).worktreePreview);}catch{box.worktreePreview=undefined;}
       }
@@ -1049,7 +1052,7 @@ export class Homepage {
       this.draw(true); return;
     }
     if (key === 'tab') {
-      if (b.kind === 'start'){const modes=modeValues(b.engine);b.permission=modes[(modes.indexOf(b.permission)+1)%modes.length]??'ask';}
+      if (b.kind === 'start'){const modes=modeValues(b.engine,this.agentSandbox.dontAsk);b.permission=modes[(modes.indexOf(b.permission)+1)%modes.length]??'ask';}
       else if (b.kind === 'model') { this.boxInput('right');return; }
       else if(b.kind==='effort'||b.kind==='mode'){b.choice=(b.choice+1)%(b.values?.length??1);}
       else this.enqueue(async () => { b.completions = await completeFolder(b.path || b.cwd, b.cwd); if (b.completions.length === 1) b.path = b.completions[0] ?? b.path; this.draw(true); });
@@ -1066,7 +1069,7 @@ export class Homepage {
             if(b.kind==='effort'){const effort=value==='CLI default'?null:value;if(!isEffortForEngine(b.engine,effort))return;
               if(this.savingDefault)await this.connection.request({kind:'settings.set',patch:{...(isCliEngine(b.engine)?{defaultEngine:b.engine}:{}),defaultEffort:effort}});
               b.effort=effort;this.effort=effort;
-            }else{b.permission=modeValues(b.engine)[b.choice]??'ask';this.permission=b.permission;}
+            }else{b.permission=modeValues(b.engine,this.agentSandbox.dontAsk)[b.choice]??'ask';this.permission=b.permission;}
             this.savingDefault=false;if(this.returnToStart){b.kind='start';this.returnToStart=false;}else this.box=undefined;
           }catch(error){b.error=error instanceof Error?error.message:'Effort could not save';}this.draw(true);return;
         }
@@ -1302,7 +1305,7 @@ export class Homepage {
       }
       const cwd = this.folder, home = homedir();
       let grid = renderHomepage({ cols, rows, sessions: this.sessions, selectedId: this.selectedId, input: this.field.display(), field: this.fieldView(cols), commandMenu: !this.field.hasPastes, note: this.pasteNote||this.note, notePriority: !!this.pasteNote, warning: this.warning, copying: this.copying, previewVisible: this.visible, cwd: cwd === home ? '~' : cwd.startsWith(home + '/') ? '~' + cwd.slice(home.length) : cwd, engine:this.engine, model:this.model, now: Date.now(), previewCells: this.previewCells, linesBack: preview?.linesBack, newLines: preview?.newLines, stats: this.stats, cpuHistory: this.cpuHistory,authLabel:this.nextAuthLabel(),menuChoice:this.menuChoice,effort:this.box?.effort??this.effort,permission:this.box?.permission??this.permission,worktrees:this.worktrees,usage:this.usage,budgets:this.budgets,marked:this.marked,contextWarning:this.contextWarning,taskCost:this.taskCost }, this.theme);
-      if (this.box) grid = drawAgentBox(grid,this.box,this.theme);
+      if (this.box) grid = drawAgentBox(grid,{...this.box,...(this.agentSandbox.dontAsk?{}:{modeNote:this.agentSandbox.note??"don't ask needs a sandbox"})},this.theme);
       if(this.credentials)grid=this.credentials.draw(grid,this.theme);
       if(this.helpOffset!==null)grid=drawHelp(grid,helpLines(this.commandContext()),this.helpOffset,this.theme);
       if(this.usageForm)grid=drawUsageForm(grid,this.usageForm.lines(),this.usageFormError,this.theme);

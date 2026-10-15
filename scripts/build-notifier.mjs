@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+// macOS only: Linux uses notify-send and Windows has none (v0.8), so there is nothing to build there.
+if (process.platform !== 'darwin') { process.stdout.write('Notification helper: macOS only, skipped\n'); process.exit(0); }
 const source = join(root, 'native', 'notifier'), out = join(root, 'build', 'notifier'), app = join(out, 'AI Term.app');
 // The whole bundle is assembled and signed here first, so a failed compile or signature never touches the working helper.
 const staged = join(out, 'staging', 'AI Term.app'), previous = join(out, 'previous.app');

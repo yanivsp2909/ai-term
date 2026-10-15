@@ -17,7 +17,7 @@ import { modeValues } from '../src/client/tui/commands.js';
 import { runBash } from '../src/agent/bash.js';
 import { runTests } from '../src/daemon/test-run.js';
 import { buildBashEnv, buildTestEnv } from '../src/daemon/env.js';
-import { validateResponse } from '../src/shared/validate.js';
+import { validateSuccess as validateResponse } from '../src/shared/validate.js';
 import { appBuilderConfig } from '../scripts/app-config.mjs';
 
 // v0.8.1 Linux. The pure parts run everywhere; the bubblewrap ones only on Linux with bwrap installed (GitHub Actions'
@@ -75,13 +75,13 @@ it('notifications on Linux: notify-send with argv, markup escaped; without it th
   const log = { error: vi.fn() };
   const notifier = new Notifier(null, log, async () => true, (file, args, done) => { launched.push({ file, args }); done(null); }, () => true, Date.now, undefined, { platform: 'linux', notifySend: '/usr/bin/notify-send' });
   expect(notifier.state()).toBe('ready');
-  notifier.transition({ id: '11111111-1111-4111-8111-111111111111', title: 'fix <it>' } as never, { status: 'working', statusDetail: null } as never, { status: 'waiting', statusDetail: null } as never, false);
+  notifier.transition({ id: '11111111-1111-4111-8111-111111111111', title: 'fix <it>' } as never, { status: 'working', statusDetail: '' } as never, { status: 'waiting', statusDetail: 'question' } as never, false);
   await vi.waitFor(() => expect(launched).toHaveLength(1));
   expect(launched[0]?.file).toBe('/usr/bin/notify-send');
   expect(launched[0]?.args.slice(0, 3)).toEqual(['--app-name=AI Term', '--', 'AI Term']);
   expect(launched[0]?.args[3]).toContain('fix &lt;it&gt;');
   expect(new Notifier(null, log, async () => true, undefined, undefined, Date.now, undefined, { platform: 'linux', notifySend: null }).state()).toBe('none');
-  expect(validateResponse({ id: '11111111-1111-4111-8111-111111111111', ok: true, engines: { claudeCode: { installed: false }, codex: { installed: false } }, notifier: 'none' })).toMatchObject({ notifier: 'none' });
+  expect(validateResponse({ id: '11111111-1111-4111-8111-111111111111', ok: true, engines: { claudeCode: { installed: false, path: null, version: null, loggedIn: null, authMethod: 'unknown' }, codex: { installed: false, path: null, version: null, loggedIn: null, authMethod: 'unknown' } }, notifier: 'none', agentSandbox: { dontAsk: false, note: "don't ask needs bubblewrap (bwrap), which isn't installed" } })).toMatchObject({ notifier: 'none' });
 });
 
 it('keys on Linux: no Secret Service refuses with one clear line, never a file', () => {

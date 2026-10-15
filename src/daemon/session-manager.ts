@@ -40,7 +40,8 @@ import type { UndoPlan } from '../shared/checkpoints.js';
 import { merge, MergeError, mergePlan, openPr, prPlan, type MergeTarget, type UserGit } from './merge.js';
 import { isYourPrice, MAX_PRICES, overridesFor, priceCount, PRICED_BY_YOU } from '../shared/prices.js';
 import { runTests, testSetup, TestRunError, projectRepo } from './test-run.js';
-import { prepareSandbox, sandboxReady, SANDBOX_EXEC, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
+import { currentAgentSandbox, dontAskNote } from './agent-sandbox.js';
+import { prepareSandbox, sandboxReady, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, forkTitle, type ForkPlan, type ForkTarget } from '../shared/fork.js';
 import { ownLoginLabel } from '../shared/models.js';
@@ -125,7 +126,8 @@ export class SessionManager extends EventEmitter {
     // v0.6.3: how long a handed-off agent has to start (a test shortens it).
     static handoffStartMs = 30_000;
     // B26: the sandbox auto-test runs under (a test points it at a missing file to see the no-sandbox path).
-    static sandboxExec = SANDBOX_EXEC;
+    // null: the system's own (sandbox-exec on macOS, bwrap on Linux).
+    static sandboxExec: string | null = null;
     private secretTimers=new Map<string,ReturnType<typeof setTimeout>>();
     private sessions = new Map<string, Live>();
     private size = { cols: 85, rows: 30 };
@@ -313,6 +315,8 @@ export class SessionManager extends EventEmitter {
         if (this.closing || !cwdValid || (request.title !== undefined && !isTitle(request.title)))
             throw new Error('Invalid session request');
         const agent = 'engine' in request && request.engine !== 'shell' ? await this.route(request) : null;
+        // v0.8.1: AI Term's agent runs in Don't ask only where its bash is sandboxed; elsewhere the start is refused with why.
+        if (agent?.engine === 'ai-term' && agent.permission === 'dontAsk') { const note = dontAskNote(await currentAgentSandbox()); if (note) throw new Error(note); }
         // Read once per start: AI Term's agent takes the theme, and worktrees decide isolation below. Unreadable settings
         // keep the defaults (ask, worktrees on, keys on AI Term's agent).
         let settings: Settings | null = null;
@@ -1049,9 +1053,9 @@ export class SessionManager extends EventEmitter {
         let gitDir:string|undefined;
         if(repo)try{gitDir=await repoCommonDir(repo);}catch{this.log.error('Test sandbox: the repository\'s git folder is unknown; git inside tests may fail');}
         let box:PreparedSandbox;
-        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,program:SessionManager.sandboxExec,env:buildTestEnv(process.env),readable:gitDir?[gitDir]:[],log:text=>this.log.error(text)});}
+        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,...(SessionManager.sandboxExec?{program:SessionManager.sandboxExec}:{}),env:buildTestEnv(process.env),readable:gitDir?[gitDir]:[],log:text=>this.log.error(text)});}
         catch(error){this.log.error(error instanceof SandboxPathError?'Test sandbox: a path can\'t go into a profile; tests ask first':'Test sandbox: its temp folder could not be made; tests ask first');return null;}
-        if(await sandboxReady(box.profile,box.program))return box;
+        if(await sandboxReady(box.profile,box.program,box.prefix))return box;
         this.log.error('Test sandbox unavailable; tests ask first');
         await box.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));
         return null;

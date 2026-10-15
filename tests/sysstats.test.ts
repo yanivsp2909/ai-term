@@ -149,7 +149,7 @@ describe('SystemSampler', () => {
   });
   it('commands are absolute paths with argv arrays', () => {
     for (const command of Object.values(SAMPLE_COMMANDS)) { expect(command.file.startsWith('/')).toBe(true); expect(Array.isArray(command.args)).toBe(true); }
-    expect(SAMPLE_COMMANDS.ps.args).toEqual(['-axo', 'pid=,ppid=,rss=,%cpu=']);
+    expect(SAMPLE_COMMANDS.ps.args).toEqual(['-Ao', 'pid=,ppid=,rss=,%cpu=']);
   });
   it('a failing or slow sample is skipped and logged once per failure streak, and never overlaps the next tick', async () => {
     const { sampler, run, events, logs } = fixture();

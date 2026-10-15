@@ -1,8 +1,9 @@
 import type {AgentEngine,Effort,Permission,ThemeName} from '../../shared/protocol.js';
 import {EFFORT_LEVELS} from '../../shared/validate.js';
-export interface CommandContext {engine:AgentEngine;model:string|null;cwd:string;theme:ThemeName;effort?:Effort|null;permission?:Permission;selectedTitle?:string;agents?:readonly string[]}
+// dontAsk: false where AI Term's agent can't have its bash sandbox (v0.8.1); it then offers Ask only.
+export interface CommandContext {engine:AgentEngine;model:string|null;cwd:string;theme:ThemeName;effort?:Effort|null;permission?:Permission;selectedTitle?:string;agents?:readonly string[];dontAsk?:boolean}
 export interface Command {name:string;description:string;argumentHint?:(context:CommandContext)=>string;values?:(context:CommandContext)=>readonly string[];current:(context:CommandContext)=>string}
-export const modeValues=(engine:AgentEngine):readonly Permission[]=>engine==='claude-code'?['ask','auto','dontAsk']:['ask','dontAsk'];
+export const modeValues=(engine:AgentEngine,dontAsk=true):readonly Permission[]=>engine==='claude-code'?['ask','auto','dontAsk']:engine==='ai-term'&&!dontAsk?['ask']:['ask','dontAsk'];
 export const modeLabel=(mode:Permission):string=>mode==='dontAsk'?"! don't ask":mode;
 export const effortValues=(engine:AgentEngine):readonly string[]=>['CLI default',...EFFORT_LEVELS[engine]];
 const none=()=>'';
@@ -18,7 +19,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/settings',description:'Keys and saved defaults',current:none},
  {name:'/login',description:'Connect an engine or API key',current:none},
  {name:'/effort',description:'Reasoning for the next agent',argumentHint:c=>effortValues(c.engine).join('|'),values:c=>effortValues(c.engine),current:c=>c.effort??'CLI default'},
- {name:'/mode',description:'Permissions for the next agent',argumentHint:c=>modeValues(c.engine).map(m=>m==='dontAsk'?"don't ask":m).join('|'),values:c=>modeValues(c.engine).map(m=>m==='dontAsk'?"don't ask":m),current:c=>modeLabel(c.permission??'ask')+(c.engine==='codex'?' · auto unavailable':'')},
+ {name:'/mode',description:'Permissions for the next agent',argumentHint:c=>modeValues(c.engine,c.dontAsk).map(m=>m==='dontAsk'?"don't ask":m).join('|'),values:c=>modeValues(c.engine,c.dontAsk).map(m=>m==='dontAsk'?"don't ask":m),current:c=>modeLabel(c.permission??'ask')+(c.engine==='codex'?' · auto unavailable':'')},
  {name:'/resume',description:'Continue the selected finished agent',current:c=>c.selectedTitle??''},
  {name:'/retry',description:'Restart the selected finished agent fresh',current:c=>c.selectedTitle??''},
  {name:'/diff',description:'What an agent changed in its worktree (d on a card); a vs b compares two',argumentHint:()=>'[agent] [vs <agent>]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},

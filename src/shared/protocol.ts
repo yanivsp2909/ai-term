@@ -205,7 +205,10 @@ export type Request = {
 });
 // Whether the daemon can post notifications; only these fixed states cross the socket.
 export type NotificationAuthorization='allowed'|'denied'|'not-asked'|'unknown';
-export type NotifierState = 'ready' | 'not built' | 'launch failed';
+// none: Linux without notify-send (v0.8.1); there notifications have no click-through.
+// v0.8.1: whether AI Term's agent may run in Don't ask here (its bash sandboxed); note says why not, in one line.
+export interface AgentSandbox { dontAsk: boolean; note?: string }
+export type NotifierState = 'ready' | 'not built' | 'launch failed' | 'none';
 export interface SuccessResponse {
     id: string;
     ok: true;
@@ -227,6 +230,7 @@ export interface SuccessResponse {
     settings?: Settings;
     engines?: EnginesStatus;
     notifier?: NotifierState;
+    agentSandbox?: AgentSandbox;
     notificationPermission?:NotificationAuthorization;
     keys?: KeyView[];
     key?: KeyView;

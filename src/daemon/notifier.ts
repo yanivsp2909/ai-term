@@ -26,7 +26,18 @@ const launchHelper: Launcher = (file, args, done) => {
   // go to ~/.ai-term.
   execFile(file, [...args], { timeout: LAUNCH_TIMEOUT_MS, env: { PATH: '/usr/bin:/bin' } }, error => done(error));
 };
+// notify-send talks to the session's notification server over D-Bus: it needs the bus address and display, nothing else
+// of the daemon's environment (no keys reach it).
+const NOTIFY_ENV = ['DBUS_SESSION_BUS_ADDRESS', 'XDG_RUNTIME_DIR', 'DISPLAY', 'WAYLAND_DISPLAY'];
+export const launchNotifySend: Launcher = (file, args, done) => {
+  const env = Object.fromEntries([['PATH', '/usr/bin:/bin'], ...NOTIFY_ENV.flatMap(name => process.env[name] === undefined ? [] : [[name, process.env[name] ?? '']])]);
+  execFile(file, [...args], { timeout: LAUNCH_TIMEOUT_MS, env }, error => done(error));
+};
 const helperExists = (app: string): boolean => existsSync(join(app, NOTIFIER_EXECUTABLE));
+// Linux (v0.8.1): notify-send, found once at start; null when it isn't installed (no notifications, no click-through).
+export interface NotifierSystem { platform: NodeJS.Platform; notifySend: string | null }
+// Some notification servers read the body as markup (<b>, <a href>): an agent's title must stay plain text.
+export function notifySendBody(text: string): string { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 // Notifications default to on and the setting is read at each notification, so /settings changes apply at once.
 // The no-op callback makes the store skip a malformed key entry, as the server's store does, instead of failing the
 // whole read (which would turn notifications off).
@@ -40,12 +51,15 @@ export class Notifier {
   private readonly sessionLaunches = new Map<string, number[]>();
   private recent: number[] = [];
   constructor(private readonly app: string | null, private readonly log: { error(text: string): void }, private readonly enabled: () => Promise<boolean>,
-    private readonly launch: Launcher = launchHelper, private readonly exists: (app: string) => boolean = helperExists, private readonly now: () => number = Date.now,private readonly authorization=new NotificationPermission(app,text=>this.once(text))) {}
+    private readonly launch: Launcher = launchHelper, private readonly exists: (app: string) => boolean = helperExists, private readonly now: () => number = Date.now,private readonly authorization=new NotificationPermission(app,text=>this.once(text)), private readonly system: NotifierSystem = { platform: 'darwin', notifySend: null }) {}
   start():void{this.authorization.start();}
   close():void{this.authorization.close();}
   permission(){return this.authorization.value();}
   refreshPermission(){return this.authorization.refresh();}
-  state(): NotifierState { return this.launchFailed ? 'launch failed' : !this.app || !this.exists(this.app) ? 'not built' : 'ready'; }
+  state(): NotifierState {
+    if (this.system.platform !== 'darwin') return !this.system.notifySend ? 'none' : this.launchFailed ? 'launch failed' : 'ready';
+    return this.launchFailed ? 'launch failed' : !this.app || !this.exists(this.app) ? 'not built' : 'ready';
+  }
   // Called on every status change. It never throws and never waits: the setting is read and the helper launched in the background.
   transition(session: SessionInfo, previous: StatusPair, next: StatusPair, attached: boolean): void {
     const alert = notificationFor(previous, next, attached, true); if (!alert) return;
@@ -53,12 +67,21 @@ export class Notifier {
     void this.enabled().then(on => { if (on) this.send(id, body); }, () => this.once('Notification settings unreadable'));
   }
   private send(sessionId: string, body: string): void {
+    if (this.system.platform !== 'darwin') { this.sendLinux(sessionId, body); return; }
     if(this.permission()==='denied'){this.once('Notifications blocked by macOS permission');return;}
     if (!this.app || !this.exists(this.app)) { this.once('Notifier helper not built'); return; }
     if (!this.allowed(sessionId)) { this.once('Notifications rate limited'); return; }
     const failed = () => { this.launchFailed = true; this.once('Notifier helper failed to launch'); };
     // Error details can carry the argv; only fixed text is logged.
     try { this.launch(OPEN, ['-n', '-g', '-a', this.app, '--args', '--session', sessionId, '--title', 'AI Term', '--body', body], error => { if (error) failed(); else this.launchFailed = false; }); }
+    catch { failed(); }
+  }
+  private sendLinux(sessionId: string, body: string): void {
+    const tool = this.system.notifySend;
+    if (!tool) { this.once('Notifications unavailable: notify-send is not installed'); return; }
+    if (!this.allowed(sessionId)) { this.once('Notifications rate limited'); return; }
+    const failed = () => { this.launchFailed = true; this.once('notify-send failed'); };
+    try { this.launch(tool, ['--app-name=AI Term', '--', 'AI Term', notifySendBody(body)], error => { if (error) failed(); else this.launchFailed = false; }); }
     catch { failed(); }
   }
   private allowed(sessionId: string): boolean {

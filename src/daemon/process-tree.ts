@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 const POLL_MS = 250;
 interface Row { ppid: number; start: string }
 function table(): Promise<Map<number, Row>> {
-  return new Promise((done, fail) => execFile('/bin/ps', ['-axo', 'pid=,ppid=,lstart='], { env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' }, maxBuffer: 16 * 1024 * 1024, timeout: 10_000 }, (error, stdout) => {
+  return new Promise((done, fail) => execFile('/bin/ps', ['-Ao', 'pid=,ppid=,lstart='], { env: { PATH: '/usr/bin:/bin', LC_ALL: 'C' }, maxBuffer: 16 * 1024 * 1024, timeout: 10_000 }, (error, stdout) => {
     if (error) { fail(error); return; }
     const rows = new Map<number, Row>();
     for (const line of stdout.split('\n')) { const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/); if (match) rows.set(Number(match[1]), { ppid: Number(match[2]), start: match[3] ?? '' }); }

@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { cpus, totalmem, type CpuInfo } from 'node:os';
 import type { SessionStats, SystemStats } from '../shared/protocol.js';
 import { validateSystemStats } from '../shared/validate.js';
-// This Mac (architecture §10, macOS only until v0.8). Samples run only while a client subscribes.
+// This machine (architecture §10): macOS, and Linux from v0.8.1. Samples run only while a client subscribes.
 export interface ProcRow { pid: number; ppid: number; rssKb: number; cpu: number }
 export interface NetCounter { rx: number; tx: number }
 export interface SessionRoot { sessionId: string; pid: number }
@@ -14,14 +14,42 @@ export interface SamplerDeps {
   now(): number;
   sessions(): SessionRoot[];
   log: { info(message: string): void; error(message: string): void };
+  platform?: NodeJS.Platform;
 }
 // Absolute paths: the daemon's PATH comes from whatever shell started it.
 export const SAMPLE_COMMANDS = {
-  // Only numeric columns: no command, user or name column is ever asked for.
-  ps: { file: '/bin/ps', args: ['-axo', 'pid=,ppid=,rss=,%cpu='] },
+  // Only numeric columns: no command, user or name column is ever asked for. -A (every process) reads the same on macOS
+  // and Linux, where -ax is a BSD spelling procps only half accepts.
+  ps: { file: '/bin/ps', args: ['-Ao', 'pid=,ppid=,rss=,%cpu='] },
   vmStat: { file: '/usr/bin/vm_stat', args: [] as string[] },
   netstat: { file: '/usr/sbin/netstat', args: ['-ibn'] },
 } as const;
+// Linux (v0.8.1): memory and network come from /proc, read by cat so the sampler's one way of running things stays.
+export interface SampleCommands { ps: { file: string; args: readonly string[] }; memory: { file: string; args: readonly string[] }; net: { file: string; args: readonly string[] } }
+export function sampleCommands(platform: NodeJS.Platform = process.platform): SampleCommands {
+  if (platform === 'linux') return { ps: SAMPLE_COMMANDS.ps, memory: { file: '/bin/cat', args: ['/proc/meminfo'] }, net: { file: '/bin/cat', args: ['/proc/net/dev'] } };
+  return { ps: SAMPLE_COMMANDS.ps, memory: SAMPLE_COMMANDS.vmStat, net: SAMPLE_COMMANDS.netstat };
+}
+// Used = MemTotal − MemAvailable (what `free` calls used plus what the kernel can't reclaim quickly).
+export function parseMeminfo(text: string): number | null {
+  const field = (name: string) => { const value = text.match(new RegExp(`^${name}:\\s+(\\d+) kB$`, 'm'))?.[1]; return value === undefined ? null : Number(value) * 1024; };
+  const total = field('MemTotal'), available = field('MemAvailable');
+  if (total === null || available === null || !Number.isSafeInteger(total) || available > total) return null;
+  return total - available;
+}
+// /proc/net/dev: two header lines, then `name: rx-bytes ×8 fields, tx-bytes ×8 fields`. Loopback doesn't count.
+export function parseProcNetDev(text: string): Map<string, NetCounter> | null {
+  const lines = text.split('\n');
+  if (!/\|\s*Receive/.test(lines[0] ?? '') || !/bytes/.test(lines[1] ?? '')) return null;
+  const counters = new Map<string, NetCounter>();
+  for (const line of lines.slice(2)) {
+    const match = line.match(/^\s*([^:\s]+):\s*(.*)$/); if (!match) continue;
+    const name = match[1] ?? '', fields = (match[2] ?? '').trim().split(/\s+/);
+    if (name === 'lo' || fields.length < 16 || !fields.every(field => /^\d+$/.test(field))) continue;
+    counters.set(name, { rx: Number(fields[0]), tx: Number(fields[8]) });
+  }
+  return counters;
+}
 export const SAMPLE_INTERVAL_MS = 1000;
 const COMMAND_TIMEOUT_MS = 2000, MAX_OUTPUT_BYTES = 1024 * 1024;
 export interface MemoryParts {
@@ -207,13 +235,13 @@ export class SystemSampler extends EventEmitter {
     }).finally(() => { if (generation === this.generation) this.busy = false; });
   }
   private async sample(generation: number): Promise<SystemStats | null> {
-    const { ps, vmStat, netstat } = SAMPLE_COMMANDS;
-    const [psText, vmText, netText] = await Promise.all([this.deps.run(ps.file, [...ps.args]), this.deps.run(vmStat.file, [...vmStat.args]), this.deps.run(netstat.file, [...netstat.args])]);
+    const linux = (this.deps.platform ?? process.platform) === 'linux', { ps, memory, net: netCommand } = sampleCommands(linux ? 'linux' : 'darwin');
+    const [psText, vmText, netText] = await Promise.all([this.deps.run(ps.file, [...ps.args]), this.deps.run(memory.file, [...memory.args]), this.deps.run(netCommand.file, [...netCommand.args])]);
     // Sampling stopped while the commands ran: leave no baseline, or the next run's first event would average over the gap.
     if (generation !== this.generation) return null;
-    const at = this.deps.now(), cpuList = this.deps.cpus(), net = parseNetstat(netText), memUsed = parseVmStat(vmText);
-    if (!net) throw new SampleError('netstat output unreadable');
-    if (memUsed === null) throw new SampleError('vm_stat output unreadable');
+    const at = this.deps.now(), cpuList = this.deps.cpus(), net = linux ? parseProcNetDev(netText) : parseNetstat(netText), memUsed = linux ? parseMeminfo(vmText) : parseVmStat(vmText);
+    if (!net) throw new SampleError(linux ? '/proc/net/dev unreadable' : 'netstat output unreadable');
+    if (memUsed === null) throw new SampleError(linux ? '/proc/meminfo unreadable' : 'vm_stat output unreadable');
     const before = this.baseline;
     this.baseline = { at, cpus: cpuList, net };
     if (!before) return null; // the first sample only sets the baseline for the deltas

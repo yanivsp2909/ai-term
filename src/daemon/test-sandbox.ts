@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
-import { access, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { constants, type Stats } from 'node:fs';
+import { access, lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { isFsError } from '../shared/paths.js';
+import { bwrapPath, bwrapTestArgs, findBwrap } from './bwrap.js';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { MAX_BLOCKED_WHAT } from '../shared/test-run.js';
@@ -11,18 +13,15 @@ import { MAX_BLOCKED_WHAT } from '../shared/test-run.js';
 // folder, no network (127.0.0.1 only when the project allows it), no signals or process info outside the run, and no
 // reads of the credential folders below. Without a working sandbox the caller never runs tests by itself.
 export const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
-export class SandboxPathError extends Error {}
+export { SandboxPathError } from './sandbox-error.js';
+export { PERSISTENCE_DIRS, PERSISTENCE_FILES } from './sandbox-places.js';
+import { SandboxPathError } from './sandbox-error.js';
 // Under your home folder. Read-data is denied (contents and listings); names and sizes stay visible, because path
 // resolution (realpath, getcwd) needs them and would otherwise fail inside the worktree, which lives in ~/.ai-term.
 export const SECRET_PATHS: readonly string[] = ['.ssh', '.aws', '.gnupg', '.netrc', '.npmrc', '.docker', '.kube', '.config/gh', 'Library/Keychains', '.ai-term', '.claude', '.claude.json', '.codex',
   '.git-credentials', '.config/git/credentials', '.config/gcloud', '.azure', '.pypirc', '.gem/credentials', '.cargo/credentials', '.cargo/credentials.toml', '.terraform.d',
   // Credential files inside toolchain folders that stay readable (Part A review).
   '.m2/settings.xml', '.m2/settings-security.xml', '.gradle/gradle.properties', '.gradle/init.d', '.config/mise/config.toml', '.bunfig.toml', '.pub-cache/credentials.json'];
-// B29: places under your home that run later, outside any sandbox: shell startup files, login items, SSH and git's global
-// config, Claude Code's and Codex's folders. The agent's bash may not write them, even in Don't ask. Linux's autostart
-// and systemd user units are the same kind of place.
-export const PERSISTENCE_FILES: readonly string[] = ['.zshrc', '.zshenv', '.zprofile', '.zlogin', '.zlogout', '.bashrc', '.bash_profile', '.bash_login', '.bash_logout', '.profile', '.gitconfig', '.claude.json'];
-export const PERSISTENCE_DIRS: readonly string[] = ['.config/fish', 'Library/LaunchAgents', '.ssh', '.config/git', '.claude', '.codex', '.config/autostart', '.config/systemd/user', '.config/environment.d'];
 // hidden: folders whose contents tests can't read (your home, /Volumes, /tmp, the user temp area); readable: what inside
 // them stays open (the toolchains tests run, the repository's git folder). Key folders and private stay closed either way.
 export interface SandboxSpec { worktree: string; temp: string; home: string; private: readonly string[]; loopback: boolean; hidden?: readonly string[]; readable?: readonly string[] }
@@ -46,7 +45,8 @@ export function toolchainPaths(home: string, env: Readonly<Record<string, string
   }
   return [...new Set(found.filter(under))];
 }
-export interface PreparedSandbox { profile: string; spec: SandboxSpec; env: { TMPDIR: string; TMP: string; TEMP: string; XDG_CACHE_HOME: string; npm_config_cache: string; GOCACHE: string }; program: string; dispose(): Promise<void> }
+// prefix: the argv that goes before the test command (sandbox-exec -p <profile> --, or bwrap <args> --).
+export interface PreparedSandbox { profile: string; spec: SandboxSpec; env: { TMPDIR: string; TMP: string; TEMP: string; XDG_CACHE_HOME: string; npm_config_cache: string; GOCACHE: string }; program: string; prefix: readonly string[]; dispose(): Promise<void> }
 
 // A profile string is SBPL (a Scheme dialect): a quote, backslash or parenthesis inside a path could end the string and
 // add rules, so any path holding one (or a control character) is refused rather than escaped.
@@ -85,8 +85,9 @@ export function sandboxProfile(spec: SandboxSpec): string {
 
 // What the sandbox stopped, read from the run's output (the kernel's own record isn't readable without reading every
 // app's log): a path the profile denies, or network. A refusal inside the run's own folders is the test's business.
-const NETWORK = /\b(?:connect|listen|bind) EPERM\b|Could not resolve host|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)|\bsocket\b.*Operation not permitted|\.(?:connect|bind|listen)\(.*\n.*Operation not permitted/i;
-const PATHS: readonly RegExp[] = [/EPERM: operation not permitted, \w+ '([^']+)'/, /Errno 1\] Operation not permitted: '([^']+)'/, /(?:^|: )((?:\/|\.\.?\/)[^:\n]*): Operation not permitted/m];
+const NETWORK = /\b(?:connect|listen|bind) (?:EPERM|ENETUNREACH)\b|Network is unreachable|Could not resolve host|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)|\bsocket\b.*Operation not permitted|\.(?:connect|bind|listen)\(.*\n.*Operation not permitted/i;
+// Linux (bubblewrap): a write outside the run's folders is a read-only file system.
+const PATHS: readonly RegExp[] = [/EPERM: operation not permitted, \w+ '([^']+)'/, /EROFS: read-only file system, \w+ '([^']+)'/, /cannot \w+ '([^']+)': Read-only file system/, /(?:^|: )((?:\/|\.\.?\/)[^:\n]*): Read-only file system/m, /Errno 1\] Operation not permitted: '([^']+)'/, /(?:^|: )((?:\/|\.\.?\/)[^:\n]*): Operation not permitted/m];
 // eslint-disable-next-line no-control-regex -- control characters never reach the card.
 const shown = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, '?');
 const real = (path: string) => path.startsWith('/var/') || path.startsWith('/tmp/') || path.startsWith('/etc/') ? `/private${path}` : path;
@@ -112,7 +113,13 @@ export function sandboxDenial(output: string, spec: Pick<SandboxSpec, 'worktree'
 
 // Whether this Mac can sandbox the run: macOS, sandbox-exec present, and the profile itself accepted (a probe runs
 // /usr/bin/true under it; a profile the system rejects fails here, before any test code runs).
-export async function sandboxReady(profile: string, exec = SANDBOX_EXEC): Promise<boolean> {
+// prefix (Linux): the whole bwrap argv, probed with /bin/true in place of the tests.
+export async function sandboxReady(profile: string, exec = SANDBOX_EXEC, prefix?: readonly string[]): Promise<boolean> {
+  if (process.platform === 'linux' && prefix?.length) {
+    const [program, ...args] = prefix;
+    try { await access(program ?? '', constants.X_OK); } catch { return false; }
+    return new Promise(done => { execFile(program ?? '', [...args, '/bin/true'], { timeout: 10_000, env: { PATH: '/usr/bin:/bin' } }, error => done(!error)); });
+  }
   if (process.platform !== 'darwin') return false;
   try { await access(exec, constants.X_OK); } catch { return false; }
   return new Promise(done => { execFile(exec, ['-p', profile, '--', '/usr/bin/true'], { timeout: 10_000, env: { PATH: '/usr/bin:/bin' } }, error => done(!error)); });
@@ -120,8 +127,9 @@ export async function sandboxReady(profile: string, exec = SANDBOX_EXEC): Promis
 // A fresh 0700 temp folder for the run (TMPDIR, caches), the profile, and its removal afterwards. Throws SandboxPathError
 // when a path can't go into a profile; the caller then treats the run as having no sandbox.
 // env: the test's env, for the toolchains on its PATH; readable: more folders to keep open (the repository's git folder).
-export async function prepareSandbox(worktree: string, options: { home: string; private: readonly string[]; loopback: boolean; program?: string; env?: Readonly<Record<string, string | undefined>>; readable?: readonly string[]; log?: (text: string) => void }): Promise<PreparedSandbox> {
+export async function prepareSandbox(worktree: string, options: { home: string; private: readonly string[]; loopback: boolean; program?: string; env?: Readonly<Record<string, string | undefined>>; readable?: readonly string[]; log?: (text: string) => void; platform?: NodeJS.Platform }): Promise<PreparedSandbox> {
   const temp = await mkdtemp(join(await realpath(tmpdir()), 'ai-term-test-'));
+  if ((options.platform ?? process.platform) === 'linux') return prepareLinux(worktree, temp, options);
   try {
     const realHome = await realpath(options.home).catch(() => options.home);
     // The sandbox matches real paths: a key folder that is a link elsewhere is denied at its target too.
@@ -137,7 +145,33 @@ export async function prepareSandbox(worktree: string, options: { home: string; 
       hidden: [...new Set([realHome, '/Volumes', '/private/tmp', '/private/var/tmp', ...userTemp ? [userTemp] : []])], readable };
     // Fixed words: the path itself may be anything.
     if (dropped) options.log?.('Test sandbox: a folder with quotes, parentheses or control characters in its path stays closed to tests');
-    const profile = sandboxProfile(spec);
-    return { profile, spec, program: options.program ?? SANDBOX_EXEC, env: { TMPDIR: temp, TMP: temp, TEMP: temp, XDG_CACHE_HOME: join(temp, 'cache'), npm_config_cache: join(temp, 'npm-cache'), GOCACHE: join(temp, 'go-build') }, dispose: () => rm(temp, { recursive: true, force: true }) };
+    const profile = sandboxProfile(spec), program = options.program ?? SANDBOX_EXEC;
+    return { profile, spec, program, prefix: [program, '-p', profile, '--'], env: { TMPDIR: temp, TMP: temp, TEMP: temp, XDG_CACHE_HOME: join(temp, 'cache'), npm_config_cache: join(temp, 'npm-cache'), GOCACHE: join(temp, 'go-build') }, dispose: () => rm(temp, { recursive: true, force: true }) };
+  } catch (error) { await rm(temp, { recursive: true, force: true }); throw error; }
+}
+
+// Linux (v0.8.1): the same rules through bubblewrap (bwrap.ts bwrapTestArgs). What exists decides the argv: bwrap can
+// only hide or reopen a path that is there. Hidden: home, other homes, /tmp, /var/tmp, /run (the D-Bus and Docker
+// sockets live there; a socket isn't stopped by a network namespace), /media and /mnt. A hidden file reads as missing,
+// so only writes (a read-only file system) and network show as blocked. 127.0.0.1 is always the run's own: your
+// machine's services stay closed whatever the project allows.
+const missingPath = (error: unknown): null => { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR') || isFsError(error, 'EACCES')) return null; throw error; };
+async function prepareLinux(worktree: string, temp: string, options: { home: string; private: readonly string[]; loopback: boolean; program?: string; env?: Readonly<Record<string, string | undefined>>; readable?: readonly string[]; log?: (text: string) => void }): Promise<PreparedSandbox> {
+  try {
+    const program = options.program ?? await findBwrap();
+    if (!program) throw new SandboxPathError("bubblewrap (bwrap) isn't installed");
+    const realHome = await realpath(options.home).catch(() => options.home);
+    const real = async (path: string) => { const resolved = await realpath(path).catch(missingPath); return resolved ? { path: resolved, info: await lstat(resolved) } : null; };
+    const existing = async (paths: readonly string[]) => (await Promise.all(paths.map(real))).filter((found): found is { path: string; info: Stats } => found !== null);
+    const hidden = (await existing([realHome, '/home', '/root', '/tmp', '/var/tmp', '/run', '/media', '/mnt'])).filter(found => found.info.isDirectory()).map(found => found.path);
+    let dropped = false;
+    const usable = (paths: readonly string[]) => paths.filter(path => { try { bwrapPath(path); return true; } catch { dropped = true; return false; } });
+    const readable = usable([...new Set((await existing([...toolchainPaths(options.home, options.env ?? {}), ...toolchainPaths(realHome, options.env ?? {}), ...options.readable ?? []])).map(found => found.path))]);
+    const secrets = (await existing([...SECRET_PATHS.map(name => join(options.home, name)), ...options.private])).filter(found => !found.info.isSymbolicLink());
+    if (dropped) options.log?.('Test sandbox: a folder with control characters in its path stays closed to tests');
+    const tree = await realpath(worktree);
+    const args = bwrapTestArgs({ worktree: tree, temp, hidden: [...new Set([...hidden].sort((a, b) => a.length - b.length))], readable, secrets: [...new Map(secrets.map(found => [found.path, { path: found.path, dir: found.info.isDirectory() }])).values()] });
+    const spec: SandboxSpec = { worktree: tree, temp, home: realHome, private: options.private, loopback: false, hidden, readable };
+    return { profile: '', spec, program, prefix: [program, ...args, '--'], env: { TMPDIR: temp, TMP: temp, TEMP: temp, XDG_CACHE_HOME: join(temp, 'cache'), npm_config_cache: join(temp, 'npm-cache'), GOCACHE: join(temp, 'go-build') }, dispose: () => rm(temp, { recursive: true, force: true }) };
   } catch (error) { await rm(temp, { recursive: true, force: true }); throw error; }
 }

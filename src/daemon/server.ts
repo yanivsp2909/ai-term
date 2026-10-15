@@ -15,7 +15,7 @@ import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
 import { enginesStatus } from './engines.js';
-import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS } from './keys.js';
+import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS, KEYCHAIN_ERRORS } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
 import { testDirect } from './providers/direct.js';
 import { PROFILE_OTHER_ENGINE } from './accounts.js';
@@ -26,6 +26,7 @@ import { REVIEW_ERRORS } from './review.js';
 import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
 import { DIRECT_HOSTS } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
+import { currentAgentSandbox, AGENT_SANDBOX_ERRORS } from './agent-sandbox.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
     socket: Socket;
@@ -222,7 +223,7 @@ export class DaemonServer {
                     await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
                 }
                 case 'engines.status':
-                    this.control(peer, { id: request.id, ok: true, engines: await enginesStatus(), notifier: this.notifier?.state() ?? 'not built' });
+                    this.control(peer, { id: request.id, ok: true, engines: await enginesStatus(), notifier: this.notifier?.state() ?? 'not built', agentSandbox: await currentAgentSandbox() });
                     break;
                 case 'mcp.list': case 'mcp.add': case 'mcp.remove': case 'mcp.toggle': case 'mcp.approve': case 'mcp.discover': case 'mcp.schema': case 'mcp.call': case 'mcp.cancel': case 'mcp.stop':
                     if(['mcp.schema','mcp.call','mcp.cancel','mcp.stop'].includes(request.kind))throw new Error('MCP tool calls require an agent');
@@ -415,7 +416,7 @@ export class DaemonServer {
                 'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
                 // AI Term's agent (v0.4.1–v0.4.2).
                 'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh",'Pick a model for AI Term agent','Unknown catalog model',
-                'OS keychain unavailable; key was not saved','OS keychain unavailable; key was not removed','OS keychain unavailable',
+                ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',

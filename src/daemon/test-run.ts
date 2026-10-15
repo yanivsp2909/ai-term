@@ -18,13 +18,13 @@ import { diffNameStatus, GitError, insideWorktree, isolatedGitDir, repoCommonDir
 export const TEST_TIMEOUT_MS = 10 * 60_000, TEST_OUTPUT_CAP = 16 * 1024 * 1024;
 const TAIL_BYTES = 64 * 1024, KILL_GRACE_MS = 2_000;
 export type TestOutcome = { state: 'pass' } | { state: 'fail'; failing: number | null } | { state: 'timeout' } | { state: 'error' } | { state: 'cancelled' } | { state: 'blocked'; what: string } | { state: 'nosandbox' };
-export interface TestRunOptions { timeoutMs?: number; outputCap?: number; signal?: AbortSignal; log?: (text: string) => void; sandbox?: Pick<PreparedSandbox, 'program' | 'profile' | 'spec'> }
+export interface TestRunOptions { timeoutMs?: number; outputCap?: number; signal?: AbortSignal; log?: (text: string) => void; sandbox?: Pick<PreparedSandbox, 'prefix' | 'spec'> }
 // sandbox-exec's own refusal (a profile the system rejects): EX_DATAERR or EX_OSERR, and its name on stderr.
-const SANDBOX_REFUSED = /^sandbox-exec: /m;
+const SANDBOX_REFUSED = /^sandbox-exec: /m, BWRAP_REFUSED = /^bwrap: /m;
 
 export function runTests(command: readonly string[], cwd: string, env: Record<string, string>, options: TestRunOptions = {}): Promise<TestOutcome> {
   if (!isTestCommand(command)) return Promise.resolve({ state: 'error' });
-  const box = options.sandbox, argv = box ? [box.program, '-p', box.profile, '--', ...command] : [...command];
+  const box = options.sandbox, argv = box ? [...box.prefix, ...command] : [...command];
   const [program, ...args] = argv;
   return new Promise(resolve => {
     let tail = Buffer.alloc(0), total = 0, ended: 'timeout' | 'cancelled' | 'capped' | null = null, settled = false;
@@ -73,6 +73,8 @@ export function runTests(command: readonly string[], cwd: string, env: Record<st
       const text = tail.toString('utf8');
       if (!box) return { state: 'fail', failing: failingCount(text) };
       if (code !== null && [65, 71].includes(code) && SANDBOX_REFUSED.test(text)) return { state: 'nosandbox' };
+      // bubblewrap's own failure (no user namespace, a mount it couldn't make) comes before any test code runs.
+      if (code === 1 && BWRAP_REFUSED.test(text)) return { state: 'nosandbox' };
       const what = sandboxDenial(text, box.spec);
       return what ? { state: 'blocked', what } : { state: 'fail', failing: failingCount(text) };
     };

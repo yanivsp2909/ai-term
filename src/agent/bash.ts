@@ -4,6 +4,7 @@ import { access, readlink, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { PERSISTENCE_DIRS, PERSISTENCE_FILES, SANDBOX_EXEC, SandboxPathError, sandboxPath } from '../daemon/test-sandbox.js';
+import { bashSandboxPlan, bwrapBashArgs, findBwrap, runtimeDir, ShadowError, type BwrapBashSpec } from '../daemon/bwrap.js';
 import { visible } from './display.js';
 import { isFsError } from '../shared/paths.js';
 import { ToolError } from './tools.js';
@@ -22,7 +23,10 @@ export interface BashResult { exitCode: number | null; signal: string | null; st
 // a hook planted there would run unsandboxed at your next commit).
 // user: your home folder (B29), whose startup files and persistence folders a command may not write; os.homedir() unless
 // a test passes a fake one.
-export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string; protect?: readonly string[]; user?: string } }
+// require: Don't ask (v0.8.1). A command never runs without its sandbox then: no sandbox-exec, no bubblewrap or another
+// system refuses it. In Ask you approve each command, so it runs as before where no sandbox exists.
+// platform: process.platform unless a test says otherwise.
+export interface BashOptions { cwd: string; env: Record<string, string>; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal; sandbox?: { home: string; protect?: readonly string[]; user?: string; require?: boolean; platform?: NodeJS.Platform } }
 // Real paths (link targets included) of the places in PERSISTENCE_FILES and PERSISTENCE_DIRS; parents: the folders
 // between your home and them (~/.config, ~/Library), which may not be renamed, removed or replaced by a link (security
 // review: a ~/.config swapped for a link would lead ~/.config/git somewhere no rule names). Their other contents stay open.
@@ -59,7 +63,7 @@ export async function persistencePaths(user: string, env: Readonly<Record<string
 // The protected place a refusal names, as ~/path; null when the output names none (the command's own error then stands).
 // A name may be relative to wherever the command had gone (`cd ~ && echo >> .zshrc`): it is tried from the folder and from
 // home. macOS paths are case-insensitive, so the comparison is too.
-const REFUSED = /Operation not permitted|EPERM/i, PATH_TOKEN = /[^\s:'",;()]*[./][^\s:'",;()]*/g;
+const REFUSED = /Operation not permitted|EPERM|Read-only file system|EROFS|Device or resource busy|EBUSY/i, PATH_TOKEN = /[^\s:'",;()]*[./][^\s:'",;()]*/g;
 export function blockedPlace(output: string, cwd: string, user: string, guarded: Persistence & { home?: string }): string | null {
   const fold = (path: string) => process.platform === 'darwin' ? path.toLowerCase() : path;
   const within = (path: string, dir: string) => fold(path) === fold(dir) || fold(path).startsWith(`${fold(dir)}/`);
@@ -79,8 +83,12 @@ export function blockedPlace(output: string, cwd: string, user: string, guarded:
 interface Argv { program: string; args: string[]; guard?: { user: string; cwd: string; places: Persistence & { home: string } } }
 async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
   const plain: Argv = { program: '/bin/sh', args: ['-c', command] };
-  if (!options.sandbox || process.platform !== 'darwin') return plain;
-  try { await access(SANDBOX_EXEC, constants.X_OK); } catch { return plain; }
+  if (!options.sandbox) return plain;
+  const platform = options.sandbox.platform ?? process.platform, required = options.sandbox.require === true;
+  const without = (why: string): Argv => { if (required) throw new ToolError(`bash can't run in don't ask without a sandbox: ${why}`); return plain; };
+  if (platform === 'linux') return linuxArgv(command, options, without);
+  if (platform !== 'darwin') return without('this system has none AI Term can use');
+  try { await access(SANDBOX_EXEC, constants.X_OK); } catch { return without("macOS's sandbox-exec is missing"); }
   const user = options.sandbox.user ?? homedir();
   const missing = (fallback: string) => (error: unknown) => { if (isFsError(error, 'ENOENT')) return fallback; throw error; };
   let home: string, cwd: string, realUser: string, persistence: Persistence;
@@ -89,6 +97,21 @@ async function bashArgv(command: string, options: BashOptions): Promise<Argv> {
   let profile: string;
   try { profile = bashProfile(home, cwd, await Promise.all((options.sandbox.protect ?? []).map(dir => realpath(dir).catch(missing(dir)))), persistence); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a path with quotes, parentheses or control characters (this folder, or where one of your dotfile links leads)"); throw error; }
   return { program: SANDBOX_EXEC, args: ['-p', profile, '--', '/bin/sh', '-c', command], guard: { user: realUser, cwd, places: { ...persistence, home } } };
+}
+
+// Linux (v0.8.1): bubblewrap with D57 + B29's rules (src/daemon/bwrap.ts). A refused write there reads as a read-only
+// file system, or busy for a folder that was rebuilt.
+async function linuxArgv(command: string, options: BashOptions, without: (why: string) => Argv): Promise<Argv> {
+  const sandbox = options.sandbox; if (!sandbox) return without('no sandbox was asked for');
+  const bwrap = await findBwrap();
+  if (!bwrap) return without("bubblewrap (bwrap) isn't installed");
+  const user = sandbox.user ?? homedir();
+  let spec: BwrapBashSpec, persistence: Persistence;
+  try { [spec, persistence] = await Promise.all([bashSandboxPlan({ user, aiTermHome: sandbox.home, cwd: options.cwd, protect: sandbox.protect ?? [], runtime: await runtimeDir(options.env) }), persistencePaths(user, options.env)]); }
+  catch (error) { throw new ToolError(error instanceof ShadowError ? error.message : "bash can't run here: AI Term couldn't check the folders its sandbox protects"); }
+  let args: string[];
+  try { args = bwrapBashArgs(spec); } catch (error) { if (error instanceof SandboxPathError) throw new ToolError("bash can't run here: AI Term can't sandbox a path with control characters (this folder, or where one of your dotfile links leads)"); throw error; }
+  return { program: bwrap, args: [...args, '--', '/bin/sh', '-c', command], guard: { user: spec.shadows[0]?.dir ?? user, cwd: spec.cwd, places: { ...persistence, home: spec.aiTermHome } } };
 }
 
 // The bash tool runs the model's command line as one argv element of /bin/sh -c: running that line *is* the tool, and it is

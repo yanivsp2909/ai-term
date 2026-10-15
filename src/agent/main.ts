@@ -1,5 +1,6 @@
 import { realpath } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import { homedir } from 'node:os';
 import { AGENT_ASK_FLAG, AGENT_DONT_ASK_FLAG, buildBashEnv } from '../daemon/env.js';
 import { killAllBash } from './bash.js';
 import { isEndpoint, isKeyProvider, isSecret, isThemeName, isValidModelId } from '../shared/validate.js';
@@ -101,7 +102,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, ...(aiTermHome ? { bashSandbox: { home: aiTermHome, ...(gitCommon ? { protect: [gitCommon] } : {}) } } : {}), extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox: { home: aiTermHome ?? join(homedir(), '.ai-term'), require: parsed.permission === 'dontAsk', ...(gitCommon ? { protect: [gitCommon] } : {}) }, extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
       quit: () => { restore(); void transcript.close().then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);

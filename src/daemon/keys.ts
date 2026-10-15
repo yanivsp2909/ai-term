@@ -12,6 +12,13 @@ import { isMcpHash, isMcpEnv, isMcpHeader } from '../shared/validate.js';
 import { lastFour } from '../shared/text-cut.js';
 import { hasModelList, isBedrockEndpoint, isBoundProvider, isLocalEndpoint } from '../shared/providers.js';
 export class KeyError extends Error {}
+// One clear line when the system's key store can't be used. Linux (v0.8.1) keeps keys only in the Secret Service
+// (GNOME Keyring, KWallet); headless, locked or missing, key features refuse, and there is never a file fallback.
+export function keychainUnavailable(platform: NodeJS.Platform = process.platform): string {
+ return platform === 'linux' ? 'No Secret Service keyring (none running, or it is locked); API keys need one, and AI Term never stores them in a file' : platform === 'win32' ? 'Windows Credential Manager unavailable' : 'OS keychain unavailable';
+}
+const UNAVAILABLE = keychainUnavailable(), NOT_SAVED = `${UNAVAILABLE}; key was not saved`, NOT_REMOVED = `${UNAVAILABLE}; key was not removed`;
+export const KEYCHAIN_ERRORS: readonly string[] = [UNAVAILABLE, NOT_SAVED, NOT_REMOVED];
 // B12: settings.json is writable by anything running as the user, so a Foundry key's endpoint and deployments are
 // stored with the secret in its Keychain entry, and only those bound values ever decide where the secret goes.
 export interface FoundryBinding { endpoint: string; deployments: string[] }
@@ -77,7 +84,7 @@ export class KeyStore extends EventEmitter {
   const account=`${key.provider}:${key.id}`;
   return this.serial(async()=>{
    const stored=isBoundProvider(key.provider)?foundryEntry(secret,{endpoint:key.endpoint??'',deployments:key.deployments??[]}):secret;
-   try{await this.vault.write(account,stored);}catch{throw new KeyError('OS keychain unavailable; key was not saved',{cause:new Error('Keychain write failed')});}
+   try{await this.vault.write(account,stored);}catch{throw new KeyError(NOT_SAVED,{cause:new Error('Keychain write failed')});}
    try{await this.settings.update(async settings=>{const keys=Array.isArray(settings.keys)?settings.keys.map(validateKeyView):[];if(keys.length>=100)throw new Error('Too many keys');return {...settings,keys:[...keys,key]};});}
    catch{try{await this.vault.remove(account);}catch{
     // The account names a provider and a UUID, never the secret: without it the orphaned entry can't be found.
@@ -106,13 +113,13 @@ export class KeyStore extends EventEmitter {
    return updated;
   });
  }
- async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);if(key.provider!=='ollama')try{await this.vault.remove(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable; key was not removed',{cause:new Error('Keychain remove failed')});}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
- async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');if(provider==='ollama')return false;try{return await this.vault.read(`${provider}:${id}`)!==null;}catch{throw new KeyError('OS keychain unavailable',{cause:new Error('Keychain read failed')});}}
+ async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);if(key.provider!=='ollama')try{await this.vault.remove(`${key.provider}:${id}`);}catch{throw new KeyError(NOT_REMOVED,{cause:new Error('Keychain remove failed')});}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
+ async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');if(provider==='ollama')return false;try{return await this.vault.read(`${provider}:${id}`)!==null;}catch{throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}}
  // For a Foundry key, use receives the Keychain-bound endpoint and deployments; callers must send the secret only there.
  async withSecret<T>(id:string,use:(secret:string,binding:FoundryBinding|null)=>T|Promise<T>):Promise<T>{
   const key=await this.view(id);let secret:string|null;
   if(key.provider==='ollama')throw new KeyError(OLLAMA_NO_KEY);
-  try{secret=await this.vault.read(`${key.provider}:${id}`);}catch{throw new KeyError('OS keychain unavailable',{cause:new Error('Keychain read failed')});}
+  try{secret=await this.vault.read(`${key.provider}:${id}`);}catch{throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}
   if(!secret)throw new KeyError('Key is missing from the OS keychain');
   let binding:FoundryBinding|null=null;
   if(isBoundProvider(key.provider)){
