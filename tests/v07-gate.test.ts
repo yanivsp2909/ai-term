@@ -96,3 +96,87 @@ it('LOW (gate, /merge): a merge, cherry-pick, revert or rebase you have in progr
   await expect(m.mergePlan(agent.id)).rejects.toThrow('Your checkout is in the middle of a merge, cherry-pick, revert or rebase; finish it yourself first');
   await expect(realpath(join(repo, '.git', 'MERGE_HEAD'))).resolves.toBeTruthy();
 });
+
+// ---- second batch: the sandbox, names with control characters, timeouts, quiet failures ----
+it('HIGH (gate, bounty): a sandboxed test can\'t write (or read) xcrun\'s shared cache in your temp folder, which unsandboxed tools trust', async () => {
+  const { sandboxProfile } = await import('../src/daemon/test-sandbox.js');
+  const text = sandboxProfile({ worktree: '/w/tree', temp: '/w/tmp', home: '/Users/me', private: [], loopback: false });
+  expect(text).not.toContain('xcrun');
+});
+
+it('HIGH (gate, code review): a file name with a newline or tab never breaks what crosses the socket (test plans, test results, undo plans, scan hits)', async () => {
+  const { validateTestPlan, validateTestResult } = await import('../src/shared/test-run.js');
+  const { validateMergePlan } = await import('../src/shared/merge.js');
+  const { validateUndoPlan } = await import('../src/shared/checkpoints.js');
+  const { m, agent, tree } = await repoSetup();
+  await m.setTestCommand(tree, ['./check.sh']);
+  await writeFile(join(tree, 'check.sh'), '#!/bin/sh\nexit 0\n');
+  await mkdir(join(tree, 'node_modules'), { recursive: true }); await writeFile(join(tree, 'node_modules', 'x\ny\u001b[2J.js'), '');
+  const plan = await m.testPlan(agent.id);
+  expect(() => validateTestPlan(plan)).not.toThrow();
+  await m.afterTurn(agent.id);
+  const tests = m.list().find(s => s.id === agent.id)?.tests;
+  expect(() => validateTestResult(tests)).not.toThrow();
+  await commit(tree, 'tab\there.ts', `export const key = "${KEY}";\n`);
+  const merge = await m.mergePlan(agent.id);
+  expect(() => validateMergePlan(merge)).not.toThrow();
+  expect(merge.hits.map(hit => hit.file)).toEqual([expect.stringContaining('here.ts')]);
+  await writeFile(join(tree, 'new\nline.txt'), 'x\n');
+  await m.checkpointTurn(agent.id); await writeFile(join(tree, 'later.txt'), 'y\n'); await m.checkpointTurn(agent.id);
+  const undo = await m.undoPlan(agent.id, 'undo');
+  expect(() => validateUndoPlan(undo)).not.toThrow();
+}, 30_000);
+
+it('HIGH (gate, code review): /review, /fork, /test and their plans wait as long as the daemon may take, not 5 s', async () => {
+  const { requestTimeout } = await import('../src/client/connection.js');
+  for (const kind of ['sessions.review', 'sessions.reviewPlan', 'sessions.fork', 'sessions.forkPlan', 'sessions.testPlan', 'sessions.test'] as const) expect(requestTimeout(kind), kind).toBeGreaterThanOrEqual(60_000);
+});
+
+it('MEDIUM (gate): /undo is refused while the agent\'s tests run in its worktree (test code could swap a folder for a link during the restore)', async () => {
+  const { m, agent, tree } = await repoSetup();
+  await writeFile(join(tree, 'check.sh'), '#!/bin/sh\nsleep 30\n'); await run('/bin/chmod', ['+x', join(tree, 'check.sh')]);
+  await commit(tree, 'check.sh', '#!/bin/sh\nsleep 30\n'); await run('/bin/chmod', ['+x', join(tree, 'check.sh')]);
+  await m.setTestCommand(tree, ['./check.sh']);
+  await m.checkpointTurn(agent.id);
+  const plan = await m.testPlan(agent.id); await m.runTestPlan(agent.id, plan.fingerprint);
+  await vi.waitFor(() => expect(m.list().find(s => s.id === agent.id)?.tests).toEqual({ state: 'running' }), { timeout: 10_000 });
+  await expect(m.undoPlan(agent.id, 'undo')).rejects.toThrow('Tests are running in this worktree; /undo or /redo when they finish');
+  m.cancelTests(agent.id);
+}, 30_000);
+
+it('MEDIUM (gate, silent failures): an auto-test that can\'t run says so on the card instead of showing nothing', async () => {
+  const { m, agent, tree } = await repoSetup();
+  await m.setTestCommand(tree, ['./check.sh']);
+  vi.spyOn(m as unknown as { testTarget: (live: unknown) => Promise<unknown> }, 'testTarget').mockRejectedValue(new Error('git exploded'));
+  await m.afterTurn(agent.id);
+  expect(m.list().find(s => s.id === agent.id)?.tests).toEqual({ state: 'error' });
+});
+
+it('MEDIUM (gate, code review): a turn that ends while the last turn end is still being handled gets its own tests afterwards', async () => {
+  const { m, agent, tree } = await repoSetup();
+  await writeFile(join(tree, 'check.sh'), '#!/bin/sh\nexit 0\n'); await commit(tree, 'check.sh', '#!/bin/sh\nexit 0\n'); await run('/bin/chmod', ['+x', join(tree, 'check.sh')]);
+  await m.setTestCommand(tree, ['./check.sh']);
+  const target = vi.spyOn(m as unknown as { testTarget: (live: unknown) => Promise<unknown> }, 'testTarget');
+  const first = m.afterTurn(agent.id), second = m.afterTurn(agent.id);
+  await Promise.all([first, second]);
+  await vi.waitFor(() => expect(target).toHaveBeenCalledTimes(2), { timeout: 10_000 });
+}, 30_000);
+
+it('LOW (gate): the refusals added in v0.7 reach the client as written', async () => {
+  const { MERGE_ERRORS } = await import('../src/daemon/merge.js');
+  const { TEST_ERRORS } = await import('../src/daemon/test-run.js');
+  const { CHECKPOINT_ERRORS } = await import('../src/daemon/checkpoints.js');
+  const { PRICE_ERRORS } = await import('../src/daemon/price-migration.js');
+  for (const message of ['origin has more than one push URL; push it yourself', 'Your checkout is in the middle of a merge, cherry-pick, revert or rebase; finish it yourself first']) expect(MERGE_ERRORS).toContain(message);
+  expect(TEST_ERRORS).toContain("Set /test-cmd from your checkout; this folder is an agent's worktree AI Term has no record of");
+  expect(CHECKPOINT_ERRORS).toContain('Tests are running in this worktree; /undo or /redo when they finish');
+  expect(PRICE_ERRORS).toContain('AI Term keeps at most 100 prices');
+});
+
+it('LOW (gate, code review): a fork of an agent whose name ends in an emoji keeps a valid name', async () => {
+  const { forkTitle } = await import('../src/shared/fork.js');
+  const title = forkTitle(`${'a'.repeat(55)}😀😀`);
+  expect([...title].length).toBeLessThanOrEqual(60);
+  expect(title).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  expect(forkTitle('fixer')).toBe('fixer fork');
+});
