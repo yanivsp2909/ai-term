@@ -12,7 +12,7 @@ import { Logger } from '../src/daemon/log.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
 import { buildTestEnv } from '../src/daemon/env.js';
 import { runTests } from '../src/daemon/test-run.js';
-import { prepareSandbox, sandboxDenial, sandboxProfile, SandboxPathError, SECRET_PATHS, type SandboxSpec } from '../src/daemon/test-sandbox.js';
+import { prepareSandbox, sandboxDenial, sandboxProfile, SandboxPathError, SECRET_PATHS, toolchainPaths, type SandboxSpec } from '../src/daemon/test-sandbox.js';
 import { validateTestPlan, validateTestResult } from '../src/shared/test-run.js';
 import { cardText } from '../src/client/tui/agent-card.js';
 import { TestAsk, testLines } from '../src/client/tui/test-ask.js';
@@ -198,4 +198,40 @@ it.skipIf(!MAC)('macOS (skipped elsewhere: sandbox-exec is macOS only): a key fo
   finally { await box.dispose(); }
   expect(await readFile(join(tree, 'via-link.txt'), 'utf8')).toBe('');
   expect(await readFile(join(tree, 'via-target.txt'), 'utf8')).toBe('');
+}, 30_000);
+
+// Follow-up (Yaniv, during Part A): the sandbox still let a test read every file outside the key folders and copy it into
+// the worktree, where the agent reads it (Claude Code would have asked before reading outside its folder). Now the whole
+// home folder, /Volumes, /tmp and the user temp area are unreadable, except the worktree, the run's temp folder, the
+// repository's git folder and the toolchains tests need (those on PATH under home, the usual version managers).
+it('the profile hides the home folder, /Volumes, /tmp and the user temp area, and opens only the toolchains and the git folder', () => {
+  const text = sandboxProfile({ ...spec, hidden: ['/Users/me', '/Volumes', '/private/tmp'], readable: ['/Users/me/.nvm', '/Users/me/src/repo/.git'] });
+  const hide = text.indexOf('(deny file-read-data file-read-xattr (subpath "/Users/me") (subpath "/Volumes") (subpath "/private/tmp"))');
+  const open = text.indexOf('(allow file-read-data file-read-xattr (subpath "/Users/me/.nvm") (subpath "/Users/me/src/repo/.git"))');
+  const keys = text.indexOf('(deny file-read-data file-read-xattr (subpath "/Users/me/.ssh")'), own = text.indexOf(`(allow file-read-data file-read-xattr (subpath "${spec.worktree}") (subpath "${spec.temp}"))`);
+  expect(hide).toBeGreaterThan(0); expect(open).toBeGreaterThan(hide); expect(keys).toBeGreaterThan(open); expect(own).toBeGreaterThan(keys);
+  expect(toolchainPaths('/Users/me', { PATH: '/Users/me/.nvm/versions/node/v22/bin:/Users/me/bin:/Users/me:/opt/homebrew/bin:/Users/me/.local/bin', PYENV_ROOT: '/Users/me/.pyenv', GOPATH: '/Users/me/go', HOME: '/Users/me' }))
+    .toEqual(expect.arrayContaining(['/Users/me/.nvm/versions/node/v22', '/Users/me/bin', '/Users/me/.local/bin', '/Users/me/.pyenv', '/Users/me/go', '/Users/me/.cargo', '/Users/me/.gitconfig']));
+  for (const wide of ['/Users/me', '/Users', '/', '/opt/homebrew/bin']) expect(toolchainPaths('/Users/me', { PATH: '/Users/me/bin:/Users/me:/opt/homebrew/bin', VIRTUAL_ENV: '/', HOME: '/Users/me' })).not.toContain(wide);
+  const box = { worktree: '/private/var/w/tree', temp: '/private/var/w/tmp', home: '/Users/me', private: [], hidden: ['/Users/me'], readable: [] };
+  expect(sandboxDenial("EPERM: operation not permitted, open '/Users/me/Documents/notes.txt'", box)).toBe('~/Documents/notes.txt');
+});
+
+it.skipIf(!MAC)('macOS (skipped elsewhere: sandbox-exec is macOS only): a test can\'t read ~/Documents or /tmp to copy them into the worktree; toolchains on PATH and the git folder still work', async () => {
+  const dir = await temp(), home = join(dir, 'home'), tree = join(dir, 'tree'), tool = join(home, '.tools', 'v1');
+  await mkdir(join(home, 'Documents'), { recursive: true }); await writeFile(join(home, 'Documents', 'notes.txt'), 'PRIVATE-NOTES\n');
+  await mkdir(join(tool, 'bin'), { recursive: true }); await writeFile(join(tool, 'bin', 'mytool'), '#!/bin/sh\necho tool-ran\n'); await chmod(join(tool, 'bin', 'mytool'), 0o755);
+  const loose = await realpath(await mkdtemp('/private/tmp/ai-b26-loose-')); roots.push(loose); await writeFile(join(loose, 'scratch.txt'), 'TMP-SECRET\n');
+  await run('/usr/bin/git', ['init', '-q', '-b', 'main', '--', tree]); await git(tree, 'commit', '-q', '--allow-empty', '-m', 'first', '--');
+  await writeFile(join(tree, 'probe.sh'), ['#!/bin/sh', 'cat "$HOME/Documents/notes.txt" > notes.txt', `cat "${loose}/scratch.txt" > tmp.txt`, 'ls "$HOME" > listing.txt', 'mytool > tool.txt', '/usr/bin/git log --format=%s > git.txt', 'exit 0', ''].join('\n'));
+  await chmod(join(tree, 'probe.sh'), 0o755);
+  const env = { ...buildTestEnv(process.env), HOME: home, PATH: `${join(tool, 'bin')}:/usr/bin:/bin` };
+  const box = await prepareSandbox(tree, { home, private: [], loopback: false, env });
+  try { await runTests(['./probe.sh'], tree, { ...env, ...box.env }, { timeoutMs: 20_000, sandbox: box }); }
+  finally { await box.dispose(); }
+  expect(await readFile(join(tree, 'notes.txt'), 'utf8')).toBe('');
+  expect(await readFile(join(tree, 'tmp.txt'), 'utf8')).toBe('');
+  expect(await readFile(join(tree, 'listing.txt'), 'utf8')).toBe('');
+  expect(await readFile(join(tree, 'tool.txt'), 'utf8')).toBe('tool-ran\n');
+  expect(await readFile(join(tree, 'git.txt'), 'utf8')).toBe('first\n');
 }, 30_000);
