@@ -131,3 +131,107 @@ it('env on Windows: Path is spelled PATH in a copy; a credential variable goes w
   const env = buildSpawnEnv('claude-code', { kind: 'account' }, { Path: 'C:\\x', anthropic_api_key: 'sk-ant-x', Anthropic_Base_Url: 'http://evil' }, { platform: 'win32' });
   expect(env.anthropic_api_key).toBeUndefined(); expect(env.Anthropic_Base_Url).toBeUndefined(); expect(env.PATH).toBe('C:\\x');
 });
+
+// Part C review (typescript-reviewer, security-reviewer; fresh context): each failed before its fix.
+it('HIGH (TS review): Git for Windows prints C:/… paths: they are accepted; agent folders follow the same rule', async () => {
+  const { isAgentFolder } = await import('../src/shared/validate.js');
+  expect(isSafeAbsolutePath('C:/Users/me/repo', 'win32')).toBe(true);
+  expect(isSafeAbsolutePath('C:/Users/me/../x', 'win32')).toBe(false);
+  expect(isAgentFolder('C:\\a\\..\\b', 'win32')).toBe(false);
+  expect(isAgentFolder('C:\\Users\\me\\proj', 'win32')).toBe(true);
+});
+
+it('HIGH (TS review): a live daemon that hasn\'t opened its pipe yet is starting, not stale; a slow Windows start gets more than 3 s', async () => {
+  const { lockState } = await import('../src/daemon/lock.js');
+  expect(lockState({ alive: true, pipeAnswers: false, lockAgeMs: 5_000 })).toBe('running');
+  expect(lockState({ alive: true, pipeAnswers: false, lockAgeMs: 60_000 })).toBe('stale');
+  expect(lockState({ alive: true, pipeAnswers: true, lockAgeMs: 60_000 })).toBe('running');
+  expect(lockState({ alive: false, pipeAnswers: false, lockAgeMs: 1 })).toBe('stale');
+  const { daemonStartDeadline } = await import('../src/client/connection.js');
+  expect(daemonStartDeadline('win32')).toBeGreaterThanOrEqual(15_000); expect(daemonStartDeadline('darwin')).toBe(3000);
+});
+
+it('HIGH (TS review): an Administrators-owned folder (an elevated terminal) is accepted when every entry is yours; any other entry is not', async () => {
+  const { aclIsMine } = await import('../src/shared/win-acl.js');
+  const me = 'S-1-5-21-1-2-3-1001';
+  expect(aclIsMine(parseAcl(`S-1-5-32-544\n${me}\n`), me)).toBe(true);
+  expect(aclIsMine(parseAcl(`${me}\n${me}\nS-1-5-21-1-2-3-1002\n`), me)).toBe(false);
+  expect(aclIsMine(parseAcl('S-1-5-21-1-2-3-1002\n' + me + '\n'), me)).toBe(false);
+});
+
+it('HIGH (TS review): the folder is checked by the daemon; a client only makes it (icacls) when it creates it', async () => {
+  const { aclPlan } = await import('../src/shared/paths.js');
+  expect(aclPlan({ created: true, daemon: false })).toBe('restrict');
+  expect(aclPlan({ created: false, daemon: false })).toBe('none');
+  expect(aclPlan({ created: false, daemon: true })).toBe('verify');
+  expect(aclPlan({ created: true, daemon: true })).toBe('verify');
+});
+
+it('HIGH (TS review): AI Term\'s agent on Windows keeps SystemRoot, TEMP and USERPROFILE; git gets SystemRoot; tests get ProgramFiles', async () => {
+  const { buildAgentEnv, buildTestEnv, windowsBaseVars } = await import('../src/daemon/env.js');
+  expect(windowsBaseVars('win32')).toEqual(expect.arrayContaining(['SystemRoot', 'TEMP', 'USERPROFILE', 'ProgramFiles', 'ProgramData', 'NUMBER_OF_PROCESSORS']));
+  expect(windowsBaseVars('darwin')).toEqual([]);
+  if (WIN) {
+    const env = buildAgentEnv(process.env, { secret: 'sk-ant-test0123456789abcdef', endpoint: null, entry: 'C:\\ai\\dist\\cli\\index.js' });
+    expect(env.SystemRoot ?? env.SYSTEMROOT).toBeTruthy();
+    expect(buildTestEnv(process.env).ProgramFiles).toBeTruthy();
+  }
+});
+
+it('MEDIUM (TS review): a .bat or a non-npm .cmd is refused; a launcher whose npm package is a native .exe runs that .exe; an unreadable launcher says so', async () => {
+  expect(() => windowsCommand({ executable: 'C:\\x\\gradlew.bat', args: [] }, { shim: null, node: null, script: false })).toThrow(CliLaunchError);
+  const exeShim = '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.exe"   %*\r\n';
+  expect(windowsCommand({ executable: 'C:\\npm\\codex.cmd', args: ['--x'] }, { shim: exeShim, node: null, script: true })).toEqual({ executable: 'C:\\npm\\node_modules\\@openai\\codex\\bin\\codex.exe', args: ['--x'] });
+  const { launchFacts } = await import('../src/daemon/win-launch.js');
+  const dir = await temp(); await mkdir(join(dir, 'locked.cmd'));
+  await expect(launchFacts(join(dir, 'locked.cmd'), '')).rejects.toThrow("AI Term couldn't read this CLI's .cmd launcher");
+});
+
+it('MEDIUM (TS review): without Git for Windows there is no git (never a bare git.exe found in the folder)', () => {
+  expect(gitExecutable('win32', 'C:\\nowhere')).toBeNull();
+});
+
+it('MEDIUM (TS review): worktree checks on Windows ignore case and slash style', async () => {
+  const { pathInside } = await import('../src/shared/path-inside.js');
+  expect(pathInside('C:\\Users\\Me\\.ai-term\\worktrees', 'c:/users/me/.ai-term/worktrees/r/a', 'win32')).toBe(true);
+  expect(pathInside('C:\\Users\\Me\\.ai-term\\worktrees', 'C:\\Users\\Me\\.ai-term\\worktrees2', 'win32')).toBe(false);
+  expect(pathInside('/Users/me/w', '/Users/me/W/x', 'darwin')).toBe(false);
+});
+
+it('MEDIUM (TS review): a failed stop on Windows is reported; killGroup takes its error handler', async () => {
+  const text = await (await import('node:fs/promises')).readFile(join(process.cwd(), 'src', 'shared', 'kill-tree.ts'), 'utf8');
+  expect(text).not.toContain('onError: (error: unknown) => void = () => {}');
+  const sm = await (await import('node:fs/promises')).readFile(join(process.cwd(), 'src', 'daemon', 'session-manager.ts'), 'utf8');
+  expect(sm).toContain('stopFailed');
+});
+
+it('HIGH (security review): the client checks the daemon answers with proof of the token (HMAC of its nonce) before sending anything else', async () => {
+  const { helloProof, proofValid } = await import('../src/daemon/pipe-server.js');
+  const token = 'a'.repeat(64), nonce = 'b'.repeat(64);
+  const proof = helloProof(token, nonce);
+  expect(proof).toMatch(/^[0-9a-f]{64}$/);
+  expect(proofValid(token, nonce, proof)).toBe(true);
+  expect(proofValid(token, nonce, helloProof('c'.repeat(64), nonce))).toBe(false);
+  expect(proofValid(token, nonce, undefined)).toBe(false);
+  const { validateRequest, validateSuccess } = await import('../src/shared/validate.js');
+  const id = '11111111-1111-4111-8111-111111111111';
+  await expect(validateRequest({ id, kind: 'hello', protocol: 1, version: '1', token, nonce })).resolves.toMatchObject({ nonce });
+  expect(validateSuccess({ id, ok: true, kind: 'hello', protocol: 1, version: '1', daemonPid: 5, proof })).toMatchObject({ proof });
+  await expect(validateRequest({ id, kind: 'daemon.stop' })).resolves.toMatchObject({ kind: 'daemon.stop' });
+});
+
+it('HIGH (security review): a stale daemon.pipe is removed when its daemon is known dead, so nobody can sit on the old name', async () => {
+  const { removeStalePipe, pipeFile } = await import('../src/daemon/pipe-server.js');
+  const dir = await temp(), socket = join(dir, 'run', 'daemon.sock'); await mkdir(join(dir, 'run'));
+  await writeFile(pipeFile(socket), JSON.stringify({ name: '\\\\.\\pipe\\ai-term-0123456789abcdef-' + 'a'.repeat(32), token: 'b'.repeat(64) }));
+  await removeStalePipe(socket);
+  await expect((await import('node:fs/promises')).stat(pipeFile(socket))).rejects.toThrow();
+  await removeStalePipe(socket);
+});
+
+it('MEDIUM (security review): the folder and each of its folders are checked in one PowerShell run; LOW: alternate data streams and device names are refused', async () => {
+  const { parseAcls } = await import('../src/shared/win-acl.js');
+  const me = 'S-1-5-21-1-2-3-1001';
+  expect(parseAcls(`#\n${me}\n${me}\n#\nS-1-5-21-9-9-9-500\n${me}\n`)).toEqual([{ owner: me, entries: [me] }, { owner: 'S-1-5-21-9-9-9-500', entries: [me] }]);
+  for (const bad of ['C:\\x\\file.txt:stream', 'C:\\x\\NUL', 'C:\\x\\con.txt', 'C:\\COM1\\y']) expect(isSafeAbsolutePath(bad, 'win32'), bad).toBe(false);
+});
