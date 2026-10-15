@@ -793,6 +793,23 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
 - **B27 prices per provider.** `settings.providerPrices: {provider: {model: price}}` for `PRICED_BY_YOU` (every provider but Anthropic and OpenAI, which use the catalog); `overridesFor(settings, provider)` merges old model-only `priceOverrides` under the provider's own (null-prototype result) and every `findPrice` caller passes it. `migratePrices` (daemon start) moves an old record to the single provider that has its id (a key's deployment/model list, or that provider's catalog via `findPrice` with no overrides; Ollama only by its model list); several or none: it stays and applies to each, listed once as `any provider` (`priceRows`). At most 100 prices in all.
 - **B28 price pause.** `RunLimits.check` returns `price: {model, budgets, modelMax}` with the no-price pause; `Agent.pauseActions` asks `{kind:'price.info'}` (provider and `closestCatalogModel`: the catalog id with the most words, all in the id after `vendor/` and `:tag`, own provider's table first) and builds `pricePauseText`. `AgentApp.pauseKey`: `p` opens a line form (`input / output [/ cache read]`, the guess prefilled), `m` (Foundry) a filtered `catalogIds()` picker; a save that the daemon accepts resolves the pause as go, so `clearance` checks again. The daemon's `priceQuery` answers only a live AI Term key agent about a model in its `agentModels`, saves `price.set` only while that model has no price (`findPrice` undefined inside the settings update) and `price.map` only for a Foundry key and a real catalog id, also only while unpriced. `agentFacts` sets `SessionInfo.priceYours` while the price in use is yours; the card adds `price: yours` after the cost.
 
+### 12.19 v0.7 release gate (2026-10-15) — v0.7 closed
+- **Agent secrets off the env (D57).** A process's starting environment is readable to the same user (`ps -E`), so `splitAgentSecrets` (`src/daemon/env.ts`) moves `AITERM_AGENT_KEY`, `AITERM_AGENT_ENDPOINT`, `AITERM_STATUS_TOKEN` and `AITERM_USAGE_TOKEN` into `<root>/sessions/<id>/agent-secrets.json` (new file, `O_EXCL|O_NOFOLLOW`, 0600, in the 0700 session folder; the daemon unlinks it after 60 s). The env keeps `AITERM_AGENT_SECRETS` (its path), `AITERM_STATUS_PORT` and `AITERM_HOME`. `takeSecrets` (`src/agent/main.ts`) reads it with `readAgentSecrets(env, true)` (no link, owner, 0600, ≤ 64 KiB) and deletes it before anything else runs.
+- **Agent bash sandbox (D57).** `bashArgv` (`src/agent/bash.ts`) runs each command as `sandbox-exec -p <bashProfile> -- /bin/sh -c <command>` on macOS: `(allow default)`, then deny `file-read-data`, `file-read-xattr` and `file-write*` under `AITERM_HOME` and unix-socket connects there, then reopen the agent's own folder when it lies inside. A folder no profile can hold refuses the command; no `sandbox-exec` (another OS) runs it as before. This keeps a hijacked agent from changing settings, prices or budgets, or calling the daemon as the agent or as you. It doesn't stop writes elsewhere in your home (shell startup files and the like), which a Don't-ask agent can make by design.
+- **Gate fixes.**
+  - `/review` sends a secret-looking file's name only and drops scan-flagged lines (`diffForReview`).
+  - `/pr` reads `remote get-url --push --all` and refuses more than one URL; it masks a URL password for the client and pins `gh pr create --repo host/owner/repo` (`githubRepo`).
+  - The secret scan uses `--text` and also scans `git log -p --no-merges <fork>..<branch>`, deduplicating hits.
+  - `/merge` refuses when `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `rebase-merge` or `rebase-apply` exists.
+  - The test sandbox lost its xcrun cache rule.
+  - Names crossing the socket go through `diffPath`.
+  - Client timeouts cover `/review`, `/fork` and `/test`.
+  - `/undo` is refused while tests run, and says when the last checkpoint failed.
+  - `afterTurn` shows `error` when it fails and re-runs a turn end that arrived meanwhile.
+  - `/compact` refuses a summary cut off by its output limit.
+  - An unreadable diff file says why.
+  - Every new refusal is in its module's error list, so it reaches the client.
+
 ## 13. Decisions log
 
 Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless he objects.
@@ -855,3 +872,4 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D54 | `/remote` in v1.0: a phone page on a private network only, off by default, QR pairing, per-phone revocable tokens, every action logged. The only exception to S12's 127.0.0.1 rule. | Proposed |
 | D55 | Every optional feature has its own on/off in `/settings`; anything that spends tokens by itself defaults to off. | Pinned (Yaniv, 2026-10-14) |
 | D56 | Code an agent wrote never runs outside a sandbox without asking. Auto-test runs the test process tree under macOS `sandbox-exec` with a deny-by-default profile built from checked paths (writes only in the worktree and a per-run temp folder; no network unless the project allows 127.0.0.1; no reads of the home folder beyond toolchains, nor of key folders); without a working sandbox it never runs by itself and `/test` asks every time (§12.18). | Proposed |
+| D57 | AI Term's agent never holds its key or AI Term's credentials in its process environment (a 0600 file it reads and deletes carries them), and on macOS its bash commands run in a sandbox that can't read or write `~/.ai-term` (its own worktree excepted) or reach AI Term's sockets, so the agent can't change your prices, budgets or settings, or talk to AI Term as you (§12.19). | Proposed |
