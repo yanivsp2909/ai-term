@@ -71,7 +71,7 @@ describe('agent providers', () => {
 
   it('the guard lets plain http reach only the local endpoint it was made for', async () => {
     let calls = 0;
-    const guarded = guardedFetch('http://127.0.0.1:11434/v1', async () => { calls++; return new Response('{}'); });
+    const guarded = guardedFetch('http://127.0.0.1:11434/v1', async () => { calls++; return new Response('{}'); }, { plainLocal: true });
     for (const url of ['http://127.0.0.1:11435/v1/chat/completions', 'http://localhost:11434/v1/chat/completions', 'https://127.0.0.1:11434/v1/chat/completions', 'http://127.0.0.1:11434/api/pull'])
       await expect(guarded(url)).rejects.toThrow('Request outside the provider endpoint');
     await guarded('http://127.0.0.1:11434/v1/chat/completions');

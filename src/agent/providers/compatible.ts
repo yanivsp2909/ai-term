@@ -12,5 +12,5 @@ export function compatibleModel(provider: CompatibleProvider, model: string, key
   const local = provider === 'ollama';
   if (!isValidModelId(model) || (local ? key !== null || !isLocalEndpoint(endpoint) : !isSecret(key))) throw new ProviderError(`Invalid ${PROVIDER_LABELS[provider]} settings`);
   const baseURL = local ? `${endpoint}/v1` : DIRECT_HOSTS[provider];
-  return createOpenAICompatible({ name: provider, baseURL, ...(key !== null ? { apiKey: key } : {}), includeUsage: true, fetch: guardedFetch(baseURL, base) }).chatModel(model);
+  return createOpenAICompatible({ name: provider, baseURL, ...(key !== null ? { apiKey: key } : {}), includeUsage: true, fetch: guardedFetch(baseURL, base, { plainLocal: local }) }).chatModel(model);
 }

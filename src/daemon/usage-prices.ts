@@ -22,11 +22,11 @@ export function estimateCost(price:ModelPrice|undefined,input:number,output:numb
 // deployment itself still wins.
 export function findPrice(snapshot:PriceSnapshot,provider:KeyProvider,model:string,overrides:Record<string,ModelPrice>,alias?:string):ModelPrice|undefined{
  const own=(table:Record<string,ModelPrice>,id=model)=>Object.hasOwn(table,id)?table[id]:undefined;
- // Ollama runs on this Mac: nothing to bill, so budgets never pause it (v0.6.5).
- if(provider==='ollama')return {input:0,output:0,cacheRead:0};
  const override=own(overrides);
  // An explicit two-rate override applies its input rate to every input token; no cache discount is guessed.
  const overridden=override?{...override,cacheRead:override.cacheRead??override.input}:undefined;
+ // Ollama runs on this Mac: free unless you price a model (it can also serve billed cloud models), v0.6.5.
+ if(provider==='ollama')return overridden??{input:0,output:0,cacheRead:0};
  if(provider==='anthropic'||provider==='openai')return own(snapshot.providers[provider]);
  // v0.6.5 providers have no catalog prices: their override (/settings p) or unknown (`price ?`).
  if(provider!=='foundry')return overridden;
