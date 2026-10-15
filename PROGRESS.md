@@ -1,6 +1,97 @@
 # PROGRESS
 
 ## Checkpoint
+Last commit: see the handover commit after 3566fb0 (Part A, v0.9.3)
+Roadmap step: run 2026-10-15 (4), Claude Code, Opus 5.5 (the prompt was written for Codex; Yaniv asked Claude to run it), long run A–C: A v0.9.3 done · B v1.0.1 install and docs next · C v1.0.2 /brain after
+Branch: main, pushed after each part. Started at cf6e64e after `git pull --ff-only` (already up to date). macOS 26.5.1 (arm64); no CI by Yaniv's choice, every check runs on this Mac.
+
+| Part | Result | Pushed at | Findings (CRITICAL / HIGH / MEDIUM / LOW) |
+|---|---|---|---|
+| A v0.9.3 diagnostics, performance, polish | done | this push | review: 0 / 3 fixed / 3 fixed + 1 explained / 4 fixed + 2 explained |
+
+## Part A: v0.9.3 LSP diagnostics, performance pass, consistency polish — done
+Commits:
+- **Diagnostics:** 993ffdd (RED) / 49bef70.
+- **Polish:** cbe0ec9.
+- **Performance:** 72f4970.
+- **Diagnostics review:** db5779c (RED) / 406de30.
+- **Performance review:** ddfa0f7 and 9ef623c (RED) / 3f74bd4.
+- **Servers not installed:** ffa6d51 (RED) / f177192, then 3566fb0.
+
+**1. LSP diagnostics for AI Term's agent (D55, off; `/settings` z).**
+- **What the agent gets:** after each write or edit, that file's errors, at most 40 lines.
+- **Which servers:** `typescript-language-server`, `pyright-langserver`, `gopls` or `rust-analyzer`, found on PATH outside the worktree and any `node_modules/.bin` (by real path too).
+- **Sandbox:** each runs under the agent's bash sandbox (`sandboxedArgv`, the same sandbox-exec or bwrap profile) with bash's env, keys removed. Where there's no sandbox, none starts, said once.
+- **Lifetime:** one per language per agent, stopped at exit, on a signal or a crash, or after 10 idle minutes.
+- **Not installed:** Yaniv pointed out none of the four servers is installed here, so the switch did nothing, quietly. Now the `/settings` row lists the servers found ("no language server installed; README lists them" on this Mac), and the agent is told once per language with the install command.
+- **Tested** with a stand-in server: run for real inside the macOS sandbox, it can't see the key, and it was stopped after idle. Real servers need Yaniv (manual checks).
+
+**2. Performance pass, A/B.** `scripts/perf-ab.py` builds cf6e64e (A) and the final code (B) and runs them back to back, 5 alternating rounds:
+- **Setup:** each round gets its own throwaway home and daemon, 10 agents running `spikes/renderer/noise.js` (33 redraws a second each), and stand-in `claude`/`codex` that answer in 0.1 s.
+- **Raw numbers:** `docs/testing/v093-perf-ab.json`.
+
+| Measure (median of 5) | A cf6e64e | B final | Change | Per-round spread |
+|---|---|---|---|---|
+| Typing echo p95, attached | 2.12 ms | 0.75 ms | −65% | A 2.03–2.21 · B 0.39–0.82 |
+| Typing echo p50 | 1.73 ms | 0.52 ms | −70% | A 1.61–1.84 · B 0.24–0.60 |
+| Cold `ai` start to the first homepage frame | 352 ms | 112 ms | −68% | A 344–363 · B 100–114 |
+| Daemon memory, 10 mirrors | 120.5 MB | 90.9 MB | −25% | A 120.0–121.2 · B 90.5–91.2 |
+| Homepage CPU, 10 agents (% of one core) | 8.7% | 6.7% | −23% | A 7.6–10.6 · B 2.2–7.4 (noisy) |
+| Homepage bytes/s | 3605 | 3603 | 0% | — |
+
+Fixes, from the performance-optimizer's profiles:
+- **Engine check:** the homepage draws before the engine check (each CLI's version and login status).
+- **Typing echo:** an attached session's output goes to its client before the mirror's write. xterm calls back from a timer, which cost about 1.2 ms on every echo. This happens only while nothing is queued and no attach is pending, so the byte order never changes.
+- **Daemon memory:** the daemon loads the AI SDK and MCP client on use (about 30 MB).
+- **Preview:** it reuses its cells until something changes, and plain ASCII skips the sanitizing regex.
+
+No change made typing slower: B beat A in every round.
+
+**3. Consistency polish (mechanical).**
+- **Wording:** every README command row opens with the exact `/help` wording (a test enforces it).
+- **Key hints:** one verb form (Esc closes or cancels, ⏎ saves or selects; "Enter" became ⏎). Hints sit on each popup's last row.
+- **Esc:** a test opens each of the 17 popups and checks that Esc gives the homepage back exactly as it was.
+- **Errors and colors:** errors are one line, and there are no raw hex colors outside the theme (tests). Nothing animates; the only new timer is the language-server idle check.
+- **Suggestion, not built:** the asks that run code or spend tokens (`/test`, `/undo`, `/dev`, MCP approve) confirm with `y`, not ⏎. They were kept that way so a stray ⏎ typed after the command can't start anything.
+
+**Fresh reviews (typescript-reviewer ×2, performance-optimizer):**
+- **HIGH fixed:**
+  - A language server that never answered `initialize` froze the agent forever. Every wait is now bounded at 8 s and an interrupted turn stops it.
+  - The direct echo path could send a chunk ahead of an earlier one that was waiting on the first state save. The pending count is now released only after its emit; reproduced by a test first.
+  - A silent server held every write for 8 s.
+- **MEDIUM fixed:**
+  - A crashing server restarted on every write. It is now turned off for the language and said once.
+  - Two writes at once started two servers, and one was never stopped.
+  - The "no login" popup replaced what you'd started typing.
+- **MEDIUM explained:** the engine status is not cached in the daemon. It would go stale right after `/login`, and drawing first already removed its cost.
+- **LOW fixed:**
+  - Odd diagnostic fields.
+  - The crash path now kills every server group.
+  - A stuck pending counter after a mirror failure.
+  - The settings popup waited on a PATH scan, and a command queued behind it was dropped.
+- **LOW explained:**
+  - A chunk whose mirror write fails was already shown to the attached client (the session errors out anyway).
+  - Language servers may run project code (TypeScript loads the worktree's typescript, rust-analyzer runs build scripts). It's agent-written, so they run at bash's trust level, in bash's sandbox.
+
+**Checks (after 3566fb0):**
+- typecheck exit 0; lint `ESLint: No issues found`; build `ESM ⚡️ Build success in 45ms`; app:build `✓ built in 61ms`.
+- npm test twice: `Test Files 247 passed (247)` · `Tests 1660 passed | 7 skipped (1667)` (33.24s, 32.67s).
+- app:test `9 passed (37.9s)`.
+- verification scan clean.
+- Flaky under load, seen once each and green on rerun: `tests/v091-queue.test.ts` "after a named agent finishes…".
+
+**Where the code disagreed with the prompt:**
+- None of the four language servers is installed on this Mac, and this run may not download, so real servers are a manual check.
+- `codex` has no flag to add instructions from a file (only `model_instructions_file`, which replaces its own; checked in the 0.160.1 binary). This matters for Part C.
+
+**New manual checks (A):**
+- `cd ~/ai-term && npm i -g typescript-language-server typescript && npm run build && node dist/cli/index.js`
+  - `/settings` → the diagnostics row says `servers found: TypeScript/JavaScript`; press `z` on.
+  - Start AI Term's agent and ask it to write `src/x.ts` with `const a: number = "s";`. The tool result ends with `diagnostics for src/x.ts: 1 error` and `1:7 error 2322 Type 'string' is not assignable…`.
+- `cd ~/ai-term && node dist/cli/index.js`: with no server installed, the agent's first `.py` write ends with `npm i -g pyright installs it`.
+- `cd ~/ai-term && python3 scripts/perf-ab.py <old build> <new build> 5`: an A/B of any two builds (a build is a folder with `dist/cli/index.js`).
+
+## Previous run (2026-10-15, 3): checkpoint as it was
 Last commit: see the handover commit after dfce6ed (Part F, v0.9.2 dev servers)
 Roadmap step: run 2026-10-15 (3), Claude Code, Opus 5.5, long run A–F: all six done · A B29 · B v0.8.1 Linux · C v0.8.2 Windows · D v0.8 gate (**v0.8 closed**) · E v0.9.1 queue · F v0.9.2 dev servers (E's tail and F's whole spec written here because the prompt was cut off)
 Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-only` (already up to date). Running on macOS 26.5.1 (arm64); no Linux or Windows machine here (Docker/colima are installed but not running, and starting them would download a VM image, which the limits rule out), so Linux and Windows run for real only in GitHub Actions (Part D).
@@ -12,7 +103,7 @@ Branch: main, pushed after each part. Started at ff1b7c1 after `git pull --ff-on
 | C v0.8.2 Windows | done | 3c4493c | review: 0 / 6 fixed / 11 fixed + 2 explained / 4 fixed + 6 explained |
 | D v0.8 release gate | done, **v0.8 closed** (no cloud CI, by Yaniv) | 8722739 | CI run: 4 real bugs fixed; reviewers: 0 / 3 fixed / 12 fixed + 4 explained / 9 fixed + 6 explained |
 | E v0.9.1 queue | done (spec completed where the prompt was cut) | 0fed369 | review: 0 / 5 fixed / 12 fixed + 2 explained / 5 fixed + 3 explained |
-| F v0.9.2 dev servers | done (whole spec written here; the prompt's part F never arrived) | this push | review: 0 / 5 fixed / 12 fixed + 2 explained / 4 fixed + 4 explained |
+| F v0.9.2 dev servers | done (whole spec written here; the prompt's part F never arrived) | cf6e64e | review: 0 / 5 fixed / 12 fixed + 2 explained / 4 fixed + 4 explained |
 
 **The prompt was cut off:** it ends inside Part E ("times passed while the"), and Part F (v0.9.2 dev servers per worktree) has no text at all. Part E will follow the visible text and the safer reading of the cut sentence; Part F can't be built from no spec, so the run stops before it.
 

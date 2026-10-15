@@ -4,119 +4,119 @@
   "B": "/private/tmp/claude-501/-Users-yanivsp-ai-term/dfd853a6-fd65-4783-909b-6b65516dd6a2/scratchpad/perf/new",
   "summary": {
     "daemonRssMb": {
-      "A": 119.89,
-      "B": 91.03,
-      "change%": -24.1
+      "A": 120.5,
+      "B": 90.88,
+      "change%": -24.6
     },
     "homepageCpuPercent": {
-      "A": 11.94,
-      "B": 8.62,
-      "change%": -27.7
+      "A": 8.65,
+      "B": 6.65,
+      "change%": -23.1
     },
     "homepageBytesPerSecond": {
-      "A": 3599.99,
-      "B": 3538.73,
-      "change%": -1.7
+      "A": 3605.04,
+      "B": 3602.95,
+      "change%": -0.1
     },
     "coldStartMs": {
-      "A": 358.8,
-      "B": 115.99,
-      "change%": -67.7
+      "A": 352.11,
+      "B": 111.57,
+      "change%": -68.3
     },
     "typingP50Ms": {
-      "A": 1.83,
-      "B": 0.47,
-      "change%": -74.3
+      "A": 1.73,
+      "B": 0.52,
+      "change%": -70.0
     },
     "typingP95Ms": {
-      "A": 2.15,
-      "B": 0.65,
-      "change%": -69.5
+      "A": 2.12,
+      "B": 0.75,
+      "change%": -64.8
     }
   },
   "raw": {
     "A": [
       {
-        "daemonRssMb": 119.859375,
-        "homepageCpuPercent": 11.9375,
-        "homepageBytesPerSecond": 3606.703202302076,
-        "coldStartMs": 358.8032079860568,
-        "typingP50Ms": 1.8473751842975616,
-        "typingP95Ms": 2.14683311060071
+        "daemonRssMb": 121.21875,
+        "homepageCpuPercent": 8.225,
+        "homepageBytesPerSecond": 3605.040428934752,
+        "coldStartMs": 353.227874962613,
+        "typingP50Ms": 1.7325000371783972,
+        "typingP95Ms": 2.1238750778138638
       },
       {
-        "daemonRssMb": 119.9375,
-        "homepageCpuPercent": 4.975,
-        "homepageBytesPerSecond": 3533.435293665173,
-        "coldStartMs": 317.1175417955965,
-        "typingP50Ms": 1.3985419645905495,
-        "typingP95Ms": 1.5327080618590117
+        "daemonRssMb": 120.5625,
+        "homepageCpuPercent": 10.6125,
+        "homepageBytesPerSecond": 3577.369290849638,
+        "coldStartMs": 362.7986251376569,
+        "typingP50Ms": 1.60725018940866,
+        "typingP95Ms": 2.0340830087661743
       },
       {
-        "daemonRssMb": 119.703125,
-        "homepageCpuPercent": 12.6375,
-        "homepageBytesPerSecond": 3599.9924153958336,
-        "coldStartMs": 375.75520807877183,
-        "typingP50Ms": 1.8330409657210112,
-        "typingP95Ms": 2.2763339802622795
+        "daemonRssMb": 120.21875,
+        "homepageCpuPercent": 7.625,
+        "homepageBytesPerSecond": 3580.8443340811564,
+        "coldStartMs": 352.1055830642581,
+        "typingP50Ms": 1.7093750648200512,
+        "typingP95Ms": 2.1562499459832907
       },
       {
-        "daemonRssMb": 119.890625,
-        "homepageCpuPercent": 13.3625,
-        "homepageBytesPerSecond": 3536.0294438011647,
-        "coldStartMs": 363.6904170271009,
-        "typingP50Ms": 1.8559161107987165,
-        "typingP95Ms": 2.2710831835865974
+        "daemonRssMb": 120.015625,
+        "homepageCpuPercent": 9.8125,
+        "homepageBytesPerSecond": 3627.970334005529,
+        "coldStartMs": 343.96870783530176,
+        "typingP50Ms": 1.8368340097367764,
+        "typingP95Ms": 2.1039159037172794
       },
       {
-        "daemonRssMb": 120.03125,
-        "homepageCpuPercent": 4.1375,
-        "homepageBytesPerSecond": 3605.792883810152,
-        "coldStartMs": 316.41066703014076,
-        "typingP50Ms": 1.4732498675584793,
-        "typingP95Ms": 1.555624883621931
+        "daemonRssMb": 120.5,
+        "homepageCpuPercent": 8.65,
+        "homepageBytesPerSecond": 3657.864442026531,
+        "coldStartMs": 349.576833890751,
+        "typingP50Ms": 1.799166901037097,
+        "typingP95Ms": 2.206333912909031
       }
     ],
     "B": [
       {
-        "daemonRssMb": 91.140625,
-        "homepageCpuPercent": 8.625,
-        "homepageBytesPerSecond": 3538.7271585889175,
-        "coldStartMs": 115.98787503316998,
-        "typingP50Ms": 0.47029205597937107,
-        "typingP95Ms": 0.7488748524338007
+        "daemonRssMb": 90.84375,
+        "homepageCpuPercent": 6.95,
+        "homepageBytesPerSecond": 3574.0175310273794,
+        "coldStartMs": 100.38158390671015,
+        "typingP50Ms": 0.5110420752316713,
+        "typingP95Ms": 0.7397918961942196
       },
       {
-        "daemonRssMb": 91.03125,
-        "homepageCpuPercent": 8.75,
-        "homepageBytesPerSecond": 3534.729317019367,
-        "coldStartMs": 116.56983382999897,
-        "typingP50Ms": 0.4848330281674862,
-        "typingP95Ms": 0.6541248876601458
+        "daemonRssMb": 90.46875,
+        "homepageCpuPercent": 6.65,
+        "homepageBytesPerSecond": 3598.7994209821895,
+        "coldStartMs": 114.40500011667609,
+        "typingP50Ms": 0.5327090620994568,
+        "typingP95Ms": 0.811832956969738
       },
       {
-        "daemonRssMb": 90.890625,
-        "homepageCpuPercent": 8.7375,
-        "homepageBytesPerSecond": 3596.5425190726055,
-        "coldStartMs": 106.75520799122751,
-        "typingP50Ms": 0.11079199612140656,
-        "typingP95Ms": 0.5929998587816954
+        "daemonRssMb": 90.875,
+        "homepageCpuPercent": 2.2375,
+        "homepageBytesPerSecond": 3602.953068723062,
+        "coldStartMs": 103.07116690091789,
+        "typingP50Ms": 0.2401249948889017,
+        "typingP95Ms": 0.39100018329918385
       },
       {
-        "daemonRssMb": 91.1875,
-        "homepageCpuPercent": 8.3,
-        "homepageBytesPerSecond": 3542.9382956131076,
-        "coldStartMs": 116.34595785290003,
-        "typingP50Ms": 0.47945789992809296,
-        "typingP95Ms": 0.7019159384071827
+        "daemonRssMb": 91.078125,
+        "homepageCpuPercent": 5.825,
+        "homepageBytesPerSecond": 3606.493862379101,
+        "coldStartMs": 111.88666708767414,
+        "typingP50Ms": 0.5963749717921019,
+        "typingP95Ms": 0.820874935016036
       },
       {
-        "daemonRssMb": 90.609375,
-        "homepageCpuPercent": 1.825,
-        "homepageBytesPerSecond": 3517.5483609988673,
-        "coldStartMs": 95.84283386357129,
-        "typingP50Ms": 0.13579102233052254,
-        "typingP95Ms": 0.4800830502063036
+        "daemonRssMb": 91.15625,
+        "homepageCpuPercent": 7.4125,
+        "homepageBytesPerSecond": 3621.6734478277076,
+        "coldStartMs": 111.56812496483326,
+        "typingP50Ms": 0.5191250238567591,
+        "typingP95Ms": 0.7482089567929506
       }
     ]
   }
