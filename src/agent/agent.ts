@@ -45,6 +45,7 @@ export interface AgentOptions {
   reporter: Reporter; transcript: Transcript; io: AgentIO; redact: (text: string) => string;
   // Streamed model text: a key split across deltas is still caught (display.ts). Without one, each delta is redacted alone.
   redactStream?: () => StreamRedactor;
+  brainIndex?: string;
   bashEnv: Record<string, string>; rg: string | null; maxSteps?: number;
   // AI Term's own folder, kept out of reach of every bash command (bash.ts).
   bashSandbox?: { home: string; protect?: readonly string[]; require?: boolean; shell?: import('./bash.js').ShellDirs };
@@ -190,7 +191,7 @@ export class Agent {
     };
   }
   private tools(): ToolSet {
-    const read = this.run<{ path: string; offset?: number; limit?: number }>('read', i => i.path, i => readTool(this.options.root, i));
+    const read = this.run<{ path: string; offset?: number; limit?: number }>('read', i => i.path, i => readTool(this.options.root, i, this.options.brainIndex));
     const write = this.gated<{ path: string; content: string }>('write', i => i.path, writeTool);
     const edit = this.gated<{ path: string; old: string; new: string; replaceAll?: boolean }>('edit', i => i.path, editTool);
     const search = this.run<{ pattern: string; path?: string }>('search', i => i.pattern + (i.path ? ` in ${i.path}` : ''), i => searchTool(this.options.root, i, this.options.rg));

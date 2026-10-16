@@ -8,7 +8,7 @@ import { engineTitle } from './models.js';
 // cap and a $ budget, a CLI on a key a $ budget, a CLI on your subscription a stop time.
 export type QueueTrigger = { kind: 'after'; agent: string } | { kind: 'at'; time: string; due?: string };
 export interface QueueLimit { usd?: number; turns?: number; until?: string }
-export interface QueueRequest { engine: AgentEngine; model: string | null; auth: AuthRef; cwd: string; permission: Permission; effort: Effort | null; firstMessage?: string; useWorktree?: boolean }
+export interface QueueRequest { engine: AgentEngine; model: string | null; auth: AuthRef; cwd: string; permission: Permission; effort: Effort | null; firstMessage?: string; useWorktree?: boolean; brain?: boolean }
 // waiting: not yet; started: its agent runs (sessionId); failed: the start or its trigger failed (note says why, never
 // retried); missed: its time passed while AI Term wasn't running, so it never starts by itself.
 export type QueueState = 'waiting' | 'started' | 'failed' | 'missed';
@@ -66,9 +66,9 @@ export function validateQueueTrigger(value: unknown): QueueTrigger {
 export function validateQueueRequest(value: unknown): QueueRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid queued agent');
   const v = value as Record<string, unknown>;
-  if (Object.keys(v).some(key => !['engine', 'model', 'auth', 'cwd', 'permission', 'effort', 'firstMessage', 'useWorktree'].includes(key))) throw new ValidationError('Invalid queued agent');
+  if (Object.keys(v).some(key => !['engine', 'model', 'auth', 'cwd', 'permission', 'effort', 'firstMessage', 'useWorktree', 'brain'].includes(key))) throw new ValidationError('Invalid queued agent');
   if (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isSafeAbsolutePath(v.cwd) || !isPermissionForEngine(v.engine, v.permission) || !(v.effort === null || isEffortForEngine(v.engine, v.effort))
-    || v.firstMessage !== undefined && !isFirstMessage(v.firstMessage) || v.useWorktree !== undefined && typeof v.useWorktree !== 'boolean') throw new ValidationError('Invalid queued agent');
+    || v.firstMessage !== undefined && !isFirstMessage(v.firstMessage) || v.brain !== undefined && typeof v.brain !== 'boolean' || v.useWorktree !== undefined && typeof v.useWorktree !== 'boolean') throw new ValidationError('Invalid queued agent');
   if (v.engine === 'ai-term' && v.auth.kind !== 'key') throw new ValidationError('AI Term agent needs an API key');
   return { engine: v.engine, model: v.model, auth: v.auth, cwd: v.cwd, permission: v.permission, effort: v.effort as Effort | null, ...v.firstMessage !== undefined ? { firstMessage: v.firstMessage } : {}, ...v.useWorktree !== undefined ? { useWorktree: v.useWorktree } : {} };
 }

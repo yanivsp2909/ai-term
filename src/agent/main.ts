@@ -110,7 +110,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); void lsp?.stopAll(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox, ...(lsp ? { diagnostics: lsp } : {}), extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, brainIndex: parsed.brain, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox, ...(lsp ? { diagnostics: lsp } : {}), extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
       quit: () => { restore(); void Promise.all([transcript.close(), lsp?.stopAll()]).then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);

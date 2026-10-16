@@ -116,18 +116,27 @@ export async function writeBrain(root: string, top: string, index: BrainIndex, n
   await atomicWrite(paths.json, index);
   return { path: paths.markdown, lines: markdown.split('\n').length };
 }
-export async function writeBrainIndex(root: string, top: string, index: BrainIndex, trusted: boolean): Promise<string> {
+export async function writeBrainIndex(root: string, top: string, index: BrainIndex, trusted: boolean, snapshot = false): Promise<string> {
   const paths = brainPaths(root, top);
   await privateDirectory(join(root, 'brain')); await privateDirectory(paths.dir);
-  await atomicWriteText(paths.index, renderBrainIndex(index, paths.markdown, trusted) + '\n');
-  const at = new Date(index.builtAt); await utimes(paths.index, at, at);
-  return paths.index;
+  const text = renderBrainIndex(index, paths.markdown, trusted) + '\n';
+  let target = paths.index;
+  if(snapshot){
+    const snapshots=join(paths.dir,'snapshots'),dir=join(snapshots,createHash('sha256').update(JSON.stringify([index,trusted])).digest('hex'));
+    await privateDirectory(snapshots);await privateDirectory(dir);target=join(dir,'brain-index.md');
+    const files=Object.fromEntries(Object.entries(index.files).filter(([path])=>safeBrainName(path)).map(([path,file])=>[path,trusted?file:{...file,summary:undefined}]));
+    const full=renderBrain({...index,files,...(!trusted?{model:undefined,design:[]}:{})},new Date(index.builtAt));
+    await atomicWriteText(join(dir,'brain.md'),full+'\n');
+  }
+  await atomicWriteText(target, text);
+  const at = new Date(index.builtAt); await utimes(target, at, at);
+  return target;
 }
 export async function removeBrain(root: string, top: string): Promise<boolean> {
   const paths = brainPaths(root, top);
   try { const info = await lstat(paths.dir); if (info.isSymbolicLink() || !info.isDirectory()) throw new BrainError('The brain folder is not a plain folder; AI Term left it alone'); }
   catch (error) { if (isFsError(error, 'ENOENT')) return false; throw error; }
-  await rm(paths.index, { force: true }); await rm(paths.markdown, { force: true }); await rm(paths.json, { force: true });
+  await rm(join(paths.dir, 'snapshots'), { force: true, recursive: true }); await rm(paths.index, { force: true }); await rm(paths.markdown, { force: true }); await rm(paths.json, { force: true });
   // The folder goes too when nothing else is in it (a write cut short leaves a temp file, which stays for a look).
   try { await rmdir(paths.dir); } catch (error) { if (!isFsError(error, 'ENOTEMPTY')) throw error; }
   return true;

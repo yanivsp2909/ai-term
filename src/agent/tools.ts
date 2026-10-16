@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { mkdir, open, readdir, stat } from 'node:fs/promises';
+import { mkdir, open, readdir, realpath, stat } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { resolveInside, inside } from './jail.js';
 import { findExecutable } from '../shared/executable.js';
 import { isFsError } from '../shared/paths.js';
-import { buildBashEnv } from '../daemon/env.js';
+import { buildBashEnv, isBrainFile } from '../daemon/env.js';
 import { visible } from './display.js';
 
 // Bounds that keep one tool call to one reasonable model message and one screen of approval.
@@ -45,8 +45,20 @@ async function existingFile(root: string, path: unknown): Promise<string> {
 }
 
 export interface ReadInput { path: string; offset?: number; limit?: number }
-export async function readTool(root: string, input: ReadInput): Promise<string> {
-  const path = await existingFile(root, input.path), { text, cut, binary } = await readCapped(path, READ_MAX_BYTES);
+export async function readTool(root: string, input: ReadInput, brainIndex?: string): Promise<string> {
+  // Only the map this start was authorized to use escapes the repository jail. A snapshot's full map has the same
+  // trust policy as its index; unrelated files in AI Term's storage remain inaccessible, including through links.
+  let map: string | undefined, full: string | undefined;
+  if (brainIndex && isBrainFile(brainIndex)) {
+    const folder = dirname(brainIndex);
+    const snapshot = /[\\/]snapshots[\\/][0-9a-f]{64}$/.test(folder);
+    full = join(snapshot ? dirname(dirname(folder)) : folder, 'brain.md');
+    if (input.path === full) {
+      map = join(folder, 'brain.md');
+      if (await realpath(dirname(map)) !== dirname(map)) throw new ToolError('Brain folder is not a plain folder');
+    }
+  }
+  const path = map ?? await existingFile(root, input.path), { text, cut, binary } = await readCapped(path, map ? 4 * 1024 * 1024 : READ_MAX_BYTES);
   if (binary) return `${show(root, path)} looks like a binary file`;
   const lines = text.split('\n'), first = Math.max(1, Math.floor(input.offset ?? 1)), count = Math.max(1, Math.min(READ_DEFAULT_LINES, Math.floor(input.limit ?? READ_DEFAULT_LINES)));
   const shown = lines.slice(first - 1, first - 1 + count).map((line, i) => `${String(first + i).padStart(5)}  ${line.length > LINE_MAX_CHARS ? line.slice(0, LINE_MAX_CHARS) + '…' : line}`);

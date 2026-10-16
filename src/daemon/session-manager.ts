@@ -357,7 +357,7 @@ export class SessionManager extends EventEmitter {
             }
         }
         // B30: only an explicit setting/choice loads the small index; logins and resumes never receive it.
-        const preferences = agent && !agent.login && !continuation?.resume ? await this.brainPreferences(request.cwd) : { agents: false, trusted: false };
+        const preferences = agent && !agent.login && !continuation?.resume ? await this.brainPreferences(request.cwd,settings??{theme:'graphite'}) : { agents: false, trusted: false };
         const brain=agent&&!agent.login&&!continuation?.resume&&(agent.brain??agent.brainMention??preferences.agents)?await this.brainFor(request.cwd,preferences.trusted):null;
         const conversationId=agent?.engine==='claude-code'&&!agent.login?(continuation?.conversationId??randomUUID()):undefined;
         // Status is not billing: subscription and key sessions both report it. Login sessions only sign in.
@@ -1246,11 +1246,11 @@ export class SessionManager extends EventEmitter {
         try {
             const top=await this.brainRepo(cwd),index=await readBrain(this.paths.root,top);
             if(!index)return null;
-            return {file:await writeBrainIndex(this.paths.root,top,index,trusted),builtAt:index.builtAt};
+            return {file:await writeBrainIndex(this.paths.root,top,index,trusted,true),builtAt:index.builtAt};
         }catch(error){if(error instanceof BrainError&&error.message.includes("isn't in a git"))return null;this.log.error('Brain: index unavailable; the agent starts without it');return null;}
     }
-    async brainPreferences(cwd:string):Promise<{agents:boolean;trusted:boolean}>{
-        const settings=await new SettingsStore(this.paths.root).get();
+    async brainPreferences(cwd:string, knownSettings?:Settings):Promise<{agents:boolean;trusted:boolean}>{
+        const settings=knownSettings??await new SettingsStore(this.paths.root).get();
         let top:string;
         try{top=await this.brainRepo(cwd);}catch(error){if(error instanceof BrainError&&error.message.includes("isn't in a git"))return {agents:settings.brainForAgents===true,trusted:false};throw error;}
         const saved=settings.brainRepositories?.[repoDirectory(top)];
@@ -1258,9 +1258,11 @@ export class SessionManager extends EventEmitter {
     }
     async setBrainPreferences(cwd:string,patch:{agents?:boolean;trusted?:boolean}):Promise<void>{
         const top=await this.brainRepo(cwd),id=repoDirectory(top);
-        const settings=await new SettingsStore(this.paths.root).update(async current=>({...current,brainRepositories:{...current.brainRepositories,[id]:{...current.brainRepositories?.[id],...patch}}}));
-        const index=await readBrain(this.paths.root,top);
-        if(index)await writeBrainIndex(this.paths.root,top,index,settings.brainRepositories?.[id]?.trusted===true);
+        await serialize('brain:'+top,async()=>{
+            const settings=await new SettingsStore(this.paths.root).update(async current=>({...current,brainRepositories:{...current.brainRepositories,[id]:{...current.brainRepositories?.[id],...patch}}}));
+            const index=await readBrain(this.paths.root,top);
+            if(index)await writeBrainIndex(this.paths.root,top,index,settings.brainRepositories?.[id]?.trusted===true);
+        });
     }
     private async brainInput(cwd:string){
         const top=await this.brainRepo(cwd),previous=await readBrain(this.paths.root,top),scan=await scanRepo(top,previous),settings=await new SettingsStore(this.paths.root).get();
@@ -1315,6 +1317,7 @@ export class SessionManager extends EventEmitter {
                 // Earlier design notes first; new ones after (review: a small rescan pushed out the whole-repo ones).
                 const merge=()=>{index.design=[...new Set([...index.design,...decisions])].slice(0,BRAIN_MAX_DECISIONS);index.model=writer.model;};
                 try{for(const part of input.prompts){
+                    if(!(await this.brainPreferences(cwd)).trusted)throw new BrainError('Model pass stopped: repository is untrusted');
                     const tokens=estimateTokens(part.prompt),share={low:Math.round(tokens*0.8),high:Math.round(tokens*1.25)};
                     const out={low:part.paths.length*BRAIN_OUTPUT_PER_FILE.low,high:part.paths.length*BRAIN_OUTPUT_PER_FILE.high+300};
                     const written=await this.keyedRequest(job,writer,part.prompt,{worst:reviewModelView(writer,share,out).priceUsd.high,maxOutput:out.high,what:'brain'},settings);
@@ -1323,14 +1326,17 @@ export class SessionManager extends EventEmitter {
                     decisions.push(...read.decisions);costUsd+=written.summary.costUsd??0;
                 }}catch(error){
                     // A request that failed partway keeps what the earlier ones paid for: the map is written with them.
-                    if(summarized||decisions.length){merge();await writeBrain(this.paths.root,top,index,new Date(),input.trusted).catch(()=>{this.log.error('Brain: the partial map could not be saved');});}
+                    if(summarized||decisions.length){merge();await this.publishBrain(top,index).catch(()=>{this.log.error('Brain: the partial map could not be saved');});}
                     throw error;
                 }
                 merge();
             }
-            const written=await writeBrain(this.paths.root,top,index,new Date(),input.trusted);
+            const written=await this.publishBrain(top,index);
             return {repo:top,path:written.path,lines:written.lines,files:Object.keys(index.files).length,changed:input.previous?scan.parsed.length:Object.keys(index.files).length,summarized,costUsd,model:writer?.model??null};
         }finally{this.brainBuilding.delete(top);}
+    }
+    private publishBrain(top:string,index:import('../shared/brain.js').BrainIndex):Promise<{path:string;lines:number}>{
+        return serialize('brain:'+top,async()=>{const preferences=await this.brainPreferences(top);return writeBrain(this.paths.root,top,index,new Date(),preferences.trusted);});
     }
     async brainShow(cwd:string):Promise<{repo:string;text:string;builtAt:string}>{
         const top=await this.brainRepo(cwd),{markdown}=brainPaths(this.paths.root,top);

@@ -49,7 +49,7 @@ export const AGENT_LSP_FLAG='--lsp';
 // eslint-disable-next-line no-control-regex -- refusing controls in a path that becomes one argv element is the point.
 const BRAIN_CONTROLS=/[\u0000-\u001f\u007f]/;
 // An index path: absolute, ends in /brain/<repo folder>/brain-index.md, no controls (it goes to a CLI as one argv element).
-export function isBrainFile(path:string):boolean{return path.length<=4096&&/^(?:\/|[A-Za-z]:[\\/])/.test(path)&&/[\\/]brain[\\/][\w.-]+[\\/]brain-index\.md$/.test(path)&&!BRAIN_CONTROLS.test(path);}
+export function isBrainFile(path:string):boolean{return path.length<=4096&&/^(?:\/|[A-Za-z]:[\\/])/.test(path)&&/[\\/]brain[\\/][\w.-]+(?:[\\/]snapshots[\\/][0-9a-f]{64})?[\\/]brain-index\.md$/.test(path)&&!BRAIN_CONTROLS.test(path);}
 const PERMISSION_ARGS:Record<AgentEngine,Partial<Record<Permission,readonly string[]>>>={
     'claude-code':{ask:['--permission-mode=default'],auto:['--permission-mode=auto'],dontAsk:['--permission-mode=bypassPermissions']},
     codex:{ask:['--ask-for-approval=on-request','--sandbox=workspace-write'],dontAsk:['--ask-for-approval=never','--sandbox=workspace-write']},
