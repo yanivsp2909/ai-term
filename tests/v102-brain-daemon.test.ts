@@ -113,7 +113,7 @@ it('B30: agents default off; explicit old on survives; per-repository choices ap
   vi.spyOn(pty, 'spawn').mockImplementation((_file, args, options) => { spawned.push([...args]); return real('/bin/sh', ['-c', 'sleep 30'], { ...options, env: { PATH: '/usr/bin:/bin' } }); });
   const base = { model: null, auth: { kind: 'account' as const }, cwd: d.repo, permission: 'ask' as const, firstMessage: 'fix it' };
   const off = await d.manager.create({ ...base, engine: 'claude-code' });
-  expect(off.brain).toBeUndefined(); expect(spawned.at(-1)?.join(' ')).not.toContain('brain');
+  expect(off.brain).toBeUndefined(); expect(spawned.at(-1)?.join(' ')).not.toContain('append-system-prompt-file');
   await d.manager.setBrainForAgents(true);
   const claude = await d.manager.create({ ...base, engine: 'claude-code' });
   const indexPath = built.path.replace('brain.md', 'brain-index.md');

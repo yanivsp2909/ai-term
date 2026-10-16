@@ -63,3 +63,45 @@ it('typed: /brain asks, ⏎ builds the free map, /brain show opens it, /brain rm
   await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.remove', cwd: '/tmp/proj' }));
   await shows(tty, '✓ brain removed for this repository · /brain builds a new one');
 });
+
+
+it('B30: start box shows remembered brain choice, b changes this agent and saves it for this repository', async () => {
+  const sent: RequestBody[] = [];
+  const client = Object.assign(new EventEmitter(), { async request(body: RequestBody): Promise<SuccessResponse> {
+    sent.push(body);
+    return { id: randomUUID(), ok: true,
+      ...(body.kind === 'settings.get' ? { settings: { theme: 'graphite' as const } } : {}),
+      ...(body.kind === 'sessions.list' ? { sessions: [] } : {}),
+      ...(body.kind === 'keys.list' ? { keys: [] } : {}),
+      ...(body.kind === 'brain.preferences' ? { brainPreferences: { agents: false, trusted: false } } : {}),
+      ...(body.kind === 'engines.status' ? { engines: { claudeCode: { installed: true, loggedIn: true, path: '/bin/false', version: '1' }, codex: { installed: true, loggedIn: true, path: '/bin/false', version: '1' } } } : {}),
+    };
+  } });
+  const tty = new TTY(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp/proj', terminalProgram: 'unknown' });
+  await home.start();
+  try {
+    tty.emit('data', Buffer.from('goal\r'));
+    await shows(tty, 'brain          off');
+    await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.preferences', cwd: '/tmp/proj' }));
+    tty.emit('data', Buffer.from('b'));
+    await shows(tty, 'brain          on');
+    await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.configure', cwd: '/tmp/proj', agents: true }));
+    tty.emit('data', Buffer.from('\r'));
+    await vi.waitFor(() => expect(sent.some(body => body.kind === 'sessions.create' && body.brain === true)).toBe(true));
+  } finally { await home.stop(); }
+});
+
+it('B30: /brain trust and untrust persist an explicit repository choice', async () => {
+  const sent: RequestBody[] = [];
+  const client = Object.assign(new EventEmitter(), { async request(body: RequestBody): Promise<SuccessResponse> {
+    sent.push(body); return { id: randomUUID(), ok: true, ...(body.kind === 'settings.get' ? { settings: { theme: 'graphite' as const } } : {}), ...(body.kind === 'sessions.list' ? { sessions: [] } : {}), ...(body.kind === 'keys.list' ? { keys: [] } : {}) };
+  } });
+  const tty = new TTY(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp/proj', terminalProgram: 'unknown' });
+  await home.start();
+  try {
+    tty.emit('data', Buffer.from('/brain trust\r'));
+    await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.configure', cwd: '/tmp/proj', trusted: true }));
+    tty.emit('data', Buffer.from('/brain untrust\r'));
+    await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.configure', cwd: '/tmp/proj', trusted: false }));
+  } finally { await home.stop(); }
+});
