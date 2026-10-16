@@ -70,7 +70,7 @@ export function validateQueueRequest(value: unknown): QueueRequest {
   if (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isSafeAbsolutePath(v.cwd) || !isPermissionForEngine(v.engine, v.permission) || !(v.effort === null || isEffortForEngine(v.engine, v.effort))
     || v.firstMessage !== undefined && !isFirstMessage(v.firstMessage) || v.brain !== undefined && typeof v.brain !== 'boolean' || v.useWorktree !== undefined && typeof v.useWorktree !== 'boolean') throw new ValidationError('Invalid queued agent');
   if (v.engine === 'ai-term' && v.auth.kind !== 'key') throw new ValidationError('AI Term agent needs an API key');
-  return { engine: v.engine, model: v.model, auth: v.auth, cwd: v.cwd, permission: v.permission, effort: v.effort as Effort | null, ...v.firstMessage !== undefined ? { firstMessage: v.firstMessage } : {}, ...v.useWorktree !== undefined ? { useWorktree: v.useWorktree } : {} };
+  return { engine: v.engine, model: v.model, auth: v.auth, cwd: v.cwd, permission: v.permission, effort: v.effort as Effort | null, ...v.firstMessage !== undefined ? { firstMessage: v.firstMessage } : {}, ...v.brain !== undefined ? { brain: v.brain } : {}, ...v.useWorktree !== undefined ? { useWorktree: v.useWorktree } : {} };
 }
 // What queue.add carries (the daemon adds id, time and state).
 export function validateQueueAdd(value: Record<string, unknown>): { trigger: QueueTrigger; limit: QueueLimit; request: QueueRequest } {
