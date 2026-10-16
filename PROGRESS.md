@@ -1,6 +1,51 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 29e6e40 fix: retain per-agent brain choices through queue normalization
+Last commit: Part A handover (this commit)
+Roadmap step: 2026-10-16 long run · Part A B30 done · Parts B and C pending
+Branch: main. Started at 20dbba9; git pull --ff-only was already up to date.
+
+## What works
+- Brain defaults off; explicitly saved global on remains on. The start box shows a brain line; b changes this agent and remembers the choice by canonical repository id, including preset changes and queued starts.
+- All three engines receive the same <=150-line, <=64 KiB brain-index.md with folders, entry points, import ranks, and a full-map pointer. Starts use immutable content-addressed snapshots; the native read tool can page only the matching full-map snapshot while all unrelated external paths remain jailed.
+- Trust defaults off. /brain trust allows priced model summaries; /brain untrust removes them from indexes, stops later model batches, and cannot be undone by an in-flight build. Untrusted native full-map snapshots strip cached model notes too. Unsafe names are dropped and counted.
+- AGENTS.md stale command/API-key/credential wording corrected. Architecture usage/worktree wording and section ordering corrected. D58 now holds Yaniv's add-on decision; the old Linux proposal is preserved as D60 (D59 was already Windows).
+
+## What's next
+- Part B: inventory every installed skill, agent and command definition in the specified D48 roots; commit and push before Part C.
+- Part C: D58 core and /plan, /prompt, /explain pilots from the complete brief supplied during this run.
+
+## Manual checks
+- Stub engines: ran · daemon tests assert all engine argv and native full-map paging; headless homepage tests exercise brain/trust/presets/queue.
+- Hidden Electron smoke: ran · `9 passed (36.6s)` with temporary state; no visible app or computer use.
+- Live CLI/index use: needs Yaniv · cd ~/ai-term && npm run dev (start an agent with b on after /brain).
+- Live trust changes: needs Yaniv · cd ~/ai-term && npm run dev (/brain trust, optional model pass, /brain untrust).
+
+## Gotchas
+- Prompt checkpoint matched. The prompt omitted the baseline 7 opt-in credential-store skips; none were enabled because real credentials/keychain reads are forbidden.
+- D58 conflicted with an existing proposed Linux decision; only its identifier moved, no pinned design was reopened.
+- RTK.md is not present in this checkout. No behavior was inferred from that missing include.
+- No CI added. No npm dependencies added. Real ~/.ai-term and Yaniv's daemon remain untouched.
+- Review: 0 CRITICAL, 1 HIGH, 5 unique MEDIUM, 0 LOW; all fixed. HIGH: trust revocation. MEDIUM: shared index replacement, native full-map access, preset repo preference, queue choice omission, queue normalizer omission. TS and security follow-up reviews found no unresolved issues; general code review independently confirmed preset/native-read defects. Existing regression tests also caught bad-settings fallback and README summary mismatch; both fixed.
+- TDD commits: 98195a9, caaefd2 (RED) → 3f3fc25 (GREEN); ffb3c7c (review RED) → 2e72af6 (GREEN); 7aae75c (queue RED) → 29e6e40 (GREEN). Evidence: .github/tdd/b30.tdd.md.
+- Checks on final code: typecheck exit 0 (`tsc --noEmit && tsc --noEmit -p app/tsconfig.json`); lint exit 0 (`eslint .`); build `ESM ⚡️ Build success in 41ms`; app:build `✓ built in 59ms`.
+- Full suite twice in succession: `Test Files 254 passed (254)`; `Tests 1712 passed | 7 skipped (1719)`; durations 33.98s, 33.32s. Native opt-in skips unchanged.
+- Verification scan: 0 forbidden process/log constructs in changed production files; git diff --check clean. Initial scoped coverage: 97.52% lines, 85.04% statements, 74.73% branches; review regressions added afterwards.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Trust-qualified data: src/shared/brain.ts renders a short factual index, not agent instructions. Model prose enters it only with an explicit repository trust setting, because reading extra context costs tokens and repository text can carry misleading instructions.
+- Immutable start snapshot: src/daemon/brain.ts hashes map data plus trust into a private snapshot path. A later build or trust change cannot replace what an already-starting agent was approved to read.
+- Narrow read capability: src/agent/tools.ts permits the exact full-map pointer attached to the start and serves its matching snapshot. It does not open the rest of AI Term's private folder or relax the repository jail.
+
+---
+
+# Previous run (2026-10-15)
+
+## Checkpoint
 Last commit: see the handover commit (Part C, v1.0.2 /brain) — this run's last
 Roadmap step: run 2026-10-15 (4), Claude Code, Opus 5.5 (the prompt was written for Codex; Yaniv asked Claude to run it), long run A–C: all three done · A v0.9.3 · B v1.0.1 install and docs · C v1.0.2 /brain
 Branch: main, pushed after each part. Started at cf6e64e after `git pull --ff-only` (already up to date). macOS 26.5.1 (arm64); no CI by Yaniv's choice, every check runs on this Mac.
