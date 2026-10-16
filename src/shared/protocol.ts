@@ -137,7 +137,11 @@ export type Request = {
 } | {
     kind: 'settings.set';
     patch: SettingsPatch;
-} | {kind:'extensions.list';cwd:string} | {kind:'extensions.read';cwd:string;extensionId:string} | {kind:'extensions.toggle';cwd:string;extensionId:string;enabled:boolean} | {
+} | {kind:'addons.plan';name:string;args:string;cwd:string;target:import('./addons.js').AddonTarget}
+  | {kind:'addons.start';receipt:string}
+  | {kind:'addons.result'|'addons.approve';sessionId:string}
+  | {kind:'addons.step';sessionId:string;step:number}
+  | {kind:'extensions.list';cwd:string} | {kind:'extensions.read';cwd:string;extensionId:string} | {kind:'extensions.toggle';cwd:string;extensionId:string;enabled:boolean} | {
     kind: 'sessions.list';
 } | {
     kind: 'engines.status';
@@ -251,6 +255,9 @@ export type NotifierState = 'ready' | 'not built' | 'launch failed' | 'none';
 export interface SuccessResponse {
     id: string;
     ok: true;
+    addonAsk?: import('./addons.js').AddonAsk;
+    addonResult?: import('./addons.js').AddonResult | null;
+    savedPlan?: string;
     kind?: 'hello';
     protocol?: number;
     version?: string;

@@ -69,8 +69,12 @@ it('the single popup never starts on Enter, and Space reveals only the next expl
   panel.key('enter'); expect(start).not.toHaveBeenCalled();
   panel.setAsk({ receipt: randomUUID(), name: 'plan', summary: 'Plan', cwd: '/tmp/repo', target: { engine: 'claude-code', model: null, auth: { kind: 'account' } }, brain: 'none', brainNeed: 'recommended', worktree: false, readOnly: true, files: [], inputTokens: { low: 100, high: 200 }, outputTokens: { low: 100, high: 500 }, priceUsd: { low: 0, high: 0 }, subscription: true });
   panel.key('enter'); expect(start).not.toHaveBeenCalled(); panel.key('b'); expect(build).toHaveBeenCalledOnce();
-  panel.key('y'); expect(start).toHaveBeenCalledOnce();
-  panel.setResult({ ...fixtures.explain, chunks: [...fixtures.explain.chunks, ['Second idea', 'Example: src/b.ts:1.', 'You are here: src/b.ts.', 'Quick check: where next?']] });
+  // b owns the next action until the refreshed estimate is shown.
+  expect(start).not.toHaveBeenCalled();
+  const confirm = new AddonPanel(() => {}, () => {}, { start, build, approve, step, copy, choose: () => {} });
+  confirm.setAsk({ receipt: randomUUID(), name: 'prompt', summary: 'Audit', cwd: '/tmp/repo', target: { engine: 'claude-code', model: null, auth: { kind: 'account' } }, brain: 'none', brainNeed: 'none', worktree: false, readOnly: true, files: [], inputTokens: { low: 100, high: 200 }, outputTokens: { low: 100, high: 500 }, priceUsd: { low: 0, high: 0 }, subscription: true });
+  confirm.key('y'); expect(start).toHaveBeenCalledOnce();
+  panel.setResult({ ...fixtures.explain, recap: [...fixtures.explain.recap], diagram: [...fixtures.explain.diagram], chunks: [...fixtures.explain.chunks.map(c => [...c]), ['Second idea', 'Example: src/b.ts:1.', 'You are here: src/b.ts.', 'Quick check: where next?']] });
   expect(panel.lines.join('\n')).not.toContain('Second idea'); panel.key('space'); expect(panel.lines.join('\n')).toContain('Second idea');
   panel.key('space'); expect(panel.lines.slice(-3)).toEqual(fixtures.explain.recap);
 });

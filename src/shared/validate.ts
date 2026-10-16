@@ -145,6 +145,12 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=v.kind==='worktrees.check'?['path']:['path','fingerprint','confirm'];
             if(!isSafeAbsolutePath(v.path)||v.kind==='worktrees.delete'&&(!isFingerprint(v.fingerprint)||v.confirm!==undefined&&!isWorktreeBranch(v.confirm)))throw new ValidationError('Invalid worktree request');
             break;
+        case 'addons.plan':
+            fields=['name','args','cwd','target'];if(!addonName(v.name)||!isFirstMessage(v.args)||!String(v.args).trim()||Buffer.byteLength(String(v.args))>10000||!await validCwd(v.cwd)||!isAddonTarget(v.target))throw new ValidationError('Invalid add-on request');break;
+        case 'addons.start':
+            fields=['receipt'];if(!isUUID(v.receipt))throw new ValidationError('Invalid add-on approval');break;
+        case 'addons.result': case 'addons.approve': case 'addons.step':
+            fields=v.kind==='addons.step'?['sessionId','step']:['sessionId'];if(!isUUID(v.sessionId)||v.kind==='addons.step'&&(!Number.isSafeInteger(v.step)||Number(v.step)<0||Number(v.step)>23))throw new ValidationError('Invalid add-on result request');break;
         case 'sessions.create':
             fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login','useWorktree','brain','brainMention'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
@@ -674,3 +680,4 @@ export function validateMcpRequest(value:unknown):string[]{
  if(Object.keys(v).some(k=>k!=='id'&&!fields.includes(k)&&k!=='kind')||Buffer.byteLength(JSON.stringify(v))>64*1024)throw new ValidationError('Invalid MCP request');return fields;
 }
 export function parseMcpRequest(value:unknown):McpRequest{validateMcpRequest(value);return value as McpRequest;}
+import { addonName, isAddonTarget } from './addons.js';
