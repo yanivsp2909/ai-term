@@ -19,3 +19,12 @@ it('Part B: inventory rows have provenance, purpose, quality, overlap, license a
   const suggestions = text.split('## Additional command suggestions')[1] ?? '';
   expect(suggestions.split('\n').filter(line => line.startsWith('- `/'))).toHaveLength(10);
 });
+
+
+it('Part B review: harmless skill names keep exact provenance and overlaps require shared subject matter', async () => {
+  const text = await readFile(new URL('../docs/addons/inventory.md', import.meta.url), 'utf8');
+  expect(text).toContain('~/.agents/skills/ask-sonner/SKILL.md');
+  expect(text).not.toContain('a[redacted]');
+  const adRow = text.split('\n').find(line => line.startsWith('| ad-manager ')) ?? '';
+  expect(adRow).not.toContain('adhd');
+});
