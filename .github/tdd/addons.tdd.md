@@ -8,5 +8,6 @@ All tests use stub engines and temporary state. The real PTY fixture executes a 
 | All engine handoffs use Ask; read-only pilots expose constrained tools | 89fdcaf: absent argv support failed assertions | bf1925d: engine/UI integration and stub pilots passed |
 | Scanner-detected entropy secrets never reach the first message; echoed markers remain pending; changed bundle metadata/extra files refuse reuse | 171f2b8: five review regressions failed | Review fix commit: all passed |
 | Literal submitted placeholders survive; selected long-plan steps remain visible and pageable; actual usage appears after results | c36a556: eight accumulated review regressions failed | Review fix commit: all passed, including protocol/flow actual-usage integration |
+| Existing model/folder menu actions stay in place; README and help list all pilot popup keys | Full suite at 7412ad4 reproduced three menu failures; follow-up RED contract commit failed | Menu fix commit: menu/keyboard contracts passed |
 
 Fresh high-effort TypeScript and security reviewers reported one HIGH and five unique MEDIUM issues, all covered above. The native loader additionally verifies the content-addressed body hash before adding bundle instructions. Full verification and review follow-up results are recorded in PROGRESS.md.

@@ -180,6 +180,9 @@ Homepage slash commands:
 
 | Keys / action | Where and behavior |
 |---|---|
+| Add-on e / m / b / y / Enter / Esc | Engine or key / model / free local brain first / start / no action / close |
+| /plan a / ↑↓ / PgUp/PgDn / s | Approve and save / select step / page details / start that step in Ask mode in a worktree |
+| /prompt c · /explain Space | Copy improved diff / next chunk, then three-line recap |
 | ↑ / ↓ | Slash menu selects a command with wrapping; otherwise homepage selects session; pickers/settings select rows |
 | Enter | Slash menu picks highlighted command (`/theme`, `/effort`, `/mode` insert argument prefixes); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |
 | Tab | Complete the highlighted slash command; with an argument, cycle its values |
