@@ -264,6 +264,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     const v=value as Record<string,unknown>;
     if(!isUUID(v.id)||v.ok!==true)throw new ValidationError('Invalid daemon response');
     if(v.proof!==undefined&&(typeof v.proof!=='string'||!/^[0-9a-f]{64}$/.test(v.proof)))throw new ValidationError('Invalid daemon hello');
+    if(v.addonUsage!==undefined&&v.addonUsage!==null&&!isTaskUsage(v.addonUsage))throw new ValidationError('Invalid add-on usage');
     if(v.kind!==undefined && (v.kind!=='hello'||v.protocol!==1||typeof v.version!=='string'||!/^[A-Za-z0-9._-]{1,40}$/.test(v.version)||!Number.isSafeInteger(v.daemonPid)||Number(v.daemonPid)<2))throw new ValidationError('Invalid daemon hello');
     if(v.snapshot!==undefined&&(typeof v.snapshot!=='string'||!isSize(v.cols,v.rows)))throw new ValidationError('Invalid daemon snapshot');
     if(v.copy!==undefined)validateSessionText(v.copy);
@@ -432,7 +433,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
 function isReviewState(value: unknown): boolean { try { validateReviewState(value); return true; } catch { return false; } }
 function isTestResult(value: unknown): boolean { try { validateTestResult(value); return true; } catch { return false; } }
 function isLimit(value: unknown): boolean { return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 && 'resets' in value && (value.resets === null || typeof value.resets === 'string' && /^\d{2}:\d{2}$/.test(value.resets)); }
-function isTaskUsage(value: unknown): boolean {
+export function isTaskUsage(value: unknown): value is import('./protocol.js').TaskUsage {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const t = value as Record<string, unknown>, keys = Object.keys(t);
     return keys.every(k => ['tokens', 'costUsd', 'unknownPrice'].includes(k)) && 'tokens' in t && 'costUsd' in t && Number.isSafeInteger(t.tokens) && isAmount(t.tokens) && (t.costUsd === null || isAmount(t.costUsd)) && (t.unknownPrice === undefined || t.unknownPrice === true);

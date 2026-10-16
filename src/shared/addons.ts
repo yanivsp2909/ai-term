@@ -48,6 +48,7 @@ export function extractAddonResult(source: string, nonce: string, name: string):
   const begin = `RESULT_${nonce}_BEGIN`, end = `RESULT_${nonce}_END`, start = source.lastIndexOf(begin), finish = source.indexOf(end, start + begin.length);
   if (start < 0 || finish < 0) return null;
   const body = source.slice(start + begin.length, finish).trim();
+  if (body === '(the JSON result goes here)') return null;
   return parseAddonResult(body, name);
 }
 export function validateAddonAsk(value: unknown): AddonAsk {

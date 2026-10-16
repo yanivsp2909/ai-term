@@ -1,6 +1,6 @@
 import type { RequestBody } from '../connection.js';
-import type { SuccessResponse } from '../../shared/protocol.js';
-import { validateSession } from '../../shared/validate.js';
+import type { SessionInfo, SuccessResponse } from '../../shared/protocol.js';
+import { isTaskUsage, validateSession } from '../../shared/validate.js';
 import { parseAddonResult, validateAddonAsk, type AddonAsk, type AddonTarget } from '../../shared/addons.js';
 import { validateBrainPlan } from '../../shared/brain.js';
 import { AddonPanel } from './addon-panel.js';
@@ -23,6 +23,7 @@ export class AddonFlow {
   private async action(work: () => Promise<void>): Promise<void> { try { await work(); } catch (error) { this.panel.wait(error instanceof Error ? error.message : 'Add-on operation failed'); } this.options.changed(); }
   async open(): Promise<void> { this.ended = false; if (this.session) { if (!this.resultReady) await this.poll(); } else await this.action(() => this.estimate()); }
   dispose(): void { this.ended = true; if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
+  update(session: SessionInfo): void { if(session.id===this.session)this.panel.setUsage(session.taskUsage??null); }
   private async estimate(): Promise<void> { const target = this.targets[this.choice]; if (!target) throw new Error('No add-on engine available'); this.ask = validateAddonAsk((await this.options.request({ kind: 'addons.plan', name: this.name, args: this.args, cwd: this.cwd, target })).addonAsk); if (!this.ended) this.panel.setAsk(this.ask); }
   private async choose(kind: 'engine' | 'model'): Promise<void> {
     const current = this.targets[this.choice]; if (!current) return;
@@ -37,6 +38,7 @@ export class AddonFlow {
     try {
       const response = await this.options.request({ kind: 'addons.result', sessionId: this.session });
       if (this.ended) return;
+      if(response.addonUsage!==undefined){if(response.addonUsage!==null&&!isTaskUsage(response.addonUsage))throw new Error('Invalid add-on usage');this.panel.setUsage(response.addonUsage);}
       if (response.addonResult) { this.panel.setResult(parseAddonResult(JSON.stringify(response.addonResult), this.name)); this.resultReady = true; this.options.changed(); return; }
     } catch (error) { this.panel.wait(error instanceof Error ? error.message : 'Add-on result unavailable'); this.options.changed(); return; }
     this.timer = setTimeout(() => { void this.poll(); }, 1000); this.timer.unref();

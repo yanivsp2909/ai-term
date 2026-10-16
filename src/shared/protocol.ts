@@ -257,6 +257,7 @@ export interface SuccessResponse {
     ok: true;
     addonAsk?: import('./addons.js').AddonAsk;
     addonResult?: import('./addons.js').AddonResult | null;
+    addonUsage?: TaskUsage | null;
     savedPlan?: string;
     kind?: 'hello';
     protocol?: number;

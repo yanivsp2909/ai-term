@@ -11,6 +11,7 @@ export class TextPanel {
   private lines: Line[] | null = null;
   constructor(private readonly title: string, private readonly changed: () => void, private readonly close: () => void, private readonly waiting = '· checking') {}
   set(lines: Line[]): void { this.lines = lines; this.changed(); }
+  resetScroll(): void { this.offset = 0; }
   key(key: string): void {
     if (key === 'escape') { this.close(); return; }
     const delta = key === 'up' ? -1 : key === 'down' ? 1 : key === 'page-up' ? -this.page : key === 'page-down' ? this.page : 0;

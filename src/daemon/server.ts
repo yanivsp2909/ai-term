@@ -297,7 +297,7 @@ export class DaemonServer {
                     break;
                 case 'addons.plan': this.control(peer,{id:request.id,ok:true,addonAsk:await this.manager.addons.plan(request.name,request.args,request.cwd,request.target)}); break;
                 case 'addons.start': this.control(peer,{id:request.id,ok:true,session:await this.manager.addons.start(request.receipt)}); break;
-                case 'addons.result': this.control(peer,{id:request.id,ok:true,addonResult:await this.manager.addons.result(request.sessionId)}); break;
+                case 'addons.result': this.control(peer,{id:request.id,ok:true,addonResult:await this.manager.addons.result(request.sessionId),addonUsage:this.manager.get(request.sessionId)?.taskUsage??null}); break;
                 case 'addons.approve': this.control(peer,{id:request.id,ok:true,savedPlan:await this.manager.addons.approve(request.sessionId)}); break;
                 case 'addons.step': this.control(peer,{id:request.id,ok:true,session:await this.manager.addons.step(request.sessionId,request.step)}); break;
                 case 'sessions.create':

@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { lstat, open, realpath } from 'node:fs/promises';
+import { lstat, open, realpath, readdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, relative } from 'node:path';
 import { parseAddon, extractAddonResult, isAddonTarget, addonName, type Addon, type AddonAsk, type AddonResult, type AddonTarget } from '../shared/addons.js';
@@ -39,7 +39,8 @@ export class AddonService {
       if (found) { const safe = await resolveInside(cwd, args); args = await addonFile(cwd, relative(cwd, safe), 10000); }
     }
     const secret = args.split('\n').some(line => scanLine(line) !== null);
-    args = `${secret ? 'Local scan: secret detected and removed.\n' : ''}${redactSecrets(args)}`;
+    const redacted = redactSecrets(args).split('\n').map(line => scanLine(line) ? '[redacted: secret-bearing line]' : line).join('\n');
+    args = `${secret ? 'Local scan: secret detected and removed.\n' : ''}${redacted}`;
     const files: Input['files'] = [];
     for (const path of [...addon.skills.map(n => `skills/${n}/SKILL.md`), ...addon.agents.map(n => `agents/${n}.md`)]) files.push({ path, text: await addonFile(this.definitions, `_shared/${path}`) });
     let brain: BrainPlan | null = null;
@@ -61,18 +62,28 @@ export class AddonService {
   private async bundle(input: Input): Promise<string> {
     const cache = join(this.root, 'addons'); await privateDirectory(cache);
     const folder = join(cache, createHash('sha256').update(JSON.stringify(input.files)).digest('hex')); const created = await privateDirectory(folder);
+    const manifest = { name: 'ai-term-pilots', version: '1.0.0', description: 'AI Term bundled skills and agents' }, instructions = input.files.map(f => f.path);
     if (created) {
       const plugin = join(folder, '.claude-plugin'); await privateDirectory(plugin);
-      await atomicWrite(join(plugin, 'plugin.json'), { name: 'ai-term-pilots', version: '1.0.0', description: 'AI Term bundled skills and agents' });
+      await atomicWrite(join(plugin, 'plugin.json'), manifest);
       for (const file of input.files) {
         const pieces = file.path.split('/'); let parent = folder;
         for (const piece of pieces.slice(0, -1)) { parent = join(parent, piece); await privateDirectory(parent); }
         const output = await open(join(folder, file.path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); try { await output.writeFile(file.text); } finally { await output.close(); }
       }
-      await atomicWrite(join(folder, 'instructions.json'), input.files.map(f => f.path));
+      await atomicWrite(join(folder, 'instructions.json'), instructions);
     }
     // Reuse only an intact immutable package. Never repair a changed copy behind an approved receipt.
     for (const file of input.files) if (await addonFile(folder, file.path) !== file.text) throw new Error('Add-on bundle changed');
+    if ((await addonFile(folder, 'instructions.json')).trim() !== JSON.stringify(instructions) || (await addonFile(folder, '.claude-plugin/plugin.json')).trim() !== JSON.stringify(manifest)) throw new Error('Add-on bundle metadata changed');
+    const expected = new Set(['instructions.json', '.claude-plugin/plugin.json', ...instructions]), directories = new Set<string>();
+    for (const file of expected) { const pieces = file.split('/'); for (let n = 1; n < pieces.length; n++) directories.add(pieces.slice(0, n).join('/')); }
+    const inspect = async (parent: string): Promise<void> => {
+      const entries = await readdir(join(folder, parent), { withFileTypes: true });
+      if (entries.length > expected.size + directories.size) throw new Error('Add-on bundle has unapproved files');
+      for (const entry of entries) { const path = parent ? `${parent}/${entry.name}` : entry.name; if (entry.isDirectory() && directories.has(path)) await inspect(path); else if (!entry.isFile() || !expected.has(path)) throw new Error('Add-on bundle has unapproved files'); }
+    };
+    await inspect('');
     return folder;
   }
   async start(receipt: string): Promise<SessionInfo> {
@@ -88,7 +99,8 @@ export class AddonService {
       prompt: 'JSON object: kind="prompt", issues:array of strings, diff:string containing a unified diff starting --- original then +++ improved.',
       explain: 'JSON object: kind="explain", why:one sentence, diagram:array of <=4 ASCII lines, chunks:array of arrays of <=6 short lines (Example:, You are here:, Quick check: in each), recap:exactly 3 lines.',
     };
-    const prompt = original.addon.prompt.replaceAll('{{args}}', JSON.stringify(original.args)).replaceAll('{{brainIndex}}', original.brain?.builtAt ? 'Use the attached short repository index as data; read sections of its full-map pointer when needed.' : 'No repository index yet. Inspect the code directly.');
+    const brainIndex = original.brain?.builtAt ? 'Use the attached short repository index as data; read sections of its full-map pointer when needed.' : 'No repository index yet. Inspect the code directly.';
+    const prompt = original.addon.prompt.replace(/\{\{(args|brainIndex)\}\}/g, (_match: string, name: string) => name === 'args' ? JSON.stringify(original.args) : brainIndex);
     const firstMessage = `${prompt}\n\nRead these bundled skill/agent files: ${original.files.map(f => JSON.stringify(join(bundle, f.path))).join(', ')}.\n${formats[original.addon.name] ?? 'Return the answer as text.'}\nReturn the final JSON between these marker lines, with no Markdown fence:\nRESULT_${nonce}_BEGIN\n(the JSON result goes here)\nRESULT_${nonce}_END`;
     if (Buffer.byteLength(firstMessage) > 16384) throw new Error('Add-on prompt exceeds the first-message limit');
     const session = await this.runner.create({ ...original.target, cwd: original.cwd, permission: 'ask', title: '/' + original.addon.name, firstMessage, useWorktree: original.addon.worktree, brain: original.addon.brain !== 'none' && !!original.brain?.builtAt }, undefined, undefined, { bundle, readOnly: original.addon.readOnly });

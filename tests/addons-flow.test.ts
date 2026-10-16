@@ -12,7 +12,7 @@ it('engine/model changes refresh the receipt, b builds only the free brain first
     if (body.kind === 'addons.plan') response.addonAsk = { receipt: randomUUID(), name: 'prompt', summary: 'Audit', cwd: '/tmp', target: body.target, brain: 'none', brainNeed: 'recommended', readOnly: true, worktree: false, files: [], inputTokens: { low: 10, high: 20000 }, outputTokens: { low: 50, high: 1000 }, priceUsd: { low: 0, high: 0 }, subscription: true };
     if (body.kind === 'brain.plan') response.brainPlan = { repo: '/tmp', files: 1, changed: 1, removed: 0, skipped: { binary: 0, large: 0, secret: 0, env: 0 }, builtAt: null, summarize: 0, inputTokens: { low: 0, high: 0 }, outputTokens: { low: 0, high: 0 }, models: [], selected: 0, fingerprint: 'a'.repeat(64), agents: false };
     if (body.kind === 'addons.start') response.session = { id, engine: 'codex', title: 'Prompt', model: null, auth: { kind: 'account' }, cwd: '/tmp', permission: 'ask', status: 'done', statusDetail: 'done', statusSince: now, createdAt: now, exitCode: null, lastOutputAt: null, ctxPercent: null };
-    if (body.kind === 'addons.result') response.addonResult = { kind: 'prompt', issues: ['Checkpoint missing'], diff: '--- original\n+++ improved\n@@ -1 +1 @@\n-build\n+Build and stop.' };
+    if (body.kind === 'addons.result') { response.addonResult = { kind: 'prompt', issues: ['Checkpoint missing'], diff: '--- original\n+++ improved\n@@ -1 +1 @@\n-build\n+Build and stop.' }; response.addonUsage={tokens:1234,costUsd:0.023}; }
     return response;
   };
   const flow = new AddonFlow('prompt', 'Build', '/tmp', targets, { request, started: async () => {}, changed: () => {}, close: () => {}, copy: async s => { copied.push(s); } });
@@ -24,5 +24,6 @@ it('engine/model changes refresh the receipt, b builds only the free brain first
     await vi.waitFor(() => expect(flow.panel.lines.join('\n')).toContain('y starts')); flow.panel.key('y');
     await vi.waitFor(() => expect(flow.panel.lines.join('\n')).toContain('c copies')); flow.panel.key('c');
     await vi.waitFor(() => expect(copied).toHaveLength(1)); expect(copied[0]).toContain('+++ improved');
+    expect(flow.panel.lines.join('\n')).toContain('actual: 1234 tokens · $0.0230');
   } finally { flow.dispose(); }
 });

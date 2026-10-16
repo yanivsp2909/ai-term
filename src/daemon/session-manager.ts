@@ -433,7 +433,7 @@ export class SessionManager extends EventEmitter {
         const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
         // Usage counts API-key sessions (D27). Cost per task (v0.6.1, D55, on by default) also asks a subscription or
         // unknown-auth CLI for its usage, but only for its own token total: never Usage, a budget or a price.
-        const counted=agent&&!agent.login&&this.usage?(authMethod==='api-key'?'usage':agent.engine!=='ai-term'&&settings?.taskCost!==false?'task':null):null;
+        const counted=agent&&!agent.login&&this.usage?(authMethod==='api-key'?'usage':agent.engine!=='ai-term'&&(settings?.taskCost!==false||addon||strictIsolation)?'task':null):null;
         const telemetry=counted&&agent&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model,...(counted==='task'?{taskOnly:true}:{})}):undefined;
         const cliEngine=agent&&agent.engine!=='ai-term'?agent.engine:null;
         // AI Term's agent gets its usage credential through buildAgentEnv at spawn; the CLIs through their own settings here.

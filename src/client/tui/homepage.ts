@@ -1311,6 +1311,7 @@ export class Homepage {
       if(v.kind==='usage.updated'){this.usage=validateUsageSummary(v.usage);this.draw(true);return;}
       if (v.kind === 'session.updated') {
         const session = validateSession(v.session), index = this.sessions.findIndex(s => s.id === session.id);
+        for(const flow of this.addonFlows.values())flow.update(session);
         // D53: a limit is said once, when it appears, with the choice; AI Term never switches accounts by itself.
         if (session.limit && !this.sessions[index]?.limit) this.showNote(this.limitNote(session));
         if (index >= 0) this.sessions[index] = session; else this.sessions.push(session);
