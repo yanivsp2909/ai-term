@@ -12,7 +12,7 @@ For a recommended or required brain, the popup shows none, stale or fresh. When 
 
 `/plan` returns steps grounded in inspected files, with verification and stop conditions. `a` approves and saves the plan privately under `~/.ai-term/plans/<repo id>/`. Approval starts nothing. ↑↓ selects a step; PgUp/PgDn scrolls its details. `s` starts only that step as a normal Ask agent in its own worktree. If isolation cannot be made, nothing starts.
 
-`/prompt` audits the supplied builder prompt as data. It checks contradictions, a missing stop/checkpoint, a cut-off ending, secrets and conflicts with the actual AGENTS.md. A file must be a small regular file inside the selected folder; credential and `.env` files are refused. Detected secrets are removed before submission. The result lists issues and an improved unified diff; `c` copies it. The agent cannot write or run commands.
+`/prompt` audits the supplied builder prompt as data. It checks contradictions, a missing stop/checkpoint, a cut-off ending, secrets and conflicts with the actual AGENTS.md. Relative or absolute file paths must name a small regular file inside the selected folder; credential and `.env` files are refused. Detected secrets are removed before submission. The result lists issues and an improved unified diff; `c` copies it. The agent cannot write or run commands.
 
 `/explain` begins with one sentence explaining why and a tiny ASCII diagram. Each chunk has one idea in at most six short lines, an example from inspected code, a “you are here” line and a quick check question. Space shows the next chunk; it finishes with exactly three recap lines.
 

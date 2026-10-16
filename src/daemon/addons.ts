@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { lstat, open, realpath, readdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { parseAddon, extractAddonResult, isAddonTarget, addonName, type Addon, type AddonAsk, type AddonResult, type AddonTarget } from '../shared/addons.js';
 import type { CreateSession, SessionInfo, SessionText } from '../shared/protocol.js';
 import type { BrainPlan } from '../shared/brain.js';
@@ -33,10 +33,10 @@ export class AddonService {
     if (!addon.engines.includes(target.engine)) throw new Error('Engine unavailable for this add-on');
     cwd = await realpath(cwd);
     if (name === 'prompt' && !args.includes('\n')) {
-      const wanted = join(cwd, args);
-      if (SECRET_FILE.test(args.replaceAll('\\', '/'))) throw new Error('A credential or env file cannot be audited');
+      const wanted = resolve(cwd, args);
+      if ([args, wanted].some(path => SECRET_FILE.test(path.replaceAll('\\', '/')))) throw new Error('A credential or env file cannot be audited');
       let found = false; try { found = (await lstat(wanted)).isFile(); } catch (error) { if (!isFsError(error, 'ENOENT') && !isFsError(error, 'ENOTDIR')) throw error; }
-      if (found) { const safe = await resolveInside(cwd, args); args = await addonFile(cwd, relative(cwd, safe), 10000); }
+      if (found) { const safe = await resolveInside(cwd, args); if(SECRET_FILE.test(safe.replaceAll('\\', '/')))throw new Error('A credential or env file cannot be audited'); args = await addonFile(cwd, relative(cwd, safe), 10000); }
     }
     const secret = args.split('\n').some(line => scanLine(line) !== null);
     const redacted = redactSecrets(args).split('\n').map(line => scanLine(line) ? '[redacted: secret-bearing line]' : line).join('\n');
