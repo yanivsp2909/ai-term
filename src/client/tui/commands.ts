@@ -8,6 +8,9 @@ export const modeLabel=(mode:Permission):string=>mode==='dontAsk'?"! don't ask":
 export const effortValues=(engine:AgentEngine):readonly string[]=>['CLI default',...EFFORT_LEVELS[engine]];
 const none=()=>'';
 export const commandRegistry:readonly Command[]=[
+ {name:'/plan',description:'Propose a step plan; a saves it, s starts a step (asks first)',argumentHint:()=>'<goal>',current:none},
+ {name:'/prompt',description:'Audit a builder prompt read-only; copy the improved diff (asks first)',argumentHint:()=>'<file or text>',current:none},
+ {name:'/explain',description:'Explain inspected code in small chunks; Space advances (asks first)',argumentHint:()=>'<path or question>',current:none},
  {name:'/model',description:'Choose model and provider',current:c=>`${c.model??'CLI default'} · ${c.engine==='codex'?'codex':'claude code'}`},
  {name:'/cd',description:'Choose the next agent folder',current:c=>c.cwd},
  {name:'/skills',description:'Browse and enable skills, agents and commands',current:none},
@@ -53,6 +56,9 @@ export const commandRegistry:readonly Command[]=[
 export const aiSubcommands=['ai','ai --attach <id>','ai --version','ai doctor','ai status-line','ai status-notify <json>','ai agent','ai daemon','ai daemon stop','ai debug stats','ai debug usage','ai debug ls','ai debug shell [cwd]','ai debug attach <id>','ai debug stop <id>','ai debug peek <id>'] as const;
 export const debugActions=aiSubcommands.filter(c=>c.startsWith('ai debug ')).map(c=>c.split(' ')[2]??'');
 export const keyTable:readonly [string,string][]=[
+ ['Add-on e / m / b / y / Enter / Esc','Engine or key / model / free local brain first / start / no action / close'],
+ ['/plan a / ↑↓ / s','Approve and save / select step / start that step in Ask mode in a worktree'],
+ ['/prompt c · /explain Space','Copy improved diff / next chunk, then three-line recap'],
  ['c','Empty field copies Claude last reply; cleaned session fallback (v0.2)'],['u','Empty field opens usage details by period and provider'],['/find ↑↓ / Enter / Esc','Select a hit / select its agent and scroll the preview to it / close'],['/doctor, /usage ↑↓ / PgUp / PgDn / Esc','Scroll / page / close'],
  ['/skills, /agents ←→ / ↑↓ / Space / Enter / Esc','Tab / item / on-off / read-only full file / close'],
  ['Paste','Over 1 line or 200 chars: [pasted · N lines]; 16 KB first-message limit'],

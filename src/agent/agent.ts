@@ -46,6 +46,7 @@ export interface AgentOptions {
   // Streamed model text: a key split across deltas is still caught (display.ts). Without one, each delta is redacted alone.
   redactStream?: () => StreamRedactor;
   brainIndex?: string;
+  readOnly?: boolean;
   bashEnv: Record<string, string>; rg: string | null; maxSteps?: number;
   // AI Term's own folder, kept out of reach of every bash command (bash.ts).
   bashSandbox?: { home: string; protect?: readonly string[]; require?: boolean; shell?: import('./bash.js').ShellDirs };
@@ -202,7 +203,7 @@ export class Agent {
     }, async i => bashPreview(checkCommand(i.command), timeout(i.timeoutSeconds)));
     const skill = this.run<{name:string}>('skill', i=>i.name, async i=>(await this.extension(i.name,'skill')).body);
     const task = this.run<{name:string;prompt:string}>('task', i=>i.name, async (i,signal)=>this.subagent(i.name,i.prompt,signal), async i=>this.taskPreview(i.name,i.prompt), true);
-    return {
+    const tools: ToolSet = {
       ...this.mcpTools(),
       ...(this.options.extensions ? {
         skill: tool({description:'Load an enabled skill by name. Only the listed name and description are initially loaded; use this to read its full instructions.',inputSchema:schema<{name:string}>({name:'string'}, {}, {}),execute:(input,{abortSignal})=>skill(input,abortSignal??new AbortController().signal)}),
@@ -214,6 +215,7 @@ export class Agent {
       bash: tool({ description: 'Run a shell command in the folder with /bin/sh -c. No stdin; output is capped.', inputSchema: schema<{ command: string; timeoutSeconds?: number }>({ command: 'string' }, { timeoutSeconds: 'number' }, { command: 'The command line', timeoutSeconds: 'Time limit in seconds (default 120, at most 600)' }), execute: (input, { abortSignal }) => bash(input, abortSignal ?? new AbortController().signal) }),
       search: tool({ description: this.options.rg ? 'Search file contents in the folder for a regular expression (ripgrep; respects .gitignore).' : 'Search file contents in the folder for plain text.', inputSchema: schema<{ pattern: string; path?: string }>({ pattern: 'string' }, { path: 'string' }, { pattern: this.options.rg ? 'Regular expression' : 'Plain text', path: 'Folder or file to search, relative to the folder' }), execute: (input, { abortSignal }) => search(input, abortSignal ?? new AbortController().signal) }),
     };
+    return this.options.readOnly ? Object.fromEntries(Object.entries(tools).filter(([name]) => name === 'read' || name === 'search')) : tools;
   }
 
   // One message from the user: model requests and tool rounds until the model answers, the user interrupts, or a limit

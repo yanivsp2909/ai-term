@@ -16,8 +16,9 @@ import { atomicWrite } from './store.js';
 
 export interface AddonRunOptions { bundle: string; readOnly: boolean }
 interface Runner {
-  create(request: Exclude<CreateSession, { engine: 'shell' }>, continuation?: undefined, fork?: undefined, addon?: AddonRunOptions): Promise<SessionInfo>;
+  create(request: Exclude<CreateSession, { engine: 'shell' }>, continuation?: undefined, fork?: undefined, addon?: AddonRunOptions, strictIsolation?: boolean): Promise<SessionInfo>;
   text(id: string, lastReply?: boolean): Promise<SessionText>;
+  addonAuthLabel?(target: AddonTarget): Promise<string>;
   brainPlan(cwd: string): Promise<BrainPlan | null>;
 }
 type Input = { addon: Addon; cwd: string; target: AddonTarget; args: string; rawArgs: string; brain: BrainPlan | null; files: { path: string; text: string }[]; hash: string };
@@ -52,7 +53,7 @@ export class AddonService {
     // Inspection varies by repository. This estimate assumes 1–8 rounds and up to 64K context per round; it is not a cap.
     const inputTokens = { low: base + 2000, high: Math.max(base + 2000, 8 * (base + 64000)) }, outputTokens = { low: 500, high: 12000 };
     const subscription = target.auth.kind === 'account', receipt = randomUUID();
-    const ask: AddonAsk = { receipt, name, summary: input.addon.summary, cwd: input.cwd, target, brain: state, brainNeed: input.addon.brain, worktree: input.addon.worktree, readOnly: input.addon.readOnly, files: input.files.map(f => f.path), inputTokens, outputTokens, priceUsd: subscription ? { low: 0, high: 0 } : await this.price(target, inputTokens, outputTokens), subscription };
+    const ask: AddonAsk = { receipt, name, summary: input.addon.summary, cwd: input.cwd, target, authLabel: await this.runner.addonAuthLabel?.(target) ?? (subscription ? 'subscription account' : 'API key'), brain: state, brainNeed: input.addon.brain, worktree: input.addon.worktree, readOnly: input.addon.readOnly, files: input.files.map(f => f.path), inputTokens, outputTokens, priceUsd: subscription ? { low: 0, high: 0 } : await this.price(target, inputTokens, outputTokens), subscription };
     for (const [id, saved] of this.receipts) if (saved.expires < Date.now()) this.receipts.delete(id);
     if (this.receipts.size >= 64) this.receipts.delete(this.receipts.keys().next().value ?? '');
     this.receipts.set(receipt, { input, ask, expires: Date.now() + 600000 }); return ask;
@@ -77,6 +78,7 @@ export class AddonService {
   async start(receipt: string): Promise<SessionInfo> {
     const saved = this.receipts.get(receipt); this.receipts.delete(receipt);
     if (!saved || saved.expires < Date.now()) throw new Error('Add-on approval expired; open the command again');
+    if (!saved.ask.subscription && !saved.ask.priceUsd) throw new Error('Add-on model price is unknown; set it before starting');
     const original = saved.input, current = await this.input(original.addon.name, original.rawArgs, original.cwd, original.target);
     if (current.hash !== original.hash) throw new Error('Add-on input changed; review it again');
     if (original.addon.brain === 'required' && saved.ask.brain !== 'fresh') throw new Error('This add-on needs a fresh brain; press b first');
@@ -107,6 +109,6 @@ export class AddonService {
   async step(id: string, index: number): Promise<SessionInfo> {
     const run = this.runs.get(id); if (!run?.saved || run.result?.kind !== 'plan' || !Number.isSafeInteger(index) || index < 0) throw new Error('Approve the plan before starting a step');
     const step = run.result.steps[index]; if (!step) throw new Error('Plan step not found');
-    return this.runner.create({ ...run.input.target, cwd: run.input.cwd, permission: 'ask', title: step.title.slice(0, 60), firstMessage: step.prompt, useWorktree: true, brain: run.input.addon.brain !== 'none' });
+    return this.runner.create({ ...run.input.target, cwd: run.input.cwd, permission: 'ask', title: step.title.slice(0, 60), firstMessage: step.prompt, useWorktree: true, brain: run.input.addon.brain !== 'none' },undefined,undefined,undefined,true);
   }
 }

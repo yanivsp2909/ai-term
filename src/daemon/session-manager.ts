@@ -85,7 +85,7 @@ import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
 import { link, lstat, open, unlink } from 'node:fs/promises';
 import { closeSync, constants, constants as fsConstants, existsSync, openSync, unlinkSync, writeSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join, sep, resolve } from 'node:path';
 import { MAX_RECORD_COST_USD, validatePriceOverrides } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
@@ -166,6 +166,7 @@ export class SessionManager extends EventEmitter {
     private worktreeRecords=new Map<string,WorktreeRecord>();
     private busyWorktrees=new Set<string>();
     readonly mcp:McpService;
+    readonly addons:AddonService;
     // B25 (v0.6.1): every AI Term agent's in-flight worst cases, checked against the budgets before any request is sent.
     private readonly ledger?:BudgetLedger;
     private readonly taskTimers=new Map<string,ReturnType<typeof setTimeout>>();
@@ -181,6 +182,12 @@ export class SessionManager extends EventEmitter {
     private onLogRecovery = () => this.clearWarning('log');
     constructor(private readonly paths: Paths, private readonly log: Logger, private readonly recipe?: SpawnRecipe, private readonly childUmask?: number, private readonly writeState = atomicWrite, private readonly keys = new KeyStore(paths.root), private readonly usage?:UsageService,private readonly cliEntry=fileURLToPath(new URL('../cli/index.js',import.meta.url))) {
         super();this.mcp=new McpService(new SettingsStore(paths.root),keys,log);
+        this.addons=new AddonService(paths.root,resolve(dirname(cliEntry),'..','..','addons'),this,async(target,input,output)=>{
+            if(target.auth.kind!=='key'||!target.model)return null;
+            const settings=await new SettingsStore(paths.root).get(),key=await keys.view(target.auth.keyId),price=findPrice(this.handoffWriter.prices,key.provider,target.model,overridesFor(settings,key.provider),deploymentAlias(settings,target.model));
+            if(!price)return null;
+            return {low:estimateCost(price,input.low,output.low)??0,high:estimateCost(price,input.high,output.high)??0};
+        });
         if(usage){this.ledger=new BudgetLedger({file:join(paths.root,'budget-reservations.json'),book:reservation=>usage.book(reservation),log,warn:(key,text)=>{if(text)this.warning(`budget-${key}`,text);else this.clearWarning(`budget-${key}`);},busy:id=>{const live=this.sessions.get(id);return !!live&&(live.info.status==='waiting'||(live.statusState?.toolsInFlight??0)>0);}});usage.on('record',(record:UsageRecord)=>this.addTask(record.sessionId,record.inputTokens+record.outputTokens,record.costUsd));usage.on('task',(id:string,tokens:number)=>this.addTask(id,tokens,undefined));}usage?.on('claude-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseClaudeStatus(raw,seq,new Date().toISOString())));usage?.on('codex-status',(id:string,raw:unknown,seq:number)=>this.ingressStatus(id,parseCodexStatus(raw,seq,new Date().toISOString())));usage?.on('ai-term-status',(id:string,raw:unknown,seq:number)=>this.ingressAgentStatus(id,parseAgentStatus(raw,seq,new Date().toISOString())));usage?.setAgentQuery((id,body)=>this.agentQuery(id,body));keys.on('warning',()=>this.keyMetadataWarning());usage?.on('settingsWarning',(on:boolean)=>{if(on)this.warning('usage-settings','Settings could not be read; usage uses last good prices.');else this.clearWarning('usage-settings');});usage?.on('warning',(on:boolean)=>{if(on)this.warning('usage','Usage could not be saved; agents keep running.');else this.clearWarning('usage');}); log.on('writeFailed', this.onLogFailure); log.on('writeRecovered', this.onLogRecovery);
     }
     keyMetadataWarning():void{this.warning('key-metadata','Invalid key metadata entry skipped; other keys remain usable.');}
@@ -332,11 +339,12 @@ export class SessionManager extends EventEmitter {
         try{await this.remove(id);}catch{this.log.error('Retried agent: old record could not be removed');}
         return next;
     }
-    async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{resume?:boolean;conversationId?:string;worktree?:string;branch?:string}, fork?:{startCommit:string}): Promise<SessionInfo> {
+    async create(request: CreateSession | { cwd: string; title?: string }, continuation?:{resume?:boolean;conversationId?:string;worktree?:string;branch?:string}, fork?:{startCommit:string}, addon?:AddonRunOptions, strictIsolation=false): Promise<SessionInfo> {
         const cwdValid=await validCwd(request.cwd);
         if (this.closing || !cwdValid || (request.title !== undefined && !isTitle(request.title)))
             throw new Error('Invalid session request');
         const agent = 'engine' in request && request.engine !== 'shell' ? await this.route(request) : null;
+        if(addon&&(!agent||agent.permission!=='ask'||agent.login))throw new Error('Invalid add-on arguments');
         // v0.8.1: AI Term's agent runs in Don't ask only where its bash is sandboxed; elsewhere the start is refused with why.
         if (agent?.engine === 'ai-term' && agent.permission === 'dontAsk') { const note = dontAskNote(await currentAgentSandbox()); if (note) throw new Error(note); }
         // Read once per start: AI Term's agent takes the theme, and worktrees decide isolation below. Unreadable settings
@@ -364,7 +372,7 @@ export class SessionManager extends EventEmitter {
         const withStatus=Boolean(agent&&!agent.login&&this.usage);
         const codexStatus=withStatus&&agent?.engine==='codex'?{node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})}:undefined;
         const mentioned=brain&&agent?.engine==='codex'?{firstMessage:brainMention(brain.file,agent.firstMessage??'')}:{};
-        const argvRequest=agent?{...agent,...mentioned,...(conversationId?{conversationId}:{}),...(continuation?.resume?{resume:true}:{}),...(codexStatus?{codexStatus}:{}),...(brain&&agent.engine==='claude-code'?{brainFile:brain.file}:{})}:null;
+        const argvRequest=agent?{...agent,...mentioned,...(conversationId?{conversationId}:{}),...(continuation?.resume?{resume:true}:{}),...(codexStatus?{codexStatus}:{}),...(brain&&agent.engine==='claude-code'?{brainFile:brain.file}:{}),...(addon?{addon}:{})}:null;
         let recipe: SpawnRecipe;
         let authMethod: SessionInfo['authMethod'];
         let agentKey: {view:KeyView;models:string[]}|undefined;
@@ -385,7 +393,9 @@ export class SessionManager extends EventEmitter {
             const engine=agent.engine;
             const status = await checkEngine(engine,process.env,undefined,profilePath);
             if (!status.installed || !status.path) throw new Error(`${agent.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`);
+            if(addon&&engine==='claude-code')await checkAddonCli(status.path,addon.readOnly);
             if (agent.auth.kind==='account' && !agent.login && status.loggedIn !== true) throw new Error(status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable');
+            if(addon&&agent.auth.kind==='account'&&status.authMethod!=='subscription')throw new Error('Add-on CLI runs require a confirmed subscription login');
             authMethod = status.authMethod;
             if(agent.auth.kind==='key'){
                 const key=await this.keys.view(agent.auth.keyId);
@@ -419,6 +429,7 @@ export class SessionManager extends EventEmitter {
             // v0.7.4: a fork runs in its own worktree or not at all (never in your checkout).
             if(forkWorktree&&!info.worktree)throw new ForkError("The fork's worktree couldn't be made (the start commit may be gone); nothing started");
         }
+        if((strictIsolation||addon&&!addon.readOnly)&&!info.worktree)throw new Error('Add-on worktree could not be made; nothing started');
         const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
         // Usage counts API-key sessions (D27). Cost per task (v0.6.1, D55, on by default) also asks a subscription or
         // unknown-auth CLI for its usage, but only for its own token total: never Usage, a budget or a price.
@@ -463,7 +474,7 @@ export class SessionManager extends EventEmitter {
                 const endpoint=bound&&binding?binding.endpoint:provider==='ollama'&&isLocalEndpoint(agentKey.view.endpoint)?agentKey.view.endpoint:null;
                 live.agentModels=models;
                 const command={node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})};
-                const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,lsp:settings?.lspDiagnostics===true,...(brain?{brainFile:brain.file}:{}),...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
+                const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,lsp:settings?.lspDiagnostics===true,...(brain?{brainFile:brain.file}:{}),...(addon?{addon}:{}),...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
                 const file=join(dirname(transcript),'agent-secrets.json'),split=splitAgentSecrets(buildAgentEnv(process.env,{secret,endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry}),file,this.paths.root);
                 writeAgentSecrets(file,split.secrets);
                 // An agent that never started leaves no secret behind for long; a restart's newer file keeps its own timer.
@@ -674,6 +685,10 @@ export class SessionManager extends EventEmitter {
         this.releases.add(release);void release.finally(()=>this.releases.delete(release));
     }
     setHandoffWriter(writer:{prices:PriceSnapshot;summarize:Summarize}):void{this.handoffWriter=writer;}
+    async addonAuthLabel(target:import('../shared/addons.js').AddonTarget):Promise<string>{
+        if(target.auth.kind==='key'){const key=await this.keys.view(target.auth.keyId);return `${key.provider} · ${key.label} ····${key.last4}`;}
+        const settings=await new SettingsStore(this.paths.root).get();return `subscription · ${target.auth.profile??(target.engine!=='ai-term'?settings.defaultAccounts?.[target.engine]:undefined)??'own'}`;
+    }
     // v0.6.3 (D55, off by default): only an AI agent that isn't waiting on you or running a tool, to a CLI that is installed
     // and logged in. Account logins only: a key never moves between engines.
     private async handoffSource(id:string,engine:CliEngine,account?:string):Promise<{live:Live;settings:Settings;account:string}>{
@@ -1672,3 +1687,5 @@ export class SessionManager extends EventEmitter {
         this.log.off('writeFailed',this.onLogFailure);this.log.off('writeRecovered',this.onLogRecovery);
     }
 }
+import { AddonService, type AddonRunOptions } from './addons.js';
+import { checkAddonCli } from './addon-cli.js';

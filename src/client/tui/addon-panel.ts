@@ -11,7 +11,7 @@ export class AddonPanel {
   private show(lines: string[]): void { this.lines = lines; this.panel.set(lines.map(text => ({ text, tone: 'ink-2' as const }))); }
   wait(message = 'Running in Ask mode · close this popup to inspect or attach the agent.'): void { this.busy = true; this.show([message, 'Esc closes']); }
   setAsk(ask: AddonAsk): void { this.ask = ask; this.busy = false; this.result = undefined; this.show([
-    `/${ask.name} · ${ask.summary}`, `${ask.target.engine} · ${ask.target.model ?? 'CLI default'} · ${ask.subscription ? 'subscription' : 'API key'} · Ask`,
+    `/${ask.name} · ${ask.summary}`, `${ask.target.engine} · ${ask.target.model ?? 'CLI default'} · ${ask.authLabel ?? (ask.subscription ? 'subscription' : 'API key')} · Ask`,
     `folder: ${ask.cwd}`, `${ask.readOnly ? 'read-only' : 'can edit'} · worktree ${ask.worktree ? 'yes' : 'no'}`,
     `brain: ${ask.brain} · ${ask.brainNeed}`, ...(ask.brainNeed !== 'none' && ask.brain !== 'fresh' ? ['b builds the free local /brain first: folders, entry points and import ranks save repeated exploration.'] : []),
     `uses: ${ask.files.join(', ') || 'prompt only'}`, ...this.estimate(ask),

@@ -295,6 +295,11 @@ export class DaemonServer {
                     await this.manager.deleteWorktree(request.path,request.fingerprint,request.confirm);
                     this.control(peer,{id:request.id,ok:true,deletedWorktree:request.path});
                     break;
+                case 'addons.plan': this.control(peer,{id:request.id,ok:true,addonAsk:await this.manager.addons.plan(request.name,request.args,request.cwd,request.target)}); break;
+                case 'addons.start': this.control(peer,{id:request.id,ok:true,session:await this.manager.addons.start(request.receipt)}); break;
+                case 'addons.result': this.control(peer,{id:request.id,ok:true,addonResult:await this.manager.addons.result(request.sessionId)}); break;
+                case 'addons.approve': this.control(peer,{id:request.id,ok:true,savedPlan:await this.manager.addons.approve(request.sessionId)}); break;
+                case 'addons.step': this.control(peer,{id:request.id,ok:true,session:await this.manager.addons.step(request.sessionId,request.step)}); break;
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
@@ -464,6 +469,8 @@ export class DaemonServer {
             if(request.kind==='sessions.text'){this.control(peer,{id:request.id,ok:false,error:{code:'OPERATION_FAILED',message:error instanceof Error&&error.message==='Session not found'?'Session not found':'Session text unavailable'}});return;}
             const fixed = new Set([
                 'claude not found in PATH','codex not found in PATH','Engine is not logged in','Engine login status unavailable',
+                'Add-on approval expired; open the command again','Add-on input changed; review it again','This add-on needs a fresh brain; press b first','Add-on result does not match its format','Add-on result has the wrong kind','Add-on worktree could not be made; nothing started','Installed Claude CLI lacks add-on loading flags','A credential or env file cannot be audited','Approve the plan before starting a step',
+                'Add-on model price is unknown; set it before starting','Add-on CLI runs require a confirmed subscription login',
                 'Current terminal screen exceeds snapshot frame limit','Session not found','Only exited sessions can be removed','Background service is stopping','Account not found for this engine','This agent has no worktree to diff',...CHECKPOINT_ERRORS,...MERGE_ERRORS,...TEST_ERRORS,...REVIEW_ERRORS,...FORK_ERRORS,'This worktree has no recorded start to diff against','Diff unavailable; git could not read the worktree',PROFILE_OTHER_ENGINE,"Settings unreadable; can't tell which account to use",
                 'Resume needs a finished agent','A shell has no AI conversation to resume','This older Claude agent has no conversation ID',
                 'Conversation already running','Conversation already starting','Invalid session request','Invalid session or title',

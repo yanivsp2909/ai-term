@@ -17,6 +17,8 @@ export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNod
     return result;
 }
 
+import { isAddonBundle } from '../agent/addon-bundle.js';
+import type { AddonRunOptions } from './addons.js';
 import { dirname, resolve } from 'node:path';
 import type { AgentEngine, CliEngine, Permission, Effort, ThemeName, KeyProvider } from '../shared/protocol.js';
 import { isSafeAbsolutePath, isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath, isValidModelId, isThemeName, isEndpoint, isSecret, isKeyProvider } from '../shared/validate.js';
@@ -70,7 +72,7 @@ function codexStatusArgs(command:CodexStatusCommand):string[]{
     const notify=isStatusCommandPath(command.node)&&isStatusCommandPath(command.entry)&&(!source||isStatusCommandPath(command.loader)&&isStatusCommandPath(tsconfig))?[...(source&&command.loader?[TSX_PIN,`TSX_TSCONFIG_PATH=${tsconfig}`]:[]),command.node,...(source&&command.loader?['--import',command.loader]:[]),command.entry,'status-notify']:null;
     return [...(notify?['-c',`notify=[${notify.map(part=>`"${part}"`).join(',')}]`]:[]),'-c','tui.notifications=["agent-turn-complete","approval-requested"]','-c','tui.notification_method="osc9"','-c','tui.notification_condition="always"','-c','tui.terminal_title=["activity","run-state","context-remaining"]'];
 }
-export function buildArgs(request:{engine:CliEngine;model:string|null;permission:Permission;effort?:Effort|null;conversationId?:string;resume?:boolean;firstMessage?:string;foundryEndpoint?:string;openaiKey?:boolean;codexStatus?:CodexStatusCommand;brainFile?:string}):string[] {
+export function buildArgs(request:{engine:CliEngine;model:string|null;permission:Permission;effort?:Effort|null;conversationId?:string;resume?:boolean;firstMessage?:string;foundryEndpoint?:string;openaiKey?:boolean;codexStatus?:CodexStatusCommand;brainFile?:string;addon?:AddonRunOptions}):string[] {
     if(request.engine!=='claude-code'&&request.engine!=='codex'||!isModel(request.model)||!isPermissionForEngine(request.engine,request.permission)||request.effort!==undefined&&!isEffortForEngine(request.engine,request.effort)||request.conversationId!==undefined&&(request.engine!=='claude-code'||!isUUID(request.conversationId))||request.resume!==undefined&&typeof request.resume!=='boolean'||request.resume&&request.engine==='claude-code'&&!request.conversationId||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0'))||request.codexStatus!==undefined&&request.engine!=='codex')throw new Error('Invalid spawn arguments');
     // D41: without --no-daemon the Codex TUI may join a shared background server started elsewhere, whose env and config win over this recipe's env and -c overrides. Codex rejects the flag twice, so only this line adds it.
     // B5: Codex's startup update menu takes Enter as "Update now"; its own check_for_update_on_startup (config_toml.rs, rust-v0.160.1) turns the check off for this session only.
@@ -87,7 +89,9 @@ export function buildArgs(request:{engine:CliEngine;model:string|null;permission
     if(request.model!==null)args.push(`--model=${request.model}`);
     if(request.effort!==undefined&&request.effort!==null)args.push(...(request.engine==='codex'?['-c',`model_reasoning_effort="${request.effort}"`]:[`--effort=${request.effort}`]));
     if(request.conversationId)args.push(`${request.resume?'--resume':'--session-id'}=${request.conversationId}`);
-    args.push(...(PERMISSION_ARGS[request.engine][request.permission]??[]));
+    if(request.addon && (!isAddonBundle(request.addon.bundle) || request.permission !== 'ask')) throw new Error('Invalid add-on arguments');
+    args.push(...(request.engine === 'codex' && request.addon?.readOnly ? ['--ask-for-approval=on-request','--sandbox=read-only'] : PERMISSION_ARGS[request.engine][request.permission]??[]));
+    if(request.engine === 'claude-code' && request.addon) args.push(`--plugin-dir=${request.addon.bundle}`, ...(request.addon.readOnly ? ['--tools=Read,Grep,Glob','--strict-mcp-config'] : []));
     // v1.0.2: the repository map as extra system-prompt text, the path one argv element. Claude Code only: Codex has no
     // flag that adds instructions from a file (its model_instructions_file replaces its own), so the start box offers a
     // first-message mention instead.
@@ -118,12 +122,13 @@ const MAX_AGENT_MODELS=200;
 const absolute=(path:unknown):path is string=>typeof path==='string'&&(path.startsWith('/')||process.platform==='win32'&&isSafeAbsolutePath(path))&&!path.includes('\0')&&path.length<=4096;
 // `ai agent` runs like the status commands: node plus AI Term's entry (source mode adds the tsx loader). No shell, no secret:
 // the model, the deployments it may switch to and the mode are plain argv; the key goes only into buildAgentEnv.
-export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvider;model:string;models:readonly string[];permission:Permission;theme:ThemeName;transcript:string;firstMessage?:string;lsp?:boolean;brainFile?:string}):{executable:string;args:string[]}{
+export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvider;model:string;models:readonly string[];permission:Permission;theme:ThemeName;transcript:string;firstMessage?:string;lsp?:boolean;brainFile?:string;addon?:AddonRunOptions}):{executable:string;args:string[]}{
     const {command}=request;
     if(!absolute(command.node)||!absolute(command.entry)||command.loader!==undefined&&!absolute(command.loader)||command.entry.endsWith('.ts')&&command.loader===undefined)throw new Error('Invalid agent command');
     if(!isKeyProvider(request.provider)||!isValidModelId(request.model)||!request.models.length||request.models.length>MAX_AGENT_MODELS||!request.models.every(isValidModelId)||!request.models.includes(request.model)||!isPermissionForEngine('ai-term',request.permission)||!isThemeName(request.theme)||!absolute(request.transcript)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid agent arguments');
     if(request.brainFile!==undefined&&!isBrainFile(request.brainFile))throw new Error('Invalid brain file');
-    const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--provider=${request.provider}`,`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[]),...(request.lsp===true?[AGENT_LSP_FLAG]:[]),...(request.brainFile!==undefined?[`--brain=${request.brainFile}`]:[])];
+    if(request.addon && (!isAddonBundle(request.addon.bundle) || request.permission !== 'ask')) throw new Error('Invalid add-on arguments');
+    const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--provider=${request.provider}`,`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[]),...(request.lsp===true?[AGENT_LSP_FLAG]:[]),...(request.brainFile!==undefined?[`--brain=${request.brainFile}`]:[]),...(request.addon?[`--addon=${request.addon.bundle}`, ...(request.addon.readOnly?['--read-only']:[])]:[])];
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return {executable:command.node,args};
 }

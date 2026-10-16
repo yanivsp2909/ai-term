@@ -1,3 +1,4 @@
+import { withAddon, isAddonBundle } from './addon-bundle.js';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -20,11 +21,11 @@ import { findRipgrep } from './tools.js';
 import { Transcript } from './transcript.js';
 import { LspPool } from './lsp.js';
 
-export interface AgentArgs { provider: KeyProvider; model: string; models: string[]; theme: ThemeName; transcript: string | null; permission: AgentPermission; lsp: boolean; brain?: string; firstMessage?: string }
+export interface AgentArgs { provider: KeyProvider; model: string; models: string[]; theme: ThemeName; transcript: string | null; permission: AgentPermission; lsp: boolean; brain?: string; addon?: string; readOnly?: true; firstMessage?: string }
 export class AgentUsageError extends Error {}
 // The argv env.ts builds (buildAgentArgs). Anything else is refused: Ask unless the one Don't ask flag is there.
 export function parseAgentArgs(args: readonly string[]): AgentArgs {
-  let provider: KeyProvider | null = null, model: string | null = null, models: string[] = [], theme: ThemeName = 'graphite', transcript: string | null = null, permission: AgentPermission = 'ask', lsp = false, brain: string | undefined, firstMessage: string | undefined;
+  let provider: KeyProvider | null = null, model: string | null = null, models: string[] = [], theme: ThemeName = 'graphite', transcript: string | null = null, permission: AgentPermission = 'ask', lsp = false, brain: string | undefined, addon: string | undefined, readOnly = false, firstMessage: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
     if (arg === '--') { if (i !== args.length - 2) throw new AgentUsageError('Expected one message after --'); firstMessage = args[i + 1]; break; }
@@ -37,13 +38,16 @@ export function parseAgentArgs(args: readonly string[]): AgentArgs {
     else if (arg === AGENT_ASK_FLAG) permission = 'ask';
     else if (arg === AGENT_DONT_ASK_FLAG) permission = 'dontAsk';
     else if (arg === AGENT_LSP_FLAG) lsp = true;
+    else if (name === '--addon' && value && isAddonBundle(value)) addon = value;
+    else if (arg === '--read-only') readOnly = true;
     else if (name === '--brain' && value && isBrainFile(value)) brain = value;
     else throw new AgentUsageError(`Unknown argument ${JSON.stringify(arg.slice(0, 40))}`);
   }
+  if (readOnly && (!addon || permission !== 'ask')) throw new AgentUsageError('Read-only add-ons require Ask and a bundle');
   if (!provider) throw new AgentUsageError('Missing --provider');
   if (!model) throw new AgentUsageError('Missing --model');
   if (!models.includes(model)) models = [model, ...models];
-  return { provider, model, models, theme, transcript, permission, lsp, ...(brain ? { brain } : {}), ...(firstMessage !== undefined ? { firstMessage } : {}) };
+  return { provider, model, models, theme, transcript, permission, lsp, ...(brain ? { brain } : {}), ...(addon ? { addon } : {}), ...(readOnly ? { readOnly: true } : {}), ...(firstMessage !== undefined ? { firstMessage } : {}) };
 }
 
 // The key and credentials are copied out of the environment and deleted from it before anything else runs, so nothing
@@ -87,7 +91,8 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   const screen = new Screen({ write: text => terminal.stdout.write(text), get columns() { return terminal.stdout.columns; }, get rows() { return terminal.stdout.rows; } }, createTheme(parsed.theme === 'auto' ? 'graphite' : parsed.theme));
   const reporter = new HttpReporter(secrets.reporter, () => screen.note("status updates aren't reaching AI Term; its card may lag", 'error'));
   const transcript = new Transcript(parsed.transcript, redact, () => screen.note("the transcript couldn't be saved; the conversation goes on", 'error'));
-  const instructions = parsed.brain ? await withBrain(await loadInstructions(root), parsed.brain) : await loadInstructions(root);
+  let instructions = parsed.brain ? await withBrain(await loadInstructions(root), parsed.brain) : await loadInstructions(root);
+  if (parsed.addon) instructions = await withAddon(instructions, parsed.addon);
   // A Foundry deployment's wire (Responses or Chat Completions) comes from its test, through the daemon's facts.
   const makeModel = async (id: string) => { const wire = parsed.provider === 'foundry' ? await foundryWireFor(id => reporter.facts(id), id) : undefined; return makeProviderModel({ provider: parsed.provider, model: id, key, endpoint, ...(wire ? { wire } : {}) }); };
   let extensionCount=0,extensionCost=0;
@@ -110,7 +115,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
     for (const signal of ['SIGTERM', 'SIGHUP'] as const) process.once(signal, () => { killAllBash(); void lsp?.stopAll(); app.close(); });
     const app = new AgentApp({
       screen, permission: parsed.permission, models: parsed.models, makeModel,
-      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, brainIndex: parsed.brain, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox, ...(lsp ? { diagnostics: lsp } : {}), extensions: reporter, mcp:reporter.mcp, models: parsed.models, makeModel }),
+      agent: io => new Agent({ root, permission: parsed.permission, model: firstModel, modelId: parsed.model, instructions, brainIndex: parsed.brain, readOnly: parsed.readOnly, reporter, transcript, io, redact, redactStream: () => streamRedactor(key), bashEnv, rg, bashSandbox, ...(lsp ? { diagnostics: lsp } : {}), extensions: parsed.readOnly ? undefined : reporter, mcp:parsed.readOnly ? undefined : reporter.mcp, models: parsed.models, makeModel }),
       quit: () => { restore(); void Promise.all([transcript.close(), lsp?.stopAll()]).then(() => resolveExit(0)); },
     });
     if (terminal.stdin.isTTY) terminal.stdin.setRawMode?.(true);

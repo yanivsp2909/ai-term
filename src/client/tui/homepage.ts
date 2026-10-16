@@ -101,7 +101,8 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel;
+  private addonFlows = new Map<string, AddonFlow>();
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -238,6 +239,7 @@ export class Homepage {
     this.options.controls?.off('command', this.onAppCommand);
     this.returnHome?.abort();
     this.ended = true; this.loading = null; this.credentials?.dispose();this.usageForm=undefined;this.worktreeUi=undefined;this.popup=undefined;
+    for(const flow of this.addonFlows.values())flow.dispose();
     if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve?.();
     if (this.noteTimer) clearTimeout(this.noteTimer);
     this.connection.off('event', this.onEvent); this.connection.off('output', this.onOutput); this.connection.off('disconnected', this.onDisconnect);
@@ -406,7 +408,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/dev','/brain'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/dev','/brain','/plan','/prompt','/explain'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -563,6 +565,8 @@ export class Homepage {
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
   private queueSubmit(text:string,message?:MessageField):void{const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.submit(text,selected,message));}
   private async submit(text: string, copyTarget:SessionInfo|null=null,message?:MessageField): Promise<void> {
+    const addonCommand = text.trim().match(/^\/(plan|prompt|explain)(?:\s|$)/)?.[1];
+    if(addonCommand){await this.addonCommand(addonCommand,text.trim().slice(addonCommand.length+1).trim());return;}
     // /send carries its text, paste tokens included, to the agent; it never opens the start box.
     if(text==='/send'||text.startsWith('/send ')){await this.send(text);return;}
     if(message?.hasPastes){this.openBox('start',text,message);await this.checkSelectedEngine();return;}
@@ -772,6 +776,19 @@ export class Homepage {
     this.popup=ask;this.draw(true);
   }
   // v1.0.2 /brain [show | rm]: a map of the repository this homepage's folder is in (where new agents start).
+  private async addonCommand(name:string,args:string):Promise<void>{
+    if(this.popup){this.showNote('close the open popup first');return;}
+    const key=`${this.folder}:${name}`,previous=this.addonFlows.get(key);
+    if(!args&&previous){this.popup=previous.panel;await previous.open();this.draw(true);return;}
+    if(!args){this.showNote(`/${name} ${name==='plan'?'<goal>':name==='prompt'?'<file or text>':'<path or question>'}`);return;}
+    try{
+      const keys=(await this.connection.request({kind:'keys.list'})).keys??[];
+      const targets:AddonTarget[]=modelChoices(keys,this.engines,'ai-term').map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
+      previous?.dispose();
+      const flow=new AddonFlow(name,args,this.folder,targets,{request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{if(this.popup===flow.panel)this.popup=undefined;this.draw(true);},started:response=>this.selectNew(response),copy:this.options.copy});
+      this.addonFlows.set(key,flow);this.popup=flow.panel;await flow.open();this.draw(true);
+    }catch(error){this.showNote(error instanceof Error?error.message:'Add-on unavailable');}
+  }
   private async brainCommand(argument:string):Promise<void>{
     const cwd=this.folder;
     if(argument==='show'){
@@ -1433,3 +1450,6 @@ export async function homepage(connection: import('../connection.js').Connection
   const home: Homepage = new Homepage(connection, { stdin: input, controls: input, truecolor, attachSession: (id, signal) => configuredAttach(connection, id, { stdin: input, home: signal, appTheme: () => home.currentTheme(), themeEvents: input }), splitSessions: (ids, theme, signal) => split(ids, { stdin: input, home: signal, themeEvents: input, connect, theme, truecolor, log: text => log.error(text) }), ...(attachOnStart ? { attachOnStart } : {}), ...(doctor ? { doctor } : {}) });
   try { await Promise.all([home.start(), home.done]); } finally { input.dispose(); }
 }
+import { AddonFlow } from './addon-flow.js';
+import { AddonPanel } from './addon-panel.js';
+import type { AddonTarget } from '../../shared/addons.js';

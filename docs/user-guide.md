@@ -2,6 +2,24 @@
 
 Run `ai` in your terminal. The homepage lists your agents. Type what you want built in the command bar at the bottom. Commands start with `/`; `/help` lists them all, and the README has the [full command and key list](../README.md#commands-and-keys) and the [security model](../README.md#security-model-in-plain-words).
 
+## Plan, check a prompt, or understand code
+
+`/plan <goal>`, `/prompt <file or text>` and `/explain <path or question>` open one add-on popup. It shows what runs, engine/model, folder, whether it can edit, worktree policy, brain status and estimated token/price ranges. Claude Code on your subscription is the default. `e` cycles engines or keys, `m` cycles that choice's models. Key runs always use AI Term's agent, with its normal budgets and Ask prompts. An unpriced key model cannot start; set its price first.
+
+The estimate assumes one to eight inspection rounds with up to 64K context per round. It is a range, not a spending cap. Subscription jobs show $0 API charge and still use subscription limits. No engine runs until you press `y`; Enter alone does nothing. All add-ons use Ask mode. These three pilots only read, so they do not create worktrees.
+
+For a recommended or required brain, the popup shows none, stale or fresh. When missing/stale, `b` builds the free local `/brain` first and refreshes the estimate. The index saves repeated folder, entry-point and import exploration. A required brain must be fresh before starting. Model summaries still require `/brain trust` and their separate approval.
+
+`/plan` returns steps grounded in inspected files, with verification and stop conditions. `a` approves and saves the plan privately under `~/.ai-term/plans/<repo id>/`. Approval starts nothing. ↑↓ selects a step; `s` starts only that step as a normal Ask agent in its own worktree. If isolation cannot be made, nothing starts.
+
+`/prompt` audits the supplied builder prompt as data. It checks contradictions, a missing stop/checkpoint, a cut-off ending, secrets and conflicts with the actual AGENTS.md. A file must be a small regular file inside the selected folder; credential and `.env` files are refused. Detected secrets are removed before submission. The result lists issues and an improved unified diff; `c` copies it. The agent cannot write or run commands.
+
+`/explain` begins with one sentence explaining why and a tiny ASCII diagram. Each chunk has one idea in at most six short lines, an example from inspected code, a “you are here” line and a quick check question. Space shows the next chunk; it finishes with exactly three recap lines.
+
+Esc closes the popup and keeps the agent running. Attach from its card for any normal CLI startup or permission question. Type the same command with no arguments to reopen its last popup in this folder while the homepage runs. A daemon restart keeps saved plan files; pending approval/results are in memory, so start a fresh command after a restart.
+
+Definitions live in AI Term's `addons/<name>/addon.md`, with source-attributed improved copies in `addons/_shared/`. Runtime copies are immutable private bundles under `~/.ai-term/addons/`; AI Term never installs them into Claude/Codex folders or writes them into the target repository. Claude's installed flags are checked before loading the plugin folder; Codex gets explicit file paths, and AI Term's agent loads the files itself. Read-only pilots disable write/shell/MCP/subagent tools in the native agent; Claude gets only Read/Grep/Glob, and Codex uses its read-only sandbox.
+
 One section per area: [Agents](#agents) · [Sessions](#sessions) · [Worktrees](#worktrees) · [Review and merge](#review-and-merge) · [Budgets](#budgets) · [Accounts](#accounts) · [Queue](#queue) · [Dev servers](#dev-servers) · [Diagnostics](#diagnostics) · [Brain](#brain)
 
 ## Agents

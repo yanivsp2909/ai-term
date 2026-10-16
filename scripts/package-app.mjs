@@ -8,7 +8,7 @@ const root=join(dirname(fileURLToPath(import.meta.url)),'..'),out=join(root,'bui
 const info=JSON.parse(readFileSync(join(root,'package.json'),'utf8'));
 function run(file,args){const result=spawnSync(file,args,{stdio:'inherit'});if(result.error||result.status!==0)throw new Error(`Packaging command failed: ${file}`);}
 rmSync(stage,{recursive:true,force:true});mkdirSync(stage,{recursive:true});
-for(const folder of ['app/out','dist','data'])cpSync(join(root,folder),join(stage,folder),{recursive:true});
+for(const folder of ['app/out','dist','data','addons'])cpSync(join(root,folder),join(stage,folder),{recursive:true});
 const dependencies=Object.fromEntries(Object.entries(info.dependencies).filter(([name])=>!['electron','react-dom','@playwright/test','@xterm/xterm','@xterm/addon-fit','@xterm/addon-search','@xterm/addon-web-links','@xterm/addon-webgl'].includes(name)));
 writeFileSync(join(stage,'package.json'),JSON.stringify({name:info.name,version:info.version,type:'module',main:info.main,description:'AI Term desktop terminal',author:'AI Term',dependencies},null,2));
 symlinkSync(join(root,'node_modules'),join(stage,'node_modules'));

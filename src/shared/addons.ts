@@ -8,7 +8,7 @@ export interface Addon {
   skills: string[]; agents: string[]; brain: 'none' | 'recommended' | 'required'; worktree: boolean; readOnly: boolean; prompt: string;
 }
 export interface AddonAsk {
-  receipt: string; name: string; summary: string; cwd: string; target: AddonTarget;
+  receipt: string; name: string; summary: string; cwd: string; target: AddonTarget; authLabel?: string;
   brain: 'none' | 'stale' | 'fresh'; brainNeed: Addon['brain']; worktree: boolean; readOnly: boolean; files: string[];
   inputTokens: { low: number; high: number }; outputTokens: { low: number; high: number };
   priceUsd: { low: number; high: number } | null; subscription: boolean;
@@ -52,6 +52,6 @@ export function extractAddonResult(source: string, nonce: string, name: string):
 }
 export function validateAddonAsk(value: unknown): AddonAsk {
   const p = object(value), range = (v: unknown) => { const r = object(v); return !!r && Object.keys(r).length === 2 && typeof r.low === 'number' && typeof r.high === 'number' && Number.isFinite(r.low) && Number.isFinite(r.high) && r.low >= 0 && r.high >= r.low; };
-  if (!p || Object.keys(p).length !== 14 || !isUUID(p.receipt) || !addonName(p.name) || !text(p.summary, 200) || !isSafeAbsolutePath(p.cwd) || !isAddonTarget(p.target) || !['none', 'stale', 'fresh'].includes(String(p.brain)) || !['none', 'recommended', 'required'].includes(String(p.brainNeed)) || typeof p.worktree !== 'boolean' || typeof p.readOnly !== 'boolean' || !Array.isArray(p.files) || p.files.length > 20 || !p.files.every(f => typeof f === 'string' && /^(?:skills\/[a-z][a-z0-9-]*\/SKILL|agents\/[a-z][a-z0-9-]*)\.md$/.test(f)) || !range(p.inputTokens) || !range(p.outputTokens) || !(p.priceUsd === null || range(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid add-on estimate');
+  if (!p || Object.keys(p).length !== 14 + (p.authLabel === undefined ? 0 : 1) || p.authLabel !== undefined && !text(p.authLabel, 160) || !isUUID(p.receipt) || !addonName(p.name) || !text(p.summary, 200) || !isSafeAbsolutePath(p.cwd) || !isAddonTarget(p.target) || !['none', 'stale', 'fresh'].includes(String(p.brain)) || !['none', 'recommended', 'required'].includes(String(p.brainNeed)) || typeof p.worktree !== 'boolean' || typeof p.readOnly !== 'boolean' || !Array.isArray(p.files) || p.files.length > 20 || !p.files.every(f => typeof f === 'string' && /^(?:skills\/[a-z][a-z0-9-]*\/SKILL|agents\/[a-z][a-z0-9-]*)\.md$/.test(f)) || !range(p.inputTokens) || !range(p.outputTokens) || !(p.priceUsd === null || range(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid add-on estimate');
   return p as unknown as AddonAsk;
 }
