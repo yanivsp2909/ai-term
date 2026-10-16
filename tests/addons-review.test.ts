@@ -51,6 +51,18 @@ it.each(['relative', 'absolute'])('prompt audits %s file paths inside the select
   await f.service.start(ask.receipt);
   expect(f.messages[0]).toContain(body);
 });
+it('prompt file auditing refuses an absolute path outside the selected repository', async () => {
+  const f = await setup(), path = join(f.root, 'outside.md');
+  await writeFile(path, 'Outside repository data.');
+  await expect(f.plan(path)).rejects.toThrow();
+  expect(f.messages).toHaveLength(0);
+});
+it('HIGH review: normalized credential-file aliases are refused before auditing', async () => {
+  const f = await setup();
+  await writeFile(join(f.repo, 'credentials.json'), '{"example":"placeholder"}');
+  await expect(f.plan('credentials.json/.')).rejects.toThrow('credential');
+  expect(f.messages).toHaveLength(0);
+});
 it('MEDIUM review: every selected plan step and approval hint remain visible, and long steps can page', () => {
   const panel = new AddonPanel(() => {}, () => {}, { start: () => {}, build: () => {}, approve: () => {}, step: () => {}, copy: () => {}, choose: () => {} });
   panel.setResult({ kind: 'plan', title: 'Twenty-four steps', steps: Array.from({ length: 24 }, (_, i) => ({ title: `Step ${i + 1}`, prompt: Array.from({ length: 30 }, (_, n) => `Detail ${n + 1}: inspect and test.`).join('\n') })) });
