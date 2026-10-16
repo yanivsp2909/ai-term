@@ -92,3 +92,15 @@ it('bash stops at once when the turn is interrupted', async () => {
   const result = await runBash('sleep 30', { cwd: root, env: buildBashEnv(process.env), signal: abort.signal });
   expect(result.interrupted).toBe(true); expect(Date.now() - started).toBeLessThan(3000);
 });
+
+
+it('B30 review: native read can page only the full map named by its brain index, with unrelated paths still jailed', async () => {
+  const root = await folder(), home = await folder(), dir = join(home, 'brain', 'repo-0123456789');
+  await mkdir(dir, { recursive: true });
+  const indexPath = join(dir, 'brain-index.md'), fullPath = join(dir, 'brain.md');
+  await writeFile(indexPath, '# index'); await writeFile(fullPath, 'one\ntwo\nthree');
+  expect(await readTool(root, { path: fullPath, offset: 2, limit: 1 }, indexPath)).toContain('    2  two');
+  await expect(readTool(root, { path: join(home, 'unrelated'), limit: 1 }, indexPath)).rejects.toThrow('outside');
+  await rm(fullPath); await symlink(join(root, 'anything'), fullPath);
+  await expect(readTool(root, { path: fullPath }, indexPath)).rejects.toThrow();
+});

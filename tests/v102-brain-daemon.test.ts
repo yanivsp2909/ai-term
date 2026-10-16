@@ -117,15 +117,15 @@ it('B30: agents default off; explicit old on survives; per-repository choices ap
   await d.manager.setBrainForAgents(true);
   const claude = await d.manager.create({ ...base, engine: 'claude-code' });
   const indexPath = built.path.replace('brain.md', 'brain-index.md');
-  expect(spawned.at(-1)).toContain(`--append-system-prompt-file=${indexPath}`);
+  expect(spawned.at(-1)?.find(arg=>arg.startsWith('--append-system-prompt-file='))).toMatch(/snapshots.*brain-index\.md$/);
   expect(claude.brain).toBeDefined();
   await d.manager.setBrainPreferences(d.repo, { agents: false });
   const plain = await d.manager.create({ ...base, engine: 'codex' });
   expect(plain.brain).toBeUndefined(); expect(spawned.at(-1)?.at(-1)).toBe('fix it');
   const codex = await d.manager.create({ ...base, engine: 'codex', brain: true });
-  expect(codex.brain).toBeDefined(); expect(spawned.at(-1)?.at(-1)).toContain(indexPath);
+  expect(codex.brain).toBeDefined(); expect(spawned.at(-1)?.at(-1)).toContain('brain-index.md');
   const native = await d.manager.create({ ...base, engine: 'ai-term', model: 'claude-haiku-5', auth: { kind: 'key', keyId: d.key.id }, brain: true });
-  expect(native.brain).toBeDefined(); expect(spawned.at(-1)).toContain(`--brain=${indexPath}`);
+  expect(native.brain).toBeDefined(); expect(spawned.at(-1)?.find(arg=>arg.startsWith('--brain='))).toMatch(/snapshots.*brain-index\.md$/);
   expect(await d.manager.brainPreferences(d.repo)).toMatchObject({ agents: false, trusted: false });
   await d.manager.setBrainPreferences(d.repo, { agents: true });
   expect((await d.manager.brainPlan(d.repo)).agents).toBe(true);
@@ -177,3 +177,38 @@ it('MEDIUM (review): a model pass that fails partway keeps what it already paid 
   await d.manager.brainRemove(d.repo);
   await expect(d.manager.buildBrain(d.repo, stale.fingerprint)).rejects.toThrow('The repository changed since the plan was shown; run /brain again');
 }, 30_000);
+
+
+it('HIGH review: revoking trust stops later model batches and never restores notes to the current index', async () => {
+  let release: () => void = () => {}, started: () => void = () => {}, calls = 0;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const sent = new Promise<void>(resolve => { started = resolve; });
+  const d = await daemon({}, async (_writer, _secret, _endpoint, prompt) => {
+    calls++; started(); await pending;
+    const paths = [...prompt.matchAll(/<file path="([^"]+)">/g)].map(m => m[1]);
+    return { text: paths.map(path => `${path} :: trusted-model-note`).join('\n'), inputTokens: 100, outputTokens: 20 };
+  });
+  await d.manager.setBrainPreferences(d.repo, { trusted: true });
+  for (let i = 0; i < 8; i++) await writeFile(join(d.repo, 'src', `big${i}.ts`), `export const v${i} = 1;\n` + '// pad\n'.repeat(3000));
+  const plan = await d.manager.brainPlan(d.repo);
+  const build = d.manager.buildBrain(d.repo, plan.fingerprint, { keyId: d.key.id, model: 'claude-haiku-5' });
+  const outcome = build.then(() => 'done', () => 'stopped');
+  await sent; await d.manager.setBrainPreferences(d.repo, { trusted: false }); release();
+  await outcome;
+  expect(calls).toBe(1);
+  const path = (await import('../src/daemon/brain.js')).brainPaths(d.home, d.repo).index;
+  expect(await readFile(path, 'utf8')).not.toContain('trusted-model-note');
+});
+
+it('MEDIUM security review: an untrusted start index is immutable when a later trusted writer runs', async () => {
+  const d = await daemon();
+  const plan = await d.manager.brainPlan(d.repo); await d.manager.buildBrain(d.repo, plan.fingerprint);
+  const brain = await import('../src/daemon/brain.js');
+  const index = await brain.readBrain(d.home, d.repo); if (!index) throw new Error('missing index');
+  index.files['src/a.ts'] = { ...index.files['src/a.ts']!, summary: 'trusted-model-note' };
+  const untrusted = await brain.writeBrainIndex(d.home, d.repo, index, false, true);
+  const trusted = await brain.writeBrainIndex(d.home, d.repo, index, true, true);
+  expect(untrusted).not.toBe(trusted);
+  expect(await readFile(untrusted, 'utf8')).not.toContain('trusted-model-note');
+  expect(await readFile(trusted, 'utf8')).toContain('trusted-model-note');
+});

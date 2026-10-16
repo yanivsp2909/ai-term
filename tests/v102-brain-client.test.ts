@@ -1,4 +1,7 @@
 import { expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import headless from '@xterm/headless';
@@ -104,4 +107,25 @@ it('B30: /brain trust and untrust persist an explicit repository choice', async 
     tty.emit('data', Buffer.from('/brain untrust\r'));
     await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.configure', cwd: '/tmp/proj', trusted: false }));
   } finally { await home.stop(); }
+});
+
+
+it('MEDIUM review: cycling to a preset reloads its repository brain choice', async () => {
+  const repoB = await mkdtemp(join(tmpdir(), 'ai-brain-preset-')), sent: RequestBody[] = [];
+  const client = Object.assign(new EventEmitter(), { async request(body: RequestBody): Promise<SuccessResponse> {
+    sent.push(body); return { id: randomUUID(), ok: true,
+      ...(body.kind === 'settings.get' ? { settings: { theme: 'graphite' as const, presets: { other: { engine: 'claude-code' as const, model: null, effort: null, auth: { kind: 'account' as const }, cwd: repoB, permission: 'ask' as const, worktree: false } } } } : {}),
+      ...(body.kind === 'sessions.list' ? { sessions: [] } : {}), ...(body.kind === 'keys.list' ? { keys: [] } : {}),
+      ...(body.kind === 'brain.preferences' ? { brainPreferences: { agents: body.cwd !== repoB, trusted: false } } : {}),
+      ...(body.kind === 'engines.status' ? { engines: { claudeCode: { installed: true, loggedIn: true, path: '/bin/false', version: '1', authMethod: 'subscription' as const }, codex: { installed: true, loggedIn: true, path: '/bin/false', version: '1', authMethod: 'subscription' as const } } } : {}),
+    };
+  } });
+  const tty = new TTY(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp', terminalProgram: 'unknown' });
+  await home.start();
+  try {
+    tty.emit('data', Buffer.from('goal\r')); await shows(tty, 'brain          on');
+    tty.emit('data', Buffer.from('p'));
+    await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.preferences', cwd: repoB }));
+    await shows(tty, 'brain          off');
+  } finally { await home.stop(); await rm(repoB, { recursive: true, force: true }); }
 });

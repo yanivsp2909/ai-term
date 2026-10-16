@@ -58,6 +58,7 @@ it('M2 + L6: an unreadable settings.json keeps worktrees on (the safe default) a
   const m = await manager(paths);
   const agent = await m.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: repo, permission: 'dontAsk', title: 'isolated' });
   expect(agent.worktree).toBeDefined(); expect(agent.cwd).not.toBe(repo);
+  expect(agent.brain).toBeUndefined();
   expect(await readFile(paths.log, 'utf8')).toMatch(/error Settings unreadable; new agents keep their worktrees/);
 });
 

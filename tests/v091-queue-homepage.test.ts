@@ -34,6 +34,7 @@ it('typed: /queue add → the start box queues instead of starting → after fix
   const { tty, requests, type } = await open(body => {
     if (body.kind === 'settings.get') return { settings: { theme: 'graphite', queue: true } };
     if (body.kind === 'engines.status') return { engines: { claudeCode: { installed: true, path: '/bin/claude', version: '1.0.0', loggedIn: true, authMethod: 'subscription' }, codex: { installed: true, path: '/bin/codex', version: '1.0.0', loggedIn: true, authMethod: 'subscription' } }, agentSandbox: { dontAsk: true } };
+    if (body.kind === 'brain.preferences') return { brainPreferences: { agents: true, trusted: false } };
     if (body.kind === 'queue.add') { queued.push(body); return { queue: [] }; }
     return {};
   });
@@ -49,7 +50,7 @@ it('typed: /queue add → the start box queues instead of starting → after fix
   await shows(tty, 'Its limit: a stop time, like until 23:00');
   type('until 23:00\r');
   await shows(tty, '✓ queued · /queue lists it');
-  expect(queued).toEqual([expect.objectContaining({ kind: 'queue.add', trigger: { kind: 'after', agent: 'fixer' }, limit: { until: '23:00' }, request: expect.objectContaining({ engine: expect.any(String), permission: 'ask', cwd: '/tmp' }) })]);
+  expect(queued).toEqual([expect.objectContaining({ kind: 'queue.add', trigger: { kind: 'after', agent: 'fixer' }, limit: { until: '23:00' }, request: expect.objectContaining({ engine: expect.any(String), permission: 'ask', cwd: '/tmp', brain: true }) })]);
   expect(requests.some(body => body.kind === 'sessions.create')).toBe(false);
 });
 
