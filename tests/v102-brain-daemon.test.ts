@@ -52,9 +52,8 @@ async function daemon(settings: Record<string, unknown> = {}, summarize?: Summar
 it('the local pass needs no model: the plan offers it free, the build writes brain.md under the AI Term folder', async () => {
   const d = await daemon();
   const plan = validateBrainPlan(await d.manager.brainPlan(d.repo));
-  expect(plan).toMatchObject({ files: 2, changed: 2, removed: 0, skipped: { binary: 0, large: 0, env: 0, secret: 1, names: 0 }, builtAt: null, summarize: 2, agents: true });
-  expect(plan.models.map(m => m.model)).toEqual(['claude-haiku-5', 'claude-sonnet-5']);
-  expect(plan.models[0]?.priceUsd.high).toBeGreaterThan(0);
+  expect(plan).toMatchObject({ files: 2, changed: 2, removed: 0, skipped: { binary: 0, large: 0, env: 0, secret: 1, names: 0 }, builtAt: null, summarize: 0, agents: false, trusted: false });
+  expect(plan.models).toEqual([]);
   const result = validateBrainResult(await d.manager.buildBrain(d.repo, plan.fingerprint));
   expect(result).toMatchObject({ files: 2, summarized: 0, costUsd: null, model: null });
   expect(result.path.startsWith(join(d.home, 'brain'))).toBe(true);
@@ -75,6 +74,7 @@ it('again: only what changed is planned and priced; a stale plan is refused', as
 
 it('the model pass: summaries and design decisions, secrets kept out, counted in Usage; the next plan prices only what changed', async () => {
   const d = await daemon();
+  await d.manager.setBrainPreferences(d.repo, { trusted: true });
   const plan = await d.manager.brainPlan(d.repo), model = plan.models[0];
   if (!model) throw new Error('no model');
   const result = await d.manager.buildBrain(d.repo, plan.fingerprint, { keyId: model.keyId, model: model.model });
@@ -93,36 +93,63 @@ it('the model pass: summaries and design decisions, secrets kept out, counted in
 
 it('budgets and the per-run cap hold the model pass before anything is sent', async () => {
   const tight = await daemon({ budgets: { daily: 0.000001 } });
+  await tight.manager.setBrainPreferences(tight.repo, { trusted: true });
   const plan = await tight.manager.brainPlan(tight.repo), model = plan.models[0];
   if (!model) throw new Error('no model');
   await expect(tight.manager.buildBrain(tight.repo, plan.fingerprint, { keyId: model.keyId, model: model.model })).rejects.toThrow('The brain would pass your daily budget');
   expect(tight.prompts).toEqual([]);
   const capped = await daemon({ agentCaps: { turns: 100, spendUsd: 0.000001 } });
+  await capped.manager.setBrainPreferences(capped.repo, { trusted: true });
   const plan2 = await capped.manager.brainPlan(capped.repo), model2 = plan2.models[0];
   if (!model2) throw new Error('no model');
   await expect(capped.manager.buildBrain(capped.repo, plan2.fingerprint, { keyId: model2.keyId, model: model2.model })).rejects.toThrow("The brain's model pass would pass the per-run cap in /settings c");
 });
 
-it('agents started afterwards get it (D55, on): Claude Code\'s argv names the file, the card shows its age; switched off, they don\'t; rm deletes it', async () => {
+it('B30: agents default off; explicit old on survives; per-repository choices apply to every engine', async () => {
   const d = await daemon();
   const plan = await d.manager.brainPlan(d.repo); const built = await d.manager.buildBrain(d.repo, plan.fingerprint);
   vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
   const spawned: string[][] = [], real = pty.spawn;
   vi.spyOn(pty, 'spawn').mockImplementation((_file, args, options) => { spawned.push([...args]); return real('/bin/sh', ['-c', 'sleep 30'], { ...options, env: { PATH: '/usr/bin:/bin' } }); });
-  const claude = await d.manager.create({ engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd: d.repo, permission: 'ask', title: 'mapped' });
-  expect(spawned.at(-1)).toContain(`--append-system-prompt-file=${built.path}`);
-  expect(claude.brain?.builtAt).toEqual(expect.any(String));
-  const codex = await d.manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: d.repo, permission: 'ask', title: 'told', firstMessage: 'fix it', brainMention: true });
-  expect(spawned.at(-1)?.at(-1)).toBe(`Before you start, read the repository map AI Term made at ${built.path}.\n\nfix it`);
-  expect(codex.brain).toBeDefined();
-  const plain = await d.manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: d.repo, permission: 'ask', title: 'plain', firstMessage: 'fix it' });
-  expect(spawned.at(-1)?.at(-1)).toBe('fix it'); expect(plain.brain).toBeUndefined();
-  await d.manager.setBrainForAgents(false);
-  const off = await d.manager.create({ engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd: d.repo, permission: 'ask', title: 'unmapped' });
-  expect(spawned.at(-1)?.join(' ')).not.toContain('append-system-prompt-file'); expect(off.brain).toBeUndefined();
+  const base = { model: null, auth: { kind: 'account' as const }, cwd: d.repo, permission: 'ask' as const, firstMessage: 'fix it' };
+  const off = await d.manager.create({ ...base, engine: 'claude-code' });
+  expect(off.brain).toBeUndefined(); expect(spawned.at(-1)?.join(' ')).not.toContain('brain');
+  await d.manager.setBrainForAgents(true);
+  const claude = await d.manager.create({ ...base, engine: 'claude-code' });
+  const indexPath = built.path.replace('brain.md', 'brain-index.md');
+  expect(spawned.at(-1)).toContain(`--append-system-prompt-file=${indexPath}`);
+  expect(claude.brain).toBeDefined();
+  await d.manager.setBrainPreferences(d.repo, { agents: false });
+  const plain = await d.manager.create({ ...base, engine: 'codex' });
+  expect(plain.brain).toBeUndefined(); expect(spawned.at(-1)?.at(-1)).toBe('fix it');
+  const codex = await d.manager.create({ ...base, engine: 'codex', brain: true });
+  expect(codex.brain).toBeDefined(); expect(spawned.at(-1)?.at(-1)).toContain(indexPath);
+  const native = await d.manager.create({ ...base, engine: 'ai-term', model: 'claude-haiku-5', auth: { kind: 'key', keyId: d.key.id }, brain: true });
+  expect(native.brain).toBeDefined(); expect(spawned.at(-1)).toContain(`--brain=${indexPath}`);
+  expect(await d.manager.brainPreferences(d.repo)).toMatchObject({ agents: false, trusted: false });
+  await d.manager.setBrainPreferences(d.repo, { agents: true });
+  expect((await d.manager.brainPlan(d.repo)).agents).toBe(true);
+  const settings = JSON.parse(await readFile(join(d.home, 'settings.json'), 'utf8')) as Record<string, unknown>;
+  expect(settings.brainForAgents).toBe(true);
+  expect(settings.brainRepositories).toBeDefined();
   expect(await d.manager.brainRemove(d.repo)).toBe(true);
-  await expect(d.manager.brainShow(d.repo)).rejects.toThrow('No brain for this repository yet · /brain builds one');
+  await expect(readFile(indexPath, 'utf8')).rejects.toThrow();
 }, 30_000);
+
+it('B30: untrusted repositories cannot run a model pass; trust changes invalidate the offered plan', async () => {
+  const d = await daemon();
+  const untrusted = await d.manager.brainPlan(d.repo);
+  await expect(d.manager.buildBrain(d.repo, untrusted.fingerprint, { keyId: d.key.id, model: 'claude-haiku-5' })).rejects.toThrow('trust');
+  expect(d.prompts).toEqual([]);
+  await d.manager.setBrainPreferences(d.repo, { trusted: true });
+  await expect(d.manager.buildBrain(d.repo, untrusted.fingerprint)).rejects.toThrow('changed');
+  const trusted = await d.manager.brainPlan(d.repo);
+  expect(trusted.models.length).toBeGreaterThan(0);
+  await d.manager.buildBrain(d.repo, trusted.fingerprint, { keyId: d.key.id, model: 'claude-haiku-5' });
+  await d.manager.setBrainPreferences(d.repo, { trusted: false });
+  const indexPath = (await import('../src/daemon/brain.js')).brainPaths(d.home, d.repo).index;
+  expect(await readFile(indexPath, 'utf8')).not.toContain('The src/');
+});
 
 // Part C review (typescript-reviewer): each failed before its fix.
 it('MEDIUM (review): a model pass that fails partway keeps what it already paid for; earlier design notes stay first; a plan made stale by rm is refused', async () => {
@@ -133,6 +160,7 @@ it('MEDIUM (review): a model pass that fails partway keeps what it already paid 
     const paths = [...prompt.matchAll(/<file path="([^"]+)">/g)].map(m => m[1]);
     return { text: [...paths.map(p => `${p} :: Summary ${calls}.`), `DECISION :: Decision ${calls}.`].join('\n'), inputTokens: 900, outputTokens: 60 };
   });
+  await d.manager.setBrainPreferences(d.repo, { trusted: true });
   for (let i = 0; i < 6; i++) await writeFile(join(d.repo, 'src', `big${i}.ts`), `export const v${i} = 1;\n` + '// pad\n'.repeat(3000));
   const plan = await d.manager.brainPlan(d.repo), model = plan.models[0];
   if (!model) throw new Error('no model');
