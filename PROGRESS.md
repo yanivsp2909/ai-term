@@ -1,6 +1,61 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 4a0ef99 fix: resolve prompt files and guard normalized credential paths
+Last commit: Part C final handover (this commit)
+Roadmap step: 2026-10-16 long run · Parts A, B and C done
+Branch: main. Part A pushed at 6b529b2, Part B pushed at a9488f0 before Part C; Part C is pushed with this handover.
+
+## What works
+- Part A B30: brain off by default, remembered per-agent/repository choice, <=150-line index for all engines, trust off by default, safe names and immutable trust-qualified snapshots. Stale AGENTS.md and architecture lines are fixed.
+- Part B: docs/addons/inventory.md has 1,278 definition rows (905 skills, 220 agents, 153 commands), 1,041 distinct bodies, complete provenance/quality/overlap/license/command fields and ten suggestions. All eligible bodies were read read-only; seven denied paths were excluded without content reads.
+- Part C: addons/<name>/addon.md defines /plan, /prompt and /explain. Only their three improved source-attributed assets were built in addons/_shared/: planner, prompt-engineering and code-coach. Runtime bundles are private, content-addressed and verified for exact bodies, instructions, plugin metadata and extra files; the native loader verifies the body hash again.
+- One add-on popup shows engine/model/account, folder, brain freshness and D49 token/price ranges. e/m changes the target, b builds the free local brain, y starts; Enter does nothing. Actual reported task tokens/cost update in results, including late session events; absent/unknown values are stated.
+- Every start uses the normal env and Ask flow. Claude's installed loading/read-only flags are checked; Codex receives skill paths with a read-only sandbox; the keyed native agent loads roles and exposes only read/search. None installs into CLI folders or target tracked files.
+- /plan proposes only; a saves a private plan and s alone starts a selected step in a mandatory worktree. Long selected steps page visibly. /prompt audits text or relative/absolute repository files, refuses raw/normalized/resolved credential names before content reads, removes scanner-detected secrets, and returns issues plus a copyable diff. /explain presents a why, ASCII diagram, <=6-line chunks with examples/location/check questions, then exactly three recap lines.
+- All three pilots ran through stub runners and a real local PTY stub. Native tool restrictions, homepage keys, engine/model changes, brain-first flow and copy use stubs too. README, /help and docs/user-guide.md are updated; packaged app assets include addons/.
+
+## What's next
+- Nothing remains in the requested A/B/C scope. Live CLI/clipboard feel checks below need Yaniv; no further commands were built.
+- Inventory suggestions only: /network, /deploy, /migrate, /scaffold, /launch, /benchmark, /triage, /hook, /database, /sdk. Source definitions and one-line purposes are in the inventory.
+
+## Manual checks
+- Stub engines and headless homepage: ran · all three pilots; explicit y/a/s gates, private plan save, required step isolation, constrained native tools and chunk/copy behavior.
+- Hidden Electron smoke: ran · 9 passed (36.8s), temporary HOME/state and background windows; no computer use or live credentials.
+- Live /plan approval and step: needs Yaniv · cd ~/ai-term && npm run dev # type /plan add a parser test; y, then a; select a step and press s
+- Live /prompt audit and clipboard: needs Yaniv · cd ~/ai-term && npm run dev # type /prompt Build one scoped change; y, then c
+- Live /explain chunk pacing: needs Yaniv · cd ~/ai-term && npm run dev # type /explain src/daemon/addons.ts; y, then Space through the recap
+
+## Gotchas
+- Fresh high-effort TypeScript reviewers ran after all three parts; security reviewers ran after A and C. All real review findings received committed failing regressions before fixes. Follow-ups found no unresolved issues. tdd-workflow, verification-loop and design:ux-copy were used; no CI or npm dependencies were added.
+- C review: 0 CRITICAL, 2 HIGH, 5 unique MEDIUM, 0 LOW; all fixed. HIGH: entropy-only prompt secrets and normalized credential-file aliases. MEDIUM: echoed result markers, incomplete bundle integrity, literal-variable expansion, long-plan navigation and missing actual D49 usage. Full-suite/self-discovered menu-order and absolute-file regressions were also fixed.
+- C RED → GREEN: 29d4545 → 14c00f6 (core); 89fdcaf → bf1925d (engine/UI); 171f2b8 + c36a556 → 7412ad4 (reviews); 9a934fd → 54dd7f4 (menu/keys); c1d4e7e + 7178376 → 4a0ef99 (file input/guard). Evidence: .github/tdd/addons.tdd.md. A/B commit ledgers follow below.
+- Default-parallel full verification caught the menu regressions and existing LSP/auto-test timing flakes. Two-worker verification still hit the LSP fixture's 500 ms startup deadline. Final full suites ran consecutively with npm test -- --reporter=dot --maxWorkers=1 on unchanged 4a0ef99 code; every file/assertion/timeout stayed enabled. An in-flight troubleshooting run containing the newly added absolute-file RED case is excluded from the final results. LSP and worktree-deletion logic were not changed.
+- Final C checks: typecheck exit 0 (last line: tsc --noEmit && tsc --noEmit -p app/tsconfig.json); lint exit 0 (eslint .); build ESM Build success in 50ms; app:build built in 65ms; git diff --check clean. Full suites: Test Files 263 passed (263); Tests 1735 passed | 7 skipped (1742), twice; Duration 257.09s and 249.34s. Electron: 9 passed (36.8s). The seven baseline credential-store opt-in skips remain untouched.
+- Verification scan found no forbidden exec/execSync/shell:true constructs in the new modules. Initial focused add-on coverage was 97.46% lines, 85.08% statements, 78.01% branches and 96.25% functions; review/file regressions were added afterwards. The required specialist reviews completed; an extra generic reviewer spawn was unavailable because the agent thread limit was reached.
+- The starting prompt checkpoint matched 20dbba9. Its 1,701 tests omitted seven existing opt-in skips. D58 had been a proposed Linux decision; A preserved that proposal as D60 and installed the pinned add-on D58. RTK.md is absent. Inventory scores are static judgments, and not stated is not a license grant.
+- No real ~/.ai-term, CLI/gh credentials, keychain entries, .env contents or Yaniv daemon were touched. Writes stayed in this repository and temp folders; network was used only for ai-term git pull/push.
+
+| Part | Status / last code / handover | Reviewer findings fixed | Last verification lines |
+| --- | --- | --- | --- |
+| A | done · 29e6e40 · 6b529b2 | 1 HIGH, 5 MEDIUM | typecheck/lint exit 0; build success 41ms; app built 59ms; Test Files 254 passed (254); Tests 1712 passed, 7 skipped (1719), twice (33.98s/33.32s); Electron 9 passed (36.6s) |
+| B | done · f98050a · a9488f0 | 2 MEDIUM | typecheck/lint exit 0; build success 42ms; app built 57ms; Test Files 255 passed (255); Tests 1714 passed, 7 skipped (1721), twice (34.46s/37.87s); Electron 9 passed (36.8s) |
+| C | done · 4a0ef99 · this handover | 2 HIGH, 5 MEDIUM | typecheck/lint exit 0; build success 50ms; app built 65ms; Test Files 263 passed (263); Tests 1735 passed, 7 skipped (1742), twice (257.09s/249.34s); Electron 9 passed (36.8s) |
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Approval receipt: src/daemon/addons.ts binds the popup to a hash of the inputs, assets, target and brain fingerprint. A short-lived, single-use receipt prevents changed inputs or repeated y submissions from starting an unseen job; the engine's normal task counters supply actual usage afterwards.
+- Bundled role data: addons/_shared/ holds narrowed copies with source, license and change headers. src/daemon/addons.ts builds a private package from those bodies and refuses altered metadata or extra files, while src/agent/addon-bundle.ts validates its body hash before native loading.
+- Proposal and implementation steps: /plan is read-only and approval saves data privately. In src/client/tui/addon-flow.ts and the daemon service, only an explicit s turns one approved step into a normal Ask agent, with mandatory worktree isolation.
+- Chunked explanation: src/shared/addons.ts validates six-line chunks with a real-example marker, location and check question. src/client/tui/addon-panel.ts reveals one chunk per Space and ends with three recap lines, so a result stays inspectable instead of becoming one long transcript.
+
+---
+
+# Previous part: B (2026-10-16)
+
+## Checkpoint
 Last artifact commit: f98050a docs: retain exact inventory paths and require subject overlap
 Last commit: Part B handover (this commit)
 Roadmap step: 2026-10-16 long run · Parts A and B done · Part C pending
