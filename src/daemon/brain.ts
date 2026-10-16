@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, readlink, realpath, rm, rmdir, utimes } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
-import { BRAIN_MAX_FILE_BYTES, BRAIN_MAX_FILES, BRAIN_SUMMARY_FILE_CHARS, langOf, localImports, parsePy, parseTs, renderBrain, validateBrainIndex, type BrainFile, type BrainIndex, type BrainSkipped } from '../shared/brain.js';
+import { BRAIN_MAX_FILE_BYTES, BRAIN_MAX_FILES, BRAIN_SUMMARY_FILE_CHARS, langOf, localImports, parsePy, parseTs, renderBrain, renderBrainIndex, safeBrainName, validateBrainIndex, type BrainFile, type BrainIndex, type BrainSkipped } from '../shared/brain.js';
 import { SECRET_FILE } from '../shared/review.js';
 import { scanLine } from '../shared/secret-scan.js';
 import { isFsError, privateDirectory } from '../shared/paths.js';
@@ -16,14 +16,11 @@ export class BrainError extends Error {}
 export const BRAIN_ERRORS = ["This folder isn't in a git repository; /brain maps one", 'This repository has over 20,000 files; /brain maps up to 20,000', 'No brain for this repository yet · /brain builds one',
   'The repository changed since the plan was shown; run /brain again', 'Pick one of the models /brain offered', 'A /brain build for this repository is already running', 'The brain request failed',
   'The brain would pass your daily budget', 'The brain would pass your weekly budget', 'The brain would pass your monthly budget', "The brain's model pass would pass the per-run cap in /settings c"] as const;
-export interface BrainPaths { dir: string; markdown: string; json: string }
+export interface BrainPaths { dir: string; markdown: string; index: string; json: string }
 export function brainPaths(root: string, top: string): BrainPaths {
   const dir = join(root, 'brain', repoDirectory(top));
-  return { dir, markdown: join(dir, 'brain.md'), json: join(dir, 'brain.json') };
+  return { dir, markdown: join(dir, 'brain.md'), index: join(dir, 'brain-index.md'), json: join(dir, 'brain.json') };
 }
-// A name with a control, bidi or zero-width character, or too long to show: never read, counted.
-// eslint-disable-next-line no-control-regex -- refusing these characters in a file name is the point.
-const ODD_NAME = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
 export const BRAIN_MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 const ENV_FILE = /(?:^|\/)\.env(?:\..*)?$|(?:^|\/)\.envrc$/i;
 type Read = { kind: 'file'; text: string; bytes: number; hash: string } | { kind: 'link'; hash: string } | { kind: 'skip'; reason: keyof BrainSkipped } | { kind: 'gone' };
@@ -69,7 +66,7 @@ export async function scanRepo(top: string, previous: BrainIndex | null): Promis
   let total = 0;
   const skipped: BrainSkipped = { binary: 0, large: 0, env: 0, secret: 0, names: 0 }, found = new Map<string, { file: Omit<BrainFile, 'local'>; imports: string[] }>(), parsed: string[] = [], texts = new Map<string, string>();
   for (let i = 0; i < listed.length; i += 32) {
-    const batch = listed.slice(i, i + 32), reads = await Promise.all(batch.map(path => ODD_NAME.test(path) || path.length > 4096 ? Promise.resolve<Read>({ kind: 'skip', reason: 'names' }) : total > BRAIN_MAX_TOTAL_BYTES ? Promise.resolve<Read>({ kind: 'skip', reason: 'large' }) : readRepoFile(top, path, realTop)));
+    const batch = listed.slice(i, i + 32), reads = await Promise.all(batch.map(path => !safeBrainName(path) ? Promise.resolve<Read>({ kind: 'skip', reason: 'names' }) : total > BRAIN_MAX_TOTAL_BYTES ? Promise.resolve<Read>({ kind: 'skip', reason: 'large' }) : readRepoFile(top, path, realTop)));
     batch.forEach((path, n) => {
       const read = reads[n];
       if (!read || read.kind === 'gone') return;
@@ -83,7 +80,8 @@ export async function scanRepo(top: string, previous: BrainIndex | null): Promis
       // Only code is ever summarized, and only its start is sent: nothing else is kept in memory (review).
       if (lang !== 'other') texts.set(path, read.text.slice(0, BRAIN_SUMMARY_FILE_CHARS));
       const shape = lang === 'ts' ? parseTs(read.text) : lang === 'py' ? parsePy(read.text) : { imports: [], exports: [] };
-      found.set(path, { file: { hash: read.hash, lang, bytes: read.bytes, exports: shape.exports.slice(0, 200) }, imports: shape.imports.slice(0, 400) });
+      const safe = (name: string) => { if (safeBrainName(name)) return true; skipped.names = (skipped.names ?? 0) + 1; return false; };
+      found.set(path, { file: { hash: read.hash, lang, bytes: read.bytes, exports: shape.exports.filter(safe).slice(0, 200) }, imports: shape.imports.filter(safe).slice(0, 400) });
     });
   }
   const names = new Set(found.keys()), files: Record<string, BrainFile> = {};
@@ -107,21 +105,29 @@ export async function readBrain(root: string, top: string): Promise<BrainIndex |
 }
 // brain.md and brain.json in a folder only you can open (0700, files 0600); brain.json last, so a crash in between leaves
 // the old hashes and the next /brain rescans what it must.
-export async function writeBrain(root: string, top: string, index: BrainIndex, now = new Date()): Promise<{ path: string; lines: number }> {
+export async function writeBrain(root: string, top: string, index: BrainIndex, now = new Date(), trusted = false): Promise<{ path: string; lines: number }> {
   const paths = brainPaths(root, top);
   await privateDirectory(join(root, 'brain')); await privateDirectory(paths.dir);
   const markdown = renderBrain(index, now);
   await atomicWriteText(paths.markdown, markdown + '\n');
   // brain.md's time is the map's own, so an agent's card and the next plan agree on its age (review).
   const at = new Date(index.builtAt); await utimes(paths.markdown, at, at);
+  await writeBrainIndex(root, top, index, trusted);
   await atomicWrite(paths.json, index);
   return { path: paths.markdown, lines: markdown.split('\n').length };
+}
+export async function writeBrainIndex(root: string, top: string, index: BrainIndex, trusted: boolean): Promise<string> {
+  const paths = brainPaths(root, top);
+  await privateDirectory(join(root, 'brain')); await privateDirectory(paths.dir);
+  await atomicWriteText(paths.index, renderBrainIndex(index, paths.markdown, trusted) + '\n');
+  const at = new Date(index.builtAt); await utimes(paths.index, at, at);
+  return paths.index;
 }
 export async function removeBrain(root: string, top: string): Promise<boolean> {
   const paths = brainPaths(root, top);
   try { const info = await lstat(paths.dir); if (info.isSymbolicLink() || !info.isDirectory()) throw new BrainError('The brain folder is not a plain folder; AI Term left it alone'); }
   catch (error) { if (isFsError(error, 'ENOENT')) return false; throw error; }
-  await rm(paths.markdown, { force: true }); await rm(paths.json, { force: true });
+  await rm(paths.index, { force: true }); await rm(paths.markdown, { force: true }); await rm(paths.json, { force: true });
   // The folder goes too when nothing else is in it (a write cut short leaves a temp file, which stays for a look).
   try { await rmdir(paths.dir); } catch (error) { if (!isFsError(error, 'ENOTEMPTY')) throw error; }
   return true;

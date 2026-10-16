@@ -74,7 +74,7 @@ it('B30: start box shows remembered brain choice, b changes this agent and saves
       ...(body.kind === 'sessions.list' ? { sessions: [] } : {}),
       ...(body.kind === 'keys.list' ? { keys: [] } : {}),
       ...(body.kind === 'brain.preferences' ? { brainPreferences: { agents: false, trusted: false } } : {}),
-      ...(body.kind === 'engines.status' ? { engines: { claudeCode: { installed: true, loggedIn: true, path: '/bin/false', version: '1' }, codex: { installed: true, loggedIn: true, path: '/bin/false', version: '1' } } } : {}),
+      ...(body.kind === 'engines.status' ? { engines: { claudeCode: { installed: true, loggedIn: true, path: '/bin/false', version: '1', authMethod: 'subscription' as const }, codex: { installed: true, loggedIn: true, path: '/bin/false', version: '1', authMethod: 'subscription' as const } } } : {}),
     };
   } });
   const tty = new TTY(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp/proj', terminalProgram: 'unknown' });
@@ -87,7 +87,7 @@ it('B30: start box shows remembered brain choice, b changes this agent and saves
     await shows(tty, 'brain          on');
     await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.configure', cwd: '/tmp/proj', agents: true }));
     tty.emit('data', Buffer.from('\r'));
-    await vi.waitFor(() => expect(sent.some(body => body.kind === 'sessions.create' && body.brain === true)).toBe(true));
+    await vi.waitFor(() => expect(sent.some(body => body.kind === 'sessions.create' && body.engine !== 'shell' && body.brain === true)).toBe(true));
   } finally { await home.stop(); }
 });
 

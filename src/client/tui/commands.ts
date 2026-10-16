@@ -45,7 +45,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/help',description:'Commands and keyboard help',current:none},
  {name:'/theme',description:'Choose the saved theme',argumentHint:()=> 'graphite|slate|ink|auto|light',values:()=>['graphite','slate','ink','auto','light'],current:c=>c.theme},
  {name:'/exit',description:'Quit AI Term; agents keep running',current:none},
- {name:'/brain',description:'Map this repository for agents: a free local pass, an optional model pass that asks first',argumentHint:()=>'[show | rm]',values:()=>['show','rm'],current:none},
+ {name:'/brain',description:'Map this repository for agents: a free local pass, an optional model pass that asks first',argumentHint:()=>'[show | rm | trust | untrust]',values:()=>['show','rm','trust','untrust'],current:none},
  {name:'/dev',description:'Run the project\'s dev server in an agent\'s worktree on its own port (asks first; D55, off; /settings y)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/dev-cmd',description:'The project\'s dev server command, like npm run dev (none clears it)',argumentHint:()=>'<command> | none',current:none},
  {name:'/queue',description:'Agents that start after an agent finishes or at a time, each with a limit (D55, off; /settings b)',argumentHint:()=>'[add]',values:()=>['add'],current:none},

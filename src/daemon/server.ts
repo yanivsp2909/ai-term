@@ -323,6 +323,8 @@ export class DaemonServer {
                 case 'project.testCommand':
                     this.control(peer,{id:request.id,ok:true,testCommand:await this.manager.testCommand(request.cwd)});
                     break;
+                case 'brain.preferences': this.control(peer,{id:request.id,ok:true,brainPreferences:await this.manager.brainPreferences(request.cwd)}); break;
+                case 'brain.configure': await this.manager.setBrainPreferences(request.cwd,{...(request.agents!==undefined?{agents:request.agents}:{}),...(request.trusted!==undefined?{trusted:request.trusted}:{})}); this.control(peer,{id:request.id,ok:true}); break;
                 case 'brain.plan': this.control(peer,{id:request.id,ok:true,brainPlan:await this.manager.brainPlan(request.cwd)}); break;
                 case 'brain.build': this.control(peer,{id:request.id,ok:true,brainResult:await this.manager.buildBrain(request.cwd,request.fingerprint,request.model)}); break;
                 case 'brain.show': this.control(peer,{id:request.id,ok:true,brainText:await this.manager.brainShow(request.cwd)}); break;

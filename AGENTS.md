@@ -5,7 +5,7 @@ Instructions for any coding agent working in this repo. Codex reads this file; C
 ## What this is
 AI Term is the `ai` command: a terminal UI plus a background daemon for running AI coding agents.
 - **Account logins** run the official Claude Code and Codex CLIs, untouched, in real PTYs.
-- **API keys** run AI Term's own agent from v0.4; until then they run on the official CLIs too.
+- **API keys** run AI Term's own agent (v0.4+); compatible keys can explicitly use their official CLI through settings.
 - **The homepage** lists every agent, shows a live preview of the selected one, API usage and machine stats. You type what you want built in a command bar at the bottom.
 
 This is Yaniv's personal and learning project. Optimize for correctness, clarity and a calm, fast UI. Don't add scale or features nobody asked for.
@@ -25,7 +25,7 @@ Decisions in the decisions log are not reopened unless Yaniv asks.
 
 ## Commands
 - README command list: README.md always holds the full, current list of ai commands (homepage / commands, ai subcommands) and keys. Any step that adds, removes or changes a command or key updates that list in the same session.
-Set up in v0.1.1. Until then, none exist.
+The command list is maintained in README.md.
 - `npm install`
 - `npm run dev`: run `ai` from source (tsx)
 - `npm run build`: build to `dist/`
@@ -63,7 +63,7 @@ Before you report done, run `npm run typecheck`, `npm run lint`, `npm test` and 
   - A client may know that a key exists and its last 4 characters, nothing more.
   - Keys are read from the keychain only by the daemon, only right before a spawn or a provider test, and only put into that child's env or that one request.
 - **Env hygiene:** account sessions spawn with their provider's credential and routing variables removed (lists in `docs/architecture.md` §7.3), or the CLI may silently bill an API key instead of the subscription. A key session sets only its own key. Env building lives only in `src/daemon/env.ts`, and it's unit-tested.
-- **Never read, copy, log or proxy the CLIs' own logins:** `~/.claude`, `~/.codex/auth.json`, `.credentials.json`, Keychain entries that belong to Claude Code or Codex. Never edit `~/.claude` or `~/.codex`.
+- **Never read, copy, log or proxy the CLIs' own logins:** credential files under `~/.claude`, `~/.codex/auth.json`, `.credentials.json`, Keychain entries that belong to Claude Code or Codex. Never edit `~/.claude` or `~/.codex`. D48 permits read-only skills, agents and commands in the documented allowlisted folders only; it excludes credentials, settings and history.
 - **Never log** `process.env`, a spawn env, a secret, or anything matching `sk-`.
 - **Socket:** `~/.ai-term` is 0700, the socket 0600. Refuse to start if the folder is a symlink or owned by another user.
 - **Local HTTP endpoints** (usage receiver, status endpoint): `127.0.0.1` only, a token compared in constant time, an exact `Host` check, reject any `Origin`; the status endpoint answers 204 with an empty body; the usage receiver answers 200 {} because OTLP exporters expect it (S12).

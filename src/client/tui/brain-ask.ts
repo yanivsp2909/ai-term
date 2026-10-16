@@ -12,17 +12,17 @@ import { brainAge, type BrainPlan } from '../../shared/brain.js';
 const money = (usd: number): string => `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
 const WINDOW = 10;
 export function brainLines(plan: BrainPlan, choice: number, now = Date.now()): Line[] {
-  const skipped = [plan.skipped.binary ? `${plan.skipped.binary} binary` : '', plan.skipped.large ? `${plan.skipped.large} over 256 KB` : '', plan.skipped.env ? `${plan.skipped.env} .env` : '', plan.skipped.secret ? `${plan.skipped.secret} flagged by the secret scan` : '', plan.skipped.names ? `${plan.skipped.names} with control characters in the name` : ''].filter(Boolean);
+  const skipped = [plan.skipped.binary ? `${plan.skipped.binary} binary` : '', plan.skipped.large ? `${plan.skipped.large} over 256 KB` : '', plan.skipped.env ? `${plan.skipped.env} .env` : '', plan.skipped.secret ? `${plan.skipped.secret} flagged by the secret scan` : '', plan.skipped.names ? `${plan.skipped.names} with unsafe names` : ''].filter(Boolean);
   const rows = ['local map only · free', ...(plan.summarize ? plan.models : []).map(m => `${m.model} · key ····${m.last4} · ${money(m.priceUsd.low)}–${money(m.priceUsd.high)}`)];
   const start = Math.max(0, Math.min(choice - Math.floor(WINDOW / 2), rows.length - WINDOW));
   return [
     { text: `Brain · ${basename(plan.repo)} · ${plan.files} file${plan.files === 1 ? '' : 's'} · ${plan.builtAt ? `${plan.changed} changed, ${plan.removed} removed since the last map (${brainAge(plan.builtAt, now)})` : 'first map'}`, tone: 'ink' },
     { text: `skipped: ${skipped.length ? skipped.join(', ') : 'none'}; ignored files aren't read`, tone: 'ink-3' },
     { text: 'local pass: free, no model · the tree, imports and exports (TS/JS, Python), who imports whom', tone: 'ink-3' },
-    { text: plan.summarize ? `model pass: a short summary of ${plan.summarize} module${plan.summarize === 1 ? '' : 's'} and the main design decisions, secrets removed · estimated ${compactTokens(plan.inputTokens.low)}–${compactTokens(plan.inputTokens.high)} in · ${compactTokens(plan.outputTokens.low)}–${compactTokens(plan.outputTokens.high)} out` : 'model pass: nothing new to summarize', tone: 'ink-3' },
+    { text: plan.trusted===false ? 'model pass: off · /brain trust allows model summaries for this repository' : plan.summarize ? `model pass: a short summary of ${plan.summarize} module${plan.summarize === 1 ? '' : 's'} and the main design decisions, secrets removed · estimated ${compactTokens(plan.inputTokens.low)}–${compactTokens(plan.inputTokens.high)} in · ${compactTokens(plan.outputTokens.low)}–${compactTokens(plan.outputTokens.high)} out` : 'model pass: nothing new to summarize', tone: 'ink-3' },
     ...rows.slice(start, start + WINDOW).map((text, i) => ({ text: `${start + i === choice ? '›' : ' '} ${text}`, tone: start + i === choice ? 'ink' as const : 'ink-2' as const })),
     ...rows.length > WINDOW ? [{ text: `${rows.length - 1} models · ↑↓ for more`, tone: 'ink-3' as const }] : [],
-    { text: `agents get it: ${plan.agents ? 'on' : 'off'} · new agents in this repository read it at start`, tone: 'ink-3' },
+    { text: `agents get it: ${plan.agents ? 'on' : 'off'} · new agents in this repository get the short index`, tone: 'ink-3' },
     { text: '↑↓ choose · ⏎ builds · a agents on/off · Esc cancels', tone: 'ink-3' },
   ];
 }

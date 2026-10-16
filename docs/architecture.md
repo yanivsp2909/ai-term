@@ -778,7 +778,7 @@ Five fresh reviewers on `c558cf7..HEAD` (security ×2, bounty hunter, silent fai
 - **Compare (`sessions.diff` with `against`).** `/diff <agent> vs <other>`: the first worktree diffed (the same private-git-dir diff) against the other's last signed checkpoint, else its branch head (`rev-parse --verify --end-of-options refs/heads/<branch>^{commit}` in the recorded repo's own `.git`). Both must share one recorded repository.
 - **/compact (AI Term's agent).** `splitHistory` keeps the last two user turns and everything after them; older messages are rendered as plain text (tool calls and results as short lines, so no provider needs tool definitions), cut to their last 200k characters. The ask (`confirmJob`, ⏎) shows turns, model, token range and price range. The request goes through `clearance` (caps, budgets, grant), counts its usage like a turn's step and settles its grant once; the history is replaced only after a whole summary arrived (`compactedHistory`). Esc or Ctrl+K stops it with the conversation unchanged.
 
-### 12.4 v0.3 splits
+### 12.17a v0.3 splits (historical outline)
 
 - **Opening:** the homepage marks 2–4 agents with Space and `v` calls `split()` (`src/client/split.ts`) with their ids in list order. `split-layout.ts` fits 2 or 3 panes side by side (3 falls back to two on top and one full width below) or 4 as 2×2, each at least 40×10 including its header; fewer than two fitting returns the first agent for a normal attach.
 - **No protocol change:** the daemon lets one connection own one attached agent (§6 ownership), so each pane opens its own connection (`connect()` from the CLI, `autoStart: false`) and sends `sessions.attach {cols: pane width, rows: pane height − 1}`. Separate sockets also keep a flooding pane's bytes from queueing ahead of the focused pane's echo. Leaving sends `sessions.detach` per pane, so sizes follow §5 (preview size, or the normal attach that follows).
@@ -967,7 +967,66 @@ The prompt's text for this part never arrived (it was cut off inside the queue p
   - **Ports and state:** a port is held only while its server runs. `dev` isn't saved to state. `remove()` stops the server only once the removal is allowed. The card shows the dev state in every status.
   - **Popup lines:** live in `src/shared/dev.ts`, so the client imports no daemon code for them.
 
+### 12.25 v0.9.3 LSP diagnostics for AI Term's agent (2026-10-15; D55, off by default)
+- **Switch:** `/settings` z → `settings.lspDiagnostics`. The daemon adds `--lsp` (`AGENT_LSP_FLAG`, `buildAgentArgs`) only when it is on; it applies to agents started afterwards.
+- **Client** (`src/agent/lsp.ts`, `LspPool`): a minimal LSP over stdio (initialize, didOpen/didChange, publishDiagnostics; the last publish within 300 ms of the first wins; 8 s wait). `Agent.gated` appends the result to write and edit results.
+- **Which server:** by extension: `typescript-language-server --stdio`, `pyright-langserver --stdio`, `gopls`, `rust-analyzer`. `findServer` takes the first executable in PATH's absolute folders that isn't in the worktree or a `node_modules/.bin`, by its real path too (the agent can write those).
+- **Sandbox (D57):** `sandboxedArgv` in `bash.ts` wraps the server exactly like a bash command (sandbox-exec or bwrap profile, same protections). Its env is bash's (`buildBashEnv`) with anything key-, token- or AI Term-named removed again. If the sandbox can't start, no server starts and the agent reads one line saying why, once.
+- **Lifetime:** one server per language per agent, in its own process group. Stopped (shutdown, exit, then SIGKILL to the group after 1 s) when the agent quits or is signalled, or after 10 idle minutes (checked each minute). A server that dies or breaks its pipe answers every wait with nothing, and the next write starts a fresh one.
+- **Review fixes:**
+  - **Bounded waits:** every wait, including `initialize`, is bounded at 8 s. An interrupted turn stops waiting at once (the tool's `AbortSignal`).
+  - **Silent or crashed servers:** after 3 missed answers in a row, or a crash, the language is off until the agent restarts, said once.
+  - **One start per language:** each start is kept in a map before any await.
+  - **Agent crash:** the crash path SIGKILLs every server's group at once.
+  - **Plain fields:** odd columns, codes and severities are shown as plain values.
+- **Trust:** language servers may run project code (TypeScript loads the worktree's `node_modules/typescript`; rust-analyzer runs build scripts and proc macros; gopls and pyright read the project). That code is agent-written, so they run at bash's trust level: the same sandbox and env.
+- **Output:** `diagnostics for <path>: N errors` and one line per item (`line:col severity code message`, controls removed, 200 chars), at most 40 lines with `… N more`.
+
+### 12.26 v1.0.2 /brain (2026-10-15; only when you run it; agents get it: D55, off by default; B30)
+- **Where it runs:** `/brain` runs on the repository the homepage's folder is in (`projectRepo`, so a worktree maps its main repository). The repo id is `repoDirectory(top)`, the same name as its worktree folder.
+- **Local pass** (`src/daemon/brain.ts` `scanRepo`, free):
+  - **Files:** `git ls-files -z --cached --others --exclude-standard -- .` lists them, so ignored files never show. Each is read once with `O_NOFOLLOW` (a link is listed by its target text, never followed).
+  - **Skipped:** files over 256 KB, binaries (a NUL in the first 8 KB), `.env`/`.envrc`, files named like secrets (review's `SECRET_FILE`), and any file with a line `scanLine` flags.
+  - **Parsing:** TS/JS and Python imports and exports by pattern (`src/shared/brain.ts`; nothing is run). Local imports are resolved to repository files.
+  - **Incremental:** a file with the same hash as last time keeps its entry and summary without being parsed again. Imports are resolved again for every file.
+- **Trust** (B30): repositories default to untrusted. `/brain trust` and `/brain untrust` persist the choice by canonical repo id, including worktrees. Untrusted repositories offer the local pass only; model notes enter the index only when trusted.
+- **Model pass** (optional, trusted repositories only): the popup lists the free local row, then `/review`'s priced models with the range for the modules not yet summarized (D49).
+  - **Sending:** batches of at most 60,000 characters (12,000 per file), redacted with `redactSecrets` inside `<file>` tags they can't close. Each batch is one `keyedRequest(what:'brain')`, held against the budgets at its worst case and counted in Usage.
+  - **Cap:** the whole pass's worst case must fit the per-run cap (`agentCaps.spendUsd`).
+  - **Answer:** read back as `PATH :: summary` and `DECISION :: …` lines.
+- **Files:** `~/.ai-term/brain/<repo id>/brain.md` (≤2,000 lines; modules ranked by importers; the rest counted, pointing at brain.json) and `brain.json` (each file's hash, exports, imports, local edges, summary). The folder is 0700 and the files 0600; brain.json is written last. Nothing is written in the repository.
+- **Index** (B30): `brain-index.md`, ≤150 lines and ≤64 KiB, lists top folders, entry points and the most-imported modules one per line. It names the full map and says agents can read sections as needed. Its header marks code data as not instructions. Names with controls or instruction-like text longer than 120 characters are dropped and counted, including old-map names.
+- **Fingerprint:** a build carries the plan's fingerprint (paths, hashes, removals, skips). A repository that changed since refuses.
+- **Agents** (`settings.brainForAgents`, off unless explicitly enabled; repository override in `settings.brainRepositories`, `b` in the start box): at create, a fresh agent (not a login or a resume) gets brain-index.md's path and the map's builtAt, which becomes `SessionInfo.brain.builtAt` (the card shows `brain · 2h old`).
+  - **Claude Code:** `--append-system-prompt-file=<path>`, one argv element. The option is in the 2.1.301 binary, though `--help` lists it only inside `--bare`'s text.
+  - **AI Term's agent:** `--brain=<path>`, read at start into its instructions (≤64 KiB).
+  - **Codex:** 0.160.1 has no option that adds instructions from a file (`model_instructions_file` replaces its own). The start box sets the per-agent brain choice, and the daemon puts the index path before the first message.
+  - **Paths:** `isBrainFile` accepts only an absolute `…/brain/<folder>/brain-index.md` with no controls.
+- **Review fixes (Part C):**
+  - **TS parsing:**
+    - A string-aware comment strip, so `/*` or `//` inside a string is text.
+    - `export const` names come from declarators at bracket depth 0, never from initializers; `const enum` and destructuring are handled.
+    - Parsing stops at 64 KB, with one short pattern per import form, so it's never quadratic.
+  - **Python:** a package folder isn't a source root; `from . import x` means `__init__.py`; `FOO == 1` isn't an export.
+  - **Paths:**
+    - Odd prompt paths are mapped back.
+    - A folder on the way swapped for a link is never read through: its realpath must be inside the repository's.
+    - File names with control, bidi or zero-width characters are skipped and counted (`skipped.names`).
+  - **Scan limits:** 200 MB at most per scan; only code text is kept, cut to what is sent.
+  - **Model text:** summaries and design lines render as quoted text, never headings or list items. brain.md and the agent's header say it is data about the code, not instructions.
+  - **The model pass:**
+    - A pass that fails partway still writes what it paid for.
+    - Earlier design notes stay first.
+    - The fingerprint also covers what is left to summarize and the previous map.
+    - Only text with the scanned hash is summarized.
+  - **Files:** brain.md's mtime is the map's own `builtAt`. Every read checks the brain folder is a plain folder.
+  - **Explained, not changed:**
+    - Plans don't share an in-flight scan; each is bounded instead.
+    - UNC home folders (Windows) don't get the brain: `isBrainFile` wants a drive or `/` path, as AI Term's other path checks do.
+
 ## 13. Decisions log
+
+`/init` (D49) and `/remote` (D54) are planned commands, not implemented.
 
 Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless he objects.
 
@@ -999,7 +1058,7 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D24 | Keychain access through `@napi-rs/keyring`. | Proposed |
 | D25 | Node ≥ 22, not Bun (node-pty). node-pty's install scripts are approved in package.json. | Pinned |
 | D26 | TUI renderer: our own diffed cell grid with synchronized output (v0.1.2: 14% CPU / 3.1 ms vs Ink 46% / 17.6 ms). | Pinned, unless Yaniv sees flicker in `node spikes/renderer/main.js grid` |
-| D27 | Usage counts API-key sessions only; subscription sessions show `sub`. | Pinned |
+| D27 | Usage spend/budgets count API-key sessions only; subscription sessions show `sub`. Per-agent tokens include subscription sessions (v0.6.1). | Pinned |
 | D28 | Notifications (macOS, with sound) for waiting and done arrive with v0.2 hooks. | Pinned |
 | D29 | Manager agent (goal → tasks → many agents) is a v2+ idea; nothing before v1.0 is built for it. | Pinned |
 | D30 | Foundry through Codex only for deployments whose Responses test passes; the rest wait for AI Term's agent (v0.4). | Pinned |
@@ -1016,12 +1075,12 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D41 | Every Codex session starts with `--no-daemon`, and `AZURE_OPENAI_API_KEY` passes through to Codex account sessions. | Pinned |
 | D42 | Notifications: always when an agent starts waiting (or a turn fails); "done" only when you aren't attached to that agent. | Pinned |
 | D43 | Clicking a notification with no ai open starts ai in a new Terminal window, inside that agent. | Pinned |
-| D44 | Worktrees live outside the repo: ~/.ai-term/worktrees/<repo>/<agent>. | Pinned |
+| D44 | Worktrees live outside the repo: ~/.ai-term/worktrees/<repo-name>-<first 10 SHA-256 hex chars of canonical top-level path>/<slug>. | Pinned |
 | D45 | Usage cost uses public list prices (Models.dev), Azure included, marked estimated; per-deployment overrides optional in /settings. | Pinned |
 | D46 | This Mac refreshes every 1 s while the homepage is open (was 2 s). Not faster: sampling `ps` twice a second doubles the cost and makes the percentages jumpier, not more accurate. RAM matches Activity Monitor's App + Wired + Compressed exactly; its "Memory Used" headline reads ~1 GB higher and purgeable (~116 MiB) doesn't explain it (v0.1.7f), still open. | Pinned (Yaniv asked for ≤1 s; 1 s agreed as the floor) |
 | D47 | Official CLIs run only on their own logins: Claude Code on a Claude subscription, Codex on a ChatGPT account. Every API key (Anthropic, OpenAI, Foundry, any provider) runs on AI Term's agent from v0.4; until then keys run on the CLIs. A fallback setting, off by default, can still send a key to a CLI. | Pinned (Yaniv, 2026-10-12); fallback built in v0.4.1 as `keysRunOn` (`ai-term` default, `cli` fallback; Foundry only until v0.4.2) |
 | D48 | AI Term's agent may read your skills, subagents and slash commands where the CLIs keep them: an allowlist of folders under `~/.claude`, `~/.codex` and `~/.agents`, read-only, never credentials, settings, history or `~/.claude.json`. S11 gets this one exception. | Pinned (Yaniv, 2026-10-14); used from v0.4.3 |
-| D49 | Anything that spends tokens as a job (add-ons, `/brain`, `/review`, `/fork`, `/init`) asks first: what runs, engine and model, an estimated token range (low–high) and price range. On a subscription it shows the token range and "uses your plan's limits" instead of a price. ⏎ runs, Esc cancels; afterwards it shows the real numbers. Open-ended work (starting an agent, chatting with one) shows the model's price per 1M tokens and the budget cap instead, because a range there would be made up. Budgets still stop work before a request crosses them. | Pinned (Yaniv, 2026-10-12); open-ended exception proposed |
+| D49 | Anything that spends tokens as a job (add-ons, `/brain`, `/review`, `/fork`; `/init` is planned) asks first: what runs, engine and model, an estimated token range (low–high) and price range. On a subscription it shows the token range and "uses your plan's limits" instead of a price. The popup names its confirmation key (add-ons require `y`); Esc cancels; afterwards it shows the real numbers. Open-ended work (starting an agent, chatting with one) shows the model's price per 1M tokens and the budget cap instead, because a range there would be made up. Budgets still stop work before a request crosses them. | Pinned (Yaniv, 2026-10-12); open-ended exception proposed |
 | D50 | `/send <agent> <text>` is the one deliberate exception to D22: an explicit command that sends text to a running agent. Plain keys on the homepage still never reach an agent. Built 2026-10-14: one bracketed paste (plain text with no newline when the agent hasn't enabled bracketed paste), then Enter as a separate write 50 ms later (CSI 13 u under kitty flag 8). Refused while the agent waits for permission or a question, while any client is attached (a session or split), after exit, and for an AI agent that hasn't sent a hook or run-state signal yet (its folder-trust prompt reports nothing; a status-line context report doesn't count). Before the paste and again before Enter the daemon first waits until its mirror has parsed every chunk that arrived earlier (and the status signals they queued), and refuses while the PTY is paused with unread output. Late-hook window (closed in the v0.3 gate, 2026-10-14): Claude reports a permission prompt over an HTTP hook that can be lost or late (the `permission_prompt` fallback came ~6 s later in testing), but a prompt only appears during a tool call, and PreToolUse is a blocking hook that reaches the daemon before the prompt is drawn. So /send is refused while any Claude tool is in flight (`StatusState.toolsInFlight`: PreToolUse +1, PostToolUse/PostToolUseFailure −1, reset by UserPromptSubmit, Stop, StopFailure and exit); a long tool run refuses /send until it ends. Codex reports approvals in its own output (OSC 9 `Approval requested`, the `[ ! ] Action Required` title, a bell), which arrives in order with the prompt and is read by the caught-up check before the paste and before Enter (it also waits for status signals queued behind a status request still arriving); while the mirror's last Codex title is Action Required, /send is refused whatever the card says, because a late turn-complete notify can mark it done over an open approval, and the Enter's own update only turns `done` into running, so Codex isn't gated per tool (it exposes no tool events, and gating its whole turn would refuse /send almost always). Residual: if PreToolUse itself is lost too, the old window reopens for that one call. Shells have no status, so /send goes to whatever runs in their foreground. | Pinned (Yaniv, 2026-10-12: "all of them") |
 | D51 | Names and logos: plain text "runs Claude Code / Codex" only. Never Anthropic or OpenAI names in our product name or logo, nothing that suggests a partnership, no real provider logos without written permission; the letter badges stay. Never bundle or preinstall Claude Code. | Pinned (from Anthropic's Claude Code legal page, 2026-10-12) |
 | D52 | Codex's runtime usage header goes in the invocation-local `-c` exporter config; use an env header only if the installed Codex documents support for it. Credentials never enter logs, responses or persisted recipes. | Pinned |
@@ -1030,60 +1089,6 @@ Pinned decisions are not reopened unless Yaniv asks. Proposed ones stand unless 
 | D55 | Every optional feature has its own on/off in `/settings`; anything that spends tokens by itself defaults to off. | Pinned (Yaniv, 2026-10-14) |
 | D56 | Code an agent wrote never runs outside a sandbox without asking. Auto-test runs the test process tree under macOS `sandbox-exec` with a deny-by-default profile built from checked paths (writes only in the worktree and a per-run temp folder; no network unless the project allows 127.0.0.1; no reads of the home folder beyond toolchains, nor of key folders); without a working sandbox it never runs by itself and `/test` asks every time (§12.18). | Pinned (Yaniv, 2026-10-15) |
 | D57 | AI Term's agent never holds its key or AI Term's credentials in its process environment (a 0600 file it reads and deletes carries them), and on macOS its bash commands run in a sandbox that can't read or write `~/.ai-term` (its own worktree excepted) or reach AI Term's sockets, so the agent can't change your prices, budgets or settings, or talk to AI Term as you; nor can it write the places that run later outside the sandbox (shell startup files, login items, `~/.ssh`, git's global config, Claude Code's and Codex's folders; B29) (§12.19). | Pinned (Yaniv, 2026-10-15) |
-| D58 | Linux sandboxes are bubblewrap from fixed paths, or none: tests get their own network (no 127.0.0.1 of yours even when allowed) and an empty home; agent bash gets its own PID view and a rebuilt home whose persistence spots are read-only (new entries at those levels vanish). No bwrap, or one that can't start: auto-test asks every time and AI Term's agent is Ask only, as anywhere a sandbox can't start (§12.20). | Proposed |
+| D58 | Each add-on lives in `addons/<name>/addon.md`, with metadata and a prompt; improved copies of the skills and agents it uses live in `addons/_shared/`, never in the CLI folders. Every add-on asks first (D49), runs in Ask mode on Claude Code, Codex or AI Term’s keyed agent, and gets its own worktree unless it only reads. | Pinned (Yaniv, 2026-10-16) |
+| D60 | Linux sandboxes are bubblewrap from fixed paths, or none: tests get their own network (no 127.0.0.1 of yours even when allowed) and an empty home; agent bash gets its own PID view and a rebuilt home whose persistence spots are read-only (new entries at those levels vanish). No bwrap, or one that can't start: auto-test asks every time and AI Term's agent is Ask only, as anywhere a sandbox can't start (§12.20). | Proposed |
 | D59 | Windows: the daemon is a named pipe with a random per-start name and a token in the ACL'd AI Term folder (Node can't narrow a pipe's DACL); npm `.cmd` launchers are read and their script run with node, never through cmd.exe; no sandbox, so auto-test asks and AI Term's agent is Ask only (§12.21). | Proposed |
-
-### 12.25 v0.9.3 LSP diagnostics for AI Term's agent (2026-10-15; D55, off by default)
-- **Switch:** `/settings` z → `settings.lspDiagnostics`. The daemon adds `--lsp` (`AGENT_LSP_FLAG`, `buildAgentArgs`) only when it is on; it applies to agents started afterwards.
-- **Client** (`src/agent/lsp.ts`, `LspPool`): a minimal LSP over stdio (initialize, didOpen/didChange, publishDiagnostics; the last publish within 300 ms of the first wins; 8 s wait). `Agent.gated` appends the result to write and edit results.
-- **Which server:** by extension: `typescript-language-server --stdio`, `pyright-langserver --stdio`, `gopls`, `rust-analyzer`. `findServer` takes the first executable in PATH's absolute folders that isn't in the worktree or a `node_modules/.bin`, by its real path too (the agent can write those).
-- **Sandbox (D57):** `sandboxedArgv` in `bash.ts` wraps the server exactly like a bash command (sandbox-exec or bwrap profile, same protections). Its env is bash's (`buildBashEnv`) with anything key-, token- or AI Term-named removed again. If the sandbox can't start, no server starts and the agent reads one line saying why, once.
-- **Lifetime:** one server per language per agent, in its own process group. Stopped (shutdown, exit, then SIGKILL to the group after 1 s) when the agent quits or is signalled, or after 10 idle minutes (checked each minute). A server that dies or breaks its pipe answers every wait with nothing, and the next write starts a fresh one.
-- **Review fixes:**
-  - **Bounded waits:** every wait, including `initialize`, is bounded at 8 s. An interrupted turn stops waiting at once (the tool's `AbortSignal`).
-  - **Silent or crashed servers:** after 3 missed answers in a row, or a crash, the language is off until the agent restarts, said once.
-  - **One start per language:** each start is kept in a map before any await.
-  - **Agent crash:** the crash path SIGKILLs every server's group at once.
-  - **Plain fields:** odd columns, codes and severities are shown as plain values.
-- **Trust:** language servers may run project code (TypeScript loads the worktree's `node_modules/typescript`; rust-analyzer runs build scripts and proc macros; gopls and pyright read the project). That code is agent-written, so they run at bash's trust level: the same sandbox and env.
-- **Output:** `diagnostics for <path>: N errors` and one line per item (`line:col severity code message`, controls removed, 200 chars), at most 40 lines with `… N more`.
-
-### 12.26 v1.0.2 /brain (2026-10-15; only when you run it; agents get it: D55, on)
-- **Where it runs:** `/brain` runs on the repository the homepage's folder is in (`projectRepo`, so a worktree maps its main repository). The repo id is `repoDirectory(top)`, the same name as its worktree folder.
-- **Local pass** (`src/daemon/brain.ts` `scanRepo`, free):
-  - **Files:** `git ls-files -z --cached --others --exclude-standard -- .` lists them, so ignored files never show. Each is read once with `O_NOFOLLOW` (a link is listed by its target text, never followed).
-  - **Skipped:** files over 256 KB, binaries (a NUL in the first 8 KB), `.env`/`.envrc`, files named like secrets (review's `SECRET_FILE`), and any file with a line `scanLine` flags.
-  - **Parsing:** TS/JS and Python imports and exports by pattern (`src/shared/brain.ts`; nothing is run). Local imports are resolved to repository files.
-  - **Incremental:** a file with the same hash as last time keeps its entry and summary without being parsed again. Imports are resolved again for every file.
-- **Model pass** (optional): the popup lists the free local row, then `/review`'s priced models with the range for the modules not yet summarized (D49).
-  - **Sending:** batches of at most 60,000 characters (12,000 per file), redacted with `redactSecrets` inside `<file>` tags they can't close. Each batch is one `keyedRequest(what:'brain')`, held against the budgets at its worst case and counted in Usage.
-  - **Cap:** the whole pass's worst case must fit the per-run cap (`agentCaps.spendUsd`).
-  - **Answer:** read back as `PATH :: summary` and `DECISION :: …` lines.
-- **Files:** `~/.ai-term/brain/<repo id>/brain.md` (≤2,000 lines; modules ranked by importers; the rest counted, pointing at brain.json) and `brain.json` (each file's hash, exports, imports, local edges, summary). The folder is 0700 and the files 0600; brain.json is written last. Nothing is written in the repository.
-- **Fingerprint:** a build carries the plan's fingerprint (paths, hashes, removals, skips). A repository that changed since refuses.
-- **Agents** (`settings.brainForAgents`, on; `a` in the popup): at create, a fresh agent (not a login or a resume) gets brain.md's path and its mtime, which becomes `SessionInfo.brain.builtAt` (the card shows `brain · 2h old`).
-  - **Claude Code:** `--append-system-prompt-file=<path>`, one argv element. The option is in the 2.1.301 binary, though `--help` lists it only inside `--bare`'s text.
-  - **AI Term's agent:** `--brain=<path>`, read at start into its instructions (≤64 KiB).
-  - **Codex:** 0.160.1 has no option that adds instructions from a file (`model_instructions_file` replaces its own). The start box's `n` sets `brainMention`, and the daemon puts the path before the first message.
-  - **Paths:** `isBrainFile` accepts only an absolute `…/brain/<folder>/brain.md` with no controls.
-- **Review fixes (Part C):**
-  - **TS parsing:**
-    - A string-aware comment strip, so `/*` or `//` inside a string is text.
-    - `export const` names come from declarators at bracket depth 0, never from initializers; `const enum` and destructuring are handled.
-    - Parsing stops at 64 KB, with one short pattern per import form, so it's never quadratic.
-  - **Python:** a package folder isn't a source root; `from . import x` means `__init__.py`; `FOO == 1` isn't an export.
-  - **Paths:**
-    - Odd prompt paths are mapped back.
-    - A folder on the way swapped for a link is never read through: its realpath must be inside the repository's.
-    - File names with control, bidi or zero-width characters are skipped and counted (`skipped.names`).
-  - **Scan limits:** 200 MB at most per scan; only code text is kept, cut to what is sent.
-  - **Model text:** summaries and design lines render as quoted text, never headings or list items. brain.md and the agent's header say it is data about the code, not instructions.
-  - **The model pass:**
-    - A pass that fails partway still writes what it paid for.
-    - Earlier design notes stay first.
-    - The fingerprint also covers what is left to summarize and the previous map.
-    - Only text with the scanned hash is summarized.
-  - **Files:** brain.md's mtime is the map's own `builtAt`. Every read checks the brain folder is a plain folder.
-  - **Explained, not changed:**
-    - Plans don't share an in-flight scan; each is bounded instead.
-    - UNC home folders (Windows) don't get the brain: `isBrainFile` wants a drive or `/` path, as AI Term's other path checks do.

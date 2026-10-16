@@ -1,3 +1,4 @@
+import { repoDirectory } from './worktrees.js';
 import { McpService } from './mcp/service.js';
 import { ExtensionService } from './extensions.js';
 import { fileURLToPath } from 'node:url';
@@ -46,7 +47,7 @@ import { pathInside } from '../shared/path-inside.js';
 import { limitCaps, overLimit, stopDelayMs, type QueueLimit } from '../shared/queue.js';
 const QUEUE_CHECK_MS = 15_000, QUEUE_REPORT_MS = 3 * 60_000;
 import { BRAIN_BATCH_CHARS, BRAIN_MAX_DECISIONS, BRAIN_OUTPUT_PER_FILE, BRAIN_SUMMARY_FILE_CHARS, brainMention, brainPrompt, parseSummaries, type BrainPlan, type BrainResult } from '../shared/brain.js';
-import { BrainError, brainFolderSafe, brainPaths, readBrain, readRepoFile, removeBrain, scanRepo, writeBrain } from './brain.js';
+import { BrainError, brainFolderSafe, brainPaths, readBrain, readRepoFile, removeBrain, scanRepo, writeBrain, writeBrainIndex } from './brain.js';
 import { allocateFreePort, devEnv, DevServers, scriptOf } from './dev-servers.js';
 import type { DevPlan, DevState } from '../shared/dev.js';
 const DEV_OFF = 'Dev servers are off; turn them on in /settings (y)', DEV_NO_TREE = 'A dev server runs in an agent\'s worktree; this agent has none', DEV_NO_CMD = "Set the project's dev command with /dev-cmd first";
@@ -355,10 +356,9 @@ export class SessionManager extends EventEmitter {
                 profile=choice;profilePath=await prepareProfile(this.paths.root,agent.engine,choice,homedir());
             }
         }
-        // v1.0.2 (D55, on): the repository map /brain made, for an agent that starts fresh (not a login or a resume).
-        // Claude Code takes it as a system-prompt file and AI Term's agent reads it at start; Codex only when you asked
-        // for the mention in its first message (it has no flag for an instructions file).
-        const brain=agent&&!agent.login&&!continuation?.resume&&settings?.brainForAgents!==false&&(agent.engine!=='codex'||agent.brainMention===true)?await this.brainFor(request.cwd):null;
+        // B30: only an explicit setting/choice loads the small index; logins and resumes never receive it.
+        const preferences = agent && !agent.login && !continuation?.resume ? await this.brainPreferences(request.cwd) : { agents: false, trusted: false };
+        const brain=agent&&!agent.login&&!continuation?.resume&&(agent.brain??agent.brainMention??preferences.agents)?await this.brainFor(request.cwd,preferences.trusted):null;
         const conversationId=agent?.engine==='claude-code'&&!agent.login?(continuation?.conversationId??randomUUID()):undefined;
         // Status is not billing: subscription and key sessions both report it. Login sessions only sign in.
         const withStatus=Boolean(agent&&!agent.login&&this.usage);
@@ -1241,19 +1241,33 @@ export class SessionManager extends EventEmitter {
     private async brainRepo(cwd:string):Promise<string>{
         try{return await projectRepo(cwd);}catch(error){if(error instanceof TestRunError)throw new BrainError("This folder isn't in a git repository; /brain maps one",{cause:error});throw error;}
     }
-    // For an agent that starts: brain.md's path and when it was written, or null (none, or not a repository).
-    private async brainFor(cwd:string):Promise<{file:string;builtAt:string}|null>{
+    // Old maps get a safe index on demand, so a prior whole-map setting can stay on without injecting the whole map.
+    private async brainFor(cwd:string,trusted:boolean):Promise<{file:string;builtAt:string}|null>{
+        try {
+            const top=await this.brainRepo(cwd),index=await readBrain(this.paths.root,top);
+            if(!index)return null;
+            return {file:await writeBrainIndex(this.paths.root,top,index,trusted),builtAt:index.builtAt};
+        }catch(error){if(error instanceof BrainError&&error.message.includes("isn't in a git"))return null;this.log.error('Brain: index unavailable; the agent starts without it');return null;}
+    }
+    async brainPreferences(cwd:string):Promise<{agents:boolean;trusted:boolean}>{
+        const settings=await new SettingsStore(this.paths.root).get();
         let top:string;
-        try{top=await projectRepo(cwd);}catch(error){if(error instanceof TestRunError)return null;this.log.error('Brain: the repository could not be found; the agent starts without it');return null;}
-        const {markdown}=brainPaths(this.paths.root,top);
-        try{if(!await brainFolderSafe(this.paths.root,top))return null;const info=await lstat(markdown);return info.isFile()?{file:markdown,builtAt:info.mtime.toISOString()}:null;}
-        catch(error){if(isFsError(error,'ENOENT'))return null;this.log.error('Brain: brain.md could not be read; the agent starts without it');return null;}
+        try{top=await this.brainRepo(cwd);}catch(error){if(error instanceof BrainError&&error.message.includes("isn't in a git"))return {agents:settings.brainForAgents===true,trusted:false};throw error;}
+        const saved=settings.brainRepositories?.[repoDirectory(top)];
+        return {agents:saved?.agents??settings.brainForAgents===true,trusted:saved?.trusted===true};
+    }
+    async setBrainPreferences(cwd:string,patch:{agents?:boolean;trusted?:boolean}):Promise<void>{
+        const top=await this.brainRepo(cwd),id=repoDirectory(top);
+        const settings=await new SettingsStore(this.paths.root).update(async current=>({...current,brainRepositories:{...current.brainRepositories,[id]:{...current.brainRepositories?.[id],...patch}}}));
+        const index=await readBrain(this.paths.root,top);
+        if(index)await writeBrainIndex(this.paths.root,top,index,settings.brainRepositories?.[id]?.trusted===true);
     }
     private async brainInput(cwd:string){
         const top=await this.brainRepo(cwd),previous=await readBrain(this.paths.root,top),scan=await scanRepo(top,previous),settings=await new SettingsStore(this.paths.root).get();
         // Modules to summarize: TS/JS and Python files new or changed since the last map (or every one, the first time a
         // model pass runs, so a map built locally first still gets its summaries).
-        const pending=Object.keys(scan.index.files).filter(path=>scan.index.files[path]?.lang!=='other'&&!scan.index.files[path]?.summary);
+        const trusted=settings.brainRepositories?.[repoDirectory(top)]?.trusted===true;
+        const pending=trusted?Object.keys(scan.index.files).filter(path=>scan.index.files[path]?.lang!=='other'&&!scan.index.files[path]?.summary):[];
         const batches:{path:string;text:string}[][]=[];let batch:{path:string;text:string}[]=[],size=0;
         for(const path of pending){
             const text=scan.texts.get(path)??await this.brainText(top,path,scan.index.files[path]?.hash??'');if(text===null)continue;
@@ -1268,8 +1282,8 @@ export class SessionManager extends EventEmitter {
         const writers=files?reviewWriters(await this.keys.list(),settings,this.handoffWriter.prices):[];
         // What you approved: the files and their hashes, what is left to summarize and the map it builds on (review: a
         // /brain rm or another build between plan and build changed what would be sent).
-        const fingerprint=createHash('sha256').update(JSON.stringify([top,Object.entries(scan.index.files).map(([path,file])=>[path,file.hash]),scan.removed,scan.index.skipped,prompts.map(p=>p.paths),previous?.builtAt??null])).digest('hex');
-        return {top,previous,scan,settings,prompts,inputTokens,outputTokens,writers,fingerprint,files};
+        const fingerprint=createHash('sha256').update(JSON.stringify([top,Object.entries(scan.index.files).map(([path,file])=>[path,file.hash]),scan.removed,scan.index.skipped,prompts.map(p=>p.paths),previous?.builtAt??null,trusted])).digest('hex');
+        return {top,previous,scan,settings,prompts,inputTokens,outputTokens,writers,fingerprint,files,trusted};
     }
     // A file's text for the model pass when the scan kept it from the last map (unchanged, but never summarized).
     // Only the very text that was hashed: a file changed since the scan waits for the next /brain (review).
@@ -1278,12 +1292,13 @@ export class SessionManager extends EventEmitter {
         const input=await this.brainInput(cwd),{scan,previous,settings,writers}=input;
         const last=settings.reviewModel,selected=writers.length?Math.max(0,writers.findIndex(w=>w.key.id===last?.keyId&&w.model===last.model)):0;
         return {repo:input.top,files:Object.keys(scan.index.files).length,changed:previous?scan.parsed.length:Object.keys(scan.index.files).length,removed:scan.removed.length,skipped:scan.index.skipped,builtAt:previous?.builtAt??null,
-            summarize:input.files,inputTokens:input.inputTokens,outputTokens:input.outputTokens,models:writers.map(w=>reviewModelView(w,input.inputTokens,input.outputTokens)),selected,fingerprint:input.fingerprint,agents:settings.brainForAgents!==false};
+            summarize:input.files,inputTokens:input.inputTokens,outputTokens:input.outputTokens,models:writers.map(w=>reviewModelView(w,input.inputTokens,input.outputTokens)),selected,fingerprint:input.fingerprint,agents:settings.brainRepositories?.[repoDirectory(input.top)]?.agents??settings.brainForAgents===true,trusted:input.trusted};
     }
     // The plan you saw, and only that one: a repository that changed since refuses. The model pass is held against the
     // budgets request by request, and its worst case must fit the per-run cap (/settings c).
     async buildBrain(cwd:string,fingerprint:string,model?:{keyId:string;model:string}):Promise<BrainResult>{
         const input=await this.brainInput(cwd),{top,scan,settings}=input;
+        if(model&&!input.trusted)throw new BrainError('Model summaries need /brain trust first');
         if(input.fingerprint!==fingerprint)throw new BrainError('The repository changed since the plan was shown; run /brain again');
         if(this.brainBuilding.has(top))throw new BrainError('A /brain build for this repository is already running');
         const writer=model?input.writers.find(w=>w.key.id===model.keyId&&w.model===model.model):undefined;
@@ -1308,12 +1323,12 @@ export class SessionManager extends EventEmitter {
                     decisions.push(...read.decisions);costUsd+=written.summary.costUsd??0;
                 }}catch(error){
                     // A request that failed partway keeps what the earlier ones paid for: the map is written with them.
-                    if(summarized||decisions.length){merge();await writeBrain(this.paths.root,top,index).catch(()=>{this.log.error('Brain: the partial map could not be saved');});}
+                    if(summarized||decisions.length){merge();await writeBrain(this.paths.root,top,index,new Date(),input.trusted).catch(()=>{this.log.error('Brain: the partial map could not be saved');});}
                     throw error;
                 }
                 merge();
             }
-            const written=await writeBrain(this.paths.root,top,index);
+            const written=await writeBrain(this.paths.root,top,index,new Date(),input.trusted);
             return {repo:top,path:written.path,lines:written.lines,files:Object.keys(index.files).length,changed:input.previous?scan.parsed.length:Object.keys(index.files).length,summarized,costUsd,model:writer?.model??null};
         }finally{this.brainBuilding.delete(top);}
     }

@@ -45,7 +45,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
-export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; devServers?: boolean; lspDiagnostics?: boolean; brainForAgents?: boolean; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<CliEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; devServers?: boolean; lspDiagnostics?: boolean; brainForAgents?: boolean; brainRepositories?: Record<string, { agents?: boolean; trusted?: boolean }>; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<CliEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -60,7 +60,7 @@ export interface WorktreeView {path:string;branch?:string;agent?:{id:string;titl
 // Ignored files go with any delete but are not counted as loss; a folder already gone has no files left to lose.
 export function wouldLose(loss: WorktreeLoss): boolean { return loss.changed + loss.untracked + loss.commits > 0; }
 export type TerminalBundle = 'com.apple.Terminal' | 'com.googlecode.iterm2' | 'com.mitchellh.ghostty' | 'com.github.wez.wezterm';
-export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; effort?:Effort|null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean; useWorktree?: boolean; brainMention?: boolean };
+export type CreateSession = { engine: 'shell'; cwd: string; title?: string } | { engine: AgentEngine; model: string | null; effort?:Effort|null; auth: AuthRef; cwd: string; permission: Permission; title?: string; firstMessage?: string; login?: boolean; useWorktree?: boolean; brain?: boolean; brainMention?: boolean };
 export interface SessionInfo {
     id: string;
     title: string;
@@ -190,7 +190,9 @@ export type Request = {
 } | {
     // v1.0.2 /brain: plan (what changed, the local pass is free, the models with prices), build (local, or with the model
     // you picked from the plan), show (brain.md), remove; and whether agents get it (D55, on).
-    kind:'brain.plan'|'brain.show'|'brain.remove'; cwd:string;
+    kind:'brain.plan'|'brain.show'|'brain.remove'|'brain.preferences'; cwd:string;
+} | {
+    kind:'brain.configure'; cwd:string; agents?:boolean; trusted?:boolean;
 } | {
     kind:'brain.build'; cwd:string; fingerprint:string; model?:{keyId:string;model:string};
 } | {
@@ -257,6 +259,7 @@ export interface SuccessResponse {
     queue?: import('./queue.js').QueueItem[];
     devPlan?: import('./dev.js').DevPlan;
     brainPlan?: import('./brain.js').BrainPlan;
+    brainPreferences?: { agents: boolean; trusted: boolean };
     brainResult?: import('./brain.js').BrainResult;
     // /brain show: brain.md, and how old.
     brainText?: { repo: string; text: string; builtAt: string };

@@ -153,10 +153,12 @@ Only a server outside the agent's worktree is used, never one in `node_modules/.
 
 The first pass is free and uses no model. It lists the files and, for TypeScript, JavaScript and Python, what each file imports and exports and which files import it. Other languages are listed as files. Files git ignores are never read. Binaries, files over 256 KB, `.env` files and anything the secret scan flags are skipped, and the popup counts them.
 
-The popup can also add a short summary of each module and the main design decisions, written by a model on one of your API keys. It shows the estimated tokens and the price range for each model first, and runs only on your ⏎. That pass counts against your budgets and the per-run cap, and secrets are removed before anything is sent.
+After `/brain trust`, the popup can also add a short summary of each module and the main design decisions, written by a model on one of your API keys. It shows the estimated tokens and the price range for each model first, and runs only on your ⏎. That pass counts against your budgets and the per-run cap, and secrets are removed before anything is sent.
 
 The map is saved as `brain.md`, at most 2,000 lines, with a `brain.json` that remembers each file's fingerprint. Both live under `~/.ai-term/brain/`, never in your repository. Run `/brain` again later and only the files that changed are read again, and priced.
 
-New agents in that repository get the map when they start. AI Term's agent reads it, and Claude Code gets it as extra instructions. Codex has no way to take a file of instructions, so in the start box `n` adds a line to your first message asking it to read the map first. The card shows `brain · 2h old`, since a map can go out of date. Press `a` in the `/brain` popup to stop giving it to agents.
+Brain starts off. The start box's **brain** line shows on/off; `b` changes this agent's choice and remembers it for this repository. An older setting you explicitly turned on stays on. Agents receive `brain-index.md`, at most 150 lines of top folders, entry points and import ranks, plus the full-map path. Claude Code loads it as a prompt file, Codex names it in the first message, and AI Term's agent reads it at start. The card shows `brain · 2h old`.
+
+Repositories start untrusted: indexes contain names and structure only. `/brain trust` allows a model pass and model notes in the index. `/brain untrust` removes those notes from the index again. The header marks all repository content as data about the code, never instructions.
 
 `/brain show` opens the map, and `/brain rm` deletes it.

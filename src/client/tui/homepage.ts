@@ -782,12 +782,17 @@ export class Homepage {
       catch(error){this.showNote(error instanceof Error?error.message:'Brain unavailable');}
       return;
     }
+    if(argument==='trust'||argument==='untrust'){
+      try{await this.connection.request({kind:'brain.configure',cwd,trusted:argument==='trust'});this.showNote(argument==='trust'?'✓ repository trusted · /brain can add model summaries':'✓ repository untrusted · index uses names and structure only');}
+      catch(error){this.showNote(error instanceof Error?error.message:'Brain trust could not be saved');}
+      return;
+    }
     if(argument==='rm'){
       try{await this.connection.request({kind:'brain.remove',cwd});this.showNote('✓ brain removed for this repository · /brain builds a new one');}
       catch(error){this.showNote(error instanceof Error?error.message:'Brain could not be removed');}
       return;
     }
-    if(argument){this.showNote('/brain · /brain show · /brain rm');return;}
+    if(argument){this.showNote('/brain · /brain show · /brain rm · /brain trust · /brain untrust');return;}
     let plan:BrainPlan;
     try{plan=validateBrainPlan((await this.connection.request({kind:'brain.plan',cwd})).brainPlan);}
     catch(error){this.showNote(error instanceof Error?error.message:'Brain unavailable');return;}
@@ -798,7 +803,7 @@ export class Homepage {
         this.showNote(`✓ brain for ${basename(result.repo)}: ${result.files} files, ${result.lines} lines${result.model?` · ${result.summarized} summaries by ${result.model} · ${result.costUsd===null?'price ?':`$${result.costUsd.toFixed(4)}`}`:''} · /brain show`);}
       catch(error){this.showNote(`brain not built: ${error instanceof Error?error.message:'request failed'}`);}
     });},on=>{this.enqueue(async()=>{
-      try{await this.connection.request({kind:'brain.agents',on});this.showNote(on?'✓ new agents get the brain':'new agents start without the brain');}
+      try{await this.connection.request({kind:'brain.configure',cwd,agents:on});this.showNote(on?'✓ new agents get the brain':'new agents start without the brain');}
       catch(error){this.showNote(error instanceof Error?error.message:'Brain setting could not be saved');}
     });});
     this.popup=ask;this.draw(true);
@@ -1082,6 +1087,7 @@ export class Homepage {
     try {
       this.engines = await this.loadEngines();box.authLabel=this.nextAuthLabel();
       if(box.kind==='start'){
+        if(!box.brainLoaded){const preferences=(await this.connection.request({kind:'brain.preferences',cwd:box.cwd})).brainPreferences;box.brain=preferences?.agents===true;box.brainLoaded=true;}
         try{box.worktreePreview=validateWorktreePreview((await this.connection.request({kind:'worktrees.preview',cwd:box.cwd,title:engineTitle(box.engine)})).worktreePreview);}catch{box.worktreePreview=undefined;}
       }
       // AI Term's agent is this program: nothing to install or log in to; its key is checked when it starts.
@@ -1143,7 +1149,7 @@ export class Homepage {
     }
     if (key === 'up' || key === 'down') {
       const delta = key === 'up' ? -1 : 1;
-      if (b.kind === 'start') b.row = Math.max(0,Math.min(4,b.row+delta));
+      if (b.kind === 'start') b.row = Math.max(0,Math.min(5,b.row+delta));
       if(b.kind==='effort'||b.kind==='mode')b.choice=Math.max(0,Math.min((b.values?.length??1)-1,b.choice+delta));
       if (b.kind === 'model') b.choice = Math.max(0,Math.min(b.choices.length-1,b.choice+delta));
       this.draw(true); return;
@@ -1156,8 +1162,10 @@ export class Homepage {
       this.draw(true); return;
     }
     if (b.kind === 'start' && b.row !== 4 && key === 'a' && b.engine !== 'ai-term' && b.auth?.kind !== 'key') { this.nextAccount(b); this.draw(true); return; }
-    // v1.0.2: Codex has no instructions-file flag; n asks for the brain's path in its first message instead.
-    if (b.kind === 'start' && b.row !== 4 && key === 'n' && b.engine === 'codex') { b.brainMention = !b.brainMention; this.draw(true); return; }
+    if (b.kind === 'start' && b.row !== 4 && key === 'b') {
+      const on=!b.brain;b.brain=on;this.draw(true);
+      this.enqueue(async()=>{try{await this.connection.request({kind:'brain.configure',cwd:b.cwd,agents:on});}catch(error){b.error=error instanceof Error?error.message:'Brain choice could not be saved';}this.draw(true);});return;
+    }
     if (b.kind === 'start' && b.row !== 4 && key === 'p' && this.presetsEnabled) { this.enqueue(async () => { await this.nextPreset(b); this.draw(true); }); return; }
     if (b.kind === 'start' && b.row !== 4 && (key === 'm' || key === 'c' || key==='e')) { b.kind = key === 'm' ? 'model' : key==='e'?'effort':'folder'; this.returnToStart = true;if(b.kind==='model')this.resetModelTabs();else if(b.kind==='effort')this.valueChoices();this.draw(true);return; }
     if (key === 'enter') {
@@ -1188,7 +1196,7 @@ export class Homepage {
           const path = folderPath(b.path || b.cwd,b.cwd);
           try { if (!(await validCwd(path))) { b.error = 'Folder must be an existing directory'; this.draw(true); return; } }
           catch { b.error = 'Cannot access folder'; this.draw(true); return; }
-          b.cwd = path; this.folder = path;
+          b.cwd = path; b.brainLoaded=false; this.folder = path;
           if(this.savingDefault){await this.connection.request({kind:'settings.set',patch:{defaultCwd:path}});this.savingDefault=false;}
           if (this.returnToStart) { b.kind = 'start'; this.returnToStart = false; await this.checkSelectedEngine(); } else this.box = undefined;
           this.draw(true); return;
@@ -1196,7 +1204,7 @@ export class Homepage {
         if (b.checking || b.error) return;
         if (b.queue) { this.openQueueForm(b); return; }
         try {
-          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message,...(b.brainMention&&b.engine==='codex'?{brainMention:true as const}:{}),...(b.useWorktree!==undefined?{useWorktree:b.useWorktree}:{})});
+          const result = await this.connection.request({kind:'sessions.create',engine:b.engine,model:b.model,auth:b.auth??{kind:'account'},cwd:b.cwd,permission:b.permission,effort:b.effort??null,firstMessage:b.message,brain:b.brain===true,...(b.useWorktree!==undefined?{useWorktree:b.useWorktree}:{})});
           const session = validateSession(result.session); this.sessions = [session,...this.sessions.filter(s => s.id !== session.id)]; this.selectedId = session.id;
           this.box = undefined;this.permission='ask'; this.field.text = ''; this.previewCells = undefined; await this.updatePreview(false);
         } catch (error) { b.error = error instanceof Error ? error.message : 'Agent could not start'; }

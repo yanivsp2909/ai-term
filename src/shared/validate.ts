@@ -146,13 +146,14 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if(!isSafeAbsolutePath(v.path)||v.kind==='worktrees.delete'&&(!isFingerprint(v.fingerprint)||v.confirm!==undefined&&!isWorktreeBranch(v.confirm)))throw new ValidationError('Invalid worktree request');
             break;
         case 'sessions.create':
-            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login','useWorktree','brainMention'];
+            fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login','useWorktree','brain','brainMention'];
             if (!(await validCwd(v.cwd))) throw new ValidationError('Folder must be an existing absolute directory');
             if (v.engine !== 'shell' && (!isAgentEngine(v.engine) || !isModel(v.model) || !isAuthRef(v.auth) || !isPermissionForEngine(v.engine,v.permission) || v.effort !== undefined && !isEffortForEngine(v.engine,v.effort) || (v.firstMessage !== undefined && !isFirstMessage(v.firstMessage)))) throw new ValidationError('Invalid account agent request');
             if (v.engine === 'ai-term' && (!v.auth || typeof v.auth !== 'object' || !('kind' in v.auth) || v.auth.kind !== 'key' || v.login !== undefined)) throw new ValidationError('AI Term agent needs an API key');
             // v0.6.2: a preset can turn the worktree on or off for this one agent; absent means the saved setting.
             if (v.useWorktree !== undefined && (typeof v.useWorktree !== 'boolean' || v.login !== undefined)) throw new ValidationError('Invalid worktree choice');
             // v1.0.2: Codex has no instructions-file flag; this asks for the brain's path in its first message.
+            if (v.brain !== undefined && (typeof v.brain !== 'boolean' || v.login !== undefined)) throw new ValidationError('Invalid brain choice');
             if (v.brainMention !== undefined && (v.brainMention !== true || v.engine !== 'codex' || v.login !== undefined)) throw new ValidationError('Invalid brain choice');
             if (v.login !== undefined && (v.login !== true || v.model!==null || !isAccount(v.auth) || v.permission !== 'ask' || v.firstMessage !== undefined || v.effort !== undefined)) throw new ValidationError('Invalid login session');
             if (v.title !== undefined) { if (typeof v.title !== 'string') throw new ValidationError('Invalid title'); v.title = sanitizeTitle(v.title); if (!isTitle(v.title)) throw new ValidationError('Invalid title'); }
@@ -193,10 +194,12 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['sessionId'];if(!isUUID(v.sessionId))throw new ValidationError('Invalid session UUID');break;
         case 'sessions.dev':
             fields=['sessionId','fingerprint'];if(!isUUID(v.sessionId)||typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint))throw new ValidationError('Invalid dev server request');break;
-        case 'brain.plan': case 'brain.show': case 'brain.remove':
+        case 'brain.plan': case 'brain.show': case 'brain.remove': case 'brain.preferences':
             fields=['cwd'];if(!await validCwd(v.cwd))throw new ValidationError('Invalid brain request');break;
         case 'brain.build':
             fields=['cwd','fingerprint','model'];if(!await validCwd(v.cwd)||typeof v.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(v.fingerprint)||v.model!==undefined&&!(isBrainRecord(v.model)&&Object.keys(v.model).every(k=>['keyId','model'].includes(k))&&isUUID(v.model.keyId)&&typeof v.model.model==='string'&&isValidModelId(v.model.model)))throw new ValidationError('Invalid brain request');break;
+        case 'brain.configure':
+            fields=['cwd','agents','trusted'];if(!await validCwd(v.cwd)||(v.agents===undefined&&v.trusted===undefined)||v.agents!==undefined&&typeof v.agents!=='boolean'||v.trusted!==undefined&&typeof v.trusted!=='boolean')throw new ValidationError('Invalid brain request');break;
         case 'brain.agents':
             fields=['on'];if(typeof v.on!=='boolean')throw new ValidationError('Invalid brain request');break;
         case 'project.setDevCommand':
@@ -368,6 +371,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.queue!==undefined&&typeof v.queue!=='boolean')throw new ValidationError('Invalid queue setting');
     if(v.devServers!==undefined&&typeof v.devServers!=='boolean')throw new ValidationError('Invalid dev server setting');
     if(v.lspDiagnostics!==undefined&&typeof v.lspDiagnostics!=='boolean')throw new ValidationError('Invalid diagnostics setting');
+    if(v.brainRepositories!==undefined&&(!isRecord(v.brainRepositories)||Object.keys(v.brainRepositories).length>100||Object.entries(v.brainRepositories).some(([id,p])=>!/^[-\w.]+-[0-9a-f]{10}$/.test(id)||!isRecord(p)||Object.keys(p).some(k=>!['agents','trusted'].includes(k))||p.agents!==undefined&&typeof p.agents!=='boolean'||p.trusted!==undefined&&typeof p.trusted!=='boolean')))throw new ValidationError('Invalid repository brain settings');
     if(v.brainForAgents!==undefined&&typeof v.brainForAgents!=='boolean')throw new ValidationError('Invalid brain setting');
     if(v.devCommands!==undefined&&(!isRecord(v.devCommands)||Object.keys(v.devCommands).length>50||Object.entries(v.devCommands).some(([repo,command])=>['__proto__','prototype','constructor'].includes(repo)||!isSafeAbsolutePath(repo)||!isTestCommand(command))))throw new ValidationError('Invalid dev commands');
     if(v.autoTest!==undefined&&typeof v.autoTest!=='boolean')throw new ValidationError('Invalid auto-test setting');
