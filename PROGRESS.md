@@ -1,6 +1,47 @@
 # PROGRESS
 
 ## Checkpoint
+Last artifact commit: f98050a docs: retain exact inventory paths and require subject overlap
+Last commit: Part B handover (this commit)
+Roadmap step: 2026-10-16 long run · Parts A and B done · Part C pending
+Branch: main. Part A pushed at 6b529b2; Part B commits below are pushed before Part C starts.
+
+## What works
+- docs/addons/inventory.md inventories 1,278 logical paths: 905 skills, 220 agents, 153 commands, with 1,041 distinct bodies. Every row includes name, source path, purpose, static quality/reason, overlap, stated license and suggested planned command.
+- The read-only scan covered the requested D48 roots, including cached/plugin archive versions and symlink aliases. Seven denied paths were excluded without reading contents. No credentials, settings, history, login files or .env contents were read.
+- A fresh high-effort TypeScript reviewer independently confirmed all 1,278 paths, with no missing or extra definitions. Two MEDIUM findings were reproduced then fixed: harmless names keep exact provenance, and subject overlaps require shared meaningful terms.
+- Part A B30 remains green; its full handover follows this one.
+
+## What's next
+- Part C: D58 add-on core and /plan, /prompt, /explain, with stub-engine runs, fresh TS/security review and the same verification gates.
+
+## Manual checks
+- Inventory artifact contract: ran · two tests read only the checked-in document.
+- Hidden Electron smoke: ran · 9 passed (36.8s), temporary state, no computer use.
+- No new manual checks are required for this documentation-only part.
+
+## Gotchas
+- Quality scores and planned-command assignments are static judgments, not runtime verification. Filesystem presence does not establish a callable agent. Not stated is not a license grant.
+- All definition bodies eligible under D48 were read; denied entries were excluded. Alias paths remain separate rows, so total paths exceed distinct bodies.
+- Review findings: 0 CRITICAL, 0 HIGH, 2 MEDIUM fixed, 0 LOW; no unresolved findings. RED 70b4ebe → GREEN c3bda71; review RED f2cf070 → GREEN f98050a. Evidence: .github/tdd/inventory.tdd.md.
+- Final checks: typecheck exit 0 (tsc --noEmit && tsc --noEmit -p app/tsconfig.json); lint exit 0 (eslint .); build ESM Build success in 42ms; app:build built in 57ms; git diff --check clean.
+- Full suites twice consecutively: Test Files 255 passed (255); Tests 1714 passed | 7 skipped (1721); durations 34.46s and 37.87s. The seven baseline credential-store opt-in skips remain untouched.
+- An earlier pre-review full run hit an unrelated LSP crash-test timing assertion while focused checks ran; no LSP code changed. Both final serial suites are green.
+- The prompt checkpoint matched Part A's starting code; inventory did not change product behavior. No CI or npm dependencies added. Real ~/.ai-term and Yaniv's daemon remain untouched.
+- Inventory's ten suggestions, not built: /network, /deploy, /migrate, /scaffold, /launch, /benchmark, /triage, /hook, /database, /sdk. Each has source definitions and a one-line purpose in the artifact.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Definition provenance: docs/addons/inventory.md keeps the visible source path for each definition, even when aliases share a body. This makes future improved add-on copies traceable without changing Yaniv's installed files.
+- Static quality rubric: the same document scores stated purpose, workflow and verification criteria. The score helps choose pilot sources; only a stub or live run can establish actual behavior.
+
+---
+
+# Previous part: A (2026-10-16)
+
+## Checkpoint
 Last code commit: 29e6e40 fix: retain per-agent brain choices through queue normalization
 Last commit: Part A handover (this commit)
 Roadmap step: 2026-10-16 long run · Part A B30 done · Parts B and C pending
