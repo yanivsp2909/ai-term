@@ -44,6 +44,13 @@ it('MEDIUM review: template replacement keeps literal variables in submitted pro
   const f = await setup(), literal = 'Keep {{brainIndex}} and {{args}} literally.';
   const ask = await f.plan(literal); await f.service.start(ask.receipt); expect(f.messages[0]).toContain(literal);
 });
+it.each(['relative', 'absolute'])('prompt audits %s file paths inside the selected repository', async kind => {
+  const f = await setup(), path = join(f.repo, 'builder.md'), body = 'Build one scoped feature, verify it and stop at the checkpoint.';
+  await writeFile(path, body);
+  const ask = await f.plan(kind === 'absolute' ? path : 'builder.md');
+  await f.service.start(ask.receipt);
+  expect(f.messages[0]).toContain(body);
+});
 it('MEDIUM review: every selected plan step and approval hint remain visible, and long steps can page', () => {
   const panel = new AddonPanel(() => {}, () => {}, { start: () => {}, build: () => {}, approve: () => {}, step: () => {}, copy: () => {}, choose: () => {} });
   panel.setResult({ kind: 'plan', title: 'Twenty-four steps', steps: Array.from({ length: 24 }, (_, i) => ({ title: `Step ${i + 1}`, prompt: Array.from({ length: 30 }, (_, n) => `Detail ${n + 1}: inspect and test.`).join('\n') })) });
