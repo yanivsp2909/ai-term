@@ -133,7 +133,7 @@ it('/fix shows the root cause, the failing test first and the sandboxed test res
   const text = p.lines.join('\n');
   expect(text).toContain('Root cause: parse() reads past the end'); expect(text).toContain('Failing test first: tests/a.test.ts › rejects empty input'); expect(text).toContain("tests (AI Term's sandbox): ✓ tests pass");
   const stopped = panel(); stopped.panel.setResult(parseAddonResult(JSON.stringify({ kind: 'fix', reproduced: false, rootCause: 'unknown', reason: 'No test failed.' }), 'fix', true));
-  expect(stopped.panel.lines.join('\n')).toContain('■ stopped: no test reproduced the bug, so nothing was fixed');
+  expect(stopped.panel.lines.join('\n')).toContain('■ stopped: no test reproduced the bug');
   const cover = panel(); cover.panel.setResult(result('cover')); cover.panel.setTests({ state: 'fail', failing: 1 });
   expect(cover.panel.lines.join('\n')).toContain('fails if: the empty check were removed'); expect(cover.panel.lines.join('\n')).toContain('✗ 1 failing');
 });
@@ -185,4 +185,12 @@ it('LOW (TS review): with an agent named deep, /review deep is still its keyed r
     await vi.waitFor(() => expect(requests).toContainEqual({ kind: 'sessions.reviewPlan', sessionId: id }), { timeout: 10_000 });
     expect(requests.some(r => r.kind === 'addons.plan')).toBe(false);
   } finally { await home.stop(); }
+});
+
+it('LOW (TS review): a /fix that stopped doesn't claim the worktree is untouched; it points to the diff', () => {
+  const { panel: p } = panel(); p.setResult(parseAddonResult(JSON.stringify({ kind: 'fix', reproduced: false, rootCause: 'unknown', reason: 'No test failed.' }), 'fix', true));
+  const text = p.lines.join('\n');
+  expect(text).toContain('■ stopped: no test reproduced the bug, so there is no fix to keep');
+  expect(text).toContain("d on the agent's card shows whether anything changed in its worktree");
+  expect(text).not.toContain('nothing was fixed');
 });
