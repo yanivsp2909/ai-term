@@ -33,21 +33,25 @@ const relPath = (v: unknown): v is string => line(v, 240) && !v.startsWith('/') 
 const paths = (v: unknown, most: number): v is string[] => Array.isArray(v) && v.length <= most && v.every(relPath);
 const list = <T>(v: unknown, most: number, each: (x: Record<string, unknown>) => boolean, least = 1): v is T[] => Array.isArray(v) && v.length >= least && v.length <= most && v.every(x => { const o = object(x); return !!o && each(o); });
 const SEVERITIES: readonly string[] = ['critical', 'high', 'medium', 'low'];
-// A reproduction must stay inside the repository: anything that reaches a host other than this Mac is dropped. Every
-// scheme://host or //host is parsed as a URL and its real host compared exactly (userinfo can't pass for one), file://
-// leaves the repository, and a network tool's host argument counts too (review: curl evil.com, nc, ssh, scp).
+// A reproduction must stay inside the repository. Two rules (security reviews): every scheme://host or //host is parsed as
+// a URL and its real host must be loopback (userinfo can't pass for one; file:// leaves the repository); and once a
+// reproduction shows any network capability at all (a network tool in any case, socket code, /dev/tcp, git's remote
+// commands), every host-like word in it must be loopback, and it must name one. Anything else is dropped, not guessed.
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-const NETWORK_TOOL = /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|rsync|telnet|ftp|nmap|ping|dig|nslookup|host)\b([^\n;|&]*)/g;
+const NETWORK = /\b(?:curl|wget|nc|ncat|netcat|socat|ssh|scp|sftp|rsync|telnet|ftp|nmap|ping|dig|nslookup|openssl|s_client|socket|create_connection|connect|fetch|urlopen|requests|axios|http\.(?:get|request)|git\s+(?:push|fetch|pull|clone|ls-remote|remote))\b|\/dev\/(?:tcp|udp)\//i;
+// A dotted name or an IPv4 address, unless it is a file name the repository could hold.
+const HOSTISH = /(?:^|[^\w./-])((?:\d{1,3}(?:\.\d{1,3}){3})|(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*)(?=$|[^\w-])/gi;
+const FILE_NAME = /\.(?:ts|tsx|js|jsx|mjs|cjs|json|sh|py|rb|go|rs|java|txt|md|yml|yaml|toml|lock|html|css|c|h|cc|cpp)$/i;
 function outside(text: string): boolean {
+  let loopback = false;
   for (const match of text.matchAll(/([a-z][a-z0-9+.-]*:)?\/\/[^\s'"`<>()]+/gi)) {
     let url: URL; try { url = new URL(match[1] ? match[0] : `http:${match[0]}`); } catch (error) { if (error instanceof TypeError) return true; throw error; }
     if (url.protocol === 'file:' || !LOOPBACK.has(url.hostname)) return true;
+    loopback = true;
   }
-  for (const match of text.matchAll(NETWORK_TOOL)) for (const word of (match[1] ?? '').split(/\s+/)) {
-    const host = word.replace(/^[a-z][a-z0-9+.-]*:\/\/.*$/i, '').replace(/^[^@/]*@/, '').replace(/:.*$/, '');
-    if (/^(?:[a-z0-9-]+\.)+[a-z0-9-]+$/i.test(host) && !LOOPBACK.has(host) && !/\.(?:ts|js|mjs|cjs|json|sh|py|txt|md)$/i.test(host)) return true;
-  }
-  return false;
+  if (!NETWORK.test(text)) return false;
+  for (const match of text.matchAll(HOSTISH)) { const host = match[1] ?? ''; if (LOOPBACK.has(host)) loopback = true; else if (!FILE_NAME.test(host)) return true; }
+  return !loopback && !/\blocalhost\b|\b127\.0\.0\.1\b|\[::1\]/i.test(text);
 }
 
 function explained(p: Record<string, unknown>): boolean {
