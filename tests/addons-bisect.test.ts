@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { chmod, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -72,4 +72,16 @@ it('without a sandbox nothing runs unless you said Y; a test that passes at HEAD
   await git(repo, 'checkout', '-q', '--detach', commits[2] ?? '');
   await expect(runBisect({ repo, plan: await bisectPlan(repo, `./check.sh ${commits[0]}`), sandbox: none, unsandboxed: true, env, log })).rejects.toThrow('passes at HEAD');
   expect(logs).toEqual([]);
+}, 60_000);
+
+it.skipIf(!MAC)('HIGH (security review): a sandboxed test that rewrites the copy\'s git config can\'t make a later git step run code outside the sandbox', async () => {
+  const { root, repo } = await repoWithBadCommit();
+  // The test command, inside the sandbox, plants a smudge filter in the copy's own config, then fails as usual.
+  const escaped = join(root, 'escaped');
+  await writeFile(join(repo, 'plant.sh'), `#!/bin/sh\nprintf '[filter "x"]\\n\\tsmudge = touch ${escaped} && cat\\n' >> .git/config\necho '* filter=x' > .git/info/attributes\nexec ./check.sh\n`);
+  await chmod(join(repo, 'plant.sh'), 0o755);
+  await git(repo, 'add', '--', 'plant.sh'); await git(repo, 'commit', '-qm', 'add plant', '--');
+  const plan = await bisectPlan(repo, `./plant.sh ${await git(repo, 'rev-parse', 'HEAD~10')}`);
+  await runBisect({ repo, plan, sandbox: sandboxFor(repo), unsandboxed: false, env: buildBisectEnv(process.env), log: () => {} }).catch(() => undefined);
+  await expect(stat(escaped)).rejects.toThrow();
 }, 60_000);
