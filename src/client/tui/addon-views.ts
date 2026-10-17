@@ -39,7 +39,7 @@ export function batchLines(r: Batch, view: ResultView): string[] {
     case 'perf': {
       const ab = view.ab, change = ab?.state === 'done' && ab.beforeMs > 0 ? Math.round((ab.afterMs - ab.beforeMs) / ab.beforeMs * 100) : null;
       return [`Measured first: ${r.measured}`, `Changed: ${r.change}`, `Benchmark: ${testCommandText(r.benchmark)}${r.files.length ? ` (new: ${r.files.join(', ')})` : ''}`, '',
-        ...!ab ? ['a runs the A/B: the benchmark on the code before and after, back to back on this Mac, in the test sandbox'] : ab.state === 'running' ? ['◐ A/B running · before and after, alternating'] : ab.state === 'failed' ? [`✗ A/B stopped: ${ab.reason}`, ...ab.reason === AB_NO_SANDBOX ? [] : ['a runs it again']]
+        ...!ab ? ['a runs the A/B: the benchmark on the code before and after, back to back on this Mac, in the test sandbox', 'the before copy has only committed files: no installed dependencies or build output'] : ab.state === 'running' ? ['◐ A/B running · before and after, alternating'] : ab.state === 'failed' ? [`✗ A/B stopped: ${ab.reason}`, ...ab.reason === AB_NO_SANDBOX ? [] : ['a runs it again']]
           : [`✓ A/B · ${ab.rounds} runs each, alternating, ${ab.sandbox ? 'sandboxed' : 'without a sandbox'}`, `  before: ${ab.beforeMs} ms median`, `  after:  ${ab.afterMs} ms median${change === null ? '' : ` · ${change > 0 ? '+' : ''}${change}%`}`],
         'Esc closes'];
     }

@@ -28,6 +28,7 @@ export class AddonPanel {
   private bisectAsk(ask: AddonAsk, b: NonNullable<AddonAsk['bisect']>): string[] {
     return [`/${ask.name} · ${ask.summary}`, 'no model · no tokens · $0', `folder: ${ask.cwd}`, `test: ${b.command.join(' ')}`, `good: ${b.goodLabel} (${b.good.slice(0, 7)}) · bad: HEAD (${b.bad.slice(0, 7)}) · ${b.commits} commit${b.commits === 1 ? '' : 's'}, about ${Math.max(1, Math.ceil(Math.log2(b.commits + 1)))} steps`,
       'runs in a temporary copy that shares your repository’s objects; your checkout is never checked out, reset or bisected',
+      'the copy has only committed files: no installed dependencies or build output, and the sandbox has no network to fetch them',
       b.sandbox ? '✓ test sandbox: writes only in the copy, no network, no home folder' : '● no sandbox here: the test command would run with your rights',
       b.sandbox ? 'y starts · Enter does nothing · Esc cancels' : 'Y (capital) starts without a sandbox · Enter does nothing · Esc cancels'];
   }
