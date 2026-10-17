@@ -169,3 +169,20 @@ it('LOW (TS review): a refused r or f says why and leaves the list usable, so yo
     flow.panel.key('down'); flow.panel.key('space'); expect(flow.panel.lines.join('\n')).toContain('[x] Remove dead export');
   } finally { flow.dispose(); }
 });
+
+it('LOW (TS review): with an agent named deep, /review deep is still its keyed review', async () => {
+  const requests: RequestBody[] = [], id = randomUUID(), now = new Date().toISOString();
+  const agent: SessionInfo = { id, title: 'deep', engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd: '/tmp', permission: 'ask', status: 'done', statusDetail: 'ready', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null };
+  const client = Object.assign(new EventEmitter(), { async request(body: RequestBody): Promise<SuccessResponse> {
+    requests.push(body); const response: SuccessResponse = { id: randomUUID(), ok: true };
+    if (body.kind === 'settings.get') response.settings = { theme: 'graphite' }; if (body.kind === 'sessions.list') response.sessions = [agent]; if (body.kind === 'keys.list') response.keys = [];
+    if (body.kind === 'sessions.preview') { response.snapshot = ''; response.cols = 85; response.rows = 30; }
+    return response;
+  } });
+  const tty = new TTY(), home = new Homepage(client, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp', terminalProgram: 'unknown' }); await home.start();
+  try {
+    tty.emit('data', Buffer.from('/review deep\r'));
+    await vi.waitFor(() => expect(requests).toContainEqual({ kind: 'sessions.reviewPlan', sessionId: id }), { timeout: 10_000 });
+    expect(requests.some(r => r.kind === 'addons.plan')).toBe(false);
+  } finally { await home.stop(); }
+});
