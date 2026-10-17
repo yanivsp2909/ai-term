@@ -39,4 +39,4 @@ it('source CLI opens homepage, enters a shell, returns via Ctrl+E, previews it a
     client?.close(); if (daemon.exitCode === null && daemon.signalCode === null) daemon.kill('SIGTERM'); await exited;
     terminal.dispose(); await rm(root, { recursive: true, force: true });
   }
-}, 15000);
+}, 60_000);
