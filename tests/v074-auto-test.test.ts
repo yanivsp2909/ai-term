@@ -172,9 +172,10 @@ it('MEDIUM (security review): a process that leaves the group (setsid) can\'t ke
     const outcome = await runTests(['/bin/sh', '-c', `perl -e 'use POSIX; POSIX::setsid(); open(my $f, ">", "${pidFile}"); print $f $$; close $f; sleep 600' & sleep 1; exit 0`], dir, buildTestEnv(process.env), { timeoutMs: 15_000 });
     expect(outcome).toEqual({ state: 'pass' });
   } finally {
-    const pid = Number((await readFile(pidFile, 'utf8').catch(() => '')).trim());
+    // The escaped process writes its pid once it has started; wait for it so it can't outlive the test.
+    const pid = await vi.waitFor(async () => { const value = Number((await readFile(pidFile, 'utf8')).trim()); expect(value).toBeGreaterThan(0); return value; }, { timeout: 10_000 });
     // ESRCH: the run's process tree already stopped it.
-    if (pid > 0) try { process.kill(pid, 'SIGKILL'); } catch (error) { expect(error).toMatchObject({ code: 'ESRCH' }); }
+    try { process.kill(pid, 'SIGKILL'); } catch (error) { expect(error).toMatchObject({ code: 'ESRCH' }); }
   }
 }, 20_000);
 
