@@ -1,6 +1,50 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: c600df9 test: tighten B31 conversions after review (last production code: 567b46d)
+Last commit: Part A handover (this commit)
+Roadmap step: 2026-10-17 long run · Part A (B31) done · Part B (add-on batch 1) next
+Branch: main. Part A is pushed with this handover.
+
+## What works
+- B31: the full suite runs with vitest's default parallel workers again, green twice in a row: 32.46 s and 32.61 s after the review fixes (36.99 s and 34.53 s before them), against 257.09 s and 249.34 s for the serial (--maxWorkers=1) runs the last session needed. Every file, assertion and timeout from before is still there; skips are the same 7 opt-in credential-store tests.
+- How the load-dependent tests were found: the suite ran under artificial CPU load (8, 24, then 32 busy loops on this 10-core Mac, 16 runs in all) and every failure was traced to its cause, plus a read of every fixed sleep in tests/ (113 sites).
+- What changed, by cause:
+  - LSP pool (src/agent/lsp.ts) and test runner (src/daemon/test-run.ts) take an injected Deadline (src/shared/deadline.ts); the LSP pool also takes a spawn hook. Their tests fire deadlines by hand and count starts at spawn, so a slow sandboxed start can't turn an answer into a timeout. The unused waitMs option is gone.
+  - src/agent/screen.ts cut long lines a character at a time and measured again: quadratic. A 17 KB bash command took 1.6 s of CPU and its test timed out under load. Both cuts are one pass over cells now (1655 ms → 53 ms); a characterization test pins the output.
+  - vitest.config.ts: test deadlines only catch hangs: expect.poll waits up to 10 s and a test up to 30 s by default (a tsx CLI cold start under load took over the old 1 s).
+  - src/daemon/usage-receiver.ts: a read-only statusSeq(id) so ordering tests wait until a held status body is being read instead of sleeping 20 ms.
+  - 22 test files: sleep-then-assert became condition waits; the killAllBash no-grace proof is a SIGTERM record instead of elapsed time (checked: a grace-style TERM leaves the record).
+
+## What's next
+- Part B: add-on batch 1 (/teach, /fix, /cover, /bisect, /refactor, /perf, /types, /failures, /review <agent> deep, /security).
+
+## Manual checks
+- Full suite, default workers, twice: ran · both green (numbers above).
+- Hidden Electron smoke: ran · 9 passed (36.9s), AI_TERM_BACKGROUND=1, temporary HOME.
+- Heavy-load stress (32 busy loops on 10 cores): ran · last 3 runs all green (52.3 s / 61.6 s / 56.9 s); before the fixes runs failed in the LSP crash test, the 17 KB bash test, the CLI terminal test and attach-bar.
+
+## Gotchas
+- Tests that check a timing behavior of the code itself were left as they are, because their timing is the thing they prove: split (a sync block drawn before the 150 ms hold), output-events (the 750 ms throttle), agent-send F1/F1b (the Enter delay), v093-perf, homepage-stats' first-render settle. None failed in the stress runs; making them deterministic needs fake clocks inside those modules (suggestion, not done).
+- Negative-only checks after a sleep (nothing was called, nothing leaked) keep their sleeps: load can only make them pass, never fail falsely.
+- Use npm run lint, not npx eslint <folder>: through this shell's wrapper `npx eslint tests` tried to install a package named tests.
+- Fresh typescript-reviewer (Part A): 0 CRITICAL, 0 HIGH, 2 MEDIUM, 3 LOW; production changes confirmed behavior-preserving. All five were about test strength in the converted tests themselves (no product code was wrong), so each was fixed directly in c600df9 rather than as a RED/GREEN pair: a 1.5 s poll against a 1 s receiver timer (now the default), early typed input re-checked after attach is fully up, the setsid test waits for the escaped pid before killing it, mcp teardown waits hang-sized. MEDIUM #2 (an aborted middle request isn't observable) is documented in the test: its proof is the final order [1,3].
+- Commits: 81250d6 (RED) → 7c51569 deadlines; 75ccc48 screen fit; 3bc5635 budgets; a387010 (RED) → 567b46d statusSeq; 6e7cd89 sweep; c600df9 review fixes.
+- Last check lines: typecheck exit 0 (tsc --noEmit && tsc --noEmit -p app/tsconfig.json); lint exit 0 (eslint .); build "ESM ⚡️ Build success in 40ms"; app:build "✓ built in 58ms"; Test Files 264 passed (264), Tests 1737 passed | 7 skipped (1744), twice; Electron 9 passed (36.9s).
+- No CI or npm dependencies were added. No real ~/.ai-term, credentials, keychain or Yaniv's daemon were touched.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Injected deadline: src/shared/deadline.ts is a tiny type, `(ms, fire) => cancel`. Code that races another process against the clock (the LSP pool's waits, a test run's timeout) takes one as an option; production passes a real setTimeout, tests pass a manual one and fire it when they choose, so which side of a race wins never depends on how busy the machine is.
+- Condition waits, not sleeps: a test that sleeps 20 ms and then asserts "it happened" is a bet on machine speed. expect.poll / vi.waitFor retry the assertion until it holds or a hang-sized budget runs out, so a slow machine only makes the test slower, never red.
+
+---
+
+# Previous long run: 2026-10-16 (Parts A, B and C)
+
+## Checkpoint
 Last code commit: 4a0ef99 fix: resolve prompt files and guard normalized credential paths
 Last commit: Part C final handover (this commit)
 Roadmap step: 2026-10-16 long run · Parts A, B and C done
