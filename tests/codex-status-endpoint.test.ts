@@ -33,7 +33,8 @@ it('a terminal signal queues behind a status body that arrived first, and a fail
  try{
   let complete:()=>void=()=>{};
   const held=new Promise<number>((resolve,reject)=>{const req=request({hostname:'127.0.0.1',port:receiver.port(),path:'/v1/status/codex',method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token,'transfer-encoding':'chunked'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode??0));});req.on('error',reject);req.write('{');complete=()=>req.end('}');});
-  await new Promise(r=>setTimeout(r,20));receiver.enqueueStatus(id,seq=>{order.push(`signal ${seq}`);});await new Promise(r=>setTimeout(r,20));expect(order).toEqual([]);
+  // B31: the body is being read (sequence 1 taken) before the signal queues, not after a guessed 20 ms.
+  await expect.poll(()=>receiver.statusSeq(id)).toBe(1);receiver.enqueueStatus(id,seq=>{order.push(`signal ${seq}`);});await new Promise(r=>setTimeout(r,20));expect(order).toEqual([]);
   complete();expect(await held).toBe(204);await expect.poll(()=>order).toEqual(['http 1','signal 2']);
   receiver.enqueueStatus(id,()=>{throw new Error('AITERMCANARY');});expect(await send(receiver.port(),token)).toEqual({status:204,body:''});await expect.poll(()=>order).toEqual(['http 1','signal 2','http 4']);
   expect(logs).toEqual(['Status signal failed']);

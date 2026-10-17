@@ -30,8 +30,10 @@ async function agent(engine: 'claude-code' | 'codex' = 'claude-code') {
   const hold = async (body: string) => {
     const req = request({ hostname: '127.0.0.1', port: Number(env.AITERM_STATUS_PORT), path: endpoint, method: 'POST', headers: { 'content-type': 'application/json', 'x-ai-term-session': env.AITERM_STATUS_TOKEN ?? '', 'transfer-encoding': 'chunked' } }, res => { res.resume(); });
     const answered = new Promise<void>(resolve => req.on('response', res => res.on('end', resolve)));
+    const before = usage.statusSeq(session.id);
     await new Promise<void>(resolve => req.write(body.slice(0, 1), () => resolve()));
-    await new Promise(resolve => setTimeout(resolve, 20));
+    // B31: the body is being read once the session's status sequence moves, not after a guessed 20 ms.
+    await expect.poll(() => usage.statusSeq(session.id)).toBeGreaterThan(before);
     return async () => { req.end(body.slice(1)); await answered; };
   };
   return { m, session, writes, feed, status, hold, output: (text: string) => output(text), exit: () => { for (const e of exits) e({ exitCode: 0 }); } };
