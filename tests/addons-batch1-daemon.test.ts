@@ -120,3 +120,12 @@ it('LOW (security review): the A/B never copies a credential-named file, and nev
   await expect(copyBenchFile(from, to, 'bench/link.sh')).rejects.toThrow();
   await copyBenchFile(from, to, 'bench/a.sh'); expect(await readFile(join(to, 'bench', 'a.sh'), 'utf8')).toBe('#!/bin/sh\n');
 });
+
+it('LOW (follow-up security review): the A/B never copies a hard-linked file', async () => {
+  const { copyBenchFile } = await import('../src/daemon/perf-ab.js');
+  const { link } = await import('node:fs/promises');
+  const dir = await temp(), from = join(dir, 'from'), to = join(dir, 'to'); await mkdir(join(from, 'bench'), { recursive: true }); await mkdir(to);
+  await writeFile(join(dir, 'private.txt'), 'secret-ish\n'); await link(join(dir, 'private.txt'), join(from, 'bench', 'x.js'));
+  await expect(copyBenchFile(from, to, 'bench/x.js')).rejects.toThrow('regular file');
+  await expect(readdir(join(to, 'bench'))).resolves.toEqual([]);
+});
