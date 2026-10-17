@@ -1,7 +1,7 @@
 import { diffFrame, type Frame } from '../client/tui/grid.js';
 import type { ExtensionsPanel } from '../client/tui/extensions-panel.js';
 import { channels, type ColorName, type Theme } from '../client/tui/theme.js';
-import { textWidth } from '../shared/unicode-width.js';
+import { textCells, textWidth } from '../shared/unicode-width.js';
 import { plain } from './display.js';
 import type { ToolName } from './agent.js';
 
@@ -77,10 +77,21 @@ export class Screen {
   turnEnd(result: 'done' | 'interrupted' | 'failed'): void { if (result === 'interrupted') this.line(this.paint('status-waiting', '■ interrupted')); }
   prompt(buffer: string): void {
     const shown = plain(buffer).replace(/\n/g, ' ⏎ '), room = this.width - 3;
-    let tail = shown;
-    while (textWidth(tail) > room) tail = [...tail].slice(1).join('');
+    const tail = lastCells(shown, room);
     if (!this.atLineStart && !this.promptShown) this.raw('\n');
     this.out.write(`\r\x1b[2K${this.paint('accent', '› ')}${tail}`); this.promptShown = true; this.atLineStart = false;
   }
-  private fit(text: string, used: number): string { const room = this.width - used - 1; if (textWidth(text) <= room) return text; let cut = text; while (textWidth(cut) > room - 1) cut = [...cut].slice(0, -1).join(''); return cut + '…'; }
+  private fit(text: string, used: number): string { const room = this.width - used - 1; return textWidth(text) <= room ? text : firstCells(text, room - 1) + '…'; }
+}
+// One pass over the cells (B31): trimming a character at a time and measuring again was quadratic, and a 17 KB command
+// took 1.6 s to fit on its line. Cells keep a wide character or a combining mark with its base.
+function firstCells(text: string, room: number): string {
+  let used = 0, kept = '';
+  for (const cell of textCells(text)) { if (used + cell.width > room) break; used += cell.width; kept += cell.text; }
+  return kept;
+}
+function lastCells(text: string, room: number): string {
+  const cells = textCells(text); let used = 0, start = cells.length;
+  for (let cell = cells[start - 1]; cell && used + cell.width <= room; cell = cells[start - 1]) { used += cell.width; start--; }
+  return cells.slice(start).map(cell => cell.text).join('');
 }
