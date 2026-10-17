@@ -1,6 +1,69 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 337d255 test: explicit wait budgets only where a test needs one (B31) (last production code: 0f76b33)
+Last commit: Part B handover (this commit)
+Roadmap step: 2026-10-17 long run · Part A (B31) done · Part B (add-on batch 1) done
+Branch: main. Part A pushed at 126fc28; Part B is pushed with this handover.
+
+## What works
+- Ten batch-1 commands on the D58 add-on core, each with its definition in addons/<name>/addon.md and the D49 popup (nothing starts before y; Enter does nothing):
+  - /teach [agent]: read-only, in the agent's worktree, explains its diff in the /explain style (why, tiny diagram, one idea per chunk with a real changed line, Space, three-line recap). The quiz is offered at the end only; y starts it, n skips it. Brain recommended.
+  - /fix <error text | file>: root cause in one line, a failing test, then the fix, in a worktree; reproduced:false stops and says what it tried.
+  - /cover [path]: tests for untested behavior in a worktree; each test names the behavior and the change that would break it. AI Term runs the project's tests in the D56 sandbox afterwards.
+  - /bisect <test command> [good ref]: no model. Checks pass at good / fail at HEAD, then git bisect run in a temporary `clone --shared` copy, every step inside the test sandbox; shows the first bad commit and its diff; always resets and removes the copy. Your checkout is only read. Without a sandbox: capital Y, enforced by the daemon too.
+  - /refactor [path]: tech-debt list; Space picks; r starts only the picked items in a worktree, tests first and after each.
+  - /perf [path | command]: measures, optimizes in a worktree; a runs AI Term's own A/B (temporary copy at the agent's start vs its worktree, 5 runs each, alternating, sandboxed, medians).
+  - /types [path]: read-only; f fixes the selected finding in a worktree.
+  - /failures [path]: read-only silent-failure hunt; cost: high, so the popup shows the worst-case price first (16 rounds).
+  - /review <agent> deep: code-reviewer then security-reviewer on the agent's diff, any engine including subscriptions; plain /review is unchanged.
+  - /security [path]: read-only review plus bounty-style hunt; a reproduction reaching any non-loopback host is dropped and counted.
+- /fix, /cover and picked refactors run the project's tests in the sandbox after their turns even with auto-test off (AddonService.wantsTests → afterTurn); the "test setup changed → ask" rule is unchanged.
+- Improved copies in addons/_shared/ (header: Source, License, What changed): diff-coach (adhd_study_coach), root-cause-fix (systematic-debugging + tdd-guide), behavior-coverage (test-coverage command), tech-debt (knowledge-work tech-debt + refactor-cleaner), performance-optimizer, type-design-analyzer, silent-failure-hunter (pr-review-toolkit), code-reviewer, security-reviewer, security-bounty-hunter. All sources rated 5/5 in docs/addons/inventory.md. /bisect has none (no model).
+- README command and key lists, /help and docs/user-guide.md cover every command.
+- Every model command ran once on a stub engine in tests/addons-batch1.test.ts; /bisect ran against a real temporary repository with a planted bad commit (tests/addons-bisect.test.ts), sandboxed and with Y.
+
+## What's next
+- Nothing left in this run's scope. Suggestions only (not done): a cancel key for a long /bisect or A/B, and removing stale ai-term-clone-* folders left by a daemon that died mid-run; dependency linking for /bisect and the A/B (today the copy holds only committed files, said in the popup).
+
+## Manual checks
+- Stub engines, real temporary repository, headless homepage and popup keys: ran (tests above).
+- Full suite, default workers, twice: ran · Test Files 268 passed (268), Tests 1777 passed | 7 skipped (1784), 35.44 s and 35.99 s.
+- Hidden Electron smoke: ran · 9 passed (36.8s), AI_TERM_BACKGROUND=1.
+- Heavy-load stress after the budget change (32 busy loops): ran · the first 3 runs found attach-terminal relying on the old global budget (fixed in 337d255); the 2 runs after the fix were green.
+- Live /teach on a real agent: needs Yaniv · cd ~/ai-term && npm run dev  # select an agent with a diff, type /teach, y, Space to the end, then y for the quiz
+- Live /fix in a worktree: needs Yaniv · cd ~/ai-term && npm run dev  # type /fix <a real error line>, y, approve its commands; check the popup's test line
+- Live /bisect sandboxed: needs Yaniv · cd ~/ai-term && npm run dev  # in a repo with a known regression: /bisect <test command> <good tag>, y
+- Live /perf A/B: needs Yaniv · cd ~/ai-term && npm run dev  # type /perf <benchmark command>, y, then a when the result shows
+- Live /review deep on a subscription: needs Yaniv · cd ~/ai-term && npm run dev  # select an agent with a diff, type /review deep, y
+
+## Gotchas
+- Where the code disagreed with the prompt: /bisect uses a temporary `git clone --shared` copy instead of a git worktree. It writes nothing into your repository (no .git/worktrees entry) and is removed with one rm, so it never touches the worktree deletion logic. "/review <agent> deep" is the add-on named review-deep, reached only through /review. The inventory tags benchmark-methodology for /perf, but it is about brand benchmarking, so /perf uses performance-optimizer alone.
+- /bisect's good ref is the last word only when it is a commit hash, a tag, HEAD or a revision like main~3; a bare branch name stays part of the command (write main~0). The copy (and /perf's before side) has only committed files and no network.
+- Reviews (fresh context): TypeScript reviewer 0 CRITICAL, 0 HIGH, 1 MEDIUM, 7 LOW; security reviewer 1 HIGH, 2 MEDIUM, 2 LOW; follow-up security review of the fixes 1 MEDIUM, 1 LOW. Each real finding got a RED test commit, then a fix commit:
+  - HIGH sandbox escape: the sandboxed test could plant a git smudge filter in the copy, run by a later unsandboxed checkout (reproduced: the marker outside the copy appeared). b365a6a → ce46deb: every later git step runs in the sandbox; results come from your repository by id.
+  - MEDIUM /security host filter: bb7ba31 → 9689dd8 (parse every URL host); follow-up bypasses 0776f58 → 8308266 (any network capability must name only loopback hosts).
+  - MEDIUM copy holds only committed files: 138268d (said in popups and docs; dependency linking left as a suggestion). MEDIUM bare branch as good ref: 11f0941. LOW escaped diff size: c55fb01. LOW copyBenchFile links/credential names/hard links: 3b4dccb, 0f76b33. LOW bisect command quoting: 6a101b2. LOW stuck busy after a refused r/f: 8054d9b. LOW agent named deep: 397bead. LOW stopped /fix wording: 02d8895 (its RED test commit had a quoting error, fixed in f924a02 and checked RED against the old text).
+  - Not changed, as suggestions: no cancel for a long /bisect or A/B; stale temp copies if the daemon dies mid-run.
+- Yaniv mid-run: the global wait budgets from Part A (vitest.config.ts testTimeout 30 s, expect.poll 10 s) hid slowness everywhere. Reverted in 337d255; only the waits that need it carry an explicit 10 s budget (44 added by the B31 sweep, plus the real-process polls in homepage-terminal and attach-terminal, whose tests get 60 s).
+- tests/v091-queue.test.ts failed once in a normal full run during this change and couldn't be reproduced (6 stressed targeted runs, 5 stressed full runs, 4 normal full runs green). Its budgets are explicit and unaffected by the revert; watch it.
+- Last check lines: typecheck exit 0; lint exit 0 (eslint .); build "ESM ⚡️ Build success in 46ms"; app:build "✓ built in 61ms"; suites and Electron above.
+- Coverage of the new modules (add-on tests only): 92% lines overall; addon-panel 98%, perf-ab 100%, bisect 96%, shared addons 100% lines.
+- No CI or npm dependencies were added. No real ~/.ai-term, credentials, keychain or Yaniv's daemon were touched; network only for git pull/push.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Temporary shared clone: src/daemon/temp-clone.ts makes `git clone --shared --no-checkout` in a temp folder and checks out one commit. The copy borrows your repository's objects through an alternates file and writes nothing back, so experiments (bisect, an A/B "before" side) can't disturb your checkout; deleting the folder removes it.
+- Trust changes after code runs: in src/daemon/bisect.ts, the copy's .git is trusted only until the first test runs inside it. After that, the test could have planted a git filter or hook, so every later git step runs in the same sandbox, and results are read from your repository by commit id instead of from the copy.
+- Result kept vs result claimed: src/shared/addon-results.ts checks a model's answer field by field. Fields only AI Term may set (the dropped count, /bisect's whole result) are accepted only on the daemon's already-checked copy, never from the model.
+
+---
+
+# Previous part: A (2026-10-17, B31)
+
+## Checkpoint
 Last code commit: c600df9 test: tighten B31 conversions after review (last production code: 567b46d)
 Last commit: Part A handover (this commit)
 Roadmap step: 2026-10-17 long run · Part A (B31) done · Part B (add-on batch 1) next
@@ -12,7 +75,7 @@ Branch: main. Part A is pushed with this handover.
 - What changed, by cause:
   - LSP pool (src/agent/lsp.ts) and test runner (src/daemon/test-run.ts) take an injected Deadline (src/shared/deadline.ts); the LSP pool also takes a spawn hook. Their tests fire deadlines by hand and count starts at spawn, so a slow sandboxed start can't turn an answer into a timeout. The unused waitMs option is gone.
   - src/agent/screen.ts cut long lines a character at a time and measured again: quadratic. A 17 KB bash command took 1.6 s of CPU and its test timed out under load. Both cuts are one pass over cells now (1655 ms → 53 ms); a characterization test pins the output.
-  - vitest.config.ts: test deadlines only catch hangs: expect.poll waits up to 10 s and a test up to 30 s by default (a tsx CLI cold start under load took over the old 1 s).
+  - vitest.config.ts: test deadlines only catch hangs: expect.poll waits up to 10 s and a test up to 30 s by default (a tsx CLI cold start under load took over the old 1 s). Superseded in Part B (337d255, Yaniv): the config is back to vitest's defaults and only the waits that need it carry explicit budgets.
   - src/daemon/usage-receiver.ts: a read-only statusSeq(id) so ordering tests wait until a held status body is being read instead of sleeping 20 ms.
   - 22 test files: sleep-then-assert became condition waits; the killAllBash no-grace proof is a SIGTERM record instead of elapsed time (checked: a grace-style TERM leaves the record).
 
