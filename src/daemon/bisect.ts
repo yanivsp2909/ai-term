@@ -22,14 +22,18 @@ const commitOf = async (cwd: string, ref: string): Promise<string | null> => {
   // rev-parse --verify --quiet exits 1 for a word that names no commit: that word is part of the command.
   catch (error) { if (error instanceof GitError) return null; throw error; }
 };
-// The words are the test command; a last word that names a commit is the good ref. Without one, the good side is the
+// The words are the test command; a last word that unambiguously names a commit is the good ref. Without one, the good side is the
 // commit BISECT_DEFAULT_BACK first-parent steps back (or the first commit). The popup shows both before anything runs.
 export async function bisectPlan(repo: string, args: string): Promise<BisectPlan> {
   const words = parseTestCommand(args);
   // git bisect run adds five words of its own in front of the command, within the runner's word limit.
   if (!words || words.length > MAX_TEST_WORDS - 5) throw new BisectError('/bisect <test command> [good ref] · no shell: pipes and && are plain words');
   const bad = await commitOf(repo, 'HEAD'); if (!bad) throw new BisectError('This repository has no commits to bisect');
-  const last = words.length > 1 ? words.at(-1) ?? '' : '', named = last && !last.startsWith('-') ? await commitOf(repo, last) : null;
+  // Only an unambiguous ref counts (review: a branch named test turned `npm test` into `npm`): a commit hash, a tag, or a
+  // revision expression like main~3 or HEAD^. A bare branch name stays part of the command; main~0 names the branch.
+  const last = words.length > 1 ? words.at(-1) ?? '' : '';
+  const refLike = !!last && !last.startsWith('-') && (last === 'HEAD' || /^[0-9a-f]{7,64}$/i.test(last) || /[~^@]/.test(last) || await commitOf(repo, `refs/tags/${last}`) !== null);
+  const named = refLike ? await commitOf(repo, last) : null;
   const command = named ? words.slice(0, -1) : words;
   let good = named, goodLabel = named ? last : '';
   if (!good) {
