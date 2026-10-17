@@ -20,7 +20,7 @@ async function repoWithBadCommit(bad = 6, total = 10) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-bisect-'))); roots.push(root);
   const repo = join(root, 'repo'); await mkdir(repo);
   await git(root, 'init', '-q', '-b', 'main', '--', repo);
-  await writeFile(join(repo, 'check.sh'), '#!/bin/sh\ngrep -q ok state.txt\n'); await chmod(join(repo, 'check.sh'), 0o755);
+  await writeFile(join(repo, 'check.sh'), '#!/bin/sh\ngrep -qx ok state.txt\n'); await chmod(join(repo, 'check.sh'), 0o755);
   const commits: string[] = [];
   for (let n = 1; n <= total; n++) {
     await writeFile(join(repo, 'state.txt'), n < bad ? 'ok\n' : 'broken\n'); await writeFile(join(repo, `file${n}.txt`), `${n}\n`);
@@ -59,16 +59,17 @@ it.skipIf(!MAC)('macOS: finds the planted commit in a sandboxed temporary copy; 
   expect(parseAddonResult(JSON.stringify(result), 'bisect', true)).toEqual(result);
   expect(await snapshot(repo)).toEqual(before);
   expect((await readdir(temp)).filter(n => n.startsWith('ai-term-clone-'))).toEqual(clonesBefore);
-  expect(logs).toEqual([]);
+  expect(logs, logs.join(' | ')).toEqual([]);
 }, 60_000);
 
 it('without a sandbox nothing runs unless you said Y; a test that passes at HEAD or fails at the good ref stops plainly', async () => {
   const { repo, commits } = await repoWithBadCommit();
-  const plan = await bisectPlan(repo, './check.sh'), none = async () => null, env = buildBisectEnv(process.env), log = () => {};
+  const plan = await bisectPlan(repo, './check.sh'), none = async () => null, env = buildBisectEnv(process.env), logs: string[] = [], log = (text: string) => { logs.push(text); };
   await expect(runBisect({ repo, plan, sandbox: none, unsandboxed: false, env, log })).rejects.toThrow('No sandbox here');
   // Y: the same bisect, with your rights.
   expect((await runBisect({ repo, plan, sandbox: none, unsandboxed: true, env, log })).subject).toBe('planted: break the state');
   await expect(runBisect({ repo, plan: await bisectPlan(repo, `./check.sh ${commits[7]}`), sandbox: none, unsandboxed: true, env, log })).rejects.toThrow('also fails at');
   await git(repo, 'checkout', '-q', '--detach', commits[2] ?? '');
   await expect(runBisect({ repo, plan: await bisectPlan(repo, `./check.sh ${commits[0]}`), sandbox: none, unsandboxed: true, env, log })).rejects.toThrow('passes at HEAD');
+  expect(logs).toEqual([]);
 }, 60_000);

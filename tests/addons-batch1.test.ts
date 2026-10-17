@@ -121,7 +121,7 @@ it('/fix that cannot reproduce stops and says so; /security drops a reproduction
 it('/refactor starts only the picked items in a worktree, with tests kept; /types f fixes one finding', async () => {
   const { repo, runs, service } = await setup();
   const refactor = await service.start((await service.plan('refactor', '', repo, CODEX)).receipt); if (!('session' in refactor)) throw new Error('session');
-  await expect(service.apply(refactor.session.id, [0])).rejects.toThrow('Nothing to apply');
+  await expect(service.apply(refactor.session.id, [0])).rejects.toThrow('Wait for the list');
   await service.result(refactor.session.id);
   await expect(service.apply(refactor.session.id, [])).rejects.toThrow('Pick items');
   await expect(service.apply(refactor.session.id, [0, 0])).rejects.toThrow('Pick items');

@@ -3,7 +3,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { parseAddon, parseAddonResult } from '../src/shared/addons.js';
+import { parseAddon } from '../src/shared/addons.js';
+import { parseAddonResult } from '../src/shared/addon-results.js';
 import { AddonService } from '../src/daemon/addons.js';
 import { AddonPanel } from '../src/client/tui/addon-panel.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
@@ -47,7 +48,7 @@ it('all pilots run once on a stub engine; approval saves the plan and only s sta
   for (const name of ['plan', 'prompt', 'explain']) {
     const ask = await service.plan(name, name === 'prompt' ? 'prompt.md' : 'trace src/a.ts', repo, { engine: 'codex', model: null, auth: { kind: 'account' } });
     expect(runs).toHaveLength(name === 'plan' ? 0 : name === 'prompt' ? 1 : 2);
-    const session = await service.start(ask.receipt); if (name === 'plan') planRun = session.id;
+    const started = await service.start(ask.receipt); if (!('session' in started)) throw new Error('expected an agent'); const session = started.session; if (name === 'plan') planRun = session.id;
     expect(runs.at(-1)).toMatchObject({ permission: 'ask', useWorktree: false });
     expect(String(runs.at(-1)?.firstMessage)).toContain('addons/');
     expect((await service.result(session.id))?.kind).toBe(name);

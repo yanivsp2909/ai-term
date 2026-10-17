@@ -20,7 +20,24 @@ Esc closes the popup and keeps the agent running. Attach from its card for any n
 
 Definitions live in AI Term's `addons/<name>/addon.md`, with source-attributed improved copies in `addons/_shared/`. Runtime copies are immutable private bundles under `~/.ai-term/addons/`; AI Term never installs them into Claude/Codex folders or writes them into the target repository. Claude's installed flags are checked before loading the plugin folder; Codex gets explicit file paths, and AI Term's agent loads the files itself. Read-only pilots disable write/shell/MCP/subagent tools in the native agent; Claude gets only Read/Grep/Glob, and Codex uses its read-only sandbox.
 
-One section per area: [Agents](#agents) · [Sessions](#sessions) · [Worktrees](#worktrees) · [Review and merge](#review-and-merge) · [Budgets](#budgets) · [Accounts](#accounts) · [Queue](#queue) · [Dev servers](#dev-servers) · [Diagnostics](#diagnostics) · [Brain](#brain)
+## Learn, fix, test and review with add-ons
+
+These use the same popup as `/plan`: it shows what runs, where, whether it can edit, and the token and price range, and nothing starts until you press `y`. Add-ons that edit work in a new worktree in Ask mode, so every command still asks first. A command with no argument reopens its last popup for the same subject.
+
+- `/teach [agent]` teaches the diff an agent just made, from its worktree: the why, a tiny diagram, then one idea per chunk with a real changed line. Space shows the next chunk. At the end it offers a short quiz of scenario questions; `y` starts it, `n` skips it, and it never starts by itself. With no name it teaches the selected agent.
+- `/fix <error text or file>` finds the root cause, writes a test that fails because of the bug, then fixes it. If it can't make a test fail, it stops and says what it tried instead of guessing.
+- `/cover [path]` writes tests for behavior nothing checks yet. Each test names the behavior and the change that would break it; tests that only copy the code don't count.
+- `/refactor [path]` lists tech debt first. Space picks items and `r` refactors only those, keeping the tests green and undoing any item that breaks them.
+- `/perf [path or command]` measures before it changes anything. After the agent's change, `a` runs AI Term's own A/B: the same benchmark on the old and new code, five runs each, back to back on this Mac, and shows both medians.
+- `/types [path]` reviews how the types guard against impossible states; `f` fixes the selected finding in a worktree.
+- `/failures [path]` hunts for errors that disappear without a trace. It reads a lot, so the popup shows its worst-case price first.
+- `/security [path]` is a security review plus a bug-bounty-style hunt. Every finding has a reproduction against this repository only; one that reaches another host is dropped and the popup says so.
+- `/review <agent> deep` runs a code reviewer, then a security reviewer, on an agent's diff on any engine, including your subscriptions. Plain `/review` is still the one-model review with a key.
+- `/bisect <test command> [good ref]` uses no model and no tokens. It checks that the test passes at the good ref (default: 32 commits back) and fails now, then runs `git bisect run` in a temporary copy of the repository under the test sandbox. It shows the first bad commit and its diff, then resets and removes the copy. Your checkout is only read. Without a sandbox it asks for a capital `Y`.
+
+When `/fix`, `/cover` and a picked `/refactor` finish, AI Term runs the project's `/test-cmd` in the test sandbox, even with auto-test off, and the popup shows the result. Without a test command they say so instead.
+
+One section per area: [Add-ons](#learn-fix-test-and-review-with-add-ons) · [Agents](#agents) · [Sessions](#sessions) · [Worktrees](#worktrees) · [Review and merge](#review-and-merge) · [Budgets](#budgets) · [Accounts](#accounts) · [Queue](#queue) · [Dev servers](#dev-servers) · [Diagnostics](#diagnostics) · [Brain](#brain)
 
 ## Agents
 

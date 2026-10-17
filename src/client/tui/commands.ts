@@ -7,6 +7,10 @@ export const modeValues=(engine:AgentEngine,dontAsk=true):readonly Permission[]=
 export const modeLabel=(mode:Permission):string=>mode==='dontAsk'?"! don't ask":mode;
 export const effortValues=(engine:AgentEngine):readonly string[]=>['CLI default',...EFFORT_LEVELS[engine]];
 const none=()=>'';
+// D58 add-ons typed as commands (review-deep is reached through /review <agent> deep). A hint in <> needs an argument;
+// one in [] has a default: the whole folder, or the selected agent.
+export const ADDON_COMMANDS=['plan','prompt','explain','teach','fix','cover','bisect','refactor','perf','types','failures','security'] as const;
+export const ADDON_HINTS:Readonly<Record<string,string>>={plan:'<goal>',prompt:'<file or text>',explain:'<path or question>',teach:'[agent]',fix:'<error text or file>',cover:'[path]',bisect:'<test command> [good ref]',refactor:'[path]',perf:'[path or command]',types:'[path]',failures:'[path]',security:'[path]','review-deep':'[agent]'};
 export const commandRegistry:readonly Command[]=[
  {name:'/model',description:'Choose model and provider',current:c=>`${c.model??'CLI default'} · ${c.engine==='codex'?'codex':'claude code'}`},
  {name:'/cd',description:'Choose the next agent folder',current:c=>c.cwd},
@@ -27,7 +31,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/merge',description:'Merge an agent\'s branch into your checkout (asks first; secret scan)',argumentHint:()=>'[agent] [rebase]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/pr',description:'Push an agent\'s branch and open a pull request with gh (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/fork',description:'The same first message on another model, in its own worktree (spends tokens; asks first)',argumentHint:()=>'[agent] <model>',current:c=>c.selectedTitle??''},
- {name:'/review',description:'One reviewer pass on an agent\'s diff by a keyed model you pick (spends tokens; asks first)',argumentHint:()=>'[agent] [show] | budget <usd>',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
+ {name:'/review',description:'One reviewer pass on an agent\'s diff by a keyed model you pick (spends tokens; asks first)',argumentHint:()=>'[agent] [show | deep] | budget <usd>',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/test',description:'Run the project\'s tests in an agent\'s worktree (asks first; the card shows the result)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/test-cmd',description:'The project\'s test command, run when an agent finishes (none clears it)',argumentHint:()=>'[<command> | none]',current:none},
  {name:'/undo',description:'Restore an agent\'s worktree to its previous checkpoint (asks first)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
@@ -49,6 +53,15 @@ export const commandRegistry:readonly Command[]=[
  {name:'/plan',description:'Propose a step plan; a saves it, s starts a step (asks first)',argumentHint:()=>'<goal>',current:none},
  {name:'/prompt',description:'Audit a builder prompt read-only; copy the improved diff (asks first)',argumentHint:()=>'<file or text>',current:none},
  {name:'/explain',description:'Explain inspected code in small chunks; Space advances (asks first)',argumentHint:()=>'<path or question>',current:none},
+ {name:'/teach',description:'Teach the diff an agent just made in small chunks; a quiz only if you ask (asks first)',argumentHint:()=>ADDON_HINTS.teach??'',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
+ {name:'/fix',description:'Root cause, a failing test, then the fix, in a worktree; stops if it can\'t reproduce (asks first)',argumentHint:()=>ADDON_HINTS.fix??'',current:none},
+ {name:'/cover',description:'Write tests for untested behavior in a worktree; sandboxed test run (asks first)',argumentHint:()=>ADDON_HINTS.cover??'',current:none},
+ {name:'/bisect',description:'Find the first bad commit with git bisect in a sandboxed temporary copy; no model, no tokens',argumentHint:()=>ADDON_HINTS.bisect??'',current:none},
+ {name:'/refactor',description:'Tech-debt list; Space picks items, r refactors only those in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.refactor??'',current:none},
+ {name:'/perf',description:'Measure, optimize in a worktree, then an A/B before and after (asks first)',argumentHint:()=>ADDON_HINTS.perf??'',current:none},
+ {name:'/types',description:'Read-only type-design review; f fixes a finding in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.types??'',current:none},
+ {name:'/failures',description:'Read-only hunt for silently swallowed errors; a long, expensive read (asks first)',argumentHint:()=>ADDON_HINTS.failures??'',current:none},
+ {name:'/security',description:'Read-only security review and bug-bounty hunt, reproduced against this repo only (asks first)',argumentHint:()=>ADDON_HINTS.security??'',current:none},
  {name:'/dev',description:'Run the project\'s dev server in an agent\'s worktree on its own port (asks first; D55, off; /settings y)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/dev-cmd',description:'The project\'s dev server command, like npm run dev (none clears it)',argumentHint:()=>'<command> | none',current:none},
  {name:'/queue',description:'Agents that start after an agent finishes or at a time, each with a limit (D55, off; /settings b)',argumentHint:()=>'[add]',values:()=>['add'],current:none},
@@ -59,6 +72,11 @@ export const keyTable:readonly [string,string][]=[
  ['Add-on e / m / b / y / Enter / Esc','Engine or key / model / free local brain first / start / no action / close'],
  ['/plan a / ↑↓ / PgUp/PgDn / s','Approve and save / select step / page details / start that step in Ask mode in a worktree'],
  ['/prompt c · /explain Space','Copy improved diff / next chunk, then three-line recap'],
+ ['/teach Space / y / n','Next chunk; at the end y starts the quiz, n skips it; Space shows each answer'],
+ ['/refactor ↑↓ / Space / r','Select item / pick it / refactor the picked items in a worktree'],
+ ['/types f · /failures, /security, /review deep ↑↓','Fix the selected finding in a worktree / select a finding to read it'],
+ ['/perf a / Y','Run the A/B in the sandbox / without one, only after AI Term says there is none'],
+ ['/bisect y / Y','Start in the test sandbox / start without one (capital Y) when there is none'],
  ['c','Empty field copies Claude last reply; cleaned session fallback (v0.2)'],['u','Empty field opens usage details by period and provider'],['/find ↑↓ / Enter / Esc','Select a hit / select its agent and scroll the preview to it / close'],['/doctor, /usage ↑↓ / PgUp / PgDn / Esc','Scroll / page / close'],
  ['/skills, /agents ←→ / ↑↓ / Space / Enter / Esc','Tab / item / on-off / read-only full file / close'],
  ['Paste','Over 1 line or 200 chars: [pasted · N lines]; 16 KB first-message limit'],

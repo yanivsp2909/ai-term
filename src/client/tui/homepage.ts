@@ -36,7 +36,7 @@ import { BudgetForm, PriceForm, CapsForm, drawUsageForm } from './usage-forms.js
 import { DEFAULT_AGENT_CAPS } from '../../shared/agent-facts.js';
 import {WorktreeQuestion} from './worktree-question.js';
 import {WorktreesPanel} from './worktrees-panel.js';
-import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,type CommandContext} from './commands.js';
+import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,ADDON_COMMANDS,ADDON_HINTS,type CommandContext} from './commands.js';
 import {drawHelp,wrapHelpLines} from './help.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
 import { MAX_PANES } from '../split-layout.js';
@@ -408,7 +408,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/dev','/brain','/plan','/prompt','/explain'].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/dev','/brain',...ADDON_COMMANDS.map(name=>`/${name}`)].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -565,7 +565,7 @@ export class Homepage {
   private async selectNew(result:SuccessResponse):Promise<void>{const session=validateSession(result.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.previewCells=undefined;await this.updatePreview(false);this.draw(true);}
   private queueSubmit(text:string,message?:MessageField):void{const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.submit(text,selected,message));}
   private async submit(text: string, copyTarget:SessionInfo|null=null,message?:MessageField): Promise<void> {
-    const addonCommand = text.trim().match(/^\/(plan|prompt|explain)(?:\s|$)/)?.[1];
+    const addonCommand = ADDON_COMMANDS.find(name => text.trim() === `/${name}` || text.trim().startsWith(`/${name} `));
     if(addonCommand){await this.addonCommand(addonCommand,text.trim().slice(addonCommand.length+1).trim());return;}
     // /send carries its text, paste tokens included, to the agent; it never opens the start box.
     if(text==='/send'||text.startsWith('/send ')){await this.send(text);return;}
@@ -776,17 +776,22 @@ export class Homepage {
     this.popup=ask;this.draw(true);
   }
   // v1.0.2 /brain [show | rm]: a map of the repository this homepage's folder is in (where new agents start).
+  // D58 add-ons. A command with no argument reopens its last popup for the same subject; an optional argument defaults
+  // to the whole folder (a scope) or the selected agent (/teach, /review <agent> deep). /bisect runs no model: no target.
   private async addonCommand(name:string,args:string):Promise<void>{
     if(this.popup){this.showNote('close the open popup first');return;}
-    const key=`${this.folder}:${name}`,previous=this.addonFlows.get(key);
+    const hint=ADDON_HINTS[name]??'';
+    if(!args&&hint.startsWith('<')){const previous=this.addonFlows.get(`${this.folder}:${name}:`);if(previous){this.popup=previous.panel;await previous.open();this.draw(true);return;}this.showNote(`/${name} ${hint}`);return;}
+    let subject=args;
+    if(name==='teach'||name==='review-deep'){const session=this.namedOrSelected(args,name==='teach'?'/teach':'/review <agent> deep');if(!session)return;subject=session.id;}
+    const key=`${this.folder}:${name}:${hint.startsWith('<')?'':subject}`,previous=this.addonFlows.get(key);
     if(!args&&previous){this.popup=previous.panel;await previous.open();this.draw(true);return;}
-    if(!args){this.showNote(`/${name} ${name==='plan'?'<goal>':name==='prompt'?'<file or text>':'<path or question>'}`);return;}
     try{
-      const keys=(await this.connection.request({kind:'keys.list'})).keys??[];
-      const targets:AddonTarget[]=modelChoices(keys,this.engines,'ai-term').map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
+      const local=name==='bisect',keys=local?[]:(await this.connection.request({kind:'keys.list'})).keys??[];
+      const targets:AddonTarget[]=local?[]:modelChoices(keys,this.engines,'ai-term').map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
       previous?.dispose();
-      const flow=new AddonFlow(name,args,this.folder,targets,{request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{if(this.popup===flow.panel)this.popup=undefined;this.draw(true);},started:response=>this.selectNew(response),copy:this.options.copy});
-      this.addonFlows.set(key,flow);this.popup=flow.panel;await flow.open();this.draw(true);
+      const flow=new AddonFlow(name,subject,this.folder,targets,{request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{if(this.popup===flow.panel)this.popup=undefined;this.draw(true);},started:response=>this.selectNew(response),copy:this.options.copy},local);
+      this.addonFlows.set(key,flow);if(hint.startsWith('<'))this.addonFlows.set(`${this.folder}:${name}:`,flow);this.popup=flow.panel;await flow.open();this.draw(true);
     }catch(error){this.showNote(error instanceof Error?error.message:'Add-on unavailable');}
   }
   private async brainCommand(argument:string):Promise<void>{
@@ -876,6 +881,8 @@ export class Homepage {
       catch(error){this.showNote(error instanceof Error?error.message:'Auto-review budget could not be saved');}
       return;
     }
+    // v1.1 /review <agent> deep: code and security reviewers as an add-on on any engine, subscription ones included.
+    if(words.at(-1)==='deep'){words.pop();await this.addonCommand('review-deep',words.join(' '));return;}
     const show=words.at(-1)==='show';if(show)words.pop();
     const session=this.namedOrSelected(words.join(' '),'/review');if(!session)return;
     if(show){

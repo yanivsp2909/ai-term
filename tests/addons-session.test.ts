@@ -34,7 +34,7 @@ it('the three pilots use normal Ask sessions and a real PTY stub; a saves and s 
   let planId = '';
   for (const name of ['plan', 'prompt', 'explain']) {
     const ask = await manager.addons.plan(name, 'trace a.ts', repo, { engine: 'codex', model: null, auth: { kind: 'account' } });
-    const session = await manager.addons.start(ask.receipt); if (name === 'plan') planId = session.id;
+    const started = await manager.addons.start(ask.receipt); if (!('session' in started)) throw new Error('expected an agent'); const session = started.session; if (name === 'plan') planId = session.id;
     expect(session.permission).toBe('ask'); expect(session.worktree).toBeUndefined(); expect(argv.at(-1)).toContain('--sandbox=read-only');
     await vi.waitFor(async () => expect((await manager.addons.result(session.id))?.kind).toBe(name));
     const path = argv.at(-1)?.at(-1)?.match(/"([^"\n]+\/addons\/[a-f0-9]{64})\/[^"\n]+"/)?.[1];

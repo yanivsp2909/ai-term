@@ -1,30 +1,38 @@
 import type { RequestBody } from '../connection.js';
 import type { SessionInfo, SuccessResponse } from '../../shared/protocol.js';
-import { isTaskUsage, validateSession } from '../../shared/validate.js';
-import { parseAddonResult, validateAddonAsk, type AddonAsk, type AddonTarget } from '../../shared/addons.js';
+import { isTaskUsage, isUUID, validateSession } from '../../shared/validate.js';
+import { validateTestResult } from '../../shared/test-run.js';
+import { validateAddonAsk, type AddonAsk, type AddonTarget } from '../../shared/addons.js';
+import { parseAddonResult, validateAbView } from '../../shared/addon-results.js';
 import { validateBrainPlan } from '../../shared/brain.js';
 import { AddonPanel } from './addon-panel.js';
 import { copyText } from './clipboard.js';
 interface FlowOptions { request(body: RequestBody): Promise<SuccessResponse>; changed(): void; close(): void; started(response: SuccessResponse): Promise<void>; copy?(text: string): Promise<void> }
 // One popup owns approval, the running state and the result. Closing it pauses polling, never stops the session.
+// targets: empty for an add-on that runs no model (/bisect); its estimate is asked for with no target.
 export class AddonFlow {
   readonly panel: AddonPanel;
   private ask?: AddonAsk; private session?: string; private timer?: ReturnType<typeof setTimeout>;
-  private ended = false; private resultReady = false; private choice = 0;
-  constructor(private name: string, private args: string, private cwd: string, private targets: AddonTarget[], private options: FlowOptions) {
+  private ended = false; private resultReady = false; private abRunning = false; private choice = 0;
+  constructor(private name: string, private args: string, private cwd: string, private targets: AddonTarget[], private options: FlowOptions, private local = false) {
     this.panel = new AddonPanel(options.changed, () => { this.dispose(); options.close(); }, {
-      start: () => { void this.action(() => this.start()); }, build: () => { void this.action(() => this.build()); },
+      start: unsandboxed => { void this.action(() => this.start(unsandboxed === true)); }, build: () => { void this.action(() => this.build()); },
       approve: () => { void this.action(async () => { if (!this.session) return; const response = await options.request({ kind: 'addons.approve', sessionId: this.session }); if (!response.savedPlan) throw new Error('Plan was not saved'); this.panel.setApproved(); }); },
       step: index => { void this.action(async () => { if (!this.session) return; await options.started(await options.request({ kind: 'addons.step', sessionId: this.session, step: index })); }); },
       copy: text => { void this.action(() => (options.copy ?? copyText)(text)); },
       choose: kind => { void this.action(() => this.choose(kind)); },
+      apply: items => { void this.action(async () => { if (!this.session) return; const response = await options.request({ kind: 'addons.apply', sessionId: this.session, items }); const title = validateSession(response.session).title; await options.started(response); this.panel.setApplied(`✓ started ${title} in a worktree (Ask) · it is selected on the homepage · Esc closes`); }); },
+      ab: unsandboxed => { void this.action(async () => { if (!this.session) return; this.panel.setAb(validateAbView((await options.request({ kind: 'addons.ab', sessionId: this.session, unsandboxed })).addonAb)); this.abRunning = true; await this.poll(); }); },
     });
   }
   private async action(work: () => Promise<void>): Promise<void> { try { await work(); } catch (error) { this.panel.wait(error instanceof Error ? error.message : 'Add-on operation failed'); } this.options.changed(); }
-  async open(): Promise<void> { this.ended = false; if (this.session) { if (!this.resultReady) await this.poll(); } else await this.action(() => this.estimate()); }
+  async open(): Promise<void> { this.ended = false; if (this.session) { if (!this.resultReady || this.abRunning) await this.poll(); } else await this.action(() => this.estimate()); }
   dispose(): void { this.ended = true; if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
-  update(session: SessionInfo): void { if(session.id===this.session)this.panel.setUsage(session.taskUsage??null); }
-  private async estimate(): Promise<void> { const target = this.targets[this.choice]; if (!target) throw new Error('No add-on engine available'); this.ask = validateAddonAsk((await this.options.request({ kind: 'addons.plan', name: this.name, args: this.args, cwd: this.cwd, target })).addonAsk); if (!this.ended) this.panel.setAsk(this.ask); }
+  update(session: SessionInfo): void { if (session.id === this.session) { this.panel.setUsage(session.taskUsage ?? null); this.panel.setTests(session.tests ?? null); } }
+  private async estimate(): Promise<void> {
+    const target = this.local ? null : this.targets[this.choice]; if (target === undefined) throw new Error('No add-on engine available');
+    this.ask = validateAddonAsk((await this.options.request({ kind: 'addons.plan', name: this.name, args: this.args, cwd: this.cwd, target })).addonAsk); if (!this.ended) this.panel.setAsk(this.ask);
+  }
   private async choose(kind: 'engine' | 'model'): Promise<void> {
     const current = this.targets[this.choice]; if (!current) return;
     const group = (t: AddonTarget) => `${t.engine}:${JSON.stringify(t.auth)}`;
@@ -32,14 +40,25 @@ export class AddonFlow {
     await this.estimate();
   }
   private async build(): Promise<void> { const plan = validateBrainPlan((await this.options.request({ kind: 'brain.plan', cwd: this.cwd })).brainPlan); await this.options.request({ kind: 'brain.build', cwd: this.cwd, fingerprint: plan.fingerprint }); await this.estimate(); }
-  private async start(): Promise<void> { if (!this.ask) return; const response = await this.options.request({ kind: 'addons.start', receipt: this.ask.receipt }); this.session = validateSession(response.session).id; await this.options.started(response); await this.poll(); }
+  private async start(unsandboxed: boolean): Promise<void> {
+    if (!this.ask) return;
+    const response = await this.options.request({ kind: 'addons.start', receipt: this.ask.receipt, ...unsandboxed ? { unsandboxed: true } : {} });
+    // A local add-on has a run, not an agent: nothing to select on the homepage.
+    if (response.addonRun !== undefined) { if (!isUUID(response.addonRun)) throw new Error('Invalid add-on run'); this.session = response.addonRun; }
+    else { this.session = validateSession(response.session).id; await this.options.started(response); }
+    await this.poll();
+  }
   private async poll(): Promise<void> {
     if (!this.session || this.ended) return;
     try {
       const response = await this.options.request({ kind: 'addons.result', sessionId: this.session });
       if (this.ended) return;
-      if(response.addonUsage!==undefined){if(response.addonUsage!==null&&!isTaskUsage(response.addonUsage))throw new Error('Invalid add-on usage');this.panel.setUsage(response.addonUsage);}
-      if (response.addonResult) { this.panel.setResult(parseAddonResult(JSON.stringify(response.addonResult), this.name)); this.resultReady = true; this.options.changed(); return; }
+      if (response.addonUsage !== undefined) { if (response.addonUsage !== null && !isTaskUsage(response.addonUsage)) throw new Error('Invalid add-on usage'); this.panel.setUsage(response.addonUsage); }
+      if (response.addonTests !== undefined) this.panel.setTests(response.addonTests === null ? null : validateTestResult(response.addonTests));
+      if (response.addonAb !== undefined && response.addonAb !== null) { const ab = validateAbView(response.addonAb); this.abRunning = ab.state === 'running'; this.panel.setAb(ab); }
+      if (response.addonResult && !this.resultReady) { this.panel.setResult(parseAddonResult(JSON.stringify(response.addonResult), this.name, true)); this.resultReady = true; }
+      this.options.changed();
+      if (this.resultReady && !this.abRunning) return;
     } catch (error) { this.panel.wait(error instanceof Error ? error.message : 'Add-on result unavailable'); this.options.changed(); return; }
     this.timer = setTimeout(() => { void this.poll(); }, 1000); this.timer.unref();
   }

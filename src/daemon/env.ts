@@ -176,6 +176,12 @@ export function buildTestEnv(base:NodeJS.ProcessEnv):Record<string,string>{
     return {...result,CI:'1',NO_COLOR:'1',FORCE_COLOR:'0',TERM:'dumb',PAGER:'cat',GIT_PAGER:'cat',GIT_TERMINAL_PROMPT:'0'};
 }
 
+// v1.1 /bisect: the test env, with git told to skip your global and system config (aliases, hooks, filters), so the bisect
+// in its temporary copy runs only git's defaults. GIT_DIR and the like never reach it: the test env doesn't carry them.
+export function buildBisectEnv(base:NodeJS.ProcessEnv):Record<string,string>{
+    return {...buildTestEnv(base),GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_NOSYSTEM:'1',GIT_TERMINAL_PROMPT:'0'};
+}
+
 // Gate (Yaniv): a process's starting environment stays readable to every program of the same user (`ps -E`), so the key
 // and the receiver credentials never go in the agent's env: they move into a 0600 file the agent reads and deletes before
 // anything else runs (agent/main.ts takeSecrets). Only its path, the receiver port and AI Term's folder stay in the env.

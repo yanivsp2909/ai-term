@@ -146,9 +146,14 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if(!isSafeAbsolutePath(v.path)||v.kind==='worktrees.delete'&&(!isFingerprint(v.fingerprint)||v.confirm!==undefined&&!isWorktreeBranch(v.confirm)))throw new ValidationError('Invalid worktree request');
             break;
         case 'addons.plan':
-            fields=['name','args','cwd','target'];if(!addonName(v.name)||!isFirstMessage(v.args)||!String(v.args).trim()||Buffer.byteLength(String(v.args))>10000||!await validCwd(v.cwd)||!isAddonTarget(v.target))throw new ValidationError('Invalid add-on request');break;
+            // v1.1: an empty argument is a default (the whole folder, the selected agent); a null target is a local add-on.
+            fields=['name','args','cwd','target'];if(!addonName(v.name)||!isFirstMessage(v.args)||Buffer.byteLength(String(v.args))>10000||!await validCwd(v.cwd)||v.target!==null&&!isAddonTarget(v.target))throw new ValidationError('Invalid add-on request');break;
         case 'addons.start':
-            fields=['receipt'];if(!isUUID(v.receipt))throw new ValidationError('Invalid add-on approval');break;
+            fields=['receipt','unsandboxed'];if(!isUUID(v.receipt)||v.unsandboxed!==undefined&&v.unsandboxed!==true)throw new ValidationError('Invalid add-on approval');break;
+        case 'addons.apply':
+            fields=['sessionId','items'];if(!isUUID(v.sessionId)||!Array.isArray(v.items)||!v.items.length||v.items.length>24||!v.items.every(i=>Number.isSafeInteger(i)&&Number(i)>=0&&Number(i)<24)||new Set(v.items).size!==v.items.length)throw new ValidationError('Invalid add-on items');break;
+        case 'addons.ab':
+            fields=['sessionId','unsandboxed'];if(!isUUID(v.sessionId)||typeof v.unsandboxed!=='boolean')throw new ValidationError('Invalid add-on A/B request');break;
         case 'addons.result': case 'addons.approve': case 'addons.step':
             fields=v.kind==='addons.step'?['sessionId','step']:['sessionId'];if(!isUUID(v.sessionId)||v.kind==='addons.step'&&(!Number.isSafeInteger(v.step)||Number(v.step)<0||Number(v.step)>23))throw new ValidationError('Invalid add-on result request');break;
         case 'sessions.create':

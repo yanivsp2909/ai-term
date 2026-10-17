@@ -137,8 +137,10 @@ export type Request = {
 } | {
     kind: 'settings.set';
     patch: SettingsPatch;
-} | {kind:'addons.plan';name:string;args:string;cwd:string;target:import('./addons.js').AddonTarget}
-  | {kind:'addons.start';receipt:string}
+} | {kind:'addons.plan';name:string;args:string;cwd:string;target:import('./addons.js').AddonTarget|null}
+  | {kind:'addons.start';receipt:string;unsandboxed?:true}
+  | {kind:'addons.apply';sessionId:string;items:number[]}
+  | {kind:'addons.ab';sessionId:string;unsandboxed:boolean}
   | {kind:'addons.result'|'addons.approve';sessionId:string}
   | {kind:'addons.step';sessionId:string;step:number}
   | {kind:'extensions.list';cwd:string} | {kind:'extensions.read';cwd:string;extensionId:string} | {kind:'extensions.toggle';cwd:string;extensionId:string;enabled:boolean} | {
@@ -256,7 +258,11 @@ export interface SuccessResponse {
     id: string;
     ok: true;
     addonAsk?: import('./addons.js').AddonAsk;
-    addonResult?: import('./addons.js').AddonResult | null;
+    addonResult?: import('./addon-results.js').AddonResult | null;
+    // v1.1: a local add-on's run id (/bisect), the add-on agent's sandboxed test result and /perf's A/B.
+    addonRun?: string;
+    addonTests?: import('./test-run.js').TestResult | null;
+    addonAb?: import('./addon-results.js').AbView | null;
     addonUsage?: TaskUsage | null;
     savedPlan?: string;
     kind?: 'hello';

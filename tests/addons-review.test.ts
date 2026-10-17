@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AddonService } from '../src/daemon/addons.js';
-import { extractAddonResult } from '../src/shared/addons.js';
+import { extractAddonResult } from '../src/shared/addon-results.js';
 import type { CreateSession, SessionInfo } from '../src/shared/protocol.js';
 import { AddonPanel } from '../src/client/tui/addon-panel.js';
 import { Grid } from '../src/client/tui/grid.js';

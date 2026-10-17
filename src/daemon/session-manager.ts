@@ -32,7 +32,7 @@ import { isFsError, type Paths } from '../shared/paths.js';
 import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord, type CliEngine } from '../shared/protocol.js';
 import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
 import { SettingsStore } from './settings.js';
-import { GitError, isWorktreeTop, repoCommonDir, runGit } from './git.js';
+import { GitError, isWorktreeTop, repoCommonDir, repoTopLevel, runGit } from './git.js';
 import { worktreeDiff, worktreeStat } from './diff.js';
 import type { AgentDiff } from '../shared/diff.js';
 import { fitExport, redactExportMeta, transcriptFor } from './session-export.js';
@@ -689,6 +689,45 @@ export class SessionManager extends EventEmitter {
         if(target.auth.kind==='key'){const key=await this.keys.view(target.auth.keyId);return `${key.provider} · ${key.label} ····${key.last4}`;}
         const settings=await new SettingsStore(this.paths.root).get();return `subscription · ${target.auth.profile??(target.engine!=='ai-term'?settings.defaultAccounts?.[target.engine]:undefined)??'own'}`;
     }
+    // v1.1 /teach and /review <agent> deep: the agent's diff as data (redacted, within the first-message room) and the
+    // worktree the model reads for context.
+    async addonAgent(id:string):Promise<{title:string;cwd:string;diff:string}>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        const diff=await this.diff(id);if(!diff.files.length)throw new Error("This agent's diff is empty; nothing to read yet");
+        const text=diffForReview(diff);let room=text.length;
+        while(Buffer.byteLength(text.slice(0,room))>ADDON_DIFF_BYTES)room=Math.floor(room*0.9);
+        return {title:live.info.title,cwd:live.info.worktree??live.info.cwd,diff:room<text.length?`${cutText(text,room)}\n(the diff is cut here; read the rest in the worktree)`:text};
+    }
+    // v1.1 /bisect: the plan reads your checkout only; whether a sandbox starts here decides y or a capital Y.
+    async addonBisectPlan(cwd:string,args:string):Promise<BisectAsk>{
+        const repo=await repoTopLevel(cwd);if(!repo)throw new BisectError("This folder isn't in a git repository; /bisect needs one");
+        const plan=await bisectPlan(repo,args),box=await this.sandboxFor(repo,repo);
+        await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));
+        return {...plan,sandbox:!!box};
+    }
+    async addonBisect(cwd:string,plan:BisectAsk,unsandboxed:boolean):Promise<Extract<AddonResult,{kind:'bisect'}>>{
+        const repo=await repoTopLevel(cwd);if(!repo)throw new BisectError("This folder isn't in a git repository; /bisect needs one");
+        return runBisect({repo,plan,sandbox:path=>this.sandboxFor(path,repo),unsandboxed,env:buildBisectEnv(process.env),log:text=>this.log.error(text)});
+    }
+    // v1.1 /perf's A/B: the benchmark on a temporary copy at the agent's start (before) and in its worktree (after), each in
+    // its own test sandbox; without one it runs only after the capital Y the popup asks for.
+    async addonPerfAb(id:string,benchmark:string[],files:string[],unsandboxed:boolean):Promise<AbView>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        if(!isTestCommand(benchmark)||files.length>5||files.some(file=>!file.startsWith('bench/')))throw new Error('Only a benchmark command and new files under bench/ can run in the A/B');
+        const {path,base,repo}=await this.diffTarget(live),before=await tempClone(repo??path,base),boxes:(PreparedSandbox|null)[]=[];
+        try{
+            for(const file of files)await copyBenchFile(path,before.path,file);
+            const a=await this.sandboxFor(before.path,repo);boxes.push(a);const b=await this.sandboxFor(path,repo);boxes.push(b);
+            if((!a||!b)&&!unsandboxed)return {state:'failed',reason:AB_NO_SANDBOX};
+            const env=buildTestEnv(process.env),side=(cwd:string,box:PreparedSandbox|null)=>({cwd,run:()=>runTests(benchmark,cwd,{...env,...box?.env},{timeoutMs:AB_RUN_TIMEOUT_MS,log:text=>this.log.error(text),...(box?{sandbox:box}:{})})});
+            return await runAb(side(before.path,a),side(path,b),{sandbox:!!a&&!!b});
+        }finally{
+            for(const box of boxes)await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));
+            await before.dispose().catch(()=>this.log.error('A/B: its temporary copy could not be removed'));
+        }
+    }
     // v0.6.3 (D55, off by default): only an AI agent that isn't waiting on you or running a tool, to a CLI that is installed
     // and logged in. Account logins only: a key never moves between engines.
     private async handoffSource(id:string,engine:CliEngine,account?:string):Promise<{live:Live;settings:Settings;account:string}>{
@@ -1162,7 +1201,8 @@ export class SessionManager extends EventEmitter {
             let settings:Settings;try{settings=await new SettingsStore(this.paths.root).get();}catch{this.log.error('Settings unreadable; auto-test skipped');this.testsFailed(live);return;}
             // Auto-review (off by default) reads the diff before the tests run (they may write files into the worktree).
             if(settings.autoReview===true&&settings.reviewModel)await this.autoReview(live,settings,settings.reviewModel);
-            if(settings.autoTest===false)return;
+            // An add-on that keeps tests green (/fix, /cover, /refactor) runs them even with auto-test off (v1.1).
+            if(settings.autoTest===false&&!this.addons.wantsTests(id))return;
             const target=await this.testTarget(live);if(!target)return;
             const setup=await testSetup(target.path,target.base,target.repo,target.command);
             // The agent went back to work (or away) while this was checked: its next turn end decides.
@@ -1688,4 +1728,14 @@ export class SessionManager extends EventEmitter {
     }
 }
 import { AddonService, type AddonRunOptions } from './addons.js';
+import { bisectPlan, BisectError, runBisect } from './bisect.js';
+import { AB_RUN_TIMEOUT_MS, copyBenchFile, runAb } from './perf-ab.js';
+import { tempClone } from './temp-clone.js';
+import { buildBisectEnv } from './env.js';
+import { AB_NO_SANDBOX, type AbView, type AddonResult } from '../shared/addon-results.js';
+import type { BisectAsk } from '../shared/addons.js';
+import { isTestCommand } from '../shared/test-run.js';
+import { cutText } from '../shared/text-cut.js';
+// Room for an agent's diff in an add-on's first message, next to its prompt and format (16 KB in all).
+const ADDON_DIFF_BYTES=8800;
 import { checkAddonCli } from './addon-cli.js';
