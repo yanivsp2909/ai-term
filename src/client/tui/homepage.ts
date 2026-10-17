@@ -882,7 +882,7 @@ export class Homepage {
       return;
     }
     // v1.1 /review <agent> deep: code and security reviewers as an add-on on any engine, subscription ones included.
-    if(words.at(-1)==='deep'){words.pop();await this.addonCommand('review-deep',words.join(' '));return;}
+    if(words.at(-1)==='deep'&&!(words.length===1&&this.sessions.some(s=>s.title==='deep'))){words.pop();await this.addonCommand('review-deep',words.join(' '));return;}
     const show=words.at(-1)==='show';if(show)words.pop();
     const session=this.namedOrSelected(words.join(' '),'/review');if(!session)return;
     if(show){
