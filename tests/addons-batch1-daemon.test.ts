@@ -127,5 +127,5 @@ it('LOW (follow-up security review): the A/B never copies a hard-linked file', a
   const dir = await temp(), from = join(dir, 'from'), to = join(dir, 'to'); await mkdir(join(from, 'bench'), { recursive: true }); await mkdir(to);
   await writeFile(join(dir, 'private.txt'), 'secret-ish\n'); await link(join(dir, 'private.txt'), join(from, 'bench', 'x.js'));
   await expect(copyBenchFile(from, to, 'bench/x.js')).rejects.toThrow('regular file');
-  await expect(readdir(join(to, 'bench'))).resolves.toEqual([]);
+  await expect(readdir(join(to, 'bench'))).rejects.toThrow();
 });
