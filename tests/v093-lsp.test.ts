@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LspPool, findServer, formatDiagnostics, languageOf, LSP_IDLE_MS } from '../src/agent/lsp.js';
+import { LspPool, findServer, formatDiagnostics, languageOf, LSP_IDLE_MS, LSP_SETTLE_MS } from '../src/agent/lsp.js';
+import type { Deadline } from '../src/shared/deadline.js';
 import { buildBashEnv, buildAgentArgs } from '../src/daemon/env.js';
 import { parseAgentArgs } from '../src/agent/main.js';
 
@@ -30,6 +31,8 @@ function handle(m) {
   send({ jsonrpc: '2.0', method: 'textDocument/publishDiagnostics', params: { uri: doc.uri, diagnostics } });
 }
 `;
+// B31: the 8 s deadline never fires and the settle ends on the next tick, so the answer is the server's, not the clock's.
+const answersOnly: Deadline = (ms, fire) => { if (ms !== LSP_SETTLE_MS) return () => {}; const tick = setImmediate(fire); return () => clearImmediate(tick); };
 async function setup() {
   const dir = await temp(), bin = join(dir, 'bin'), tree = join(dir, 'home', '.ai-term', 'worktrees', 'r', 'a'), aiTerm = join(dir, 'home', '.ai-term');
   await mkdir(bin); await mkdir(tree, { recursive: true });
@@ -69,7 +72,7 @@ it('diagnostics read as one short block, at most 40 lines', () => {
 
 it.skipIf(!MAC)('macOS: after a write the agent gets the file\'s errors from a sandboxed server with no keys; one server per language; idle 10 minutes stops it', async () => {
   const { tree, aiTerm, env } = await setup();
-  const pool = new LspPool({ root: tree, env: { ...env, AITERM_AGENT_KEY: 'sk-ant-should-not-pass' }, sandbox: { home: aiTerm, user: join(tree, '..', '..', '..', '..') } }); pools.push(pool);
+  const pool = new LspPool({ root: tree, env: { ...env, AITERM_AGENT_KEY: 'sk-ant-should-not-pass' }, sandbox: { home: aiTerm, user: join(tree, '..', '..', '..', '..') }, deadline: answersOnly }); pools.push(pool);
   await writeFile(join(tree, 'a.ts'), 'const x = 1;\nERROR here\n');
   const first = await pool.diagnose('a.ts');
   expect(first).toBe('diagnostics for a.ts: 1 error\n2:3 error X1 bad thing on line 2');

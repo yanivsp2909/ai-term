@@ -83,12 +83,17 @@ it('runs a command with argv only: pass, fail with a count, timeout kills its wh
   expect(await runTests([await write('ok.sh', 'echo fine\n')], dir, env, { timeoutMs: 10_000 })).toEqual({ state: 'pass' });
   expect(await runTests([await write('bad.sh', 'echo "  3 failing"\nexit 2\n')], dir, env, { timeoutMs: 10_000 })).toEqual({ state: 'fail', failing: 3 });
   expect(await runTests([await write('vague.sh', 'exit 1\n')], dir, env, { timeoutMs: 10_000 })).toEqual({ state: 'fail', failing: null });
-  const marker = join(dir, 'child-alive');
-  const started = Date.now();
-  expect(await runTests([await write('slow.sh', `(sleep 3; touch ${marker}) &\nsleep 30\n`)], dir, env, { timeoutMs: 500 })).toEqual({ state: 'timeout' });
-  expect(Date.now() - started).toBeLessThan(5_000);
-  await new Promise(resolve => setTimeout(resolve, 3_500));
-  await expect(readFile(marker)).rejects.toThrow();
+  // B31: the timeout is a manual deadline fired once the script is running, so a slow start can't decide the outcome;
+  // the background child's pid shows the whole group went, instead of waiting a fixed time for a marker.
+  const pidFile = join(dir, 'child.pid'), started = join(dir, 'started');
+  let fire = (): void => { throw new Error('the run asked for no deadline'); }, asked = 0;
+  const slow = runTests([await write('slow.sh', `sh -c 'echo $$ > ${pidFile}; exec sleep 30' &\ntouch ${started}\nsleep 30\n`)], dir, env, { timeoutMs: 500, deadline: (ms, run) => { asked = ms; fire = run; return () => {}; } });
+  await vi.waitFor(async () => { await readFile(started); expect((await readFile(pidFile, 'utf8')).trim()).toMatch(/^\d+$/); }, { timeout: 15_000 });
+  expect(asked).toBe(500);
+  fire();
+  expect(await slow).toEqual({ state: 'timeout' });
+  const child = Number((await readFile(pidFile, 'utf8')).trim());
+  await vi.waitFor(() => expect(() => process.kill(child, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' })), { timeout: 10_000 });
   expect(await runTests([await write('loud.sh', 'yes "line of output" | head -c 6000000\necho "Tests  1 failed"\nexit 1\n')], dir, env, { timeoutMs: 20_000 })).toEqual({ state: 'fail', failing: 1 });
   expect(await runTests([join(dir, 'missing-program')], dir, env, { timeoutMs: 5_000 })).toEqual({ state: 'error' });
   const aborted = new AbortController(); setTimeout(() => aborted.abort(), 200);
@@ -160,11 +165,17 @@ it('HIGH (security review): ignored dependency folders the agent filled count as
 });
 
 it('MEDIUM (security review): a process that leaves the group (setsid) can\'t keep a run open past its limit', async () => {
-  const dir = await temp(), started = Date.now();
-  const outcome = await runTests(['/bin/sh', '-c', "perl -e 'use POSIX; POSIX::setsid(); sleep 20' & sleep 1; exit 0"], dir, buildTestEnv(process.env), { timeoutMs: 15_000 });
-  // The command itself ended after a second; the escaped process can't keep the run open.
-  expect(outcome).toEqual({ state: 'pass' });
-  expect(Date.now() - started).toBeLessThan(6_000);
+  const dir = await temp(), pidFile = join(dir, 'escaped.pid');
+  // B31: the escaped process holds the output pipes far longer than this test may take, so the run ending at all (not
+  // how quickly on this machine) shows it didn't wait for them. The test removes the escaped process itself afterwards.
+  try {
+    const outcome = await runTests(['/bin/sh', '-c', `perl -e 'use POSIX; POSIX::setsid(); open(my $f, ">", "${pidFile}"); print $f $$; close $f; sleep 600' & sleep 1; exit 0`], dir, buildTestEnv(process.env), { timeoutMs: 15_000 });
+    expect(outcome).toEqual({ state: 'pass' });
+  } finally {
+    const pid = Number((await readFile(pidFile, 'utf8').catch(() => '')).trim());
+    // ESRCH: the run's process tree already stopped it.
+    if (pid > 0) try { process.kill(pid, 'SIGKILL'); } catch (error) { expect(error).toMatchObject({ code: 'ESRCH' }); }
+  }
 }, 20_000);
 
 it('MEDIUM (TS review): a turn that starts while the turn end is checked gets no test run or result', async () => {
