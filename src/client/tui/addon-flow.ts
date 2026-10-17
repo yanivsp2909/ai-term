@@ -25,7 +25,7 @@ export class AddonFlow {
       ab: unsandboxed => { void this.action(async () => { if (!this.session) return; this.panel.setAb(validateAbView((await options.request({ kind: 'addons.ab', sessionId: this.session, unsandboxed })).addonAb)); this.abRunning = true; await this.poll(); }); },
     });
   }
-  private async action(work: () => Promise<void>): Promise<void> { try { await work(); } catch (error) { this.panel.wait(error instanceof Error ? error.message : 'Add-on operation failed'); } this.options.changed(); }
+  private async action(work: () => Promise<void>): Promise<void> { try { await work(); } catch (error) { this.panel.fail(error instanceof Error ? error.message : 'Add-on operation failed'); } this.options.changed(); }
   async open(): Promise<void> { this.ended = false; if (this.session) { if (!this.resultReady || this.abRunning) await this.poll(); } else await this.action(() => this.estimate()); }
   dispose(): void { this.ended = true; if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
   update(session: SessionInfo): void { if (session.id === this.session) { this.panel.setUsage(session.taskUsage ?? null); this.panel.setTests(session.tests ?? null); } }

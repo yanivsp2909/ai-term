@@ -12,11 +12,13 @@ export class AddonPanel {
   private panel: TextPanel; private ask?: AddonAsk; private result?: AddonResult;
   private chunk = 0; private selected = 0; private approved = false; private busy = false;
   private usage: TaskUsage | null = null; private tests: TestResult | null = null; private ab: AbView | null = null;
-  private picked = new Set<number>(); private applied: string | null = null; private quiz: ResultView['quiz'] = 'hidden';
+  private picked = new Set<number>(); private applied: string | null = null; private problem: string | null = null; private quiz: ResultView['quiz'] = 'hidden';
   lines: string[] = [];
   constructor(changed: () => void, private close: () => void, private actions: Actions) { this.panel = new TextPanel('Add-on', changed, close); this.wait('Preparing the estimate…'); }
   private show(lines: string[]): void { this.lines = lines; this.panel.set(lines.map(text => ({ text, tone: 'ink-2' as const }))); }
   wait(message = 'Running in Ask mode · close this popup to inspect or attach the agent.'): void { this.busy = true; this.show([message, 'Esc closes']); }
+  // A refused action on a shown result: say why above the result and keep it usable (review: busy stayed on).
+  fail(message: string): void { if (!this.result) { this.wait(message); return; } this.problem = message; this.busy = false; this.refresh(); }
   setAsk(ask: AddonAsk): void { this.ask = ask; this.busy = false; this.result = undefined; this.show(ask.bisect ? this.bisectAsk(ask, ask.bisect) : [
     `/${ask.name} · ${ask.summary}`, ...ask.cost === 'high' ? [this.expensive(ask)] : [], `${ask.target?.engine ?? 'no engine'} · ${ask.target?.model ?? 'CLI default'} · ${ask.authLabel ?? (ask.subscription ? 'subscription' : 'API key')} · Ask`,
     `folder: ${ask.cwd}`, ...ask.subject ? [ask.subject] : [], `${ask.readOnly ? 'read-only' : 'can edit'} · worktree ${ask.worktree ? 'yes' : 'no'}`,
@@ -35,26 +37,27 @@ export class AddonPanel {
   }
   private estimate(ask: AddonAsk): string[] { return [`estimated tokens: ${ask.inputTokens.low}–${ask.inputTokens.high} in · ${ask.outputTokens.low}–${ask.outputTokens.high} out (1–${ask.cost === 'high' ? 16 : 8} inspection rounds; not a cap)`, ask.subscription ? 'price: $0 API charge · uses subscription limits' : ask.priceUsd ? `estimated price: $${ask.priceUsd.low.toFixed(4)}–$${ask.priceUsd.high.toFixed(4)}` : 'price unknown · set this model’s price before starting']; }
   setResult(result: AddonResult): void { this.result = result; this.busy = false; this.chunk = 0; this.panel.resetScroll(); this.refresh(); }
-  setApproved(): void { this.approved = true; this.busy = false; this.refresh(); }
-  setApplied(note: string): void { this.applied = note; this.busy = false; this.refresh(); }
+  setApproved(): void { this.problem = null; this.approved = true; this.busy = false; this.refresh(); }
+  setApplied(note: string): void { this.problem = null; this.applied = note; this.busy = false; this.refresh(); }
   setUsage(usage: TaskUsage | null): void { this.usage = usage; this.refresh(); }
   setTests(tests: TestResult | null): void { this.tests = tests; this.refresh(); }
-  setAb(ab: AbView | null): void { this.ab = ab; this.busy = false; this.refresh(); }
+  setAb(ab: AbView | null): void { this.problem = null; this.ab = ab; this.busy = false; this.refresh(); }
   private refresh(): void {
     const r = this.result; if (!r) return;
+    const problem = this.problem ? [`✗ ${this.problem}`] : [];
     const actual = r.kind === 'bisect' ? 'no model · no tokens' : this.usage ? `actual: ${this.usage.tokens} tokens · ${this.usage.unknownPrice ? 'price unknown' : this.usage.costUsd === null ? 'subscription limits' : `$${this.usage.costUsd.toFixed(4)}`}` : 'actual: not reported by the engine';
     if (r.kind === 'plan') {
       const start = Math.max(0, Math.min(this.selected - 1, r.steps.length - 3));
-      this.show([r.title, this.approved ? '✓ plan saved · ↑↓ step · s starts this step in Ask mode in a worktree · Esc closes' : 'a approves and saves the plan · nothing starts · Esc closes', actual,
+      this.show([...problem, r.title, this.approved ? '✓ plan saved · ↑↓ step · s starts this step in Ask mode in a worktree · Esc closes' : 'a approves and saves the plan · nothing starts · Esc closes', actual,
         ...(this.ask ? [`${this.ask.target?.engine ?? 'no engine'} · ${this.ask.target?.model ?? 'CLI default'} · ${this.ask.cwd}`, ...this.estimate(this.ask)] : []),
         ...r.steps.slice(start, start + 3).map((s, i) => `${start + i === this.selected ? '›' : ' '} ${start + i + 1}. ${s.title}`), `Selected step ${this.selected + 1}/${r.steps.length}:`, ...(r.steps[this.selected]?.prompt.split('\n') ?? [])]);
     }
-    else if (r.kind === 'prompt') this.show([actual, ...r.issues.map(s => `• ${s}`), ...r.diff.split('\n'), 'c copies the improved diff · Esc closes']);
+    else if (r.kind === 'prompt') this.show([...problem, actual, ...r.issues.map(s => `• ${s}`), ...r.diff.split('\n'), 'c copies the improved diff · Esc closes']);
     else if (r.kind === 'explain' || r.kind === 'teach') {
-      if (this.chunk < r.chunks.length) this.show([actual, ...(this.chunk === 0 ? [r.why, ...r.diagram, ''] : []), ...r.chunks[this.chunk] ?? [], `Space next · ${this.chunk + 1}/${r.chunks.length} · Esc closes`]);
+      if (this.chunk < r.chunks.length) this.show([...problem, actual, ...(this.chunk === 0 ? [r.why, ...r.diagram, ''] : []), ...r.chunks[this.chunk] ?? [], `Space next · ${this.chunk + 1}/${r.chunks.length} · Esc closes`]);
       else this.show(r.kind === 'teach' ? [actual, ...teachEnd(r, this.quiz)] : [actual, 'Recap · Esc closes', ...r.recap]);
     }
-    else this.show([actual, ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz })]);
+    else this.show([...problem, actual, ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz })]);
   }
   private move(key: 'up' | 'down', count: number): void { this.selected = Math.max(0, Math.min(count - 1, this.selected + (key === 'up' ? -1 : 1))); this.panel.resetScroll(); this.refresh(); }
   key(key: string): void {
