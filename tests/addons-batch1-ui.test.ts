@@ -149,3 +149,23 @@ it('LOW-MEDIUM (TS review): /bisect shows its test command with its quoting, exa
   const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['sh', '-c', 'make clean && make test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, sandbox: false } }));
   expect(p.lines).toContain("test: sh -c 'make clean && make test'");
 });
+
+it('LOW (TS review): a refused r or f says why and leaves the list usable, so you can pick again', async () => {
+  const id = randomUUID(), sent: RequestBody[] = [];
+  const request = async (body: RequestBody): Promise<SuccessResponse> => {
+    sent.push(body); const response: SuccessResponse = { id: randomUUID(), ok: true };
+    if (body.kind === 'addons.plan') response.addonAsk = ask({ name: 'refactor', target: { engine: 'claude-code', model: null, auth: { kind: 'account' } }, priceUsd: { low: 0, high: 0 }, subscription: true });
+    if (body.kind === 'addons.start') response.session = { id, engine: 'claude-code', title: '/refactor', model: null, auth: { kind: 'account' }, cwd: '/tmp', permission: 'ask', status: 'done', statusDetail: 'done', statusSince: new Date().toISOString(), createdAt: new Date().toISOString(), exitCode: null, lastOutputAt: null, ctxPercent: null };
+    if (body.kind === 'addons.result') response.addonResult = parseAddonResult(JSON.stringify(fixtures.refactor), 'refactor', true);
+    if (body.kind === 'addons.apply') throw new Error('Too much to start at once; pick fewer items');
+    return response;
+  };
+  const flow = new AddonFlow('refactor', '', '/tmp', [{ engine: 'claude-code', model: null, auth: { kind: 'account' } }], { request, started: async () => {}, changed: () => {}, close: () => {} });
+  try {
+    await flow.open(); flow.panel.key('y'); await vi.waitFor(() => expect(flow.panel.lines.join('\n')).toContain('Space picks it'));
+    flow.panel.key('space'); flow.panel.key('r');
+    await vi.waitFor(() => expect(flow.panel.lines.join('\n')).toContain('✗ Too much to start at once; pick fewer items'));
+    expect(flow.panel.lines.join('\n')).toContain('[x] Split parse()');
+    flow.panel.key('down'); flow.panel.key('space'); expect(flow.panel.lines.join('\n')).toContain('[x] Remove dead export');
+  } finally { flow.dispose(); }
+});
