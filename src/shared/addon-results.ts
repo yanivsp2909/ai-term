@@ -33,8 +33,22 @@ const relPath = (v: unknown): v is string => line(v, 240) && !v.startsWith('/') 
 const paths = (v: unknown, most: number): v is string[] => Array.isArray(v) && v.length <= most && v.every(relPath);
 const list = <T>(v: unknown, most: number, each: (x: Record<string, unknown>) => boolean, least = 1): v is T[] => Array.isArray(v) && v.length >= least && v.length <= most && v.every(x => { const o = object(x); return !!o && each(o); });
 const SEVERITIES: readonly string[] = ['critical', 'high', 'medium', 'low'];
-// A reproduction must stay inside the repository: anything that reaches a host other than this Mac is dropped.
-const OUTSIDE = /\b(?:https?|wss?|ftp):\/\/(?!(?:localhost|127\.0\.0\.1|\[::1\])(?:[:/]|$))/i;
+// A reproduction must stay inside the repository: anything that reaches a host other than this Mac is dropped. Every
+// scheme://host or //host is parsed as a URL and its real host compared exactly (userinfo can't pass for one), file://
+// leaves the repository, and a network tool's host argument counts too (review: curl evil.com, nc, ssh, scp).
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+const NETWORK_TOOL = /\b(?:curl|wget|nc|ncat|netcat|ssh|scp|sftp|rsync|telnet|ftp|nmap|ping|dig|nslookup|host)\b([^\n;|&]*)/g;
+function outside(text: string): boolean {
+  for (const match of text.matchAll(/([a-z][a-z0-9+.-]*:)?\/\/[^\s'"`<>()]+/gi)) {
+    let url: URL; try { url = new URL(match[1] ? match[0] : `http:${match[0]}`); } catch (error) { if (error instanceof TypeError) return true; throw error; }
+    if (url.protocol === 'file:' || !LOOPBACK.has(url.hostname)) return true;
+  }
+  for (const match of text.matchAll(NETWORK_TOOL)) for (const word of (match[1] ?? '').split(/\s+/)) {
+    const host = word.replace(/^[a-z][a-z0-9+.-]*:\/\/.*$/i, '').replace(/^[^@/]*@/, '').replace(/:.*$/, '');
+    if (/^(?:[a-z0-9-]+\.)+[a-z0-9-]+$/i.test(host) && !LOOPBACK.has(host) && !/\.(?:ts|js|mjs|cjs|json|sh|py|txt|md)$/i.test(host)) return true;
+  }
+  return false;
+}
 
 function explained(p: Record<string, unknown>): boolean {
   const chunk = (c: unknown): boolean => lines(c, 6) && c.some(s => /^Example:/i.test(s)) && c.some(s => /^You are here:/i.test(s)) && c.some(s => /^Quick check:/i.test(s));
@@ -48,7 +62,7 @@ function finding(kind: FindingsKind, f: Record<string, unknown>): boolean {
 function findings(kind: FindingsKind, p: Record<string, unknown>, kept: boolean): AddonResult {
   // dropped is AI Term's count, never the model's: only a result the daemon already checked (kept) carries it.
   if (!(kept ? keys(p, 'kind', 'summary', 'findings', 'dropped') && Number.isSafeInteger(p.dropped) && Number(p.dropped) >= 0 : keys(p, 'kind', 'summary', 'findings')) || !line(p.summary, 400) || !list<Finding>(p.findings, 24, f => finding(kind, f), 0)) throw new Error('Add-on result does not match its format');
-  const safe = p.findings.filter(f => kind !== 'security' || !OUTSIDE.test(f.reproduction ?? ''));
+  const safe = p.findings.filter(f => kind !== 'security' || !outside(f.reproduction ?? ''));
   return { kind, summary: p.summary, findings: safe, dropped: (typeof p.dropped === 'number' ? p.dropped : 0) + p.findings.length - safe.length };
 }
 
