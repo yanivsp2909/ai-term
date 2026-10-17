@@ -137,3 +137,10 @@ it('/fix shows the root cause, the failing test first and the sandboxed test res
   const cover = panel(); cover.panel.setResult(result('cover')); cover.panel.setTests({ state: 'fail', failing: 1 });
   expect(cover.panel.lines.join('\n')).toContain('fails if: the empty check were removed'); expect(cover.panel.lines.join('\n')).toContain('✗ 1 failing');
 });
+
+it('MEDIUM (TS review): /bisect and the /perf A/B say up front that the copy has only committed files', () => {
+  const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['npm', 'test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, sandbox: true } }));
+  expect(p.lines.join('\n')).toContain('only committed files: no installed dependencies or build output');
+  const perf = panel(); perf.panel.setResult(result('perf'));
+  expect(perf.panel.lines.join('\n')).toContain('only committed files: no installed dependencies or build output');
+});
