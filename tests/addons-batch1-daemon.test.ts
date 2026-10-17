@@ -102,3 +102,11 @@ it.skipIf(process.platform !== 'darwin')('macOS: /perf\'s A/B runs the same new 
   // A file that isn't a new benchmark under bench/ is never copied into the before side.
   await expect(m.addonPerfAb(agent.id, ['./bench/a.sh'], ['a.ts'], false)).rejects.toThrow();
 }, 60_000);
+
+it('LOW (security review): the agent\'s diff fits the first message after JSON escaping, so an approved run can start', async () => {
+  const { m, agent, tree } = await manager();
+  await writeFile(join(tree, 'a.ts'), Array.from({ length: 400 }, () => '"\\\\"\\\\"\\\\"\\\\"\\\\"\\\\"\\\\"\\\\"\\\\"').join('\n'));
+  const view = await m.addonAgent(agent.id);
+  expect(Buffer.byteLength(JSON.stringify(view.diff))).toBeLessThanOrEqual(8800);
+  expect(view.diff).toContain('(the diff is cut here; read the rest in the worktree)');
+});
