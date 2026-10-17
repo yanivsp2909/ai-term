@@ -6,6 +6,7 @@ import { AB_NO_SANDBOX, type AbView, type AddonResult } from '../../shared/addon
 import type { TaskUsage } from '../../shared/protocol.js';
 import type { TestResult } from '../../shared/test-run.js';
 import { batchLines, teachEnd, type ResultView } from './addon-views.js';
+import { testCommandText } from '../../shared/test-run.js';
 interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void }
 export class AddonPanel {
   private panel: TextPanel; private ask?: AddonAsk; private result?: AddonResult;
@@ -26,7 +27,7 @@ export class AddonPanel {
   // D49 for a costly add-on: the worst case first, in dollars, before anything else.
   private expensive(ask: AddonAsk): string { return ask.subscription ? '● expensive: a long read that uses a lot of your subscription limits' : ask.priceUsd ? `● expensive: up to $${ask.priceUsd.high.toFixed(2)} at this model's price` : '● expensive · price unknown: set this model’s price before starting'; }
   private bisectAsk(ask: AddonAsk, b: NonNullable<AddonAsk['bisect']>): string[] {
-    return [`/${ask.name} · ${ask.summary}`, 'no model · no tokens · $0', `folder: ${ask.cwd}`, `test: ${b.command.join(' ')}`, `good: ${b.goodLabel} (${b.good.slice(0, 7)}) · bad: HEAD (${b.bad.slice(0, 7)}) · ${b.commits} commit${b.commits === 1 ? '' : 's'}, about ${Math.max(1, Math.ceil(Math.log2(b.commits + 1)))} steps`,
+    return [`/${ask.name} · ${ask.summary}`, 'no model · no tokens · $0', `folder: ${ask.cwd}`, `test: ${testCommandText(b.command)}`, `good: ${b.goodLabel} (${b.good.slice(0, 7)}) · bad: HEAD (${b.bad.slice(0, 7)}) · ${b.commits} commit${b.commits === 1 ? '' : 's'}, about ${Math.max(1, Math.ceil(Math.log2(b.commits + 1)))} steps`,
       'runs in a temporary copy that shares your repository’s objects; your checkout is never checked out, reset or bisected',
       'the copy has only committed files: no installed dependencies or build output, and the sandbox has no network to fetch them',
       b.sandbox ? '✓ test sandbox: writes only in the copy, no network, no home folder' : '● no sandbox here: the test command would run with your rights',
