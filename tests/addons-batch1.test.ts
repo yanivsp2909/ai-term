@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -135,4 +135,35 @@ it('/refactor starts only the picked items in a worktree, with tests kept; /type
   const fix = await service.apply(types.session.id, [0]);
   expect(String(runs.at(-1)?.firstMessage)).toContain("Use 'ok' | 'failed'.");
   expect(service.wantsTests(fix.id)).toBe(false);
+});
+
+it('the daemon itself refuses an unsandboxed /bisect without Y, and runs it only with the approved plan', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ai-batch1-b-')); cleanup.push(root);
+  const plan = { command: ['./check.sh'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, sandbox: false };
+  const calls: unknown[][] = [], result = { kind: 'bisect' as const, commit: 'c'.repeat(40), subject: 'planted', author: 'Test', date: '2026-10-17', steps: 2, diff: ['+broken'] };
+  const service = new AddonService(join(root, 'home'), DEFINITIONS, { create: vi.fn(), text: vi.fn(), brainPlan: async () => null, addonBisectPlan: async () => plan, addonBisect: async (...args: unknown[]) => { calls.push(args); return result; } });
+  const ask = await service.plan('bisect', './check.sh', root, null);
+  expect(ask).toMatchObject({ target: null, bisect: plan, priceUsd: { low: 0, high: 0 }, inputTokens: { low: 0, high: 0 } });
+  await expect(service.start(ask.receipt)).rejects.toThrow('No sandbox here');
+  await expect(service.plan('bisect', './check.sh', root, CODEX)).rejects.toThrow('Engine unavailable');
+  const again = await service.plan('bisect', './check.sh', root, null), started = await service.start(again.receipt, true);
+  if (!('run' in started)) throw new Error('expected a run');
+  await vi.waitFor(async () => expect(await service.result(started.run)).toEqual(result));
+  expect(calls).toEqual([[await realpath(root), plan, true]]);
+});
+
+it('/perf a starts one A/B at a time and its result arrives through result polling', async () => {
+  const { repo, home } = await setup();
+  let finish: (view: { state: 'done'; rounds: number; beforeMs: number; afterMs: number; sandbox: boolean }) => void = () => {};
+  const perfAb = vi.fn(() => new Promise<{ state: 'done'; rounds: number; beforeMs: number; afterMs: number; sandbox: boolean }>(resolve => { finish = resolve; }));
+  const replies = new Map<string, string>(), id = randomUUID();
+  const service = new AddonService(home, DEFINITIONS, { async create(request: Record<string, unknown>) { const nonce = String(request.firstMessage).match(/RESULT_([a-f0-9]{32})_BEGIN/)?.[1]; replies.set(id, `RESULT_${nonce}_BEGIN\n${JSON.stringify(fixtures.perf)}\nRESULT_${nonce}_END`); return { id, title: '/perf', status: 'running', cwd: repo } as SessionInfo; },
+    async text(sessionId: string) { return { sessionId, text: replies.get(sessionId) ?? '', truncated: false }; }, brainPlan: async () => null, addonPerfAb: perfAb });
+  const started = await service.start((await service.plan('perf', 'node bench/a.js', repo, CODEX)).receipt); if (!('session' in started)) throw new Error('session');
+  expect(() => service.startAb(id, false)).toThrow('No benchmark to compare yet');
+  await service.result(id);
+  expect(service.startAb(id, false)).toEqual({ state: 'running' }); expect(service.startAb(id, true)).toEqual({ state: 'running' });
+  expect(perfAb).toHaveBeenCalledOnce(); expect(perfAb).toHaveBeenCalledWith(id, ['node', 'bench/a.js'], ['bench/a.js'], false);
+  finish({ state: 'done', rounds: 5, beforeMs: 120, afterMs: 40, sandbox: true });
+  await vi.waitFor(() => expect(service.ab(id)).toMatchObject({ state: 'done', afterMs: 40 }));
 });

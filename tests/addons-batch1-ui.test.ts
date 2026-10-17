@@ -127,3 +127,13 @@ it('the homepage sends an agent\'s id for /teach and /review <agent> deep, a sco
     tty.emit('data', Buffer.from('/review fixer\r')); await vi.waitFor(() => expect(requests.some(r => r.kind === 'sessions.reviewPlan')).toBe(true), { timeout: 10_000 });
   } finally { await home.stop(); }
 });
+
+it('/fix shows the root cause, the failing test first and the sandboxed test result; one that stopped says nothing was fixed', () => {
+  const { panel: p } = panel(); p.setResult(result('fix')); p.setTests({ state: 'pass' });
+  const text = p.lines.join('\n');
+  expect(text).toContain('Root cause: parse() reads past the end'); expect(text).toContain('Failing test first: tests/a.test.ts › rejects empty input'); expect(text).toContain("tests (AI Term's sandbox): ✓ tests pass");
+  const stopped = panel(); stopped.panel.setResult(parseAddonResult(JSON.stringify({ kind: 'fix', reproduced: false, rootCause: 'unknown', reason: 'No test failed.' }), 'fix', true));
+  expect(stopped.panel.lines.join('\n')).toContain('■ stopped: no test reproduced the bug, so nothing was fixed');
+  const cover = panel(); cover.panel.setResult(result('cover')); cover.panel.setTests({ state: 'fail', failing: 1 });
+  expect(cover.panel.lines.join('\n')).toContain('fails if: the empty check were removed'); expect(cover.panel.lines.join('\n')).toContain('✗ 1 failing');
+});
