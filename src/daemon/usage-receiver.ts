@@ -39,6 +39,9 @@ export class UsageReceiver {
   for(const context of this.statusCredentials.values())if(context.id===id){const seq=++context.seq;context.queue=context.queue.then(()=>apply(seq)).catch(()=>this.log.error('Status signal failed'));return true;}
   return false;
  }
+ // How many status requests and signals this session has queued so far (0 when it has no credential). Read-only; tests
+ // wait on it to know a body is being read instead of guessing a delay (B31).
+ statusSeq(id:string):number{let seq=0;for(const context of this.statusCredentials.values())if(context.id===id)seq=Math.max(seq,context.seq);return seq;}
  revoke(sessionId:string):void{for(const [token,context]of this.statusCredentials)if(context.id===sessionId)this.statusCredentials.delete(token);for(const [token,context]of this.credentials)if(context.sessionId===sessionId)this.credentials.delete(token);}
  revokeAll():void{this.credentials.clear();this.statusCredentials.clear();}
  private authorize(value:unknown):UsageContext|null{

@@ -55,6 +55,7 @@ export class UsageService extends EventEmitter {
  registerStatus(sessionId:string,engine:StatusEngine='claude-code'):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.registerStatus(sessionId,engine)};}
  setAgentQuery(handler:(id:string,body:unknown)=>Promise<unknown>):void{this.receiver.setAgentQuery(handler);}
  enqueueStatus(sessionId:string,apply:(seq:number)=>void):boolean{return this.receiver.enqueueStatus(sessionId,apply);}
+ statusSeq(sessionId:string):number{return this.receiver.statusSeq(sessionId);}
  register(context:UsageContext):UsageTelemetry{return {port:this.receiver.port(),credential:this.receiver.register(context)};}
  revoke(sessionId:string):void{this.receiver.revoke(sessionId);this.parser.revoke(sessionId);this.recordLimits.delete(sessionId);}
  summary():UsageSummary{return this.store.summary();}
