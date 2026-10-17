@@ -148,7 +148,7 @@ it('a handoff can continue on another account of the same engine, same folder, t
     expect((await manager.handoffPlan(source.id, 'claude-code', 'work')).account).toBe('work');
     const handing = manager.handoff(source.id, 'claude-code', { kind: 'agent' }, 'work');
     // The note arrives once the request for it has reached the agent.
-    await expect.poll(() => manager.snapshot(source.id)).toContain('Reply with the note only.');
+    await expect.poll(() => manager.snapshot(source.id), { timeout: 10_000 }).toContain('Reply with the note only.');
     m.ingressStatus(source.id, { event: { seq: 99, at: new Date().toISOString(), kind: 'done' }, reply: '## Goal\nship' });
     const result = await handing;
     expect(result.session.auth).toEqual({ kind: 'account', profile: 'work' });

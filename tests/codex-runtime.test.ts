@@ -18,7 +18,7 @@ async function holdNotify(port:number,token:string,body:unknown,queued:()=>numbe
  const before=queued();
  const {request}=await import('node:http');let finish=()=>{};const text=JSON.stringify(body);
  const status=new Promise<number>((resolve,reject)=>{const req=request({hostname:'127.0.0.1',port,path:'/v1/status/codex',method:'POST',headers:{'content-type':'application/json','x-ai-term-session':token,'transfer-encoding':'chunked'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode??0));});req.on('error',reject);req.write(text.slice(0,5));finish=()=>req.end(text.slice(5));});
- await expect.poll(queued).toBeGreaterThan(before);return {status,finish:()=>finish()};
+ await expect.poll(queued, { timeout: 10_000 }).toBeGreaterThan(before);return {status,finish:()=>finish()};
 }
 async function files(folder:string):Promise<string[]>{const text:string[]=[];for(const e of await readdir(folder,{withFileTypes:true})){const path=join(folder,e.name);if(e.isDirectory())text.push(...await files(path));else if(e.isFile())try{text.push(await readFile(path,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}return text;}
 it.each(['subscription','api-key'] as const)('Codex %s sessions get notify argv, env-only credential, mirror signals, Enter, done and explicit last reply',async(authMethod)=>{

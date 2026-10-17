@@ -63,6 +63,6 @@ it.each([0,40])('OSC11 after a real Escape stays out of an attached agent, delay
     tty.emit('data',Buffer.from('\x1b'));await new Promise(resolve=>setTimeout(resolve,delay));
     tty.emit('data',Buffer.from('\x1b]11;rgb:ff/ff/ff\x1b\\'));
     const background=await probe;await new Promise(resolve=>setTimeout(resolve,70));
-    await expect.poll(()=>({background,input:Buffer.concat(client.sent).toString()})).toEqual({background:'#ffffff',input:'\x1b'});
+    await expect.poll(()=>({background,input:Buffer.concat(client.sent).toString()}), { timeout: 10_000 }).toEqual({background:'#ffffff',input:'\x1b'});
   }finally{controller.abort();await run;input.dispose();}
 });

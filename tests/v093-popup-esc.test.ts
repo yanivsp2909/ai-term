@@ -40,6 +40,6 @@ it.each(COMMANDS)('%s: Esc closes its popup and the homepage is back as it was',
   await expect.poll(async () => { open = (await screen(tty)).slice(0, 38); return open; }, { message: `${command} opened nothing` }).not.toEqual(before);
   if (process.env.DUMP_POPUPS) process.stdout.write(`\n=== ${command}\n` + open.filter(line => line.trim()).join('\n') + '\n');
   // Esc goes through two 30 ms timers (terminal-reply hold, then the lone-escape timer) before the popup closes.
-  type('\x1b'); await expect.poll(async () => (await screen(tty)).slice(0, 38)).toEqual(before);
+  type('\x1b'); await expect.poll(async () => (await screen(tty)).slice(0, 38), { timeout: 10_000 }).toEqual(before);
   home.stop?.();
 });

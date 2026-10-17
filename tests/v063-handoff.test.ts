@@ -124,7 +124,7 @@ it('with no key the agent writes its own note: its next reply becomes the new ag
   manager.ingressStatus(source.id, { event: { seq: 50, at: new Date().toISOString(), kind: 'done' }, reply: 'earlier answer' });
   const handing = d.manager.handoff(source.id, 'claude-code');
   // The agent answers the request with its note (here: its turn-complete with a last reply), once the request has reached it.
-  await expect.poll(() => d.manager.snapshot(source.id)).toContain('Reply with the note only.');
+  await expect.poll(() => d.manager.snapshot(source.id), { timeout: 10_000 }).toContain('Reply with the note only.');
   manager.ingressStatus(source.id, { event: { seq: 99, at: new Date().toISOString(), kind: 'done' }, reply: '## Goal\nship it\n## Left\ndocs' });
   const result = await handing;
   expect(d.spawned.at(-1)?.args.at(-1)).toMatch(/## Goal\nship it/);

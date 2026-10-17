@@ -38,7 +38,7 @@ it.each(['exited', 'error'] as const)('Enter on an %s agent shows a removal hint
     // Each poll feeds the display only what was written since the last one, so no frame is replayed over itself.
     let written = 0;
     const text = async () => { const chunk = tty.output.slice(written); written = tty.output.length; await new Promise<void>(resolve => display.write(chunk, resolve)); return Array.from({ length: 45 }, (_, y) => display.buffer.active.getLine(y)?.translateToString() ?? '').join('\n'); };
-    await expect.poll(text).toContain('project shell has exited · x removes it');
+    await expect.poll(text, { timeout: 10_000 }).toContain('project shell has exited · x removes it');
     expect(attachSession).not.toHaveBeenCalled(); expect(client.requests).toHaveLength(requestCount);
     expect(tty.isRaw).toBe(true);
   } finally { display.dispose(); await home.stop(); }

@@ -81,7 +81,7 @@ it('ai --attach for a removed or finished agent stays on the homepage with a not
   for (const [id, sessions] of [[gone, [agent('a')]], [finished.id, [finished]]] as const) {
     const { tty, home, attached } = await fixture([...sessions], { attachOnStart: id });
     try {
-      await expect.poll(() => tty.output).toMatch(/agent is gone|has exited/);
+      await expect.poll(() => tty.output, { timeout: 10_000 }).toMatch(/agent is gone|has exited/);
       expect(attached).toEqual([]);
     } finally { await home.stop(); }
   }

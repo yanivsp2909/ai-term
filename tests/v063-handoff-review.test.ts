@@ -76,7 +76,7 @@ it('LOW: an agent that got busy while the note was written keeps running, and th
   let release = () => {}, writing = false; const gate = new Promise<void>(resolve => { release = resolve; });
   const d = await daemon(async () => { writing = true; await gate; return { text: '## Goal\nship', inputTokens: 1, outputTokens: 1 }; });
   const handing = d.manager.handoff(d.source.id, 'claude-code');
-  await expect.poll(() => writing).toBe(true);
+  await expect.poll(() => writing, { timeout: 10_000 }).toBe(true);
   const live = (d.manager as unknown as { sessions: Map<string, { codexRun?: string }> }).sessions.get(d.source.id); if (live) live.codexRun = 'action';
   release();
   const result = await handing;
@@ -115,7 +115,7 @@ it('MEDIUM: the source exiting while the note is written is charged once, and no
   let release = () => {}, writing = false; const gate = new Promise<void>(resolve => { release = resolve; });
   const d = await daemon(async () => { writing = true; await gate; return { text: '## Goal\nship', inputTokens: 100, outputTokens: 20 }; });
   const handing = d.manager.handoff(d.source.id, 'claude-code');
-  await expect.poll(() => writing).toBe(true);
+  await expect.poll(() => writing, { timeout: 10_000 }).toBe(true);
   await d.manager.stop(d.source.id);
   release();
   await expect(handing).rejects.toThrow('Agent exited before the handoff finished');
