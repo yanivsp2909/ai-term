@@ -110,3 +110,13 @@ it('LOW (security review): the agent\'s diff fits the first message after JSON e
   expect(Buffer.byteLength(JSON.stringify(view.diff))).toBeLessThanOrEqual(8800);
   expect(view.diff).toContain('(the diff is cut here; read the rest in the worktree)');
 });
+
+it('LOW (security review): the A/B never copies a credential-named file, and never follows a link', async () => {
+  const { copyBenchFile } = await import('../src/daemon/perf-ab.js');
+  const dir = await temp(), from = join(dir, 'from'), to = join(dir, 'to'); await mkdir(join(from, 'bench'), { recursive: true }); await mkdir(to);
+  await writeFile(join(from, 'bench', '.env'), 'X=1\n'); await writeFile(join(from, 'bench', 'a.sh'), '#!/bin/sh\n');
+  await expect(copyBenchFile(from, to, 'bench/.env')).rejects.toThrow('credential');
+  const { symlink } = await import('node:fs/promises'); await symlink(join(from, 'bench', 'a.sh'), join(from, 'bench', 'link.sh'));
+  await expect(copyBenchFile(from, to, 'bench/link.sh')).rejects.toThrow();
+  await copyBenchFile(from, to, 'bench/a.sh'); expect(await readFile(join(to, 'bench', 'a.sh'), 'utf8')).toBe('#!/bin/sh\n');
+});
