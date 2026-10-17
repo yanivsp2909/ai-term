@@ -187,7 +187,7 @@ it('LOW (TS review): with an agent named deep, /review deep is still its keyed r
   } finally { await home.stop(); }
 });
 
-it('LOW (TS review): a /fix that stopped doesn't claim the worktree is untouched; it points to the diff', () => {
+it('LOW (TS review): a /fix that stopped doesn\'t claim the worktree is untouched; it points to the diff', () => {
   const { panel: p } = panel(); p.setResult(parseAddonResult(JSON.stringify({ kind: 'fix', reproduced: false, rootCause: 'unknown', reason: 'No test failed.' }), 'fix', true));
   const text = p.lines.join('\n');
   expect(text).toContain('■ stopped: no test reproduced the bug, so there is no fix to keep');
