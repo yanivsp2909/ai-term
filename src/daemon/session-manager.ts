@@ -695,9 +695,12 @@ export class SessionManager extends EventEmitter {
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         const diff=await this.diff(id);if(!diff.files.length)throw new Error("This agent's diff is empty; nothing to read yet");
-        const text=diffForReview(diff);let room=text.length;
-        while(Buffer.byteLength(text.slice(0,room))>ADDON_DIFF_BYTES)room=Math.floor(room*0.9);
-        return {title:live.info.title,cwd:live.info.worktree??live.info.cwd,diff:room<text.length?`${cutText(text,room)}\n(the diff is cut here; read the rest in the worktree)`:text};
+        // Measured as the prompt carries it (JSON-escaped): quotes and backslashes double (security review).
+        const text=diffForReview(diff),fits=(value:string)=>Buffer.byteLength(JSON.stringify(value))<=ADDON_DIFF_BYTES;
+        if(fits(text))return {title:live.info.title,cwd:live.info.worktree??live.info.cwd,diff:text};
+        let room=text.length,cut='';
+        do{room=Math.floor(room*0.9);cut=`${cutText(text,room)}\n(the diff is cut here; read the rest in the worktree)`;}while(room>0&&!fits(cut));
+        return {title:live.info.title,cwd:live.info.worktree??live.info.cwd,diff:cut};
     }
     // v1.1 /bisect: the plan reads your checkout only; whether a sandbox starts here decides y or a capital Y.
     async addonBisectPlan(cwd:string,args:string):Promise<BisectAsk>{
