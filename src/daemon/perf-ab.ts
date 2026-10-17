@@ -1,10 +1,11 @@
 import { constants } from 'node:fs';
-import { chmod, copyFile, lstat, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { lstat, mkdir, open, realpath } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { TestOutcome } from './test-run.js';
 import type { AbView } from '../shared/addon-results.js';
 import { isFsError } from '../shared/paths.js';
 import { resolveInside } from '../agent/jail.js';
+import { SECRET_FILE } from '../shared/review.js';
 
 // v1.1 /perf's A/B: the same benchmark on the code before (a temporary copy at the agent's start) and after (its
 // worktree), back to back on this machine. Rounds alternate the order (ABBA…) so warm caches and drift don't favor a side;
@@ -29,11 +30,19 @@ export async function runAb(before: AbSide, after: AbSide, options: { rounds?: n
 export const AB_FILE_MAX = 1024 * 1024;
 export async function copyBenchFile(from: string, to: string, file: string): Promise<void> {
   if (!/^bench\//.test(file) || file.split('/').includes('..')) throw new Error('Only new benchmark files under bench/ are copied');
-  const source = await resolveInside(from, file), info = await lstat(source);
-  if (!info.isFile() || info.size > AB_FILE_MAX) throw new Error('A benchmark file must be a regular file of at most 1 MB');
+  if (SECRET_FILE.test(file)) throw new Error('A credential or env file is never copied');
   const target = await resolveInside(to, file);
   try { await lstat(target); return; } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-  if (await resolveInside(to, dirname(file)) !== dirname(target)) throw new Error('The benchmark folder changed while it was copied');
-  await copyFile(source, target, constants.COPYFILE_EXCL); await chmod(target, info.mode & 0o755);
+  // Read through one descriptor opened without following links, so the file checked is the file copied (review).
+  const real = await resolveInside(from, file);
+  if (real !== join(await realpath(from), file)) throw new Error('A benchmark file is never copied through a link');
+  const source = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = await source.stat();
+    if (!info.isFile() || info.size > AB_FILE_MAX) throw new Error('A benchmark file must be a regular file of at most 1 MB');
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    if (await resolveInside(to, dirname(file)) !== dirname(target)) throw new Error('The benchmark folder changed while it was copied');
+    const output = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, info.mode & 0o755);
+    try { await output.writeFile(await source.readFile()); } finally { await output.close(); }
+  } finally { await source.close(); }
 }
