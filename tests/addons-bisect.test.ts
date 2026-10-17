@@ -85,3 +85,12 @@ it.skipIf(!MAC)('HIGH (security review): a sandboxed test that rewrites the copy
   await runBisect({ repo, plan, sandbox: sandboxFor(repo), unsandboxed: false, env: buildBisectEnv(process.env), log: () => {} }).catch(() => undefined);
   await expect(stat(escaped)).rejects.toThrow();
 }, 60_000);
+
+it('MEDIUM (security review): a bare branch name is part of the command; a hash, a tag or a revision like main~3 is the good ref', async () => {
+  const { repo, commits } = await repoWithBadCommit();
+  await git(repo, 'branch', '--', 'test', commits[1] ?? ''); await git(repo, 'tag', '--', 'v1', commits[2] ?? '');
+  expect(await bisectPlan(repo, 'npm test')).toMatchObject({ command: ['npm', 'test'], good: commits[0] });
+  expect(await bisectPlan(repo, './check.sh v1')).toMatchObject({ command: ['./check.sh'], good: commits[2], goodLabel: 'v1' });
+  expect(await bisectPlan(repo, './check.sh test~0')).toMatchObject({ command: ['./check.sh'], good: commits[1] });
+  expect(await bisectPlan(repo, `./check.sh ${(commits[3] ?? '').slice(0, 9)}`)).toMatchObject({ command: ['./check.sh'], good: commits[3] });
+});
