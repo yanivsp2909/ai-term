@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, readFile, realpath, stat } from 'node:fs/promises';
 import { delimiter, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -7,6 +7,7 @@ import { isFsError } from '../shared/paths.js';
 import { sandboxedArgv, type BashOptions } from './bash.js';
 import { killGroup } from '../shared/kill-tree.js';
 import { LSP_LANGUAGES, type LspLanguage } from '../shared/lsp-languages.js';
+import type { Deadline } from '../shared/deadline.js';
 
 // v0.9.3 LSP diagnostics for AI Term's agent (D55, off by default: they add tokens to every write or edit). After a write
 // or edit the agent gets that file's errors from a language server, as a short tool result. Only a server on PATH outside
@@ -14,6 +15,9 @@ import { LSP_LANGUAGES, type LspLanguage } from '../shared/lsp-languages.js';
 // env (no keys); without a sandbox no server starts, said once. One server per language, stopped when the agent exits or
 // after 10 idle minutes. The client is a minimal LSP over stdio: initialize, didOpen/didChange, publishDiagnostics.
 export const LSP_IDLE_MS = 10 * 60_000, LSP_MAX_LINES = 40, LSP_WAIT_MS = 8000, LSP_SETTLE_MS = 300;
+// Tests pass a manual deadline (B31): how fast a sandboxed server starts can't decide whether a wait ends by its answer.
+const realDeadline: Deadline = (ms, fire) => { const timer = setTimeout(fire, ms); timer.unref(); return () => clearTimeout(timer); };
+export type LspSpawn = (program: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
 export type Language = LspLanguage;
 export function languageOf(path: string): Language | null {
   const ext = extname(path).toLowerCase();
@@ -102,12 +106,12 @@ class Server {
   // Opens or updates the file and waits for its diagnostics: the last ones that come within a short settle after the
   // first, so a server that publishes twice (syntax, then types) is read whole. Every wait is bounded (review: one that
   // never answered initialize held the write, and the whole agent, forever) and an interrupted turn stops it at once.
-  async diagnose(file: string, languageId: string, text: string, waitMs: number, signal?: AbortSignal): Promise<Diagnostic[] | 'timeout' | 'gone' | 'aborted'> {
+  async diagnose(file: string, languageId: string, text: string, waitMs: number, deadline: Deadline, signal?: AbortSignal): Promise<Diagnostic[] | 'timeout' | 'gone' | 'aborted'> {
     const within = <T>(work: Promise<T>, ms: number): Promise<T | 'timeout' | 'aborted'> => new Promise(resolve => {
       if (signal?.aborted) { resolve('aborted'); return; }
-      const timer = setTimeout(() => finish('timeout'), ms); timer.unref();
+      const cancel = deadline(ms, () => finish('timeout'));
       const onAbort = () => finish('aborted');
-      function finish(value: T | 'timeout' | 'aborted') { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); resolve(value); }
+      function finish(value: T | 'timeout' | 'aborted') { cancel(); signal?.removeEventListener('abort', onAbort); resolve(value); }
       signal?.addEventListener('abort', onAbort, { once: true });
       void work.then(finish);
     });
@@ -139,7 +143,7 @@ class Server {
     await ended; clearTimeout(kill);
   }
 }
-export interface LspOptions { root: string; env: Record<string, string>; sandbox: NonNullable<BashOptions['sandbox']>; waitMs?: number }
+export interface LspOptions { root: string; env: Record<string, string>; sandbox: NonNullable<BashOptions['sandbox']>; deadline?: Deadline; spawn?: LspSpawn }
 // A server that misses this many answers in a row is stopped, like one that crashed.
 const MAX_SILENT = 3;
 export class LspPool {
@@ -168,7 +172,7 @@ export class LspPool {
     const argv = await sandboxedArgv([program, ...language.args], { cwd: this.options.root, env: this.options.env, sandbox: { ...this.options.sandbox, require: false } });
     if (argv.unsandboxed) { if (this.told) return ''; this.told = true; return `diagnostics are off for this agent: language servers run only in AI Term's sandbox, and ${argv.unsandboxed}`; }
     const env = Object.fromEntries(Object.entries(this.options.env).filter(([name]) => !/KEY|TOKEN|SECRET|PASSWORD|AITERM|AI_TERM/i.test(name)));
-    const child = spawn(argv.program, argv.args, { cwd: this.options.root, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true });
+    const child = (this.options.spawn ?? spawn)(argv.program, argv.args, { cwd: this.options.root, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true, windowsHide: true });
     const server = new Server(child, this.options.root);
     child.once('close', () => { if (this.servers.get(language.id) === server) this.servers.delete(language.id); });
     this.servers.set(language.id, server);
@@ -187,7 +191,7 @@ export class LspPool {
     if (typeof server === 'string') { this.starting.delete(language.id); this.starting.set(language.id, Promise.resolve('')); return server; }
     let text: string;
     try { text = await readFile(file, 'utf8'); } catch (error) { if (isFsError(error, 'ENOENT')) return ''; throw error; }
-    const result = await server.diagnose(file, language.languageId(extname(file).toLowerCase()), text, this.options.waitMs ?? LSP_WAIT_MS, signal);
+    const result = await server.diagnose(file, language.languageId(extname(file).toLowerCase()), text, LSP_WAIT_MS, this.options.deadline ?? realDeadline, signal);
     if (result === 'aborted') return '';
     const stopped = `diagnostics for ${shown}: ${language.server} stopped; diagnostics for this language are off until the agent restarts`;
     if (result === 'gone') { this.turnOff(language, server); return stopped; }

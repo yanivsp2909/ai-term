@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { diffPath } from '../shared/diff.js';
 import { failingCount, isDependencyPath, isTestCommand, isTestConfig } from '../shared/test-run.js';
+import type { Deadline } from '../shared/deadline.js';
 import { ProcessTree } from './process-tree.js';
 import { killGroup } from '../shared/kill-tree.js';
 import { CliLaunchError, windowsTestCommand } from './win-launch.js';
@@ -23,9 +24,11 @@ export const TEST_TIMEOUT_MS = 10 * 60_000, TEST_OUTPUT_CAP = 16 * 1024 * 1024;
 const TAIL_BYTES = 64 * 1024, KILL_GRACE_MS = 2_000;
 export type TestOutcome = { state: 'pass' } | { state: 'fail'; failing: number | null } | { state: 'timeout' } | { state: 'error' } | { state: 'cancelled' } | { state: 'blocked'; what: string } | { state: 'nosandbox' };
 // resolved: the command was already looked up on PATH (Windows).
-export interface TestRunOptions { resolved?: boolean; timeoutMs?: number; outputCap?: number; signal?: AbortSignal; log?: (text: string) => void; sandbox?: Pick<PreparedSandbox, 'prefix' | 'spec'> }
+export interface TestRunOptions { resolved?: boolean; timeoutMs?: number; deadline?: Deadline; outputCap?: number; signal?: AbortSignal; log?: (text: string) => void; sandbox?: Pick<PreparedSandbox, 'prefix' | 'spec'> }
 // sandbox-exec's own refusal (a profile the system rejects): EX_DATAERR or EX_OSERR, and its name on stderr.
 const SANDBOX_REFUSED = /^sandbox-exec: /m, BWRAP_REFUSED = /^bwrap: /m;
+// Tests pass a manual deadline (B31), so a slow start on a loaded machine can't turn a run into a timeout.
+const realDeadline: Deadline = (ms, fire) => { const timer = setTimeout(fire, ms); return () => clearTimeout(timer); };
 
 export function runTests(command: readonly string[], cwd: string, env: Record<string, string>, options: TestRunOptions = {}): Promise<TestOutcome> {
   if (!isTestCommand(command)) return Promise.resolve({ state: 'error' });
@@ -53,13 +56,13 @@ export function runTests(command: readonly string[], cwd: string, env: Record<st
       ended = why; group('SIGTERM');
       setTimeout(() => group('SIGKILL'), KILL_GRACE_MS).unref();
     };
-    const timer = setTimeout(() => stop('timeout'), options.timeoutMs ?? TEST_TIMEOUT_MS);
+    const cancelTimeout = (options.deadline ?? realDeadline)(options.timeoutMs ?? TEST_TIMEOUT_MS, () => stop('timeout'));
     const onAbort = () => stop('cancelled');
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
     const finish = (outcome: TestOutcome) => {
       if (settled) return;
-      settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', onAbort);
+      settled = true; cancelTimeout(); options.signal?.removeEventListener('abort', onAbort);
       // Whatever is left of the group goes too: a test runner's background server must not outlive its run.
       if (outcome.state !== 'error') group('SIGKILL');
       void (tree ? tree.stop().catch(() => { options.log?.('Test run: leftover processes were not checked'); return 0; }) : Promise.resolve(0)).then(() => resolve(outcome));
