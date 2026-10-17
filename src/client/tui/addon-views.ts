@@ -26,7 +26,7 @@ export function batchLines(r: Batch, view: ResultView): string[] {
     case 'teach': return [];
     case 'fix': return r.reproduced
       ? [`Root cause: ${r.rootCause}`, `Failing test first: ${r.test}`, `Fix: ${r.fix}`, `Changed: ${r.files.join(', ') || 'nothing'}`, testsLine(view.tests), 'Work is in the agent\'s worktree · d shows its diff on the homepage · Esc closes']
-      : ['■ stopped: no test reproduced the bug, so nothing was fixed', `Best lead: ${r.rootCause}`, `Tried: ${r.reason}`, 'Esc closes'];
+      : ['■ stopped: no test reproduced the bug, so there is no fix to keep', `Best lead: ${r.rootCause}`, `Tried: ${r.reason}`, "The agent was told to change nothing · d on the agent's card shows whether anything changed in its worktree · Esc closes"];
     case 'cover': return [`${r.tests.length} test${r.tests.length === 1 ? '' : 's'} written for untested behavior:`, ...r.tests.flatMap(t => [`• ${t.file} › ${t.name}`, `  checks: ${t.behavior}`, `  fails if: ${t.wouldFailIf}`]),
       ...r.gaps.length ? ['Still untested:', ...r.gaps.map(g => `  ${g}`)] : [], testsLine(view.tests), 'Esc closes'];
     case 'refactor': {
