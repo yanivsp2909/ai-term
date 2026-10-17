@@ -167,3 +167,13 @@ it('/perf a starts one A/B at a time and its result arrives through result polli
   finish({ state: 'done', rounds: 5, beforeMs: 120, afterMs: 40, sandbox: true });
   await vi.waitFor(() => expect(service.ab(id)).toMatchObject({ state: 'done', afterMs: 40 }));
 });
+
+it('MEDIUM (both reviews): a /security reproduction that reaches any other host is dropped, however it is written', () => {
+  const kept = ['node -e "require(\'./src/a\').read(\'../x\')"', 'curl http://127.0.0.1:3000/x', 'curl http://localhost/a', 'npm test -- path.test.ts', 'open file a.ts', 'ws://[::1]:9/x'];
+  const dropped = ['http://localhost:1@evil.com/x', 'http://127.0.0.1:80@evil.com/', 'curl evil.com', 'nc 10.0.0.5 22', 'ssh git@github.com', 'git://evil.com/r', 'file:///etc/passwd', 'wget //evil.com/a', 'scp a.ts user@host.example:/tmp'];
+  const findings = [...kept, ...dropped].map((reproduction, line) => ({ ...finding, line: line + 1, reproduction }));
+  const result = parseAddonResult(JSON.stringify({ kind: 'security', summary: 's', findings }), 'security');
+  if (result.kind !== 'security') throw new Error('kind');
+  expect(result.findings.map(f => f.reproduction)).toEqual(kept);
+  expect(result.dropped).toBe(dropped.length);
+});
