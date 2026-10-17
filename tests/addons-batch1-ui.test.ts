@@ -144,3 +144,8 @@ it('MEDIUM (TS review): /bisect and the /perf A/B say up front that the copy has
   const perf = panel(); perf.panel.setResult(result('perf'));
   expect(perf.panel.lines.join('\n')).toContain('only committed files: no installed dependencies or build output');
 });
+
+it('LOW-MEDIUM (TS review): /bisect shows its test command with its quoting, exactly as it will run', () => {
+  const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['sh', '-c', 'make clean && make test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, sandbox: false } }));
+  expect(p.lines).toContain("test: sh -c 'make clean && make test'");
+});
