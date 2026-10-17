@@ -97,7 +97,7 @@ it('agent output flipping a card between running and waiting cannot launch helpe
  clock+=5000;notifier.transition(session,running,waiting,false);await vi.waitFor(()=>expect(calls).toHaveLength(2));
  // All agents together: at most 10 a minute.
  for(let i=0;i<30;i++){notifier.transition(agent(),running,waiting,false);clock+=10;}
- await new Promise(r=>setTimeout(r,20));expect(calls).toHaveLength(10);
+ await vi.waitFor(()=>expect(calls).toHaveLength(10),{timeout:10_000});
  expect(logs).toEqual(['Notifications rate limited']);
  clock+=60000;notifier.transition(other,running,waiting,false);await vi.waitFor(()=>expect(calls).toHaveLength(11));
 });

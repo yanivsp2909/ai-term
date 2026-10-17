@@ -89,7 +89,7 @@ it('Palette before y dismisses a stop confirmation synchronously, preserving the
     f.send(encodeAppControl(token,'palette')+'y');
     await new Promise(resolve=>setTimeout(resolve,50));
     expect(f.client.requests.some(request=>request.kind==='sessions.stop')).toBe(false);
-    expect(await f.screen()).toContain('/y');
+    await expect.poll(f.screen).toContain('/y');
   } finally {await f.dispose();}
 });
 it('theme-changed reprobes OSC11 and redraws auto despite the saved graphite theme', async () => {
@@ -111,7 +111,7 @@ it('Home during a settings refresh cannot resurrect the dismissed start box', as
     f.command('home');release();
     await new Promise(resolve=>setTimeout(resolve,50));
     expect(await f.screen()).not.toContain('Start a new agent');
-    expect(await f.screen()).toContain('What do you want to build?');
+    await expect.poll(f.screen).toContain('What do you want to build?');
   }finally{release();await f.dispose();}
 });
 it('pasted and agent-printed controls never dispatch or reach an attached agent', async () => {

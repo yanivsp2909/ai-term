@@ -36,11 +36,10 @@ it.each(COMMANDS)('%s: Esc closes its popup and the homepage is back as it was',
   const type = (text: string) => { for (const char of text) tty.emit('data', Buffer.from(char)); };
   const before = (await screen(tty)).slice(0, 38);
   type(command + '\r'); await settle();
-  const open = (await screen(tty)).slice(0, 38);
+  let open: string[] = [];
+  await expect.poll(async () => { open = (await screen(tty)).slice(0, 38); return open; }, { message: `${command} opened nothing` }).not.toEqual(before);
   if (process.env.DUMP_POPUPS) process.stdout.write(`\n=== ${command}\n` + open.filter(line => line.trim()).join('\n') + '\n');
-  type('\x1b'); await settle(); await settle();
-  const after = (await screen(tty)).slice(0, 38);
-  expect(open, `${command} opened nothing`).not.toEqual(before);
-  expect(after).toEqual(before);
+  // Esc goes through two 30 ms timers (terminal-reply hold, then the lone-escape timer) before the popup closes.
+  type('\x1b'); await expect.poll(async () => (await screen(tty)).slice(0, 38)).toEqual(before);
   home.stop?.();
 });

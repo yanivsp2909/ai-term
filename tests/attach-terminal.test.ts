@@ -30,7 +30,9 @@ it.each(['off','on'] as const)('bar %s: real terminal query replies and startup 
   first.child.write(noise.slice(0,18));first.child.write(noise.slice(18));await new Promise(r=>setTimeout(r,150));expect(first.finished()).toBe(false);first.child.write('\x15');
   first.child.write('/usr/bin/vim -u NONE -U NONE -i NONE -n\r');await expect.poll(first.output).toContain('VIM');first.child.write('iB1_VIM_TEXT');await expect.poll(first.output).toContain('B1_VIM_TEXT');
   first.child.resize(100,35);first.child.write('\x05');expect(await first.exit).toBe(0);expect(first.output()).toContain('back in your shell (home key)');expect(first.output()).toContain(RESET_MODES+'\x1b[?1049l');expect(first.output()).toContain('\x1b[?2031l');
-  const again=open(id);await expect.poll(again.output).toContain('B1_VIM_TEXT');again.child.write('\x1b:qa!\r');await new Promise(r=>setTimeout(r,100));again.child.write('exit\r');expect(await again.exit).toBe(0);expect(again.output()).toContain('[session exited with code 0]');expect(again.output()).toContain('back in your shell (session exited)');
+  const again=open(id);await expect.poll(again.output).toContain('B1_VIM_TEXT');const quitting=again.output().length;again.child.write('\x1b:qa!\r');
+  // Typed before vim has quit, exit would go to vim; the shell's prompt drawn again shows it is back.
+  await expect.poll(()=>again.output().slice(quitting)).toContain('$');again.child.write('exit\r');expect(await again.exit).toBe(0);expect(again.output()).toContain('[session exited with code 0]');expect(again.output()).toContain('back in your shell (session exited)');
  }finally{
   for(const child of children){if(!child.finished())child.child.kill();await child.exit;}
   client?.close();if(daemon.exitCode===null&&daemon.signalCode===null)daemon.kill('SIGTERM');await exited;for(const terminal of terminals)terminal.dispose();await rm(root,{recursive:true,force:true});

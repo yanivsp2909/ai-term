@@ -116,10 +116,10 @@ it('slash arguments substitute literally and built-in commands win clashes',asyn
 });
 
 it('Ctrl+K kills a child command and cancels both conversations with no queued request',async()=>{
-  const a=await setup([call('task',{name:'reviewer',prompt:'run a command'}),call('bash',{command:'sleep 30'}),text('never'),text('never parent')]);let out='';
+  const a=await setup([call('task',{name:'reviewer',prompt:'run a command'}),call('bash',{command:'touch started; sleep 30'}),text('never'),text('never parent')]);let out='';
   const app=new AgentApp({screen:new Screen({write:s=>{out+=s;},columns:120,rows:40},createTheme('graphite')),permission:'ask',models:['m1'],makeModel:async()=>a.model,agent:io=>new Agent({...a.options,io}),quit:vi.fn()});
   app.start();app.input('go\r');await vi.waitFor(()=>expect(out).toContain('⏎ runs the job'));app.input('\x1b[200~\r\x1b[201~');expect(a.model.doStreamCalls).toHaveLength(1);app.input('\r');
-  await vi.waitFor(()=>expect(out).toContain('allow bash'));app.input('y');await new Promise(r=>setTimeout(r,100));app.input('queued\r');app.input('\x0b');
+  await vi.waitFor(()=>expect(out).toContain('allow bash'));app.input('y');await vi.waitFor(()=>readFile(join(a.options.root,'started')),{timeout:10_000});app.input('queued\r');app.input('\x0b');
   await vi.waitFor(()=>expect(app.running).toBe(false),{timeout:2000});expect(out).toContain('killed: the request and 1 running command');expect(a.model.doStreamCalls).toHaveLength(2);expect(killAllBash()).toBe(0);app.close();
 });
 

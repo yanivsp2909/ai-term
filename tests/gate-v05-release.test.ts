@@ -127,8 +127,7 @@ it('MEDIUM: an OSC 11 reply that arrives after its probe timed out is not typed 
     expect(tty.written).toBe(BACKGROUND_QUERY);
     tty.emit('data', Buffer.from('\x1b]11;rgb:ff/ff/ff\x1b\\'));
     tty.emit('data', Buffer.from('k'));
-    await new Promise(resolve => setTimeout(resolve, 40));
-    expect(Buffer.concat(seen).toString()).toBe('k');
+    await expect.poll(() => Buffer.concat(seen).toString()).toBe('k');
   } finally { input.dispose(); }
 });
 
@@ -178,7 +177,6 @@ it('LOW: an Escape typed during the late-reply window still arrives after the Es
   try {
     await input.background(tty);
     tty.emit('data', Buffer.from('a\x1b'));
-    await new Promise(resolve => setTimeout(resolve, 80));
-    expect(Buffer.concat(seen).toString()).toBe('a\x1b');
+    await expect.poll(() => Buffer.concat(seen).toString()).toBe('a\x1b');
   } finally { input.dispose(); }
 });

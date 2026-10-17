@@ -60,8 +60,8 @@ it('typed: /brain asks, ⏎ builds the free map, /brain show opens it, /brain rm
   type('/brain show\r');
   await shows(tty, '# Brain: proj');
   type('\x1b');
-  // A lone Esc, then typing: right after it, a / would read as Alt+/.
-  await new Promise(resolve => setTimeout(resolve, 100));
+  // A lone Esc, then typing: right after it, a / would read as Alt+/. Esc has gone through once the brain view is closed.
+  await vi.waitFor(async () => expect(await screen(tty)).not.toContain('# Brain: proj'), { timeout: 10_000 });
   type('/brain rm\r');
   await vi.waitFor(() => expect(sent).toContainEqual({ kind: 'brain.remove', cwd: '/tmp/proj' }));
   await shows(tty, '✓ brain removed for this repository · /brain builds a new one');

@@ -108,8 +108,8 @@ it('retains SGR mouse encoding when an unrelated encoding is reset',async()=>{
 it('restores locally immediately when startup request stays pending',async()=>{
  const {tty,connection,signals,options}=fixture();let release:(value:Awaited<ReturnType<FakeConnection['request']>>)=>void=()=>{};const real=connection.request.bind(connection);
  const pending=new Promise<Awaited<ReturnType<FakeConnection['request']>>>(r=>{release=r;});connection.request=body=>body.kind==='sessions.attach'?pending:real(body);
- const done=attach(connection,id,options);signals.emit('SIGINT');await new Promise(r=>setTimeout(r,0));
- try{expect(tty.isRaw).toBe(false);expect(tty.output).toContain('\x1b[?1049l');}finally{release(await real({kind:'sessions.attach',sessionId:id,cols:80,rows:24}));await done;}
+ const done=attach(connection,id,options);signals.emit('SIGINT');
+ try{await expect.poll(()=>tty.isRaw).toBe(false);expect(tty.output).toContain('\x1b[?1049l');}finally{release(await real({kind:'sessions.attach',sessionId:id,cols:80,rows:24}));await done;}
 });
 it('preserves final snapshot and output when exit arrives in the attach response read',async()=>{
  const {tty,connection,options}=fixture();const real=connection.request.bind(connection);connection.request=async body=>{

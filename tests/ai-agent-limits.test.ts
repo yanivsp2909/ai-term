@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtemp, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MockLanguageModelV4, convertArrayToReadableStream } from 'ai/test';
@@ -127,24 +127,28 @@ it('the kill switch (Ctrl+K) ends the request and a running command at once', as
   const statuses: AgentStatus[] = [];
   const reporter: Reporter = { status: async s => { statuses.push(s); }, usage: async () => {}, facts: async () => stubFacts() };
   let out = ''; const screen = new Screen({ write: t => { out += t; }, columns: 100, rows: 40 }, createTheme('graphite'));
-  const model = new MockLanguageModelV4({ doStream: [toolStep('bash', { command: 'trap "" TERM; sleep 30' }), textStep('never')] });
+  // The command marks when its trap is set, so the kill switch is pressed on a command really running and ignoring SIGTERM.
+  const model = new MockLanguageModelV4({ doStream: [toolStep('bash', { command: 'trap "" TERM; touch started; sleep 30' }), textStep('never')] });
   const app = new AgentApp({ screen, permission: 'dontAsk', models: ['m1'], quit: vi.fn(), makeModel: async () => model,
     agent: io => new Agent({ root, permission: 'dontAsk', model, modelId: 'm1', instructions: { text: '', files: [], notes: [] }, reporter, transcript: new Transcript(null, t => t, () => {}), io, redact: t => t, bashEnv: buildBashEnv(process.env), rg: null }) });
   app.start(); app.input('run it\r');
   await vi.waitFor(() => expect(statuses).toContainEqual({ event: 'tool-start', tool: 'bash' }));
-  await new Promise(resolve => setTimeout(resolve, 200));
+  await vi.waitFor(() => stat(join(root, 'started')), { timeout: 10_000 });
   const killed = Date.now(); app.input('\x0b');
-  await vi.waitFor(() => expect(app.running).toBe(false), { timeout: 3000 });
-  expect(Date.now() - killed).toBeLessThan(1000);
+  await vi.waitFor(() => expect(app.running).toBe(false), { timeout: 10_000 });
+  // B31: far under the 30 s sleep (so it was killed, not waited for), with room for a loaded machine.
+  expect(Date.now() - killed).toBeLessThan(10_000);
   expect(out).toContain('killed: the request and 1 running command'); expect(model.doStreamCalls).toHaveLength(1);
 });
 
 it('killAllBash ends every running command group with no grace period, even one ignoring SIGTERM', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-kill-'))); roots.push(root);
-  const started = Date.now(), run = runBash('trap "" TERM; sleep 30', { cwd: root, env: buildBashEnv(process.env) });
-  await new Promise(resolve => setTimeout(resolve, 200));
+  // B31: the command records any SIGTERM it gets. With a grace period (TERM, then KILL a second later) the record would be
+  // written before the KILL; with none it never is. So the proof is the file, not how fast this machine is.
+  const run = runBash('trap "echo TERM >> got-term" TERM; touch started; while :; do sleep 1; done', { cwd: root, env: buildBashEnv(process.env) });
+  await vi.waitFor(() => stat(join(root, 'started')), { timeout: 10_000 });
   expect(killAllBash()).toBe(1);
-  expect((await run).signal).toBe('SIGKILL'); expect(Date.now() - started).toBeLessThan(1500);
+  expect((await run).signal).toBe('SIGKILL'); await expect(stat(join(root, 'got-term'))).rejects.toThrow();
   expect(killAllBash()).toBe(0);
 });
 

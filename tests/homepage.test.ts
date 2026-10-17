@@ -35,10 +35,10 @@ it.each(['exited', 'error'] as const)('Enter on an %s agent shows a removal hint
     client.emit('event', { kind: 'session.updated', session: { ...session, status, exitCode: status === 'error' ? 3 : 0 } });
     const requestCount = client.requests.length;
     tty.emit('data', Buffer.from('\r'));
-    await new Promise(resolve => setTimeout(resolve, 50));
-    await new Promise<void>(resolve => display.write(tty.output, resolve));
-    const text = Array.from({ length: 45 }, (_, y) => display.buffer.active.getLine(y)?.translateToString() ?? '').join('\n');
-    expect(text).toContain('project shell has exited · x removes it');
+    // Each poll feeds the display only what was written since the last one, so no frame is replayed over itself.
+    let written = 0;
+    const text = async () => { const chunk = tty.output.slice(written); written = tty.output.length; await new Promise<void>(resolve => display.write(chunk, resolve)); return Array.from({ length: 45 }, (_, y) => display.buffer.active.getLine(y)?.translateToString() ?? '').join('\n'); };
+    await expect.poll(text).toContain('project shell has exited · x removes it');
     expect(attachSession).not.toHaveBeenCalled(); expect(client.requests).toHaveLength(requestCount);
     expect(tty.isRaw).toBe(true);
   } finally { display.dispose(); await home.stop(); }

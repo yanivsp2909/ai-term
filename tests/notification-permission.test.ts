@@ -26,7 +26,7 @@ it('denied permission never launches a notification and logs the suppression onc
  const notifier=new Notifier('/tmp/app',log,async()=>true,launch,()=>true,()=>0,permission);
  const session={id:randomUUID(),title:'task'} as SessionInfo;
  for(let i=0;i<2;i++)notifier.transition(session,{status:'running',statusDetail:'running'},{status:'waiting',statusDetail:'permission'},true);
- await new Promise(r=>setTimeout(r,0));expect(launch).not.toHaveBeenCalled();expect(log.error).toHaveBeenCalledTimes(1);
+ await vi.waitFor(()=>expect(log.error).toHaveBeenCalledTimes(1),{timeout:10_000});expect(launch).not.toHaveBeenCalled();
 });
 it('daemon-start checks and minute refreshes are nonblocking and stop on close',async()=>{
  vi.useFakeTimers();const run=vi.fn<NonNullable<ConstructorParameters<typeof NotificationPermission>[2]>>((_f,_a,_o,done)=>done(null,'allowed'));

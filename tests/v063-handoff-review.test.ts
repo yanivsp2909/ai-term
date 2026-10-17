@@ -73,10 +73,10 @@ it('MEDIUM: a failing usage record for the summary is logged, the hold released,
   expect((d.manager as unknown as { ledger: BudgetLedger }).ledger.reserved()).toBe(0);
 });
 it('LOW: an agent that got busy while the note was written keeps running, and the answer says so', async () => {
-  let release = () => {}; const gate = new Promise<void>(resolve => { release = resolve; });
-  const d = await daemon(async () => { await gate; return { text: '## Goal\nship', inputTokens: 1, outputTokens: 1 }; });
+  let release = () => {}, writing = false; const gate = new Promise<void>(resolve => { release = resolve; });
+  const d = await daemon(async () => { writing = true; await gate; return { text: '## Goal\nship', inputTokens: 1, outputTokens: 1 }; });
   const handing = d.manager.handoff(d.source.id, 'claude-code');
-  await new Promise(resolve => setTimeout(resolve, 100));
+  await expect.poll(() => writing).toBe(true);
   const live = (d.manager as unknown as { sessions: Map<string, { codexRun?: string }> }).sessions.get(d.source.id); if (live) live.codexRun = 'action';
   release();
   const result = await handing;
@@ -112,10 +112,10 @@ it('HIGH: with no key, an agent still working is refused, so its pending reply c
   await expect(manager.handoff(source.id, 'claude-code')).rejects.toThrow('Agent is still working · hand off when it is done');
 });
 it('MEDIUM: the source exiting while the note is written is charged once, and no new agent starts from it', async () => {
-  let release = () => {}; const gate = new Promise<void>(resolve => { release = resolve; });
-  const d = await daemon(async () => { await gate; return { text: '## Goal\nship', inputTokens: 100, outputTokens: 20 }; });
+  let release = () => {}, writing = false; const gate = new Promise<void>(resolve => { release = resolve; });
+  const d = await daemon(async () => { writing = true; await gate; return { text: '## Goal\nship', inputTokens: 100, outputTokens: 20 }; });
   const handing = d.manager.handoff(d.source.id, 'claude-code');
-  await new Promise(resolve => setTimeout(resolve, 100));
+  await expect.poll(() => writing).toBe(true);
   await d.manager.stop(d.source.id);
   release();
   await expect(handing).rejects.toThrow('Agent exited before the handoff finished');

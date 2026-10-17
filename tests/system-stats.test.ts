@@ -92,5 +92,5 @@ it('closing the server stops sampling for good, even with several subscribers', 
   sampler.setSubscribers = (count: number) => { calls.push(count); original(count); };
   await close();
   await new Promise(r => setTimeout(r, 100));
-  expect(sampler.running()).toBe(false); expect(calls.filter(count => count > 0)).toEqual([]);
+  await expect.poll(() => sampler.running()).toBe(false); expect(calls.filter(count => count > 0)).toEqual([]);
 });
