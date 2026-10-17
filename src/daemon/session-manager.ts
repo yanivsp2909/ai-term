@@ -698,7 +698,7 @@ export class SessionManager extends EventEmitter {
         // Measured as the prompt carries it (JSON-escaped): quotes and backslashes double (security review).
         const text=diffForReview(diff),fits=(value:string)=>Buffer.byteLength(JSON.stringify(value))<=ADDON_DIFF_BYTES;
         if(fits(text))return {title:live.info.title,cwd:live.info.worktree??live.info.cwd,diff:text};
-        let room=text.length,cut='';
+        let room=text.length,cut:string;
         do{room=Math.floor(room*0.9);cut=`${cutText(text,room)}\n(the diff is cut here; read the rest in the worktree)`;}while(room>0&&!fits(cut));
         return {title:live.info.title,cwd:live.info.worktree??live.info.cwd,diff:cut};
     }
