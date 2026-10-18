@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -16,7 +16,9 @@ import { cloneCommand, cloneFolder } from '../src/daemon/dep-clone.js';
 // B33: a read-only link still broke test runners that write a cache inside node_modules (Vitest's node_modules/.vite), so
 // the copy gets its own copy-on-write clone where the disk can make one, and the read-only link only where it can't.
 const run = promisify(execFile), roots: string[] = [], MAC = process.platform === 'darwin';
-afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+// A test that made a folder read-only or a file unreadable gives it back first, so the cleanup can remove it.
+const locked: { path: string; mode: number }[] = [];
+afterEach(async () => { for (const { path, mode } of locked.splice(0)) await chmod(path, mode).catch(() => undefined); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const ID = ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false'];
 const git = async (cwd: string, ...args: string[]) => (await run('/usr/bin/git', [...ID, ...args], { cwd })).stdout.trim();
 // A Node project whose test needs a dependency that only the installed node_modules has; commit 6 of 10 breaks it.
@@ -64,7 +66,7 @@ async function ownTemp<T>(body: (temp: string) => Promise<T>): Promise<T> {
   process.env.TMPDIR = temp;
   try { return await body(temp); } finally { if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved; }
 }
-const noClone = async () => false;
+const noClone = async () => ({ ok: false as const, why: 'this disk can\'t clone' });
 const sandboxFor = (repo: string) => async (path: string, readable: readonly string[] = []): Promise<PreparedSandbox | null> => {
   const box = await prepareSandbox(path, { home: homedir(), private: [], loopback: false, env: buildBisectEnv(process.env), readable: [await repoCommonDir(repo), ...readable] });
   if (await sandboxReady(box.profile, box.program, box.prefix)) return box;
@@ -117,7 +119,7 @@ it.skipIf(!MAC)('macOS, where the disk can\'t clone: npm test finds the planted 
   await expect(stat(join(repo, 'node_modules', 'dep', 'planted.txt'))).rejects.toThrow();
   expect(await readdir(join(repo, 'node_modules'))).toEqual(['dep']);
   expect(await git(repo, 'status', '--porcelain')).toBe(status);
-  expect(logs).toEqual(['Bisect: node_modules can\'t be cloned on this disk; it\'s linked read-only']);
+  expect(logs).toEqual(['Bisect: node_modules wasn\'t cloned (this disk can\'t clone); it\'s linked read-only']);
 }, 60_000);
 
 it.skipIf(!MAC)('B33 macOS: a test runner that writes its cache inside node_modules finds the planted commit in a clone; your node_modules is byte-identical and the clone is gone', async () => {
@@ -145,14 +147,14 @@ it.skipIf(!MAC)('B33 macOS: the clone never follows a link (one inside is copied
   const outside = join(root, 'outside'); await mkdir(outside); await writeFile(join(outside, 'kept.txt'), 'kept\n');
   await symlink(outside, join(repo, 'node_modules', 'out'));
   const before = await digest(join(repo, 'node_modules')), copy = join(root, 'copy'); await mkdir(copy);
-  expect(await cloneFolder(join(repo, 'node_modules'), join(copy, 'node_modules'))).toBe(true);
+  expect(await cloneFolder(join(repo, 'node_modules'), join(copy, 'node_modules'))).toEqual({ ok: true });
   expect((await lstat(join(copy, 'node_modules'))).isDirectory()).toBe(true);
   expect(await readlink(join(copy, 'node_modules', 'out'))).toBe(outside);
   await writeFile(join(copy, 'node_modules', 'dep', 'index.js'), 'changed\n'); await writeFile(join(copy, 'node_modules', 'dep', 'new.txt'), 'x\n');
   expect(await digest(join(repo, 'node_modules'))).toBe(before);
   // A dependency folder swapped for a link after the plan checked it: cp copies the link itself, which is removed.
   await symlink(outside, join(root, 'swapped'));
-  expect(await cloneFolder(join(root, 'swapped'), join(copy, 'swapped'))).toBe(false);
+  expect(await cloneFolder(join(root, 'swapped'), join(copy, 'swapped'))).toEqual({ ok: false, why: 'it is a link now' });
   await expect(lstat(join(copy, 'swapped'))).rejects.toThrow();
   expect(await readdir(outside)).toEqual(['kept.txt']);
 });
@@ -167,7 +169,49 @@ it('B33: the clone is cp with argv only and no link followed: -c (APFS clonefile
 
 it('B33: with Y and no sandbox nothing is cloned either, so the plan\'s "nothing added" holds', async () => {
   const { repo } = await nodeRepo(6, 10, true), clones: string[] = [];
-  const clone = async (source: string) => { clones.push(source); return false; };
+  const clone = async (source: string) => { clones.push(source); return { ok: false as const, why: 'test' }; };
   await expect(runBisect({ repo, plan: await bisectPlan(repo, 'npm test'), sandbox: async () => null, unsandboxed: true, env: buildBisectEnv(process.env), clone, log: () => {} })).rejects.toThrow('also fails at');
   expect(clones).toEqual([]);
+}, 60_000);
+
+it.skipIf(!MAC)('HIGH (TS review): a cloned .venv whose scripts name the original venv by its absolute path (shebangs do) still runs: the original stays readable', async () => {
+  const { repo, badCommit } = await nodeRepo();
+  // A venv's console scripts start with #!<checkout>/.venv/bin/python, and that python reads <checkout>/.venv/pyvenv.cfg.
+  await mkdir(join(repo, '.venv', 'bin'), { recursive: true }); await writeFile(join(repo, '.venv', 'pyvenv.cfg'), 'home = /usr/bin\n');
+  await symlink('/bin/sh', join(repo, '.venv', 'bin', 'sh'));
+  await writeFile(join(repo, '.venv', 'bin', 'tool'), `#!${join(repo, '.venv', 'bin', 'sh')}\ncat '${join(repo, '.venv', 'pyvenv.cfg')}' >/dev/null || exit 3\ngrep -qx ok state.txt\n`, { mode: 0o755 });
+  await writeFile(join(repo, '.gitignore'), 'node_modules/\n.venv/\n');
+  const plan = await bisectPlan(repo, '.venv/bin/tool'), logs: string[] = [];
+  expect(plan.deps).toEqual(['node_modules', '.venv']);
+  const result = await ownTemp(() => runBisect({ repo, plan, sandbox: sandboxFor(repo), unsandboxed: false, env: buildBisectEnv(process.env), log: text => logs.push(text) }));
+  expect(result).toMatchObject({ commit: badCommit });
+  expect(logs, logs.join(' | ')).toEqual([]);
+}, 60_000);
+
+it.skipIf(!MAC)('MEDIUM (TS review): a clone that fails says why (cp\'s exit, not "this disk"), leaves nothing behind, and the folder is linked instead', async () => {
+  const { root, repo, badCommit } = await nodeRepo(), copy = join(root, 'copy'); await mkdir(copy);
+  // An unreadable file makes cp stop with exit 1 after part of the tree is cloned.
+  const secret = join(repo, 'node_modules', 'dep', 'unreadable.txt'); await writeFile(secret, 'x\n'); await chmod(secret, 0o000); locked.push({ path: secret, mode: 0o644 });
+  expect(await cloneFolder(join(repo, 'node_modules'), join(copy, 'node_modules'))).toEqual({ ok: false, why: 'cp exited 1' });
+  await expect(lstat(join(copy, 'node_modules'))).rejects.toThrow();
+  const logs: string[] = [], plan = await bisectPlan(repo, 'npm test');
+  const result = await ownTemp(() => runBisect({ repo, plan, sandbox: sandboxFor(repo), unsandboxed: false, env: buildBisectEnv(process.env), log: text => logs.push(text) }));
+  expect(result).toMatchObject({ commit: badCommit });
+  expect(logs).toEqual(['Bisect: node_modules wasn\'t cloned (cp exited 1); it\'s linked read-only']);
+}, 60_000);
+
+it.skipIf(!MAC)('LOW (TS review): a read-only folder inside node_modules is cloned read-only, and the copy is still removed; a failed clone with one falls back instead of stopping', async () => {
+  const { root, repo, badCommit } = await nodeRepo(6, 10, true);
+  const ro = join(repo, 'node_modules', 'ro'); await mkdir(ro); await writeFile(join(ro, 'kept.txt'), 'x\n'); await chmod(ro, 0o555); locked.push({ path: ro, mode: 0o755 });
+  const logs: string[] = [];
+  await ownTemp(async temp => {
+    expect(await runBisect({ repo, plan: await bisectPlan(repo, 'npm test'), sandbox: sandboxFor(repo), unsandboxed: false, env: buildBisectEnv(process.env), log: text => logs.push(text) })).toMatchObject({ commit: badCommit });
+    expect(await readdir(temp)).toEqual([]);
+  });
+  expect(logs, logs.join(' | ')).toEqual([]);
+  // cp stopping on an unreadable file after it made the read-only folder: removed all the same, and a plain false.
+  const secret = join(repo, 'node_modules', 'zz-unreadable.txt'); await writeFile(secret, 'x\n'); await chmod(secret, 0o000); locked.push({ path: secret, mode: 0o644 });
+  const copy = join(root, 'copy'); await mkdir(copy);
+  expect(await cloneFolder(join(repo, 'node_modules'), join(copy, 'node_modules'))).toEqual({ ok: false, why: 'cp exited 1' });
+  await expect(lstat(join(copy, 'node_modules'))).rejects.toThrow();
 }, 60_000);
