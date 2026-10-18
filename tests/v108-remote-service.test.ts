@@ -21,7 +21,7 @@ case "$*" in
   "status --json") cat '${dir}/status.json' ;;
   "serve --help") echo "USAGE: tailscale serve [flags] <target>"; echo "  --bg  Run the command as a background process"; echo "  --https uint  Expose an HTTPS server at the specified port" ;;
   "serve status --json") cat '${dir}/serve.json' ;;
-  "serve --bg --https=8443 http://127.0.0.1:"*) port=\${3#http://127.0.0.1:}; printf '{"TCP":{"8443":{"HTTPS":true}},"Web":{"mac.tail1234.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:%s"}}}}}' "$port" > '${dir}/serve.json' ;;
+  "serve --bg --https=8443 http://127.0.0.1:"*) port=\${4#http://127.0.0.1:}; printf '{"TCP":{"8443":{"HTTPS":true}},"Web":{"mac.tail1234.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:%s"}}}}}' "$port" > '${dir}/serve.json' ;;
   "serve --https=8443 off") echo '{}' > '${dir}/serve.json' ;;
   *) echo "unexpected: $*" >&2; exit 2 ;;
 esac
@@ -87,7 +87,7 @@ it('a daemon restart leaves /remote off: the next start removes the old serve en
   const s = await setup(), first = s.make();
   await first.on();
   // The daemon dies without turning it off: its state file and the serve entry are left behind.
-  const port = /127\.0\.0\.1:(\d+)/.exec((await s.calls()).at(-1) ?? '')?.[1];
+  const port = ((await s.calls()).find(c => c.startsWith('serve --bg')) ?? '').match(/127\.0\.0\.1:(\d+)/)?.[1];
   const second = s.make();
   await second.cleanup();
   expect((await s.calls()).at(-1)).toBe('serve --https=8443 off');

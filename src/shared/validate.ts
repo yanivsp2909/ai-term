@@ -93,9 +93,17 @@ export async function validateRequest(value: unknown): Promise<Request> {
             if (!Number.isSafeInteger(v.protocol) || typeof v.version !== 'string' || !/^[A-Za-z0-9._-]{1,40}$/.test(v.version) || v.token !== undefined && (typeof v.token !== 'string' || !/^[0-9a-f]{64}$/.test(v.token)))
                 throw new ValidationError('Invalid hello');
             break;
+        // v1.0.8 /remote: on, off, the state and phones, and revoking one by its name or id.
         case 'daemon.stop':
         case 'queue.list':
+        case 'remote.status':
+        case 'remote.on':
+        case 'remote.off':
             fields = [];
+            break;
+        case 'remote.revoke':
+            fields = ['phone'];
+            if (typeof v.phone !== 'string' || !v.phone || v.phone.length > 40 || /[\p{C}]/u.test(v.phone)) throw new ValidationError('Invalid phone');
             break;
         // v0.9.1 queue: the daemon checks the agent's folder again when it starts, like any start.
         case 'queue.add':
@@ -363,7 +371,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','brainForAgents','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides','reversePath'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','brainForAgents','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides','reversePath','remote'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -385,6 +393,7 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     if(v.checkpoints!==undefined&&typeof v.checkpoints!=='boolean')throw new ValidationError('Invalid checkpoints setting');
     if(v.secretScan!==undefined&&typeof v.secretScan!=='boolean')throw new ValidationError('Invalid secret scan setting');
     if(v.queue!==undefined&&typeof v.queue!=='boolean')throw new ValidationError('Invalid queue setting');
+    if(v.remote!==undefined&&typeof v.remote!=='boolean')throw new ValidationError('Invalid remote setting');
     if(v.devServers!==undefined&&typeof v.devServers!=='boolean')throw new ValidationError('Invalid dev server setting');
     if(v.lspDiagnostics!==undefined&&typeof v.lspDiagnostics!=='boolean')throw new ValidationError('Invalid diagnostics setting');
     if(v.brainRepositories!==undefined&&(!isRecord(v.brainRepositories)||Object.keys(v.brainRepositories).length>100||Object.entries(v.brainRepositories).some(([id,p])=>!/^[-\w.]+-[0-9a-f]{10}$/.test(id)||!isRecord(p)||Object.keys(p).some(k=>!['agents','trusted'].includes(k))||p.agents!==undefined&&typeof p.agents!=='boolean'||p.trusted!==undefined&&typeof p.trusted!=='boolean')))throw new ValidationError('Invalid repository brain settings');

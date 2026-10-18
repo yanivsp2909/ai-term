@@ -9,6 +9,10 @@ import { Notifier, notifierAppPath, notificationsSetting, launchNotifySend } fro
 import { systemTool } from '../shared/executable.js';
 import { warmAgentSandbox } from './agent-sandbox.js';
 import { QueueService } from './queue.js';
+import { RemoteService } from './remote/service.js';
+import { managerBackend } from './remote/backend.js';
+import { KeyStore } from './keys.js';
+import { SettingsStore } from './settings.js';
 import { GIT } from './git-path.js';
 import { ClickReceiver, CLICK_SOCKET } from './click-receiver.js';
 import { TerminalLauncher } from './terminal-launch.js';
@@ -38,6 +42,9 @@ export async function runDaemon(entry?:string): Promise<void> {
     // v0.9.1 queue (D55, off by default): starts through the same create() as a manual start.
     const queue = new QueueService(paths.root, { create: request => manager.create({ ...request }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop), titles: () => manager.titles() }, log);
     server.setQueue(queue);
+    // v1.0.8 /remote (D54): off until you turn it on, and off again after this daemon restarts.
+    const remote = new RemoteService({ root: paths.root, keys: new KeyStore(paths.root), backend: managerBackend(manager), log, allowed: async () => { try { return (await new SettingsStore(paths.root).get()).remote === true; } catch { log.error('Settings unreadable; /remote stays off'); return false; } } });
+    server.setRemote(remote);
     // Notification clicks: select the agent in an open homepage, otherwise open Terminal inside it (D43).
     const launcher = entry && mac ? new TerminalLauncher(paths.root, { node: process.execPath, entry, ...(entry.endsWith('.ts') ? { loader: createRequire(import.meta.url).resolve('tsx') } : {}) }, log) : null;
     const clicks = new ClickReceiver(join(paths.run, CLICK_SOCKET), {
@@ -62,7 +69,7 @@ export async function runDaemon(entry?:string): Promise<void> {
             process.exitCode = 1;
         }
         try {
-            for(const cleanup of [()=>queue.close(),()=>clicks.close(),()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close()]) {
+            for(const cleanup of [()=>remote.close(),()=>queue.close(),()=>clicks.close(),()=>server.close(),()=>manager.shutdown(),()=>usage.close(),()=>notifier.close()]) {
                 try{await cleanup();}catch{try{log.error('Shutdown cleanup failed');}catch{process.stderr.write('Daemon logging failed\n');}process.exitCode=1;}
             }
         } finally {
@@ -86,6 +93,7 @@ export async function runDaemon(entry?:string): Promise<void> {
         try { await migratePrices(paths.root); } catch { log.error('Price records could not be migrated; they keep applying as before'); }
         await manager.load();
         try { await queue.load(); queue.start(); } catch { log.error('Queue unreadable; queued agents are not started'); }
+        await remote.cleanup();
         if (!closing)
             await server.listen();
         // Clicks are optional: a failure here is logged and AI Term runs on without click-through.
@@ -96,7 +104,8 @@ export async function runDaemon(entry?:string): Promise<void> {
         if (!closing) {
             log.info('Daemon started');
             idle = setInterval(() => {
-                if (manager.activeCount() === 0 && server.clientCount() === 0) {
+                // While /remote is on the phone may start an agent, so the daemon stays (it turns off by itself when idle).
+                if (manager.activeCount() === 0 && server.clientCount() === 0 && !remote.isOn()) {
                     idleSince ??= Date.now();
                     if (Date.now() - idleSince >= 10 * 60 * 1000)
                         void shutdown();

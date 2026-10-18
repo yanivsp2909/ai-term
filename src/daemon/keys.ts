@@ -60,6 +60,20 @@ export class KeyStore extends EventEmitter {
   const account=this.mcpAccount(server,name);if(!isMcpHash(hash)||!secret||Buffer.byteLength(secret)>2048||/[\p{C}]/u.test(secret))throw new KeyError('Invalid MCP secret');
   try{await this.vault.write(account,JSON.stringify({v:1,secret,hash}));}catch{throw new KeyError('MCP keychain write failed');}return lastFour(secret);
  }
+ // v1.0.8 /remote: a paired phone's token lives only on the phone. The Keychain keeps its SHA-256 (hex), under an account
+ // kind of its own, so a stolen settings folder can't log in as the phone and nothing here can be read back as a token.
+ private phoneAccount(id:string):string{if(!/^[0-9a-f]{16}$/.test(id))throw new KeyError('Invalid phone reference');return `remote-phone:${id}`;}
+ async savePhone(id:string,hash:string):Promise<void>{
+  if(!/^[0-9a-f]{64}$/.test(hash))throw new KeyError('Invalid phone token hash');
+  try{await this.vault.write(this.phoneAccount(id),JSON.stringify({v:1,hash}));}catch{throw new KeyError('Phone keychain write failed');}
+ }
+ async phoneHash(id:string):Promise<string|null>{
+  let raw:string|null;try{raw=await this.vault.read(this.phoneAccount(id));}catch{throw new KeyError('Phone keychain read failed');}
+  if(raw===null)return null;
+  let entry:unknown;try{entry=JSON.parse(raw) as unknown;}catch{throw new KeyError('Phone keychain entry is unreadable');}
+  return entry&&typeof entry==='object'&&'hash'in entry&&typeof entry.hash==='string'&&/^[0-9a-f]{64}$/.test(entry.hash)?entry.hash:null;
+ }
+ async removePhone(id:string):Promise<void>{try{await this.vault.remove(this.phoneAccount(id));}catch{throw new KeyError('Phone keychain remove failed');}}
  // Every name is tried even after one fails, so one locked entry doesn't leave the rest behind.
  async removeMcp(server:string,names:string[]):Promise<void>{let failed=false;for(const name of names){try{await this.vault.remove(this.mcpAccount(server,name));}catch{failed=true;}}if(failed)throw new KeyError('MCP keychain remove failed');}
  async withMcp<T>(server:string,names:string[],hash:string,use:(values:Record<string,string>)=>Promise<T>):Promise<T>{

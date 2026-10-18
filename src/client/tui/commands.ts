@@ -89,6 +89,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/research',description:'Web research with sources, saved under docs/research/ in a worktree; Claude Code or Codex only (asks first)',argumentHint:()=>ADDON_HINTS.research??'',current:none},
  {name:'/study',description:'A short study session, one idea and one check question per chunk; /study alone shows what is due',argumentHint:()=>ADDON_HINTS.study??'',current:none},
  {name:'/security',description:'Read-only security review and bug-bounty hunt, reproduced against this repo only (asks first)',argumentHint:()=>ADDON_HINTS.security??'',current:none},
+ {name:'/remote',description:'Reach your agents from your phone over your own Tailscale tailnet while on: on (QR pairing), off, revoke <phone> (D54, off; /settings R)',argumentHint:()=>'[on | off | revoke <phone>]',values:()=>['on','off','revoke'],current:none},
  {name:'/dev',description:'Run the project\'s dev server in an agent\'s worktree on its own port (asks first; D55, off; /settings y)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/dev-cmd',description:'The project\'s dev server command, like npm run dev (none clears it)',argumentHint:()=>'<command> | none',current:none},
  {name:'/queue',description:'Agents that start after an agent finishes or at a time, each with a limit (D55, off; /settings b)',argumentHint:()=>'[add]',values:()=>['add'],current:none},

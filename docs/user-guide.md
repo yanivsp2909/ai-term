@@ -161,6 +161,18 @@ API keys are stored in the macOS Keychain. On Linux they go in the Secret Servic
 
 Open `/settings` to manage keys and defaults. Press `a` to add a key, `x` to remove one and `t` to test one. Press `r` to choose whether keys run on AI Term's agent or on the CLI.
 
+## Phone remote
+
+`/remote` lets your phone reach your agents over your own Tailscale tailnet, and only while you have it on. There is no cloud server of AI Term's and nothing is reachable from the internet. It is off by default: open `/settings` and press `R` once. You need the Tailscale app on the Mac and the phone, logged in to the same tailnet.
+
+- `/remote on` starts the phone page and shows a QR code. Scan it with the phone's camera within 2 minutes and give the phone a name. The code works once; `/remote on` again shows a new one.
+- On the phone you see your agents with their status, ctx % and usage. Tap one to read its screen, approve or deny the permission prompt it shows, send it a message (the same rules as `/send`), or stop it. You can also start a new agent in Ask mode, with Claude Code or Codex, in a folder one of your agents already uses. The phone never sees keys, env, logins or settings, and it can't turn on Don't ask.
+- An approval counts only if the agent's screen is still the one the phone showed you; if it changed, look again. It's refused while you're inside that agent on the Mac.
+- `/remote` alone shows whether it's on and which phones are paired. `/remote revoke <name>` unpairs a phone; its cookie stops working at once.
+- `/remote off` turns it off. It also turns off by itself after 30 minutes without a request, and whenever AI Term's background service restarts. While it's on and the Mac is on AC power, AI Term keeps the Mac awake; on battery it may sleep.
+- Every action is written to `~/.ai-term/remote.log`: which phone, what it did, which agent, and when. Messages are logged by length only.
+
+
 ## Queue
 
 The queue starts agents for you, so it is off until you turn it on. Open `/settings` and press `b`.

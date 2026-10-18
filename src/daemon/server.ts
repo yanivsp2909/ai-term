@@ -32,6 +32,7 @@ import { currentAgentSandbox, dontAskNote, AGENT_SANDBOX_ERRORS } from './agent-
 import { CLI_LAUNCH_ERRORS } from './win-launch.js';
 import { QUEUE_ERRORS, type QueueService } from './queue.js';
 import { REVERSE_ERRORS } from './reverse.js';
+import { REMOTE_SERVICE_ERRORS, type RemoteService } from './remote/service.js';
 import { REVERSE_CLI_ERRORS } from './addon-cli.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
@@ -60,6 +61,8 @@ export class DaemonServer {
     onStop: (() => void) | undefined;
     private queue: QueueService | undefined;
     // v0.9.1: the queue's requests, and its changes sent to every client.
+    private remote: RemoteService | undefined;
+    setRemote(remote: RemoteService): void { this.remote = remote; }
     setQueue(queue: QueueService): void {
         this.queue = queue;
         queue.on('changed', (items: import('../shared/queue.js').QueueItem[]) => { for (const peer of this.peers) if (peer.hello) this.control(peer, { kind: 'queue.updated', queue: items }); });
@@ -248,6 +251,12 @@ export class DaemonServer {
                         return testDirect(provider,DIRECT_HOSTS[provider],key.deployments??[],secret);
                     });
                     await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
+                }
+                // v1.0.8 /remote (D54): only through this socket, never from the phone.
+                case 'remote.status': case 'remote.on': case 'remote.off': case 'remote.revoke': {
+                    const remote = this.remote; if (!remote) throw new Error('/remote is unavailable');
+                    const status = request.kind === 'remote.on' ? await remote.on() : request.kind === 'remote.off' ? await remote.off('command') : request.kind === 'remote.revoke' ? await remote.revoke(request.phone) : await remote.status();
+                    this.control(peer, { id: request.id, ok: true, remote: status }); break;
                 }
                 case 'queue.list': case 'queue.add': case 'queue.remove': {
                     const queue = this.queue; if (!queue) throw new Error(QUEUE_ERRORS[2]);
@@ -490,7 +499,7 @@ export class DaemonServer {
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
-                ...PRICE_ERRORS,'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS,...REVERSE_ERRORS,...REVERSE_CLI_ERRORS,'This add-on is unavailable'
+                ...PRICE_ERRORS,'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS,...REVERSE_ERRORS,...REVERSE_CLI_ERRORS,'This add-on is unavailable',...REMOTE_SERVICE_ERRORS,'/remote is unavailable'
             ]);
             const message = error instanceof Error && (fixed.has(error.message) || error instanceof MergeError && CHECKOUT_NOT_ON_BASE.test(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.

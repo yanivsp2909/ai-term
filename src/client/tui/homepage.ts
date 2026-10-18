@@ -68,6 +68,8 @@ import { openFolder, OpenError, type FolderApp } from './open-folder.js';
 import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-command.js';
 import { basename, isAbsolute, sep } from 'node:path';
 import { QueueForm, QueuePanel } from './queue-panel.js';
+import { RemotePanel } from './remote-panel.js';
+import { validateRemoteStatus, type RemoteStatus } from '../../shared/remote.js';
 import { validateQueue } from '../../shared/queue.js';
 import { DevAsk } from './dev-ask.js';
 import { BrainAsk } from './brain-ask.js';
@@ -101,7 +103,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel|RemotePanel;
   private addonFlows = new Map<string, AddonFlow>();
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
@@ -408,7 +410,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/dev','/brain',...ADDON_COMMANDS.map(name=>`/${name}`)].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/remote','/dev','/brain',...ADDON_COMMANDS.map(name=>`/${name}`)].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -615,6 +617,7 @@ export class Homepage {
     if (command==='/brain') { await this.brainCommand(argument); return; }
     if (command==='/test') { await this.testCommand(argument); return; }
     if (command==='/queue') { await this.queueCommand(argument); return; }
+    if (command==='/remote') { await this.remoteCommand(argument); return; }
     if (command==='/review') { await this.reviewCommand(argument); return; }
     if (command==='/fork') { await this.forkCommand(argument); return; }
     if (command==='/account') { await this.accountCommand(text); return; }
@@ -848,6 +851,18 @@ export class Homepage {
       catch(error){this.showNote(error instanceof Error?error.message:'Brain setting could not be saved');}
     });});
     this.popup=ask;this.draw(true);
+  }
+  // v1.0.8 /remote (D54): on (with the pairing QR), off, its state and phones, revoke <phone>. Only from the Mac.
+  private async remoteCommand(argument:string):Promise<void>{
+    const [verb='',...rest]=argument.split(/\s+/).filter(Boolean),phone=rest.join(' ');
+    const request=verb===''?{kind:'remote.status' as const}:verb==='on'&&!phone?{kind:'remote.on' as const}:verb==='off'&&!phone?{kind:'remote.off' as const}:verb==='revoke'&&phone?{kind:'remote.revoke' as const,phone}:null;
+    if(!request){this.showNote('/remote · /remote on · /remote off · /remote revoke <phone>');return;}
+    if(this.popup){this.showNote('close the open popup first');return;}
+    let status:RemoteStatus;
+    try{status=validateRemoteStatus((await this.connection.request(request)).remote);}catch(error){this.showNote(error instanceof Error?error.message:'/remote is unavailable');return;}
+    if(request.kind==='remote.off'){this.showNote('✓ remote off · tailscale serve entry removed');return;}
+    const panel:RemotePanel=new RemotePanel(()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},this.theme);
+    panel.set(status);this.popup=panel;this.draw(true);
   }
   // v0.9.1 /queue lists the queue; /queue add opens the start box, whose ⏎ then asks when it starts and its limit.
   private async queueCommand(argument:string):Promise<void>{

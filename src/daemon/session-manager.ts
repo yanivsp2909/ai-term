@@ -1115,6 +1115,38 @@ export class SessionManager extends EventEmitter {
             if(live.info.engine==='codex')this.codexStatus(live,{kind:'running'},state=>state.status==='done');
         }finally{this.sending.delete(id);}
     }
+    // v1.0.8 /remote: the agent's screen as plain text from its mirror (never raw output), after everything that arrived
+    // has been parsed, with the fingerprint an answer must send back.
+    private remoteWaiting(live:Live):'permission'|'question'|null{
+        if(live.info.engine==='codex'&&live.codexRun==='action')return 'permission';
+        return live.info.status==='waiting'&&(live.info.statusDetail==='permission'||live.info.statusDetail==='question')?live.info.statusDetail:null;
+    }
+    async remoteScreen(id:string):Promise<import('../shared/remote.js').RemoteScreen>{
+        const live=isUUID(id)?this.sessions.get(id):undefined;if(!live||live.info.engine==='shell')throw new Error('Session not found');
+        await this.caughtUp(live);
+        const lines=live.mirror.tail(REMOTE_SCREEN_ROWS).split('\n');
+        return {lines,fingerprint:screenFingerprint(id,live.info.statusSince,lines),waiting:this.remoteWaiting(live)};
+    }
+    // Answers a permission prompt with the engine's own key, only while it is the very prompt the phone was shown, and
+    // never while you are attached on the Mac (you answer it there).
+    async remoteAnswer(id:string,keys:(engine:SessionInfo['engine'])=>string,fingerprint:string):Promise<void>{
+        const live=isUUID(id)?this.sessions.get(id):undefined;if(!live||live.info.engine==='shell')throw new Error('Session not found');
+        if(this.sending.has(id))throw new Error('Agent is busy with another send');
+        this.sending.add(id);
+        try{
+            await this.caughtUp(live);
+            if(!live.host||['exited','error'].includes(live.info.status))throw new Error('Agent has exited');
+            const refused=answerRefusal({attached:live.attached,waiting:this.remoteWaiting(live),current:screenFingerprint(id,live.info.statusSince,live.mirror.tail(REMOTE_SCREEN_ROWS).split('\n')),given:fingerprint});
+            if(refused)throw new Error(refused);
+            live.host.write(keys(live.info.engine));
+        }finally{this.sending.delete(id);}
+    }
+    // Folders a phone may start an agent in: where your agents run and your default folder, if they still exist.
+    async remoteFolders():Promise<string[]>{
+        let preferred:string|undefined;try{preferred=(await new SettingsStore(this.paths.root).get()).defaultCwd;}catch{this.log.error('Settings unreadable; the phone offers only your agents\' folders');}
+        const folders=[...new Set([...(preferred?[preferred]:[]),...this.list().filter(s=>s.engine!=='shell').map(s=>s.cwd)])].slice(0,12);
+        return (await Promise.all(folders.map(async folder=>await validCwd(folder)?folder:null))).filter((f):f is string=>f!==null);
+    }
     // /find over every agent's mirror; per-agent and total caps keep one search to one small response.
     find(query:string):{matches:FindMatch[];more:boolean}{
         if(!isFindQuery(query))throw new Error('Invalid find request');
@@ -1876,4 +1908,6 @@ async function openWithDefaultApp(path:string):Promise<void>{
     await new Promise<void>((done,fail)=>{execFile(opener,[path],{timeout:15_000,windowsHide:true},error=>error?fail(new Error('The file could not be opened')):done());});
 }
 import { checkAddonCli, checkReverseCli } from './addon-cli.js';
+import { answerRefusal, screenFingerprint } from './remote/backend.js';
+const REMOTE_SCREEN_ROWS=200;
 import { findRea, reaIdentity, reverseServer, reverseTarget } from './reverse.js';
