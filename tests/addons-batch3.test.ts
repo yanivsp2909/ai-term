@@ -124,3 +124,12 @@ it('MEDIUM (reviews): /study records a topic once, cleaned up; never an empty on
   await recordStudy(home, 'git worktrees'); await recordStudy(home, '   ');
   expect(JSON.parse(await readFile(join(home, 'study', 'schedule.json'), 'utf8'))).toEqual([expect.objectContaining({ topic: 'git worktrees', step: 0 })]);
 });
+
+it('every batch-3 model add-on tells the engine the exact result shape it must return', async () => {
+  const { repo, runs, service } = await setup();
+  for (const name of NAMES) {
+    started(await service.start((await service.plan(name, 'x', repo, CODEX)).receipt));
+    const first = String(runs.at(-1)?.firstMessage);
+    expect(first, name).toContain(`kind="${name}"`); expect(first, name).not.toContain('Return the answer as text.');
+  }
+});
