@@ -50,9 +50,14 @@ it('the plan reads the good ref from the last word, or goes back 32 commits; it 
 
 it.skipIf(!MAC)('macOS: finds the planted commit in a sandboxed temporary copy; your checkout, refs and worktrees are untouched and the copy is gone', async () => {
   const { repo, badCommit } = await repoWithBadCommit();
-  const before = await snapshot(repo), temp = await realpath(tmpdir()), clonesBefore = (await readdir(temp)).filter(n => n.startsWith('ai-term-clone-'));
+  // A temp folder of this test's own: other files' workers make ai-term-clone-* folders in the shared one at the same time.
+  const temp = await realpath(await mkdtemp(join(tmpdir(), 'ai-bisect-tmp-'))), saved = process.env.TMPDIR; roots.push(temp);
+  process.env.TMPDIR = temp;
+  const before = await snapshot(repo), clonesBefore = (await readdir(temp)).filter(n => n.startsWith('ai-term-clone-'));
   const plan = await bisectPlan(repo, './check.sh'), logs: string[] = [];
-  const result = await runBisect({ repo, plan, sandbox: sandboxFor(repo), unsandboxed: false, env: buildBisectEnv(process.env), log: text => logs.push(text) });
+  let result: Awaited<ReturnType<typeof runBisect>>;
+  try { result = await runBisect({ repo, plan, sandbox: sandboxFor(repo), unsandboxed: false, env: buildBisectEnv(process.env), log: text => logs.push(text) }); }
+  finally { if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved; }
   expect(result).toMatchObject({ kind: 'bisect', commit: badCommit, subject: 'planted: break the state', author: 'Test' });
   expect(result.steps).toBeGreaterThan(0);
   expect(result.diff.join('\n')).toContain('-ok'); expect(result.diff.join('\n')).toContain('+broken');
