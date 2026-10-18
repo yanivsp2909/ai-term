@@ -50,10 +50,14 @@ async function outsideSource(tool: string, folder: string): Promise<string | nul
   if (tool === 'npm') {
     const manifest = object(json(await readFile(join(folder, 'package.json'), 'utf8')));
     if (manifest.workspaces !== undefined) return 'skipped: workspaces; run /deps <package folder>';
-    const specs = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'overrides'].flatMap(key => Object.values(object(manifest[key])));
-    if (specs.some(spec => typeof spec !== 'string' || /^(?:git|https?|file|link|github|gitlab|bitbucket):|^git\+|^[.~/]|^[\w.-]+\/[\w.-]+(?:#|$)/i.test(spec))) return "skipped: package.json names a source outside the registry; AI Term won't contact it";
+    // Only registry specs pass (final review: git@host:…, host:user/repo, gist: and other git shorthands slipped a
+    // deny-list): a range or dist-tag never holds : / # or @, and an npm: alias must point at one.
+    const registry = (range: string) => !/[:/#@]/.test(range) && !range.startsWith('.');
+    const allowed = (spec: unknown) => typeof spec === 'string' && (spec.startsWith('npm:') ? ((m: RegExpMatchArray | null) => !!m && registry(m[2] ?? '*'))(spec.slice(4).match(/^((?:@[\w.-]+\/)?[\w.-]+)(?:@(.*))?$/)) : registry(spec));
+    if (!['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies', 'overrides'].flatMap(key => Object.values(object(manifest[key]))).every(allowed)) return "skipped: package.json names a source outside the registry; AI Term won't contact it";
   }
-  if (tool === 'cargo' && /\bgit\s*=|\bpath\s*=|^\s*\[patch/m.test(await readFile(join(folder, 'Cargo.toml'), 'utf8'))) return "skipped: Cargo.toml names a source outside the registry; AI Term won't contact it";
+  // Quoted TOML keys count too ("git" = …), and a [patch] table however it is spaced.
+  if (tool === 'cargo' && /["']?\b(?:git|path|registry|registry-index)\b["']?\s*=|\[\s*patch\b/m.test(await readFile(join(folder, 'Cargo.toml'), 'utf8'))) return "skipped: Cargo.toml names a source outside the registry; AI Term won't contact it";
   return null;
 }
 const json = (text: string): unknown => { try { return JSON.parse(text) as unknown; } catch (error) { if (error instanceof SyntaxError) return null; throw error; } };

@@ -27,24 +27,26 @@ async function bound(work: AgentWork): Promise<Dirs> {
   const target = (await readFile(dotGit, 'utf8')).match(/^gitdir: ([^\n]+)\n?$/)?.[1]; if (!target) throw new GitError('Git check failed');
   const gitDir = await realpath(resolve(work.path, target)), common = await realpath(join(work.repo, '.git'));
   if (dirname(gitDir) !== join(common, 'worktrees')) throw new GitError('Git check failed');
-  if (/^\s*\[\s*(?:filter|include|includeif)\b/im.test(`${await text(common, 'config')}\n${await text(gitDir, 'config.worktree')}`) || /\bfilter=/.test(await text(join(common, 'info'), 'attributes'))) throw new Error(REFUSED);
+  if (/\[\s*(?:filter|include|includeif)\b/i.test(`${await text(common, 'config')}\n${await text(gitDir, 'config.worktree')}`) || /\bfilter=/.test(await text(join(common, 'info'), 'attributes'))) throw new Error(REFUSED);
   return { args: [`--git-dir=${gitDir}`, `--work-tree=${work.path}`, '-c', 'core.attributesFile=/dev/null', `--attr-source=${EMPTY_TREE_ID}`], env: { GIT_COMMON_DIR: common } };
 }
 const git = (work: AgentWork, dirs: Dirs, args: string[], options: { maxBuffer?: number; input?: string; env?: Record<string, string> } = {}) =>
   runGit(work.path, [...dirs.args, ...args], 'Git check failed', { maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024, timeout: 60_000, ...options.input !== undefined ? { input: options.input } : {}, env: { ...dirs.env, ...options.env } });
 // `git status -z` entries: "XY path", a rename followed by its old path as its own entry.
-function statusNames(raw: string): { code: string; path: string }[] {
-  const parts = raw.split('\0'), out: { code: string; path: string }[] = [];
-  for (let n = 0; n < parts.length; n++) { const entry = parts[n] ?? ''; if (entry.length < 4) continue; out.push({ code: entry.slice(0, 2), path: entry.slice(3) }); if (entry[0] === 'R' || entry[0] === 'C') n++; }
+// The old path of a rename is kept: a tracked .env renamed to notes.txt is still a credential file (final review).
+function statusNames(raw: string): { code: string; path: string; from?: string }[] {
+  const parts = raw.split('\0'), out: { code: string; path: string; from?: string }[] = [];
+  for (let n = 0; n < parts.length; n++) { const entry = parts[n] ?? ''; if (entry.length < 4) continue; const renamed = entry[0] === 'R' || entry[0] === 'C'; out.push({ code: entry.slice(0, 2), path: entry.slice(3), ...renamed ? { from: parts[n + 1] ?? '' } : {} }); if (renamed) n++; }
   return out;
 }
+const secretName = (n: { path: string; from?: string }) => SECRET_FILE.test(n.path) || n.from !== undefined && SECRET_FILE.test(n.from);
 // A new file's content, hashed (size and time alone miss a same-size rewrite); a very large one by size and time.
 async function fingerprint(path: string): Promise<string> {
   let file;
   try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ELOOP')) return 'missing-or-link'; throw error; }
   try { const info = await file.stat(); return info.isFile() && info.size <= NEW_FILE_HASHED ? createHash('sha256').update(await file.readFile()).digest('hex') : `${info.size}:${info.mtimeMs}`; } finally { await file.close(); }
 }
-async function state(work: AgentWork, dirs: Dirs): Promise<{ hash: string; status: string; names: { code: string; path: string }[]; diff: string }> {
+async function state(work: AgentWork, dirs: Dirs): Promise<{ hash: string; status: string; names: { code: string; path: string; from?: string }[]; diff: string }> {
   const head = (await git(work, dirs, ['symbolic-ref', '-q', 'HEAD'])).trim();
   if (head !== `refs/heads/${work.branch}`) throw new Error(`The agent's worktree isn't on its own branch (${factText(work.branch, 80)}); commit it yourself`);
   const status = await git(work, dirs, ['status', '--porcelain=v1', '-z', '-uall', '--']), names = statusNames(status);
@@ -58,8 +60,8 @@ export async function agentWork(work: AgentWork): Promise<{ state: string; data:
   const dirs = await bound(work), now = await state(work, dirs);
   if (!now.names.length) throw new Error("Nothing to commit in this agent's worktree");
   // A credential file would be swept in by `git add -A` and published by /pr: never committed by AI Term.
-  const secret = now.names.find(n => SECRET_FILE.test(n.path));
-  if (secret) throw new Error(`The agent's worktree holds ${factText(secret.path, 120)}, a file that usually holds secrets; commit it yourself if you mean to`);
+  const secret = now.names.find(secretName);
+  if (secret) throw new Error(`The agent's worktree holds ${factText(secret.from ?? secret.path, 120)}, a file that usually holds secrets; commit it yourself if you mean to`);
   const shown: string[] = [];
   // A new file's text goes to the model like the diff (the add-on core redacts secrets); one it can't read is named.
   for (const file of now.names.filter(n => n.code === '??').slice(0, NEW_FILES_SHOWN)) shown.push(`New file ${file.path}:\n${await addonFile(work.path, file.path, NEW_FILE_BYTES).catch(() => '(not shown: not a small text file)')}`);
@@ -68,7 +70,7 @@ export async function agentWork(work: AgentWork): Promise<{ state: string; data:
 export async function commitWork(work: AgentWork, message: string, expected: string, identity: { name: string; email: string }): Promise<string> {
   const dirs = await bound(work), now = await state(work, dirs);
   if (now.hash !== expected) throw new Error("The agent's work changed since the message was written; run /commit again");
-  if (now.names.some(n => SECRET_FILE.test(n.path))) throw new Error("The agent's worktree holds a file that usually holds secrets; commit it yourself if you mean to");
+  if (now.names.some(secretName)) throw new Error("The agent's worktree holds a file that usually holds secrets; commit it yourself if you mean to");
   // .gitattributes filters (LFS and the like) change what is committed; with attributes off they'd be skipped: yours.
   const files = (await git(work, dirs, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--'])).split('\0').filter(name => name === '.gitattributes' || name.endsWith('/.gitattributes'));
   for (const file of files) if (/\bfilter=/.test(await addonFile(work.path, file, 64 * 1024).catch(() => 'filter='))) throw new Error(REFUSED);
