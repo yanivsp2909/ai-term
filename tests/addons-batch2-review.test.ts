@@ -81,3 +81,20 @@ it('MEDIUM (TS review): a staged .env never reaches the model; the popup says it
   expect(staged.data).toContain('+b'); expect(staged.data).not.toContain('hunter2');
   expect(staged.facts).toEqual(['staged: 2 files, +2 −0', 'left out: .env.production (a file that usually holds secrets)']);
 });
+
+it('LOW (TS review): /opensource scans added lines that start with ++, names the right file, falls back on a huge history and fits the message', async () => {
+  const { opensourceScan } = await import('../src/daemon/opensource-scan.js');
+  const { execFile } = await import('node:child_process'), { promisify } = await import('node:util'), run = promisify(execFile);
+  const git = (cwd: string, ...args: string[]) => run('/usr/bin/git', ['-c', 'user.name=T', '-c', 'user.email=t@e.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd });
+  const dir = await temp(), repo = join(dir, 'repo'); await mkdir(repo); await git(dir, 'init', '-q', '--', repo);
+  const key = 'sk-ant-api03-' + 'Z'.repeat(90);
+  await writeFile(join(repo, 'notes.md'), `+ key ${key}\n`); await writeFile(join(repo, 'filler.txt'), 'x'.repeat(4000));
+  await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-qm', 'one', '--');
+  for (let i = 0; i < 3; i++) { await writeFile(join(repo, `more${i}.txt`), 'y'.repeat(4000)); await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-qm', `more ${i}`, '--'); }
+  const full = await opensourceScan(repo);
+  expect(full.facts[0]).toBe('history: 1 secret-bearing line in 1 commit (masked)');
+  expect(full.data).toContain('notes.md');
+  const capped = await opensourceScan(repo, { maxBuffer: 9000, fallbackCommits: 1 });
+  expect(capped.facts[0]).toBe('history: 0 secret-bearing lines in 0 commits (masked) · only the last 1 commit: the full history was too large');
+  expect(Buffer.byteLength(JSON.stringify(full.data))).toBeLessThanOrEqual(9000);
+});
