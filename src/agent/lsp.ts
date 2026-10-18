@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { constants } from 'node:fs';
-import { access, readFile, realpath, stat } from 'node:fs/promises';
+import { access, open, realpath, stat } from 'node:fs/promises';
+import { JailError, resolveInside } from './jail.js';
 import { delimiter, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isFsError } from '../shared/paths.js';
@@ -24,6 +25,23 @@ export function languageOf(path: string): Language | null {
   return LSP_LANGUAGES.find(language => language.exts.includes(ext)) ?? null;
 }
 const inside = (path: string, root: string) => path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
+// The written file's text for the server, read the way the read tool reads: inside the worktree, no link anywhere on its
+// path (Darwin O_NOFOLLOW_ANY; elsewhere the last component), one hard link, at most 1 MiB. Gate HIGH: this runs in
+// the agent's own process, outside the bash sandbox, so a path swapped for a link after the write would have handed the
+// server (and the model, through its diagnostics) a file the sandbox hides. Anything else gets no diagnostics.
+const NOFOLLOW_ANY = 0x20000000, MAX_DIAGNOSED = 1024 * 1024;
+async function diagnosable(root: string, path: string): Promise<string | null> {
+  let real: string;
+  try { real = await resolveInside(root, path); } catch (error) { if (error instanceof JailError) return null; throw error; }
+  let handle;
+  try { handle = await open(real, constants.O_RDONLY | constants.O_NONBLOCK | (process.platform === 'darwin' ? NOFOLLOW_ANY : constants.O_NOFOLLOW)); }
+  catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ELOOP') || isFsError(error, 'EMLINK')) return null; throw error; }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.nlink !== 1 || info.size > MAX_DIAGNOSED) return null;
+    return await handle.readFile('utf8');
+  } finally { await handle.close(); }
+}
 // The first executable `name` in PATH's absolute folders that isn't in the worktree or a node_modules/.bin, by its real
 // path too (a link from PATH into the worktree counts as the worktree).
 export async function findServer(name: string, path: string, root: string): Promise<string | null> {
@@ -189,8 +207,8 @@ export class LspPool {
     const file = resolve(this.options.root, path), shown = relative(this.options.root, file);
     const server = await this.server(language);
     if (typeof server === 'string') { this.starting.delete(language.id); this.starting.set(language.id, Promise.resolve('')); return server; }
-    let text: string;
-    try { text = await readFile(file, 'utf8'); } catch (error) { if (isFsError(error, 'ENOENT')) return ''; throw error; }
+    const text = await diagnosable(this.options.root, path);
+    if (text === null) return '';
     const result = await server.diagnose(file, language.languageId(extname(file).toLowerCase()), text, LSP_WAIT_MS, this.options.deadline ?? realDeadline, signal);
     if (result === 'aborted') return '';
     const stopped = `diagnostics for ${shown}: ${language.server} stopped; diagnostics for this language are off until the agent restarts`;
