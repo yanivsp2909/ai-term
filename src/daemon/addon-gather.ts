@@ -64,12 +64,17 @@ export async function contextFiles(repo: string, extra: { facts: string[]; data:
   return { data: fitEscaped(quoted([...parts, ...extra.data].join('\n')), GATHER_DATA_BYTES), subject: 'instruction files and loaded skills', facts: [...facts.slice(0, 20), ...extra.facts] };
 }
 
-// /commit in your checkout: only what is staged, read-only. Nothing staged is said, not guessed.
+// /commit in your checkout: only what is staged, read-only. Nothing staged is said, not guessed. A file that usually
+// holds secrets (.env, keys) is left out of what the model sees, and the popup says so (review).
 export async function stagedChanges(repo: string): Promise<Gathered> {
   const flags = ['--no-color', '--no-ext-diff', '--no-textconv'];
-  const stat = (await runGit(repo, ['diff', '--cached', '--numstat', ...flags, '--'], 'Git check failed', { maxBuffer: 4 * 1024 * 1024 })).split('\n').filter(Boolean);
+  const stat = (await runGit(repo, ['diff', '--cached', '--numstat', '-z', ...flags, '--'], 'Git check failed', { maxBuffer: 4 * 1024 * 1024 })).split('\0').filter(Boolean);
   if (!stat.length) throw new Error('Nothing is staged in this folder · git add what belongs in the commit, or /commit <agent>');
-  const added = stat.reduce((n, l) => n + (Number(l.split('\t')[0]) || 0), 0), removed = stat.reduce((n, l) => n + (Number(l.split('\t')[1]) || 0), 0);
-  const patch = await runGit(repo, ['diff', '--cached', '--unified=3', ...flags, '--'], 'Git check failed', { maxBuffer: 32 * 1024 * 1024 });
-  return { data: fitEscaped(patch, GATHER_DATA_BYTES), subject: 'staged in your checkout (c copies; AI Term never commits here)', facts: [`staged: ${plural(stat.length, 'file')}, +${added} −${removed}`] };
+  // -z numstat: "added<TAB>removed<TAB>path"; a rename is "added<TAB>removed<TAB>" followed by two path entries.
+  const rows: { added: number; removed: number; path: string }[] = [];
+  for (let n = 0; n < stat.length; n++) { const [added = '', removed = '', path = ''] = (stat[n] ?? '').split('\t'); const name = path || (n += 2, stat[n] ?? ''); rows.push({ added: Number(added) || 0, removed: Number(removed) || 0, path: name }); }
+  const secret = rows.filter(r => SECRET_FILE.test(r.path)), shown = rows.filter(r => !SECRET_FILE.test(r.path));
+  const patch = shown.length ? await runGit(repo, ['diff', '--cached', '--unified=3', ...flags, '--', ...shown.map(r => r.path)], 'Git check failed', { maxBuffer: 32 * 1024 * 1024 }) : '(only files that usually hold secrets are staged; their contents are left out)';
+  return { data: fitEscaped(patch, GATHER_DATA_BYTES), subject: 'staged in your checkout (c copies; AI Term never commits here)',
+    facts: [`staged: ${plural(rows.length, 'file')}, +${rows.reduce((n, r) => n + r.added, 0)} −${rows.reduce((n, r) => n + r.removed, 0)}`, ...secret.length ? [`left out: ${secret.map(r => r.path.replace(/[\p{C}]/gu, '?')).join(', ').slice(0, 200)} (${secret.length === 1 ? 'a file that usually holds' : 'files that usually hold'} secrets)`] : []] };
 }
