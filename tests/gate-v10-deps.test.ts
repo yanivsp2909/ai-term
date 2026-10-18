@@ -41,3 +41,16 @@ it('cargo outdated gets a manifest it can parse: the copy has an empty library t
   const result = await depsQueries(project, { path: bin, env: { PATH: bin, HOME: dir } });
   expect(result.facts).toEqual(['cargo: 1 outdated']);
 });
+
+it('LOW (code review): a staged file named like a glob can\'t pull a left-out credential file into /commit\'s data', async () => {
+  const { execFile } = await import('node:child_process'), { promisify } = await import('node:util'), run = promisify(execFile);
+  const { stagedChanges } = await import('../src/daemon/addon-gather.js');
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'ai-gate10-commit-'))); roots.push(dir);
+  const git = (...args: string[]) => run('/usr/bin/git', ['-c', 'user.name=T', '-c', 'user.email=t@e.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: dir });
+  await git('init', '-q', '-b', 'main'); await writeFile(join(dir, 'README.md'), 'x\n'); await git('add', '--', 'README.md'); await git('commit', '-qm', 'first');
+  await writeFile(join(dir, '.env'), 'PLAIN_VALUE_NOT_FLAGGED=hello-world-123\n'); await writeFile(join(dir, '*'), 'glob\n');
+  await git('add', '--', '.env', '*');
+  const staged = await stagedChanges(dir);
+  expect(staged.data).toContain('glob');
+  expect(staged.data).not.toContain('hello-world-123');
+});

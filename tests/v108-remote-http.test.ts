@@ -203,3 +203,11 @@ it('LOW (gate): a request another tailnet page can make (no CSRF header) doesn\'
   expect(s.activity()).toBe(paired + 1);
   expect(PAGE_JS).toContain("headers['x-ai-term-csrf'] = csrf");
 });
+
+it('LOW (gate, three reviews): forged requests with your login can\'t block pairing; a 256-bit code needs no attempt limit', async () => {
+  const s = await setup();
+  for (let n = 0; n < 40; n++) await s.send('GET', '/api/agents', { cookie: '__Host-aiterm=0000000000000000.bad' });
+  for (let n = 0; n < 20; n++) await s.send('POST', '/api/pair', { 'x-ai-term-csrf': 'pair' }, JSON.stringify({ code: 'x'.repeat(43), name: 'forged' }));
+  const { reply } = await s.pair('real');
+  expect(reply.status).toBe(200);
+});
