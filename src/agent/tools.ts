@@ -53,7 +53,7 @@ export async function readTool(root: string, input: ReadInput, brainIndex?: stri
     const folder = dirname(brainIndex);
     const snapshot = /[\\/]snapshots[\\/][0-9a-f]{64}$/.test(folder);
     full = join(snapshot ? dirname(dirname(folder)) : folder, 'brain.md');
-    if (input.path === full) {
+    if (input.path === full || snapshot && input.path === join(folder, 'brain.md')) {
       map = join(folder, 'brain.md');
       if (await realpath(dirname(map)) !== dirname(map)) throw new ToolError('Brain folder is not a plain folder');
     }

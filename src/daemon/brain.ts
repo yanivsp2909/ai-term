@@ -119,7 +119,7 @@ export async function writeBrain(root: string, top: string, index: BrainIndex, n
 export async function writeBrainIndex(root: string, top: string, index: BrainIndex, trusted: boolean, snapshot = false): Promise<string> {
   const paths = brainPaths(root, top);
   await privateDirectory(join(root, 'brain')); await privateDirectory(paths.dir);
-  const text = renderBrainIndex(index, paths.markdown, trusted) + '\n';
+  let text = renderBrainIndex(index, paths.markdown, trusted) + '\n';
   let target = paths.index;
   if(snapshot){
     const snapshots=join(paths.dir,'snapshots'),dir=join(snapshots,createHash('sha256').update(JSON.stringify([index,trusted])).digest('hex'));
@@ -127,6 +127,9 @@ export async function writeBrainIndex(root: string, top: string, index: BrainInd
     const files=Object.fromEntries(Object.entries(index.files).filter(([path])=>safeBrainName(path)).map(([path,file])=>[path,trusted?file:{...file,summary:undefined}]));
     const full=renderBrain({...index,files,...(!trusted?{model:undefined,design:[]}:{})},new Date(index.builtAt));
     await atomicWriteText(join(dir,'brain.md'),full+'\n');
+    // The start names its own full map, with this start's trust (gate: it named the main brain.md, which keeps model
+    // notes after /brain untrust, and Claude Code or Codex would read that one).
+    text = renderBrainIndex(index, join(dir,'brain.md'), trusted) + '\n';
   }
   await atomicWriteText(target, text);
   const at = new Date(index.builtAt); await utimes(target, at, at);
