@@ -25,7 +25,8 @@ it('HIGH (both reviews): /deps queries run in a fresh folder holding only manife
   expect(text).not.toContain(`cwd=${repo}\n`);
   expect(text).not.toMatch(/files=[^\n]*(\.npmrc|pip )/);
   expect(text).toMatch(/files=[^\n]*package-lock\.json/);
-  expect(text).toContain('argv=-I -m pip list --outdated --format=json --disable-pip-version-check --no-input');
+  // v1.0 gate: pip no longer runs at all (it could only list this Mac's own packages).
+  expect(text).not.toContain('pip list');
   for (const pinned of ['GOTOOLCHAIN=local', 'GOFLAGS=-mod=readonly', 'GOWORK=off', 'npm_config_ignore_scripts=true', 'npm_config_update_notifier=false']) expect(text).toContain(pinned);
 }, 30_000);
 

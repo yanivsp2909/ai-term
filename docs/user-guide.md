@@ -43,7 +43,7 @@ Same popup and rules: nothing starts before `y`, agents work in Ask mode, and an
 
 - `/issue <#number or issue URL>` reads the issue through your own gh login with `gh issue view`, and the agent gets it as quoted data written by other people (secrets removed). It works the issue in a worktree, and AI Term runs the tests in the sandbox. When you're happy, `/pr <agent>` publishes. Without gh, or logged out, one line says so.
 - `/pr-review <#number or PR URL>` reviews a pull request read through `gh pr view` and `gh pr diff`. `c` copies the review; nothing is posted.
-- `/deps [path]` shows outdated and vulnerable packages from read-only queries AI Term runs itself (npm, go, pip, cargo, when the project uses them and they're installed). The agent upgrades one package at a time in a worktree.
+- `/deps [path]` shows outdated and vulnerable packages from read-only queries AI Term runs itself (npm, go and cargo, when the project uses them and they're installed; for Python the agent compares the pins itself). The agent upgrades one package at a time in a worktree.
 - `/commit [agent]` writes a commit message. For your checkout it reads only what is staged and `c` copies the message. For an agent, `y` commits its work in its worktree with your git name.
 - `/changelog [from..to]` turns git history into a changelog section; `c` copies it, `w` writes it into CHANGELOG.md in a worktree.
 - `/docs`, `/handover` and `/adr <decision>` write documentation, a PROGRESS.md-style handover and a decision record in a worktree, following what the repository already has.

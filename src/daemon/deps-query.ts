@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { lstat, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
@@ -23,7 +23,6 @@ interface Query { tool: string; marker: string[]; program: string; argv: string[
 const QUERIES: readonly Query[] = [
   { tool: 'npm', marker: ['package.json'], program: 'npm', argv: [['outdated', '--json'], ['audit', '--json']] },
   { tool: 'go', marker: ['go.mod'], program: 'go', argv: [['list', '-m', '-u', '-json', 'all']] },
-  { tool: 'pip', marker: ['requirements.txt', 'pyproject.toml'], program: 'python3', argv: [['-I', '-m', 'pip', 'list', '--outdated', '--format=json', '--disable-pip-version-check', '--no-input']] },
   { tool: 'cargo', marker: ['Cargo.toml'], program: 'cargo', argv: [['outdated', '--root-deps-only', '--format', 'json']], requires: 'cargo-outdated' },
 ];
 // Read through one descriptor opened without following links (a link swapped in after a check would be followed).
@@ -65,20 +64,19 @@ const object = (v: unknown): Record<string, unknown> => v && typeof v === 'objec
 const str = (v: unknown) => typeof v === 'string' ? v.slice(0, 120) : '?';
 function summarize(tool: string, outputs: string[]): { lines: string[]; fact: string } {
   if (tool === 'npm') {
-    const outdated = Object.entries(object(json(outputs[0] ?? ''))).map(([name, v]) => `${name.slice(0, 120)} ${str(object(v).current)} → ${str(object(v).latest)}`);
+    // The copy has no node_modules, so a dependency only your checkout has installed comes with no current version:
+    // said as such, never counted as outdated (gate).
+    const entries = Object.entries(object(json(outputs[0] ?? ''))), installed = entries.filter(([, v]) => object(v).current !== undefined), unknown = entries.filter(([, v]) => object(v).current === undefined);
+    const outdated = [...installed.map(([name, v]) => `${name.slice(0, 120)} ${str(object(v).current)} → ${str(object(v).latest)}`), ...unknown.map(([name, v]) => `${name.slice(0, 120)}: no installed version in the copy · latest ${str(object(v).latest)}`)];
     const counts = object(object(object(json(outputs[1] ?? '')).metadata).vulnerabilities), audit = ['critical', 'high', 'moderate', 'low'].flatMap(level => Number(counts[level]) > 0 ? [`${Number(counts[level])} ${level}`] : []);
     const vulnerable = Object.entries(object(object(json(outputs[1] ?? '')).vulnerabilities)).map(([name, v]) => `${name.slice(0, 120)}: ${str(object(v).severity)} vulnerability`);
-    return { lines: [...outdated, ...vulnerable], fact: `npm: ${outdated.length} outdated · audit: ${audit.join(', ') || 'nothing found'}` };
+    return { lines: [...outdated, ...vulnerable], fact: `npm: ${installed.length} outdated${unknown.length ? ` · ${unknown.length} with no installed version in AI Term's copy` : ''} · audit: ${audit.join(', ') || 'nothing found'}` };
   }
   if (tool === 'go') {
     // go list -json prints one JSON object after another, not an array.
     const modules = (outputs[0] ?? '').split(/\n(?=\{)/).map(chunk => object(json(chunk))).filter(m => object(m.Update).Version);
     const lines = modules.map(m => `${str(m.Path)} ${str(m.Version)} → ${str(object(m.Update).Version)}`);
     return { lines, fact: lines.length ? `go: ${lines.length} update${lines.length === 1 ? '' : 's'}` : 'go: no updates' };
-  }
-  if (tool === 'pip') {
-    const list = json(outputs[0] ?? ''), lines = Array.isArray(list) ? list.map(p => `${str(object(p).name)} ${str(object(p).version)} → ${str(object(p).latest_version)}`) : [];
-    return { lines, fact: `pip: ${lines.length} outdated` };
   }
   const deps = object(json(outputs[0] ?? '')).dependencies, lines = Array.isArray(deps) ? deps.map(d => `${str(object(d).name)} ${str(object(d).project)} → ${str(object(d).latest)}`) : [];
   return { lines, fact: `cargo: ${lines.length} outdated` };
@@ -89,11 +87,15 @@ export async function depsQueries(folder: string, options: { path: string; env: 
   try {
     // Only regular files are copied: a link would be followed out of the repository.
     for (const name of MANIFESTS) await copyManifest(join(folder, name), join(work, name));
+    // cargo reads a manifest only with a target: an empty library stands in for the code the copy leaves out (gate).
+    if (await present(join(work, 'Cargo.toml'))) { await mkdir(join(work, 'src')); await writeFile(join(work, 'src', 'lib.rs'), '', { flag: 'wx', mode: 0o600 }); }
     return await run(work, options);
   } finally { await rm(work, { recursive: true, force: true }); }
 }
 async function run(repo: string, options: { path: string; env: Record<string, string> }): Promise<{ data: string; facts: string[] }> {
   const facts: string[] = [], sections: string[] = [];
+  // pip has no query that reads a project's pins without installing it: `pip list` shows this Mac's own packages (gate).
+  if ((await Promise.all(['requirements.txt', 'pyproject.toml'].map(name => present(join(repo, name))))).some(Boolean)) facts.push("pip: no read-only query knows this project's installed versions; the agent compares the pins itself");
   for (const q of QUERIES) {
     const used = (await Promise.all(q.marker.map(name => present(join(repo, name))))).some(Boolean);
     if (!used) continue;

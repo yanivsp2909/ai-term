@@ -72,7 +72,7 @@ it('/deps runs only read-only queries for the tools the project uses and that ar
   const go = await stub(dir, 'go', `echo '{"Path":"x"}'; echo '{"Path":"golang.org/x/text","Version":"v0.3.0","Update":{"Version":"v0.14.0"}}'`);
   const result = await depsQueries(project, { path: npm.bin, env: { PATH: npm.bin, HOME: dir } });
   expect(await npm.argv()).toEqual(['outdated --json', 'audit --json']); expect(await go.argv()).toEqual(['list -m -u -json all']);
-  expect(result.facts).toEqual(['npm: 1 outdated · audit: 1 high', 'go: 1 update', 'pip: python3 isn\'t installed; skipped']);
+  expect(result.facts).toEqual(["pip: no read-only query knows this project's installed versions; the agent compares the pins itself", 'npm: 1 outdated · audit: 1 high', 'go: 1 update']);
   expect(result.data).toContain('left-pad 1.0.0 → 1.3.0'); expect(result.data).toContain('golang.org/x/text v0.3.0 → v0.14.0');
 }, 30_000);
 
