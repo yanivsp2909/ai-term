@@ -14,7 +14,7 @@ import { REMOTE_CODE_MS, type RemoteAgent } from '../src/shared/remote.js';
 const roots: string[] = [], servers: RemoteHttp[] = [];
 afterEach(async () => { for (const s of servers.splice(0)) await s.close(); for (const r of roots.splice(0)) await rm(r, { recursive: true, force: true }); });
 const HOST = 'mac.tail1234.ts.net:8443', LOGIN = 'yaniv@example.com', ORIGIN = `https://${HOST}`;
-const AGENT: RemoteAgent = { id: '6f1c2a4e-8b3d-4c5e-9f00-112233445566', title: 'fixer', engine: 'claude-code', status: 'waiting', detail: 'permission', ctx: 42, tokens: 1200, costUsd: null, waiting: 'permission' };
+const AGENT: RemoteAgent = { id: '6f1c2a4e-8b3d-4c5e-9f00-112233445566', title: 'fixer', engine: 'claude-code', status: 'waiting', detail: 'permission', ctx: 42, tokens: 1200, costUsd: null, waiting: 'permission', dontAsk: false };
 interface Reply { status: number; headers: Record<string, string | string[] | undefined>; body: string }
 async function setup() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-remote-'))); roots.push(root);
@@ -58,7 +58,8 @@ it('listens on 127.0.0.1 only, and a wrong Host or a foreign Tailscale user is r
   expect(ok.headers['content-security-policy']).toContain("default-src 'none'");
   expect(ok.headers['content-security-policy']).toContain("script-src 'self'");
   expect(ok.headers['x-content-type-options']).toBe('nosniff');
-  expect(s.activity()).toBe(1);
+  // A request that names no paired phone isn't something you did: it doesn't keep /remote on.
+  expect(s.activity()).toBe(0);
 });
 
 it('pairing: a one-time code from the fragment gives the phone a token in a Secure, HttpOnly, SameSite=Strict cookie; the Keychain keeps only its hash', async () => {
@@ -152,4 +153,42 @@ it('bodies must be small JSON, and repeated failures are rate limited', async ()
   for (let n = 0; n < 40; n++) statuses.push((await s.send('GET', '/api/agents', { cookie: '__Host-aiterm=0000000000000000.bad' })).status);
   expect(statuses).toContain(429);
   expect(await readFile(join(s.root, 'remote-phones.json'), 'utf8')).not.toContain(cookie.split('.')[1] ?? 'none');
+});
+
+it('MEDIUM (reviews): idle time counts only what you do on a paired phone, never polling or unpaired requests', async () => {
+  const s = await setup();
+  await s.send('GET', '/pair'); await s.send('GET', '/api/agents');
+  expect(s.activity()).toBe(0);
+  const { cookie } = await s.pair();
+  const paired = s.activity();
+  await s.send('GET', '/api/agents', { cookie, 'x-ai-term-poll': '1' });
+  expect(s.activity()).toBe(paired);
+  await s.send('GET', '/api/agents', { cookie });
+  expect(s.activity()).toBe(paired + 1);
+  // The page polls with that header, and only while it is visible.
+  expect(PAGE_JS).toContain("'x-ai-term-poll': '1'");
+  expect(PAGE_JS).toContain('document.hidden');
+});
+
+it('MEDIUM (reviews): refusals from someone else, or without a valid cookie, never lock out a paired phone', async () => {
+  const s = await setup();
+  const { cookie } = await s.pair();
+  for (let n = 0; n < 40; n++) await s.send('GET', '/api/agents', { 'tailscale-user-login': 'other@example.com' });
+  for (let n = 0; n < 40; n++) await s.send('GET', '/api/agents', { cookie: '__Host-aiterm=0000000000000000.bad' });
+  expect((await s.send('GET', '/api/agents', { cookie })).status).toBe(200);
+  // Without a valid cookie, your own identity is still limited.
+  expect((await s.send('GET', '/api/agents', { cookie: '__Host-aiterm=0000000000000000.bad' })).status).toBe(429);
+});
+
+it('LOW-MEDIUM (TS review): revoking while requests are in flight keeps the phone revoked', async () => {
+  const s = await setup();
+  const { cookie } = await s.pair();
+  const [id] = cookie.slice('__Host-aiterm='.length).split('.');
+  await Promise.all([s.phones.seen(id ?? '', Date.now() + 120_000), s.phones.revoke('pixel'), s.phones.seen(id ?? '', Date.now() + 240_000), s.send('GET', '/api/agents', { cookie })]);
+  expect(await s.phones.list()).toEqual([]);
+  expect((await s.send('GET', '/api/agents', { cookie })).status).toBe(401);
+});
+
+it('MEDIUM (security review): the phone shows the bottom of the screen, where the prompt is', () => {
+  expect(PAGE_JS).toContain('scrollTop = pre.scrollHeight');
 });

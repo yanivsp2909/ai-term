@@ -107,3 +107,24 @@ it('/remote lists the paired phones; revoke removes one by name, and its token s
   expect((await remote.status()).phones).toEqual([]);
   await expect(remote.revoke('nobody')).rejects.toThrow(REMOTE_ERRORS[4]);
 });
+
+it('MEDIUM (reviews): a serve entry that was made but not confirmed is removed again', async () => {
+  const s = await setup();
+  // serve --bg succeeds, but the status read afterwards doesn't show AI Term's proxy (as if Tailscale rewrote it).
+  await writeFile(s.program ?? '', (await readFile(s.program ?? '', 'utf8')).replace(`printf '{"TCP"`, `printf '{"TCP":{"8443":{"HTTPS":true}},"Web":{"mac.tail1234.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://localhost:%s"}}}}}' "$port" > /dev/null; printf '{"TCP"`).replace('"Proxy":"http://127.0.0.1:%s"', '"Proxy":"http://localhost:%s"'));
+  await expect(s.make().on()).rejects.toThrow("tailscale serve didn't publish");
+  expect((await s.calls()).filter(c => c.includes('off') || c.startsWith('serve --bg')).map(c => c.replace(/\d+$/, 'N'))).toEqual(['serve --bg --https=8443 http://127.0.0.1:N', 'serve --https=8443 off']);
+});
+
+it('LOW (TS review): a caffeinate that can\'t start is logged, and the Mac is no longer said to stay awake', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-remote-awake-'))); roots.push(root);
+  const program = await stubTailscale(root), errors: string[] = [];
+  const vault: KeyVault = { read: async () => null, write: async () => {}, remove: async () => {} };
+  const backend: RemoteBackend = { agents: () => [], folders: async () => [], screen: async () => ({ lines: [], fingerprint: 'f'.repeat(64), waiting: null }), answer: async () => {}, send: async () => {}, stop: async () => {}, start: async () => ({ id: 'x', title: 'x' }) };
+  const remote = new RemoteService({ root, keys: new KeyStore(root, { vault }), backend, log: { error: text => errors.push(text), info: () => {} }, tailscale: program, allowed: async () => true, power: { onAc: async () => true, keepAwake: (_pid, failed) => { setImmediate(failed); return { stop: () => {} }; } }, pid: 1 });
+  services.push(remote);
+  await remote.on();
+  await new Promise(done => setImmediate(done));
+  expect((await remote.status()).awake).toBe(false);
+  expect(errors).toContain("Remote: caffeinate couldn't keep the Mac awake");
+});

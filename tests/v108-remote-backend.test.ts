@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { ANSWER_ERRORS, answerKeys, answerRefusal, managerBackend, screenFingerprint, type RemoteManager } from '../src/daemon/remote/backend.js';
+import { ANSWER_ERRORS, answerKeys, answerRefusal, approvable, managerBackend, screenFingerprint, type RemoteManager } from '../src/daemon/remote/backend.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 
 // v1.0.8 /remote: what the phone may do with agents. Never a shell or a login session; every start is Ask in an offered
@@ -20,7 +20,7 @@ function manager(sessions: SessionInfo[]) {
 
 it('the phone lists agents only, never shells or login sessions, with status, ctx % and usage but nothing else', () => {
   const agent = session({ taskUsage: { tokens: 900, costUsd: null } }), shell = session({ engine: 'shell', title: 'zsh' }), login = session({ login: true, title: 'login' });
-  expect(managerBackend(manager([agent, shell, login]).m).agents()).toEqual([{ id: agent.id, title: 'fixer', engine: 'claude-code', status: 'waiting', detail: 'permission', ctx: 40, tokens: 900, costUsd: null, waiting: 'permission' }]);
+  expect(managerBackend(manager([agent, shell, login]).m).agents()).toEqual([{ id: agent.id, title: 'fixer', engine: 'claude-code', status: 'waiting', detail: 'permission', ctx: 40, tokens: 900, costUsd: null, waiting: 'permission', dontAsk: false }]);
 });
 
 it('each engine is answered with its own keys; a shell never', () => {
@@ -47,4 +47,20 @@ it('a start is Ask in an offered folder; known refusals reach the phone and anyt
   expect(calls).toEqual([['answer', agent.id, 'y', 'f'.repeat(64)], ['create', { engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd: '/work', permission: 'ask', firstMessage: 'hi' }]]);
   await expect(backend.send(agent.id, 'x')).rejects.toThrow('Agent is asking for permission');
   await expect(backend.stop(agent.id)).rejects.toThrow("That didn't work on your Mac · try it there");
+});
+
+it('LOW (TS review): only a plain yes/no tool prompt can be approved from the phone; any other option 1 is refused', () => {
+  expect(approvable('claude-code', ['Bash command', '  npm test', 'Do you want to proceed?', '❯ 1. Yes', '  2. Yes, and don\'t ask again for npm test', '  3. No, and tell Claude what to do differently (esc)'])).toBe(true);
+  expect(approvable('claude-code', ['Would you like to proceed?', '❯ 1. Yes, and auto-accept edits', '  2. Yes, and manually approve edits', '  3. No, keep planning'])).toBe(false);
+  expect(approvable('claude-code', ['Do you trust the files in this folder?', '❯ 1. Yes, proceed', '  2. No, exit'])).toBe(false);
+  expect(approvable('codex', ['Allow command?', '› 1. Yes, proceed (y)', '  2. No (esc)'])).toBe(true);
+  expect(approvable('codex', ['Something else', '› 1. Continue'])).toBe(false);
+  expect(approvable('ai-term', ['bash: npm test', '  y allows · n denies · Esc denies and stops'])).toBe(true);
+  expect(approvable('ai-term', ['bash: long', '  Space shows the next page'])).toBe(false);
+});
+
+it('MEDIUM (security review): an agent in Don\'t ask is shown as such and takes no message from the phone', async () => {
+  const agent = session({ permission: 'dontAsk' }), backend = managerBackend(manager([agent]).m);
+  expect(backend.agents()[0]).toMatchObject({ dontAsk: true });
+  await expect(backend.send(agent.id, 'run it')).rejects.toThrow(ANSWER_ERRORS[4]);
 });
