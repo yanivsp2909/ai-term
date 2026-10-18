@@ -22,7 +22,9 @@ export interface Addon {
   input: AddonInput; tests: boolean; cost: 'normal' | 'high'; local: LocalAddon | null; web: boolean;
 }
 // What /bisect will do, shown before anything runs; good and bad are commit ids read from your checkout.
-export interface BisectAsk { command: string[]; good: string; bad: string; goodLabel: string; commits: number; sandbox: boolean }
+// deps (B32): the installed dependency folders of your checkout linked read-only into the copy (none with --no-deps).
+export const BISECT_DEPS = ['node_modules', '.venv', 'venv', 'vendor'] as const;
+export interface BisectAsk { command: string[]; good: string; bad: string; goodLabel: string; commits: number; deps: string[]; sandbox: boolean }
 export interface AddonAsk {
   receipt: string; name: string; summary: string; cwd: string; target: AddonTarget | null; authLabel?: string; subject?: string; cost?: 'high'; bisect?: BisectAsk;
   // facts: AI Term's own read-only findings, shown before you start. free: no model and nothing run, so no y.
@@ -61,7 +63,9 @@ export function parseAddon(source: string, expected: string): Addon {
 }
 function isBisectAsk(v: unknown): v is BisectAsk {
   const b = object(v), id = (x: unknown) => typeof x === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(x);
-  return !!b && Object.keys(b).length === 6 && isTestCommand(b.command) && id(b.good) && id(b.bad) && text(b.goodLabel, 120) && Number.isSafeInteger(b.commits) && Number(b.commits) >= 1 && typeof b.sandbox === 'boolean';
+  const deps = Array.isArray(b?.deps) ? b.deps as unknown[] : null;
+  return !!b && Object.keys(b).length === 7 && isTestCommand(b.command) && id(b.good) && id(b.bad) && text(b.goodLabel, 120) && Number.isSafeInteger(b.commits) && Number(b.commits) >= 1 && typeof b.sandbox === 'boolean'
+    && !!deps && new Set(deps).size === deps.length && deps.every(d => (BISECT_DEPS as readonly unknown[]).includes(d));
 }
 export function validateAddonAsk(value: unknown): AddonAsk {
   const p = object(value), range = (v: unknown) => { const r = object(v); return !!r && Object.keys(r).length === 2 && typeof r.low === 'number' && typeof r.high === 'number' && Number.isFinite(r.low) && Number.isFinite(r.high) && r.low >= 0 && r.high >= r.low; };

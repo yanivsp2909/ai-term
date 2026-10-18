@@ -139,7 +139,7 @@ it('/refactor starts only the picked items in a worktree, with tests kept; /type
 
 it('the daemon itself refuses an unsandboxed /bisect without Y, and runs it only with the approved plan', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ai-batch1-b-')); cleanup.push(root);
-  const plan = { command: ['./check.sh'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, sandbox: false };
+  const plan = { command: ['./check.sh'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, deps: [], sandbox: false };
   const calls: unknown[][] = [], result = { kind: 'bisect' as const, commit: 'c'.repeat(40), subject: 'planted', author: 'Test', date: '2026-10-17', steps: 2, diff: ['+broken'] };
   const service = new AddonService(join(root, 'home'), DEFINITIONS, { create: vi.fn(), text: vi.fn(), brainPlan: async () => null, addonBisectPlan: async () => plan, addonBisect: async (...args: unknown[]) => { calls.push(args); return result; } });
   const ask = await service.plan('bisect', './check.sh', root, null);

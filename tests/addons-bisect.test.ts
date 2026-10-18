@@ -45,7 +45,7 @@ it('the plan reads the good ref from the last word, or goes back 32 commits; it 
   // Fewer than 32 commits: the first commit is the good side.
   expect(await bisectPlan(repo, './check.sh')).toMatchObject({ command: ['./check.sh'], good: commits[0], goodLabel: 'the first commit', commits: 9 });
   await expect(bisectPlan(repo, './check.sh HEAD')).rejects.toThrow('Nothing to bisect');
-  await expect(bisectPlan(repo, '"unclosed')).rejects.toThrow('/bisect <test command>');
+  await expect(bisectPlan(repo, '"unclosed')).rejects.toThrow('/bisect [--no-deps] <test command>');
 });
 
 it.skipIf(!MAC)('macOS: finds the planted commit in a sandboxed temporary copy; your checkout, refs and worktrees are untouched and the copy is gone', async () => {

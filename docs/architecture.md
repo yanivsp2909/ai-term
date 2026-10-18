@@ -1037,6 +1037,8 @@ The final answer carries a bounded, validated JSON result between per-run marker
 
 `/plan` only proposes steps. `a` saves the approved plan; `s` starts one selected step, in Ask mode, with that step as its first message. Step isolation is mandatory; failure makes no spawn. `/prompt` treats submitted text as data, refuses credential/env files, removes detected secrets, and returns issues plus a copyable unified diff. `/explain` validates small chunks with an example, location and check question, and a three-line recap; Space reveals one chunk at a time. All three pilots only read and therefore use no worktree.
 
+**/bisect dependencies (B32).** `bisectPlan` lists `node_modules`, `.venv`, `venv` and `vendor` when each is a real folder (not a link) in the checkout and HEAD doesn't track it; a leading `--no-deps` lists none. Before anything runs in the temporary copy, `linkDeps` checks each again, links its real path into the copy (unless a commit put files there) and adds it to the copy's `.git/info/exclude`. The sandbox gets the real paths as `readable` only: on macOS writes stay limited to the copy and the run's temp folder (Seatbelt matches real paths, so a write through the link is denied), on Linux they are `--ro-bind`. Without a sandbox (capital Y) the links are as writable as the rest of your files.
+
 ## 13. Decisions log
 
 `/init` (D49) and `/remote` (D54) are planned commands, not implemented.

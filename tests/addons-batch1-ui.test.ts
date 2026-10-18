@@ -7,7 +7,7 @@ import { AddonFlow } from '../src/client/tui/addon-flow.js';
 import { Homepage } from '../src/client/tui/homepage.js';
 import { commandRegistry, helpLines } from '../src/client/tui/commands.js';
 import { AB_NO_SANDBOX, parseAddonResult } from '../src/shared/addon-results.js';
-import type { AddonAsk } from '../src/shared/addons.js';
+import { validateAddonAsk, type AddonAsk } from '../src/shared/addons.js';
 import type { RequestBody } from '../src/client/connection.js';
 import type { SessionInfo, SuccessResponse } from '../src/shared/protocol.js';
 import { fixtures } from './fixtures/addon-results.js';
@@ -54,7 +54,7 @@ it('/perf: a runs the A/B; Y works only after AI Term said there is no sandbox; 
 });
 
 it('/bisect asks with no model or price; without a sandbox only a capital Y starts it', () => {
-  const bisect = { command: ['./check.sh'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 32, sandbox: false };
+  const bisect = { command: ['./check.sh'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 32, deps: [], sandbox: false };
   const { panel: p, actions } = panel(); p.setAsk(ask({ name: 'bisect', target: null, bisect, priceUsd: { low: 0, high: 0 } }));
   expect(p.lines.join('\n')).toContain('no model · no tokens · $0'); expect(p.lines.join('\n')).toContain('● no sandbox here');
   p.key('y'); p.key('enter'); expect(actions.start).not.toHaveBeenCalled();
@@ -78,7 +78,7 @@ it('a local add-on asks with no target and polls its run, not an agent', async (
   const sent: RequestBody[] = [], run = randomUUID(), started = vi.fn();
   const request = async (body: RequestBody): Promise<SuccessResponse> => {
     sent.push(body); const response: SuccessResponse = { id: randomUUID(), ok: true };
-    if (body.kind === 'addons.plan') response.addonAsk = { ...ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['./check.sh'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, sandbox: true } }) };
+    if (body.kind === 'addons.plan') response.addonAsk = { ...ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['./check.sh'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, deps: [], sandbox: true } }) };
     if (body.kind === 'addons.start') response.addonRun = run;
     if (body.kind === 'addons.result') response.addonResult = { kind: 'bisect', commit: 'c'.repeat(40), subject: 'planted', author: 'Test', date: '2026-10-17T00:00:00Z', steps: 2, diff: ['+broken'] };
     return response;
@@ -139,14 +139,25 @@ it('/fix shows the root cause, the failing test first and the sandboxed test res
 });
 
 it('MEDIUM (TS review): /bisect and the /perf A/B say up front that the copy has only committed files', () => {
-  const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['npm', 'test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, sandbox: true } }));
+  const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['npm', 'test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, deps: [], sandbox: true } }));
   expect(p.lines.join('\n')).toContain('only committed files: no installed dependencies or build output');
   const perf = panel(); perf.panel.setResult(result('perf'));
   expect(perf.panel.lines.join('\n')).toContain('only committed files: no installed dependencies or build output');
 });
 
+it('B32: /bisect names the dependency folders it links read-only, says versions can misreport and how to turn it off', () => {
+  const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['npm', 'test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, deps: ['node_modules', '.venv'], sandbox: true } }));
+  expect(p.lines).toContain('dependencies: node_modules, .venv linked read-only from your checkout (--no-deps turns this off)');
+  expect(p.lines.join('\n')).toContain('other dependency versions than those can misreport');
+  expect(p.lines.join('\n')).not.toContain('only committed files');
+  // The client checks what the daemon sent: only the four known folder names, each once.
+  const valid = { ...ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 } }), bisect: { command: ['npm', 'test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, deps: ['node_modules'], sandbox: true } };
+  expect(() => validateAddonAsk(valid)).not.toThrow();
+  for (const deps of [['../x'], ['node_modules', 'node_modules'], 'node_modules']) expect(() => validateAddonAsk({ ...valid, bisect: { ...valid.bisect, deps } })).toThrow();
+});
+
 it('LOW-MEDIUM (TS review): /bisect shows its test command with its quoting, exactly as it will run', () => {
-  const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['sh', '-c', 'make clean && make test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, sandbox: false } }));
+  const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['sh', '-c', 'make clean && make test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, deps: [], sandbox: false } }));
   expect(p.lines).toContain("test: sh -c 'make clean && make test'");
 });
 

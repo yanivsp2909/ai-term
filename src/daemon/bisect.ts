@@ -1,4 +1,8 @@
+import { appendFile, lstat, mkdir, realpath, symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { COMMIT_ID, GitError, runGit } from './git.js';
+import { isFsError } from '../shared/paths.js';
+import { BISECT_DEPS } from '../shared/addons.js';
 import { addonFile } from '../agent/addon-bundle.js';
 import { GIT } from './git-path.js';
 import { runTests, type TestOutcome } from './test-run.js';
@@ -12,9 +16,12 @@ import type { AddonResult } from '../shared/addon-results.js';
 // `git bisect reset` and the clone removed.
 export class BisectError extends Error {}
 export const BISECT_DEFAULT_BACK = 32, BISECT_STEP_TIMEOUT_MS = 10 * 60_000, BISECT_TIMEOUT_MS = 60 * 60_000, BISECT_DIFF_LINES = 400;
-export interface BisectPlan { command: string[]; good: string; bad: string; goodLabel: string; commits: number }
+export interface BisectPlan { command: string[]; good: string; bad: string; goodLabel: string; commits: number; deps: string[] }
+// A leading --no-deps (B32) keeps the copy to committed files only. Only first: a test command may take a --no-deps of its own.
+export const NO_DEPS = '--no-deps';
 type Run = (command: readonly string[], cwd: string, env: Record<string, string>, box: PreparedSandbox | null, timeoutMs: number) => Promise<TestOutcome>;
-export interface BisectOptions { repo: string; plan: BisectPlan; sandbox: (path: string) => Promise<PreparedSandbox | null>; unsandboxed: boolean; env: Record<string, string>; run?: Run; log: (text: string) => void }
+// sandbox: readable is the linked dependency folders (real paths), opened for reading only: writes stay the copy's and the run's.
+export interface BisectOptions { repo: string; plan: BisectPlan; sandbox: (path: string, readable: readonly string[]) => Promise<PreparedSandbox | null>; unsandboxed: boolean; env: Record<string, string>; run?: Run; log: (text: string) => void }
 
 const commitOf = async (cwd: string, ref: string): Promise<string | null> => {
   // A ref the user typed: --end-of-options keeps it from reading as an option, ^{commit} from naming a tree.
@@ -25,9 +32,9 @@ const commitOf = async (cwd: string, ref: string): Promise<string | null> => {
 // The words are the test command; a last word that unambiguously names a commit is the good ref. Without one, the good side is the
 // commit BISECT_DEFAULT_BACK first-parent steps back (or the first commit). The popup shows both before anything runs.
 export async function bisectPlan(repo: string, args: string): Promise<BisectPlan> {
-  const words = parseTestCommand(args);
+  const all = parseTestCommand(args), noDeps = all?.[0] === NO_DEPS, words = noDeps ? all?.slice(1) ?? null : all;
   // git bisect run adds five words of its own in front of the command, within the runner's word limit.
-  if (!words || words.length > MAX_TEST_WORDS - 5) throw new BisectError('/bisect <test command> [good ref] · no shell: pipes and && are plain words');
+  if (!words?.length || words.length > MAX_TEST_WORDS - 5) throw new BisectError('/bisect [--no-deps] <test command> [good ref] · no shell: pipes and && are plain words');
   const bad = await commitOf(repo, 'HEAD'); if (!bad) throw new BisectError('This repository has no commits to bisect');
   // Only an unambiguous ref counts (review: a branch named test turned `npm test` into `npm`): a commit hash, a tag, or a
   // revision expression like main~3 or HEAD^. A bare branch name stays part of the command; main~0 names the branch.
@@ -44,7 +51,46 @@ export async function bisectPlan(repo: string, args: string): Promise<BisectPlan
   try { await runGit(repo, ['merge-base', '--is-ancestor', '--end-of-options', good, bad]); }
   catch { throw new BisectError(`${goodLabel} isn't an ancestor of HEAD; pick an older good ref`); }
   const commits = Number((await runGit(repo, ['rev-list', '--count', '--end-of-options', `${good}..${bad}`, '--'])).trim());
-  return { command, good, bad, goodLabel, commits };
+  return { command, good, bad, goodLabel, commits, deps: noDeps ? [] : await installedDeps(repo, bad) };
+}
+
+// B32: the dependency folders npm, pip, Composer or Go leave in your checkout and never commit. A folder counts only when
+// it is a real folder (not a link to somewhere else) and HEAD doesn't track it (a committed vendor/ is in the copy already).
+const folderAt = async (path: string): Promise<boolean> => {
+  try { return (await lstat(path)).isDirectory(); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return false; throw error; }
+};
+const present = async (path: string): Promise<boolean> => {
+  try { await lstat(path); return true; } catch (error) { if (isFsError(error, 'ENOENT')) return false; throw error; }
+};
+async function installedDeps(repo: string, bad: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const name of BISECT_DEPS) {
+    if (!await folderAt(join(repo, name))) continue;
+    if ((await runGit(repo, ['ls-tree', '--name-only', '--end-of-options', bad, '--', name])).trim()) continue;
+    found.push(name);
+  }
+  return found;
+}
+// Links each planned folder into the copy (checked again: still a real folder inside your checkout) and tells the copy's
+// git to ignore the links, so no checkout or bisect step trips over them. Returns the real paths the sandbox may read.
+// Read-only comes from the sandbox: a link is a path, and writes are allowed only inside the copy and the run's temp folder,
+// matched on the real path (macOS) or bound read-only (Linux). Windows has no sandbox: there Y means your rights anyway.
+async function linkDeps(repo: string, copy: string, deps: readonly string[]): Promise<string[]> {
+  const top = await realpath(repo), linked: string[] = [], names: string[] = [];
+  for (const name of deps) {
+    if (!(BISECT_DEPS as readonly string[]).includes(name) || !await folderAt(join(repo, name))) continue;
+    const source = await realpath(join(repo, name));
+    if (source !== join(top, name)) continue;
+    // A commit that tracks this path is already checked out in the copy: its own files win.
+    if (await present(join(copy, name))) continue;
+    await symlink(source, join(copy, name), process.platform === 'win32' ? 'junction' : 'dir');
+    linked.push(source); names.push(name);
+  }
+  if (names.length) {
+    await mkdir(join(copy, '.git', 'info'), { recursive: true });
+    await appendFile(join(copy, '.git', 'info', 'exclude'), names.map(name => `/${name}\n`).join(''));
+  }
+  return linked;
 }
 
 const realRun: Run = (command, cwd, env, box, timeoutMs) => runTests(command, cwd, { ...env, ...box?.env }, { timeoutMs, ...(box ? { sandbox: box } : {}) });
@@ -63,7 +109,9 @@ export async function runBisect(options: BisectOptions): Promise<Extract<AddonRe
   let box: PreparedSandbox | null = null, started = false;
   const gitInCopy = (args: string[], timeoutMs = BISECT_STEP_TIMEOUT_MS) => run([GIT ?? 'git', ...SAFE_GIT, ...args], copy.path, env, box, timeoutMs);
   try {
-    box = await options.sandbox(copy.path);
+    // Linked while the copy is still fresh: nothing in it has run yet.
+    const linked = await linkDeps(repo, copy.path, plan.deps);
+    box = await options.sandbox(copy.path, linked);
     if (!box && !options.unsandboxed) throw new BisectError('No sandbox here · open /bisect again and press Y to run the test command with your rights');
     // The copy starts at HEAD (a fresh clone: nothing planted yet); the good side is checked out from inside the sandbox.
     const atBad = await run(plan.command, copy.path, env, box, BISECT_STEP_TIMEOUT_MS);
@@ -71,8 +119,8 @@ export async function runBisect(options: BisectOptions): Promise<Extract<AddonRe
     if (atBad.state !== 'fail') throw new BisectError(`The test command didn't run at HEAD: ${why(atBad)}`);
     if ((await gitInCopy(['checkout', '--quiet', '--detach', '--end-of-options', plan.good])).state !== 'pass') throw new BisectError(`git couldn't check out ${plan.goodLabel} in the temporary copy`);
     const atGood = await run(plan.command, copy.path, env, box, BISECT_STEP_TIMEOUT_MS);
-    // The copy has only committed files: no installed dependencies or build output, so say so where it most often bites.
-    if (atGood.state === 'fail') throw new BisectError(`${testCommandText(plan.command)} also fails at ${plan.goodLabel}; pick an older good ref, or the test needs files the copy doesn't have (only committed files are there)`);
+    // The copy has committed files and the linked dependency folders, no build output: say so where it most often bites.
+    if (atGood.state === 'fail') throw new BisectError(`${testCommandText(plan.command)} also fails at ${plan.goodLabel}; pick an older good ref, or the test needs files the copy doesn't have (only committed files${linked.length ? ' and your installed dependencies' : ''} are there)`);
     if (atGood.state !== 'pass') throw new BisectError(`The test command didn't run at ${plan.goodLabel}: ${why(atGood)}`);
     started = true;
     // bisect start reads its own argv and refuses --end-of-options; both ids are checked commit hashes, and -- ends them.

@@ -816,7 +816,7 @@ export class SessionManager extends EventEmitter {
     }
     async addonBisect(cwd:string,plan:BisectAsk,unsandboxed:boolean):Promise<Extract<AddonResult,{kind:'bisect'}>>{
         const repo=await repoTopLevel(cwd);if(!repo)throw new BisectError("This folder isn't in a git repository; /bisect needs one");
-        return runBisect({repo,plan,sandbox:path=>this.sandboxFor(path,repo),unsandboxed,env:buildBisectEnv(process.env),log:text=>this.log.error(text)});
+        return runBisect({repo,plan,sandbox:(path,readable)=>this.sandboxFor(path,repo,undefined,readable),unsandboxed,env:buildBisectEnv(process.env),log:text=>this.log.error(text)});
     }
     // v1.1 /perf's A/B: the benchmark on a temporary copy at the agent's start (before) and in its worktree (after), each in
     // its own test sandbox; without one it runs only after the capital Y the popup asks for.
@@ -1267,7 +1267,8 @@ export class SessionManager extends EventEmitter {
     // The run's sandbox, or null when this Mac can't give one (not macOS, no sandbox-exec, a path no profile can hold, or a
     // profile the system refuses): then nothing runs by itself. The caller disposes what it gets.
     // loopback: a dev server listens on 127.0.0.1 whatever the project's test switch says (v0.9.2).
-    private async sandboxFor(path:string,repo:string|undefined,force?:{loopback:boolean;ports?:number[]}):Promise<PreparedSandbox|null>{
+    // readable: more folders the run may read but never write (/bisect's linked dependency folders, B32).
+    private async sandboxFor(path:string,repo:string|undefined,force?:{loopback:boolean;ports?:number[]},readable:readonly string[]=[]):Promise<PreparedSandbox|null>{
         // Windows has no sandbox: said as it is, not as a path that couldn't go into a profile (gate).
         if(process.platform==='win32'){this.log.error('Test sandbox: Windows has none; tests ask first');return null;}
         let loopback=false;
@@ -1276,7 +1277,7 @@ export class SessionManager extends EventEmitter {
         let gitDir:string|undefined;
         if(repo)try{gitDir=await repoCommonDir(repo);}catch{this.log.error('Test sandbox: the repository\'s git folder is unknown; git inside tests may fail');}
         let box:PreparedSandbox;
-        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,...(force?.ports?{ports:force.ports}:{}),...(SessionManager.sandboxExec?{program:SessionManager.sandboxExec}:{}),env:buildTestEnv(process.env),readable:gitDir?[gitDir]:[],log:text=>this.log.error(text)});}
+        try{box=await prepareSandbox(path,{home:homedir(),private:[this.paths.root],loopback,...(force?.ports?{ports:force.ports}:{}),...(SessionManager.sandboxExec?{program:SessionManager.sandboxExec}:{}),env:buildTestEnv(process.env),readable:[...gitDir?[gitDir]:[],...readable],log:text=>this.log.error(text)});}
         catch(error){this.log.error(error instanceof SandboxPathError?'Test sandbox: a path can\'t go into a profile; tests ask first':'Test sandbox: its temp folder could not be made; tests ask first');return null;}
         if(await sandboxReady(box.profile,box.program,box.prefix))return box;
         this.log.error('Test sandbox unavailable; tests ask first');
