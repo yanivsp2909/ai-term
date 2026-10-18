@@ -221,7 +221,7 @@ it('LOW (v1.0 gate): an untrusted start\'s index names its own stripped full map
   index.files['src/a.ts'] = { ...index.files['src/a.ts']!, summary: 'trusted-model-note' };
   await brain.writeBrain(d.home, d.repo, index, new Date(), true);
   const untrusted = await brain.writeBrainIndex(d.home, d.repo, index, false, true);
-  const named = /Full map: ("[^"]+")/.exec(await readFile(untrusted, 'utf8'))?.[1];
+  const named = (await readFile(untrusted, 'utf8')).match(/Full map: ("[^"]+")/)?.[1];
   expect(named && JSON.parse(named)).toBe(join(dirname(untrusted), 'brain.md'));
   expect(await readFile(join(dirname(untrusted), 'brain.md'), 'utf8')).not.toContain('trusted-model-note');
   // AI Term's own agent reads it at that path too, through its one brain exception.

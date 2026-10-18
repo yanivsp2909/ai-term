@@ -88,14 +88,14 @@ export class RemoteHttp {
     // 256-bit one-time code needs no attempt limit (gate: forged attempts locked your real pairing out).
     const pairing = req.method === 'POST' && (req.url ?? '').split('?')[0] === '/api/pair';
     if (!pairing && this.failures.full(who, now) && !await this.options.phones.check(cookie(req.headers.cookie))) { this.reply(res, 429, { error: 'Too many refused requests · wait a minute' }); return; }
-    try { await this.route(req, res, now, who); }
+    try { await this.route(req, res, now); }
     catch (error) {
       if (error instanceof Refused) { if (error.status !== 429 && !pairing) this.failures.add(who, now); this.reply(res, error.status, { error: error.message }); return; }
       if (error instanceof RemoteRefusal || error instanceof PhoneError) { this.reply(res, 409, { error: error.message }); return; }
       throw error;
     }
   }
-  private async route(req: IncomingMessage, res: ServerResponse, now: number, who: string): Promise<void> {
+  private async route(req: IncomingMessage, res: ServerResponse, now: number): Promise<void> {
     const { host, login } = this.options, origin = req.headers.origin, own = `https://${host}`;
     if (req.headers.host !== host) throw new Refused(421, 'Wrong host');
     const user = req.headers['tailscale-user-login'];

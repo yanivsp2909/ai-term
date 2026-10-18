@@ -6,7 +6,7 @@ export const INERT_CSP = "default-src 'none'; img-src 'self' data:; style-src 's
 const meta = `<meta http-equiv="Content-Security-Policy" content="${INERT_CSP}">`;
 // The policy goes right after a doctype (or first), so the parser puts it in <head> ahead of any script it could stop.
 export function inertHtml(text: string): string {
-  const doctype = text.match(/^﻿?\s*<!doctype[^>]*>/i)?.[0] ?? '';
+  const doctype = text.match(/^\uFEFF?\s*<!doctype[^>]*>/i)?.[0] ?? '';
   return `${doctype}${meta}${text.slice(doctype.length)}`;
 }
 const escaped = (name: string) => name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
