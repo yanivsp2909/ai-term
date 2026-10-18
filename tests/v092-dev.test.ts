@@ -121,3 +121,18 @@ it('the daemon: off by default; with it on, a project command and a plan; y with
   await vi.waitFor(() => expect(m.list().find(s => s.id === session.id)?.dev).toBeUndefined());
   void readFile;
 }, 60_000);
+
+it('LOW (v1.0 gate): two agents\' plans can show the same free port; y on the second is refused instead of a server that dies at once', async () => {
+  const { m, session, repo, tree } = await agent({ devServers: true });
+  const other = await m.create({ engine: 'codex', model: 'gpt-test', auth: { kind: 'account' }, cwd: repo, permission: 'ask', title: 'other' });
+  const server = "require('http').createServer((q, s) => s.end('ok')).listen(Number(process.env.PORT), process.env.HOST, () => console.log('up'));\n";
+  await writeFile(join(tree, 'server.js'), server); await writeFile(join(other.worktree ?? '', 'server.js'), server);
+  await m.setDevCommand(repo, [process.execPath, 'server.js']);
+  const [a, b] = [await m.devPlan(session.id), await m.devPlan(other.id)];
+  expect(b.port).toBe(a.port);
+  const results = await Promise.allSettled([m.runDevPlan(session.id, a.fingerprint), m.runDevPlan(other.id, b.fingerprint)]);
+  expect(results.map(r => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+  const refused = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  expect(String(refused?.reason)).toContain("Another agent's dev server just took that port; run /dev again");
+  await m.stopDev(session.id); await m.stopDev(other.id);
+}, 60_000);
