@@ -215,3 +215,10 @@ it.skipIf(!MAC)('LOW (TS review): a read-only folder inside node_modules is clon
   expect(await cloneFolder(join(repo, 'node_modules'), join(copy, 'node_modules'))).toEqual({ ok: false, why: 'cp exited 1' });
   await expect(lstat(join(copy, 'node_modules'))).rejects.toThrow();
 }, 60_000);
+
+it('LOW (security review): where no sandbox starts and you didn\'t press Y, it refuses before cloning anything (no wait for clones it won\'t use)', async () => {
+  const { repo } = await nodeRepo(), clones: string[] = [];
+  const clone = async (source: string) => { clones.push(source); return { ok: true as const }; };
+  await expect(runBisect({ repo, plan: await bisectPlan(repo, 'npm test'), sandbox: async () => null, unsandboxed: false, env: buildBisectEnv(process.env), clone, log: () => {} })).rejects.toThrow('No sandbox here');
+  expect(clones).toEqual([]);
+});
