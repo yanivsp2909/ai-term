@@ -68,7 +68,9 @@ describe('homepage layout and cards', () => {
     const { createTheme } = await import('../src/client/tui/theme.js');
     const { plainText } = await import('../src/client/tui/grid.js');
     const grid = renderHomepage({ cols, rows, sessions: [session], selectedId: session.id, input: '', note: '', previewVisible: true, cwd: '/tmp', now: Date.parse('2026-10-11T10:04:00Z') }, createTheme('graphite'));
-    expect(plainText(grid)).toMatchSnapshot();
+    // The version changes every release: masked to its own width, so the approved breakpoints stay about the layout.
+    const { version } = (await import('../package.json', { with: { type: 'json' } })).default;
+    expect(plainText(grid).replace(`v${version}`, `v${'#'.repeat(version.length)}`)).toMatchSnapshot();
     expect(grid).toHaveLength(rows); expect(grid.every(row => row.length === cols)).toBe(true);
     const text = plainText(grid);
     if (cols < 60) expect(text.trim()).toBe('make the window bigger');

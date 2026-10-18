@@ -1,3 +1,4 @@
+import packageInfo from '../../../package.json' with { type: 'json' };
 import { engineLabel } from '../../shared/models.js';
 // design.md: two letters for the model family (CL Claude, GP GPT, KI Kimi, GR Grok, DS DeepSeek, GL GLM). AI Term's agent can
 // run any of them, so its badge follows the deployment name; an unknown family reads AT.
@@ -97,7 +98,8 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
     grid.box(x, layout.statsY, usageW, 7, 'Usage'); grid.box(x + usageW + 2, layout.statsY, macW, 7, 'This Mac');
     drawUsage(grid,x+2,layout.statsY+1,usageW-4,view.usage,view.budgets,theme);
     drawThisMac(grid, x + usageW + 4, layout.statsY + 1, macW - 4, view.stats, view.cpuHistory ?? [], theme);
-    grid.text(x + usageW + 4, layout.statsY + 5, 'v0.1.8', t['ink-3'], t.bg, false, macW - 4, true);
+    // The version you run (live suite: it still said the v0.1.8 it was first drawn with).
+    grid.text(x + usageW + 4, layout.statsY + 5, `v${packageInfo.version}`, t['ink-3'], t.bg, false, macW - 4, true);
   }
   grid.box(0, rows - 4, cols, 3, '', t.surface); grid.text(2, rows - 3, '›', t.accent, t.surface);
   const units = graphemes(view.input); drawField(grid, view.field ?? { units, caret: units.length, selection: null }, cols, rows - 3, theme);
