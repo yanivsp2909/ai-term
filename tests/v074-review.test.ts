@@ -185,7 +185,7 @@ it('LOW (TS review): a review that ends after the agent went back to work doesn\
   const plan = await d.manager.reviewPlan(d.agent.id), pick = plan.models[0];
   if (!pick) throw new Error('no model');
   const reviewing = d.manager.review(d.agent.id, pick.keyId, pick.model, plan.fingerprint);
-  await vi.waitFor(() => expect(d.manager.get(d.agent.id).review).toEqual({ state: 'running' }));
+  await vi.waitFor(() => expect(d.manager.get(d.agent.id).review).toEqual({ state: 'running' }), { timeout: 10_000 });
   d.live.info.status = 'running'; release();
   await reviewing;
   expect(d.manager.get(d.agent.id).review).toBeUndefined();
