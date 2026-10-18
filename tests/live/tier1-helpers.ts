@@ -22,6 +22,14 @@ export async function waitBottom(t: Tier1, what: RegExp, label: string): Promise
 // The screen as text with every escape sequence taken out, for searching what reached it.
 // eslint-disable-next-line no-control-regex -- taking escape sequences out is the point.
 export const plain = (raw: string) => raw.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-9;?<>=]*[ -/]*[@-~]/g, '').replace(/\x1b./g, '');
+// Inside AI Term's agent: its approval for this command is the live prompt, the bottom of the screen (an earlier,
+// answered one stays on screen above it).
+export async function waitAsk(t: Tier1, command: string): Promise<void> {
+  await until(t, async () => {
+    const lines = (await t.ai.text()).split('\n').filter(line => line.trim()), last = lines.slice(-4).join('\n');
+    return /y allows · n denies/.test(lines.at(-1) ?? '') && last.includes(command);
+  }, `the agent asking to run ${command}`);
+}
 // The worktree folder of a branch, from git's own list in the repository.
 export async function worktreeOf(repo: string, branch: string): Promise<string> {
   const list = await git(repo, 'worktree', 'list', '--porcelain');

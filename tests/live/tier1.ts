@@ -8,7 +8,7 @@ import type { Check } from './runner.js';
 import { KEY, LiveFailure, sleep } from './screen.js';
 import { STUB_MODEL, startStubOllama } from './stub-ollama.js';
 import { aiCommand, endWorld, FAKE_KNOWN_HOSTS, git, makeRepo, makeWorld, startAi } from './world.js';
-import { bisectRepo, FAKE_CLAUDE, fail, localPage, nextMinute, plain, rename, stop, stubTarget, textOf, treeDigest, until, waitBottom, worktreeOf, type Tier1 } from './tier1-helpers.js';
+import { bisectRepo, FAKE_CLAUDE, waitAsk, fail, localPage, nextMinute, plain, rename, stop, stubTarget, textOf, treeDigest, until, waitBottom, worktreeOf, type Tier1 } from './tier1-helpers.js';
 
 // Tier 1: no login, no key, no phone. Everything runs in the throwaway world, against the stub Ollama on 127.0.0.1.
 export type { Tier1 } from './tier1-helpers.js';
@@ -141,6 +141,34 @@ export const TIER1: readonly Check<Tier1>[] = [
     // Renamed, so the next AI Term agent can be told apart.
     await rename(t, 'AI Term', 'builder');
   }),
+  step('asks', 'AI Term\'s agent in Ask: n denies a command, Esc interrupts one that runs, Ctrl+K kills one, a read outside its folder is refused, /caps turns pauses it', '"✗ denied", "■ interrupted", "killed: the request and 1 running command", "Path is outside the folder", "cap reached: 2 turns this run"', async t => {
+    const toolResults = t.stub.toolResults.length;
+    await t.home.command('/send builder LIVE run: echo LIVE_DENY_ME'); await t.home.waitStatus('builder', /● waiting/, 20_000, 'asking for permission');
+    await t.home.attach('builder'); await waitAsk(t, 'echo LIVE_DENY_ME');
+    t.ai.write('n'); await t.ai.waitFor('✗ denied');
+    await until(t, () => t.stub.toolResults.slice(toolResults).some(r => r.includes('The user denied this')), 'the model being told the command was denied');
+    // Back at its prompt: the last line on screen is an empty "›".
+    const prompt = () => until(t, async () => /^› *$/.test((await t.ai.text()).split('\n').filter(line => line.trim()).at(-1) ?? ''), 'the agent back at its prompt');
+    await prompt();
+    // Esc while an approved command runs ends the turn.
+    await t.ai.type('LIVE run: sleep 30'); await waitAsk(t, 'sleep 30'); t.ai.write('y'); await until(t, async () => (await t.ai.text()).split('\n').filter(l => l.trim()).slice(-3).some(l => l.includes('✓ allowed')), 'sleep 30 allowed'); await sleep(1500);
+    t.ai.write(KEY.esc); await t.ai.waitFor('■ interrupted', 10_000);
+    // Ctrl+K kills the running command and the request.
+    await prompt(); await t.ai.type('LIVE run: sleep 31'); await waitAsk(t, 'sleep 31'); t.ai.write('y'); await sleep(1500);
+    t.ai.write(KEY.ctrlK); await t.ai.waitFor('killed: the request and 1 running command', 10_000);
+    // Reads don't ask, but only inside its own folder.
+    const reads = t.stub.toolResults.length;
+    await prompt(); await t.ai.type('LIVE read: /etc/hosts');
+    await until(t, () => t.stub.toolResults.slice(reads).some(r => r.includes('Path is outside the folder')), 'the read of /etc/hosts refused as outside the folder');
+    await prompt();
+    // /caps turns 2: this run has had more turns already, so the next message waits for you instead of asking the model.
+    await t.ai.type('/caps turns 2'); await t.ai.waitFor(/caps: \d+\/2 turns/);
+    const requests = t.stub.requests;
+    await t.ai.type('LIVE hello caps'); await t.ai.waitFor('cap reached: 2 turns this run');
+    if (t.stub.requests !== requests) await fail(t, 'the capped agent asked the model anyway');
+    t.ai.write(KEY.esc); await sleep(300); await t.ai.type('/caps turns off'); await t.ai.waitFor('turns (no cap)');
+    t.ai.write(KEY.ctrlE); await t.home.home();
+  }),
   step('trust', '/send to an agent still at its trust prompt is refused (a stand-in Claude Code that never reports in)', '"Claude Code may be asking to trust its folder · go inside first"', async t => {
     await writeFile(join(t.world.bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
     await t.home.command('/model'); await t.ai.waitFor('OLLAMA'); await t.ai.type('claude', false); await sleep(200);
@@ -174,7 +202,7 @@ export const TIER1: readonly Check<Tier1>[] = [
   step('rename', 'r renames an agent, whatever letter the name starts with (s, x and d are homepage keys elsewhere)', 'the card named "sandboxed", not "andboxed"', async t => {
     await rename(t, 'AI Term', 'sandboxed');
   }),
-  step('split', 'splits: Space marks two, v opens them side by side, Ctrl+\\ moves focus, Ctrl+E and v reopen it, /exit in one pane, Ctrl+\\ closes it', '"2 marked · v opens them side by side", the underlined (focused) header moving, "exited · exit 0 sandboxed", then builder full screen', async t => {
+  step('split', 'splits: Space marks two, v opens them side by side, Ctrl+\\ and clicks move focus, Ctrl+E and v reopen it, /exit in one pane, Ctrl+\\ closes it', '"2 marked · v opens them side by side", the underlined (focused) header moving, "exited · exit 0 sandboxed", then builder full screen', async t => {
     await t.home.select('builder'); await t.home.emptyBar(); t.ai.write(' '); await t.ai.waitFor('1 marked · Space marks one more');
     await t.home.select('sandboxed'); t.ai.write(' '); await t.ai.waitFor('2 marked · v opens them side by side');
     t.ai.write('v'); await t.ai.waitFor('^\\ next pane'); await t.ai.waitFor('each pane is its own agent in its own worktree');
@@ -184,12 +212,19 @@ export const TIER1: readonly Check<Tier1>[] = [
     if (!/builder|sandboxed/.test(first) || !/builder|sandboxed/.test(second)) await fail(t, `the focused header names neither pane (before: "${first}", after: "${second}")`);
     // Ctrl+E from a split goes home; v with nothing marked opens the same split again.
     t.ai.write(KEY.ctrlE); await t.home.home(); await t.home.emptyBar(); t.ai.write('v'); await t.ai.waitFor('^\\ next pane', 10_000, 'the split reopened by v');
-    if (!(await focus()).includes('sandboxed')) await moveFocus();
+    // A click in a pane focuses it; each pane's column comes from where its title sits in the header row.
+    const header = (await t.ai.text()).split('\n').find(line => line.includes('builder') && line.includes('sandboxed')) ?? '';
+    const clickOn = async (title: string) => {
+      const x = header.indexOf(title) + 1; if (x < 1) await fail(t, `no pane header names ${title}`);
+      t.ai.write(`\x1b[<0;${x};12M\x1b[<0;${x};12m`); await until(t, async () => (await focus()).includes(title), `a click in ${title}'s pane focusing it`, 5000);
+    };
+    await clickOn((await focus()).includes('builder') ? 'sandboxed' : 'builder'); await clickOn((await focus()).includes('builder') ? 'sandboxed' : 'builder');
     if (!(await focus()).includes('sandboxed')) await fail(t, 'couldn\'t focus the sandboxed pane');
     await sleep(300); await t.ai.type('/exit'); await t.ai.waitFor(/exited · exit 0\s+sandboxed/, 15_000, 'the sandboxed pane saying exited · exit 0');
     await t.ai.waitFor('^\\ closes');
     t.ai.write(KEY.ctrlBackslash); await t.ai.waitGone('^\\ next pane', 10_000, 'the split');
-    await t.ai.waitFor('LIVE inside two', 10_000, 'builder full screen, the one pane left');
+    // builder full screen, the one pane left: no homepage, no split, its own prompt at the bottom.
+    await until(t, async () => { const text = await t.ai.text(); return !/^ AI Term_/m.test(text) && /^› *$/.test(text.split('\n').filter(line => line.trim()).at(-1) ?? '') && text.includes('caps:'); }, 'builder full screen, the one pane left', 10_000);
     t.ai.write(KEY.ctrlE); await t.home.home(); await t.home.waitStatus('sandboxed', /■ exited/, 10_000, 'exited');
     await t.home.command('/send sandboxed hi'); await t.ai.waitFor('sandboxed has exited · /retry restarts it');
   }),
@@ -252,6 +287,24 @@ export const TIER1: readonly Check<Tier1>[] = [
     await until(t, async () => (await localPage(port)) === null, `nothing listening on ${port} any more`, 15_000);
     await t.home.close('Dev server');
   }),
+  step('devport', 'two agents\' /dev at once on one free port: the second y is refused', '"▶ dev server for builder", then in a second ai "Another agent\'s dev server just took that port" or "The dev server setup changed since it was shown"; no second server', async t => {
+    const other = startAi(t.world, t.repo), second = new Home(other), t2 = { ...t, ai: other, home: second };
+    try {
+      await second.home();
+      // Both plans show the same free port: nothing holds a port until its server runs.
+      await second.select('/deck'); await second.command('/dev'); const plan = await other.waitFor(/Dev server for \/deck[\s\S]*http:\/\/127\.0\.0\.1:(\d+)/, 15_000, 'the /deck dev plan');
+      await t.home.select('builder'); await t.home.command('/dev'); const mine = await t.ai.waitFor(/Dev server for builder[\s\S]*http:\/\/127\.0\.0\.1:(\d+)/, 15_000, 'the builder dev plan');
+      const port = (text: string) => text.match(/in .* · http:\/\/127\.0\.0\.1:(\d+)/)?.[1];
+      if (port(plan) !== port(mine)) await fail(t, `the two plans show different ports (${port(mine) ?? '?'} and ${port(plan) ?? '?'}), so nothing races`);
+      t.ai.write('y'); await t.ai.waitFor(/▶ dev server for builder · http:\/\/127\.0\.0\.1:\d+/, 20_000);
+      // Refused either way: the port is part of the plan you approved, so a plan whose port was just taken has changed.
+      other.write('y'); await other.waitFor(/Another agent's dev server just took that port; run \/dev again|The dev server setup changed since it was shown; run \/dev again/, 15_000, 'the second y refused (port taken, or the plan changed)');
+      if (/▶ dev/.test(await second.card('/deck'))) await fail(t, 'a second dev server started on the same port');
+      await second.close('Dev server'); await second.command('/exit'); await Promise.race([other.exited, sleep(10_000)]);
+      await t.home.command('/dev'); await t.ai.waitFor('▶ running'); t.ai.write('x'); await t.ai.waitFor('dev server for builder stopped'); await t.home.close('Dev server');
+    } catch (error) { if (error instanceof LiveFailure && !error.screen.includes(await other.text())) throw new LiveFailure(error.message, `${error.screen}\n--- the second ai:\n${await other.text()}`); throw error; }
+    finally { await other.close(); void t2; }
+  }),
   step('brain', '/brain: the free local map of the repository (no model asked)', '"local map only · free", then "✓ brain for"; the stub got no request', async t => {
     const requests = t.stub.requests;
     await t.home.command('/brain'); await t.ai.waitFor('local map only · free'); await t.ai.waitFor('first map');
@@ -270,6 +323,17 @@ export const TIER1: readonly Check<Tier1>[] = [
     try { await until(t, () => t.stub.userMessages.some(m => m.includes('LIVE queued hello')), `the queued agent starting at ${at} and sending its first message`, 150_000); }
     catch (error) { if (!(error instanceof LiveFailure)) throw error; await t.home.command('/queue'); await sleep(500); throw new LiveFailure(error.message, await t.ai.text()); }
     await t.home.command('/queue'); await t.ai.waitFor('▶ started', 10_000); await t.home.close('Queue');
+  }),
+  step('queueafter', '/queue after <agent>: an agent queued after builder starts when builder finishes its next turn', '"✓ queued", nothing started yet, then its first message once builder\'s turn ends', async t => {
+    await t.home.command('/queue add'); await t.ai.waitFor('Queue a new agent');
+    for (let i = 0; i < 4; i++) { t.ai.write(KEY.down); await sleep(60); }
+    await t.ai.waitFor('› first message'); await t.ai.type('LIVE after builder hello', false); await sleep(100); t.ai.write(KEY.enter);
+    await t.ai.waitFor('When does it start?'); await t.ai.type('after builder');
+    await t.ai.waitFor('Its limit:'); await t.ai.type('5 turns $1'); await t.ai.waitFor('✓ queued · /queue lists it');
+    await sleep(2000);
+    if (t.stub.userMessages.some(m => m.includes('LIVE after builder hello'))) await fail(t, 'the queued agent started before builder finished a turn');
+    await t.home.command('/send builder LIVE wake up'); await t.ai.waitFor('✓ sent to builder');
+    await until(t, () => t.stub.userMessages.some(m => m.includes('LIVE after builder hello')), 'the agent queued after builder starting when builder finished', 60_000);
   }),
   step('find', '/find searches every agent\'s screen', '"Find “LIVE_SHELL_OK” · N", ⏎ shows the shell', async t => {
     await t.home.command('/find LIVE_SHELL_OK'); await t.ai.waitFor(/Find “LIVE_SHELL_OK” · [1-9]/, 10_000, 'Find “LIVE_SHELL_OK” with at least one match');
@@ -319,11 +383,32 @@ export const TIER1: readonly Check<Tier1>[] = [
     if (/^ai\/ai-term(-2)?$/m.test(branches) || /refs\/heads\/ai\/ai-term(-2)?$/m.test(list)) await fail(t, `a deleted agent's branch or worktree is still there: ${branches.replace(/\n/g, ' ')}`);
     if (!/^ai\/claude-code$/m.test(branches) || !existsSync(await worktreeOf(t.repo, 'ai/claude-code'))) await fail(t, 'k didn\'t keep ai/claude-code and its folder');
   }),
-  step('doctor', 'ai doctor checks this world: the daemon, the folder modes, the CLIs it finds (only the stand-in Claude Code), the sandbox', '"Daemon: running", "mode 0700", the stand-in claude, "codex: not found", "Sandbox: sandbox-exec", "Credential store: unavailable"', async t => {
+  step('clean', '/clean removes finished agents but keeps their worktrees; /worktrees lists them, ⏎ asks keep or delete', '"remove N finished agents? y/n", "kept 1 worktree · /worktrees reviews them", ai/deck and ai/claude-code in Worktrees, "✓ deleted worktree and branch ai/claude-code", "worktree kept"', async t => {
+    await stop(t, '/deck');
+    await t.home.command('/clean'); await t.ai.waitFor(/remove \d+ finished agents\? y\/n/); t.ai.write('y');
+    await t.ai.waitFor(/removed \d+, 0 failed · kept 1 worktree · \/worktrees reviews them/, 15_000);
+    if (existsSync(await worktreeOf(t.repo, 'ai/deck')) === false) await fail(t, '/clean deleted the /deck worktree');
+    // Every worktree AI Term made: the queued agents' too, /deck's whose record /clean removed, and the one k kept.
+    await t.home.command('/worktrees'); await t.ai.waitFor(/Worktrees \d+/, 10_000, 'the Worktrees popup');
+    await t.ai.waitFor('ai/deck  ~/.ai-term/worktrees/'); await t.ai.waitFor('ai/claude-code  ~/.ai-term/worktrees/');
+    const pick = async (branch: string) => { for (let i = 0; i < 4 && !new RegExp(`▎ ${branch.replace('/', '\\/')}  `).test(await t.ai.text()); i++) { t.ai.write(KEY.down); await sleep(200); } };
+    await pick('ai/claude-code'); t.ai.write(KEY.enter); await t.ai.waitFor('✓ nothing would be lost'); await t.ai.waitFor('k keep · d delete');
+    t.ai.write('d'); await t.ai.waitFor('✓ deleted worktree and branch ai/claude-code', 15_000);
+    await t.ai.waitGone('ai/claude-code  ~/.ai-term/worktrees/', 10_000, 'the ai/claude-code row');
+    await pick('ai/deck'); t.ai.write(KEY.enter); await t.ai.waitFor('! would be lost'); t.ai.write('k'); await t.ai.waitFor('worktree kept:');
+    await t.home.close('Worktrees');
+    const branches = await git(t.repo, 'branch', '--format=%(refname:short)');
+    if (/^ai\/claude-code$/m.test(branches) || !/^ai\/deck$/m.test(branches)) await fail(t, `after d and k, git has: ${branches.replace(/\n/g, ' ')}`);
+  }),
+  step('doctor', 'ai doctor checks this world: the daemon, the folder modes, the CLIs it finds (only the stand-in Claude Code), the sandbox', '"Daemon: running", "mode 0700", the stand-in claude, "codex: not found", "Sandbox: sandbox-exec", "Credential store: unavailable", and the same lines in the /doctor popup', async t => {
     const { code, stdout } = await aiCommand(t.world, ['doctor'], t.repo);
     // The world's home has no login keychain: "unavailable" here also shows the run never reaches yours.
     for (const line of [/^Daemon: running/m, /: mode 0700$/m, existsSync(join(t.world.bin, 'claude')) ? new RegExp(`^claude: ${t.world.bin}/claude; version 2\\.1\\.302$`, 'm') : /^claude: not found/m, /^codex: not found/m, /^gh: not found/m, /^Sandbox: sandbox-exec/m, /^Credential store: unavailable/m])
       if (!line.test(stdout)) throw new LiveFailure(`ai doctor (exit ${code}) printed no line matching ${String(line)}`, stdout);
+    // /doctor on the homepage says the same.
+    await t.home.command('/doctor'); await t.ai.waitFor('Daemon: running', 15_000);
+    for (const line of stdout.split('\n').filter(l => /^(?:Daemon|codex|Sandbox|Credential store|gh|Notifier):/.test(l))) await t.ai.waitFor(line.slice(0, 60), 5000, `the Doctor popup saying "${line}"`);
+    await t.home.close('Doctor');
   }),
   step('exit', '/exit leaves the homepage; the agents keep running', 'ai exits with 0; a new ai shows the shell still running', async t => {
     await t.home.command('/exit');

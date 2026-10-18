@@ -49,16 +49,18 @@ export class Home {
   }
   async home(): Promise<string> { return this.screen.waitFor(/^ AI Term_/m, 15_000, 'the homepage (AI Term_ at the top)'); }
   async selected(): Promise<string | null> { return previewTitle(await this.screen.text()); }
-  // Moves the selection with ↓ (then ↑) until the preview names this title; each key waits for the title to change, so a
-  // slow redraw is never read as the next card.
+  // Moves the selection with ↓ (then ↑) until the preview names this title; each key waits for the selected card to move,
+  // so a slow redraw is never read as the next card.
+  // The selected card is the one drawn with ▎ (its row is what changes: two agents may share a title).
+  private async selectedRow(): Promise<number> { return (await this.cards()).split('\n').findIndex(row => row.startsWith('│▎')); }
   async select(title: string): Promise<void> {
     for (const key of [KEY.down, KEY.up]) for (let i = 0; i < 12; i++) {
-      const before = await this.selected();
-      if (before === title) return;
+      if (await this.selected() === title) return;
+      const before = await this.selectedRow();
       this.screen.write(key);
       const deadline = Date.now() + 1500;
-      while (await this.selected() === before && Date.now() < deadline) await sleep(40);
-      if (await this.selected() === before) break;
+      while (await this.selectedRow() === before && Date.now() < deadline) await sleep(40);
+      if (await this.selectedRow() === before) break;
     }
     if (await this.selected() === title) return;
     throw new LiveFailure(`couldn't select the agent "${title}" with ↑↓`, await this.screen.text());
