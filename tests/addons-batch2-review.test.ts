@@ -69,3 +69,15 @@ it('LOW (TS review): /context and /opensource take no argument instead of quietl
   await expect(service.plan('opensource', 'src', dir, codex)).rejects.toThrow('/opensource takes no argument');
   await expect(service.plan('context', '', dir, codex)).resolves.toMatchObject({ name: 'context' });
 });
+
+it('MEDIUM (TS review): a staged .env never reaches the model; the popup says it was left out', async () => {
+  const { stagedChanges } = await import('../src/daemon/addon-gather.js');
+  const { execFile } = await import('node:child_process'), { promisify } = await import('node:util'), run = promisify(execFile);
+  const git = (cwd: string, ...args: string[]) => run('/usr/bin/git', ['-c', 'user.name=T', '-c', 'user.email=t@e.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd });
+  const dir = await temp(), repo = join(dir, 'repo'); await mkdir(repo); await git(dir, 'init', '-q', '--', repo);
+  await writeFile(join(repo, 'README.md'), 'a\n'); await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-qm', 'first', '--');
+  await writeFile(join(repo, 'README.md'), 'a\nb\n'); await writeFile(join(repo, '.env.production'), 'DB_PASSWORD=hunter2\n'); await git(repo, 'add', '--', '.');
+  const staged = await stagedChanges(repo);
+  expect(staged.data).toContain('+b'); expect(staged.data).not.toContain('hunter2');
+  expect(staged.facts).toEqual(['staged: 2 files, +2 −0', 'left out: .env.production (a file that usually holds secrets)']);
+});
