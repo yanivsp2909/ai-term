@@ -4,9 +4,27 @@ AI Term is the `ai` command: a terminal screen for running AI coding agents, wit
 
 Dates are commit dates from `git log` for each version's own work. Between 2026-10-11 and 2026-10-15 everything was built in a few days, so most later versions share one date.
 
-## v1.0 (unreleased)
+## 1.0.0 (2026-10-18)
 
-Started 2026-10-15. Not released yet.
+AI Term 1.0: the homepage, the background service, three engines, worktrees, review and merge, and the add-ons, checked by the v0.9 + v1.0 release gate. The v1.0.x steps below are in this release.
+
+### v1.0.3: add-ons (D58)
+- **One popup for every add-on.** Each says what will run, on which engine and model, in which folder, and the token and price range before anything starts (D49). `y` starts it in Ask mode; a writer gets its own worktree, a reader none. Changed input after the popup refuses the start.
+- **35 commands**: planning and learning (`/plan`, `/prompt`, `/explain`, `/teach`, `/study`), fixing and testing (`/fix`, `/cover`, `/bisect`, `/refactor`, `/perf`, `/types`, `/failures`, `/review <agent> deep`, `/security`), repository and GitHub (`/issue`, `/pr-review`, `/deps`, `/commit`, `/changelog`, `/docs`, `/handover`, `/standup`, `/adr`, `/context`, `/opensource`) and making things (`/deck`, `/slides`, `/diagram`, `/design`, `/polish`, `/a11y`, `/e2e`, `/animate`, `/video`, `/research`).
+- **Made files.** `o` opens one, `s` saves a copy to Downloads, only when you press them and not while the agent runs. HTML opens and saves with no script or network allowed; an SVG opens as an image.
+
+### B31 and B32
+- **The full test suite runs in parallel again** (B31), about 40 seconds instead of four minutes, with every check kept.
+- **`/bisect` with your dependencies** (B32). Your installed `node_modules`, `.venv`, `venv` or `vendor` are linked into its temporary copy, readable but not writable inside the sandbox, so `npm test` works at every commit. `--no-deps` leaves them out; without a sandbox nothing is linked.
+
+### v1.0.7: /reverse
+- **`/reverse <target>`** explains how an app or binary of yours works, with evidence, using [REA](https://github.com/morluto/rea), which you install yourself. One read-only agent gets REA's MCP server for itself only, on Claude Code or AI Term's agent. REA runs sandboxed with no network, no key folders and no writes outside its own state. `/reverse path <path>` says where REA is.
+
+### v1.0.8: /remote
+- **Your phone, over your own tailnet** (`/remote on`, off by default; `/settings` `R`). A QR code pairs a phone once; the page lists your agents, shows an agent's screen, approves or denies a plain permission prompt, sends a message, stops an agent, and starts one in Ask mode. It turns off by itself after 30 idle minutes and after a restart, and every action is logged. No cloud server; Tailscale serve on its own port, removed again by `/remote off`.
+
+### Release gate
+- **v0.9 and v1.0 closed** after fresh-eyes security, bounty, silent-failure and code reviews of everything since v0.8. Two HIGH and five MEDIUM findings were fixed, each with a failing test first: add-on refusals now reach the popup, diagnostics can't read a file the sandbox hides, a queued agent never runs without its limit, the phone answers only the live prompt, made HTML stays inert, and `/deps` reports this project's packages only.
 
 ### v0.9.3: diagnostics, performance, polish (2026-10-15)
 - **Language-server errors for the agent.** `/settings` `z` turns on diagnostics for AI Term's own agent. After each write or edit, the agent sees that file's errors, at most 40 lines. It uses a language server already on your PATH (TypeScript, Python, Go or Rust). Off by default, since it adds tokens to every write.
@@ -28,7 +46,7 @@ Started 2026-10-15. Not released yet.
 ### v1.0.2: /brain
 - **A map of your repository** (`/brain`, only when you run it). A free local pass lists the files and, for TypeScript, JavaScript and Python, each file's imports and exports and who imports whom. Ignored files, binaries, files over 256 KB, `.env` files and secret-flagged files are skipped.
 - **Optional summaries.** A model you pick adds a short summary per module and the main design decisions. It shows the token and price range first, counts against budgets and the per-run cap, and removes secrets before sending.
-- **Agents start knowing it** (on; `a` in the popup). AI Term's agent reads it, Claude Code gets it as extra instructions, and for Codex the start box can mention it in the first message. The card shows how old the map is.
+- **Agents can start knowing it** (off by default; `/settings`, or `b` in the start box for one repository). AI Term's agent reads it, Claude Code gets it as extra instructions, and for Codex the start box can mention it in the first message. The card shows how old the map is.
 - **Kept outside your repository**, under `~/.ai-term/brain/`. Running `/brain` again rereads, and prices, only the files that changed. `/brain show` opens it, and `/brain rm` deletes it.
 
 ## v0.9 (2026-10-15)

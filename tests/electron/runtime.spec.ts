@@ -12,11 +12,11 @@ test('runtime loads N-API bindings without a system Node and command symlinks pr
  if(packaged){
   const command=join(dirname(packaged),'ai'),node=join(dirname(packaged),'ai-node');
   await installCommand(commandPlan(home,command));
-  expect((await run(join(home,'.local/bin/ai'),['--version'],{env,cwd:home})).stdout.trim()).toBe('0.1.1');
+  expect((await run(join(home,'.local/bin/ai'),['--version'],{env,cwd:home})).stdout.trim()).toBe((JSON.parse(await readFile(resolve('package.json'),'utf8')) as {version:string}).version);
   const packageFile=resolve(dirname(packaged),'../Resources/app/package.json');
   const code="const r=require('node:module').createRequire(process.argv[1]); const root=require('node:path').dirname(process.argv[1]); for(const name of ['node-pty','@napi-rs/keyring'])if(!require('node:fs').realpathSync(r.resolve(name)).startsWith(root+'/'))throw new Error('Binding resolved outside bundle'); console.log(typeof r('node-pty').spawn,typeof r('@napi-rs/keyring').Entry)";
   expect((await run(node,['-e',code,packageFile],{env:{...env,NAPI_RS_NATIVE_LIBRARY_PATH:join(home,'foreign-binding.node')},cwd:home})).stdout.trim()).toBe('function function');
- }else expect((await run(process.execPath,[resolve('dist/cli/index.js'),'--version'],{env,cwd:home})).stdout.trim()).toBe('0.1.1');
+ }else expect((await run(process.execPath,[resolve('dist/cli/index.js'),'--version'],{env,cwd:home})).stdout.trim()).toBe((JSON.parse(await readFile(resolve('package.json'),'utf8')) as {version:string}).version);
  }finally{await rm(home,{recursive:true,force:true});}
 });
 test('window uses an existing protocol-compatible dev daemon without stopping its agents',async()=>{

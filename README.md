@@ -2,6 +2,8 @@
 
 AI Term is the `ai` command: one terminal homepage for running AI coding agents side by side. It starts Claude Code and Codex on your own logins, untouched, and its own agent on any API key you save. Each agent gets its own git worktree, so they can't step on each other or on your checkout. A background service keeps them running when you close the terminal. The homepage lists every agent with a live preview of its screen, your API spend and what the machine is doing, and you type what you want built at the bottom. When an agent is done you read its diff, test it, review it, and merge it, each step only when you ask. It's Yaniv's personal and learning project: macOS first, Linux and Windows since v0.8.
 
+**Status: 1.0.0** (2026-10-18). Every version up to 1.0 passed its release gate; [CHANGELOG.md](CHANGELOG.md) lists what each one added. Live checks that need your own logins, Tailscale or REA are listed in PROGRESS.md.
+
 ## Install
 
 ### From source (macOS, Linux, Windows)
