@@ -187,3 +187,31 @@ it('/commit y refuses a repository that uses git filters (they would change what
   const gathered = await m.addonGather('commit', checkout, agent.id);
   await expect(m.addonCommit(agent.id, 'feat: bin', gathered.commitState)).rejects.toThrow('uses git filters; commit it yourself');
 });
+
+// ---- Follow-up security review of the /commit y fix ----
+it('MEDIUM (follow-up): a filter set in the repository config never runs: /commit refuses before git reads the worktree', async () => {
+  const { repo: checkout, m, agent, tree } = await manager(), marker = join(tree, '..', 'config-filter-ran');
+  await git(checkout, 'config', 'filter.x.clean', `touch ${marker} && cat`);
+  await mkdir(join(checkout, '.git', 'info'), { recursive: true }); await writeFile(join(checkout, '.git', 'info', 'attributes'), '* filter=x\n');
+  await writeFile(join(tree, 'new.txt'), 'hello\n');
+  await expect(m.addonGather('commit', checkout, agent.id)).rejects.toThrow('uses git filters');
+  await expect(readFile(marker)).rejects.toThrow();
+});
+
+it('MEDIUM-LOW (follow-up): /commit y commits only on the agent\'s own branch', async () => {
+  const { repo: checkout, m, agent, tree } = await manager();
+  await writeFile(join(tree, 'new.txt'), 'hello\n');
+  const gathered = await m.addonGather('commit', checkout, agent.id), admin = await git(tree, 'rev-parse', '--absolute-git-dir'), mainHead = await git(checkout, 'rev-parse', 'main');
+  await writeFile(join(admin, 'HEAD'), 'ref: refs/heads/main\n');
+  await expect(m.addonCommit(agent.id, 'feat: x', gathered.commitState)).rejects.toThrow("isn't on its own branch");
+  expect(await git(checkout, 'rev-parse', 'main')).toBe(mainHead);
+});
+
+it('LOW (follow-up): a new file changed with the same size and time still counts as a change', async () => {
+  const { repo: checkout, m, agent, tree } = await manager();
+  const { utimes } = await import('node:fs/promises'), when = new Date('2026-01-01T00:00:00Z');
+  await writeFile(join(tree, 'new.txt'), 'aaaa\n'); await utimes(join(tree, 'new.txt'), when, when);
+  const gathered = await m.addonGather('commit', checkout, agent.id);
+  await writeFile(join(tree, 'new.txt'), 'bbbb\n'); await utimes(join(tree, 'new.txt'), when, when);
+  await expect(m.addonCommit(agent.id, 'feat: x', gathered.commitState)).rejects.toThrow('changed since the message was written');
+});
