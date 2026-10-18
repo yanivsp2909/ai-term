@@ -102,3 +102,17 @@ it('the switch: off by default; the daemon passes --lsp only when it is on; the 
   expect(parseAgentArgs(['--provider=anthropic', '--model=claude-sonnet-5-5', '--lsp']).lsp).toBe(true);
   expect(parseAgentArgs(['--provider=anthropic', '--model=claude-sonnet-5-5']).lsp).toBe(false);
 });
+
+it.skipIf(!MAC)('HIGH (v1.0 gate): diagnostics never read a file through a link or a second hard link, so they can\'t carry what the sandbox hides', async () => {
+  const { tree, aiTerm, env } = await setup();
+  await writeFile(join(aiTerm, 'secret.ts'), 'ERROR TOPSECRET\n');
+  const { symlink, link } = await import('node:fs/promises');
+  await symlink(join(aiTerm, 'secret.ts'), join(tree, 'a.ts'));
+  await link(join(aiTerm, 'secret.ts'), join(tree, 'b.ts'));
+  await writeFile(join(tree, 'c.ts'), 'ERROR here\n');
+  const pool = new LspPool({ root: tree, env, sandbox: { home: aiTerm }, deadline: answersOnly }); pools.push(pool);
+  // A normal file still gets its diagnostics.
+  expect(await pool.diagnose('c.ts')).toContain('1 error');
+  expect(await pool.diagnose('a.ts')).toBe('');
+  expect(await pool.diagnose('b.ts')).toBe('');
+}, 30_000);
