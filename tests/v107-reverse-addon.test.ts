@@ -31,7 +31,7 @@ const RESULT = { kind: 'reverse', summary: 'Search builds a trigram index at lau
 
 it('the /reverse definition is a read-only add-on on every engine that takes a target', async () => {
   const addon = parseAddon(await readFile(join(DEFINITIONS, 'reverse', 'addon.md'), 'utf8'), 'reverse');
-  expect(addon).toMatchObject({ input: 'target', readOnly: true, worktree: false, engines: ['claude-code', 'codex', 'ai-term'] });
+  expect(addon).toMatchObject({ input: 'target', readOnly: true, worktree: false, engines: ['claude-code', 'ai-term'] });
   expect(addon.prompt).toContain('{{args}}');
 });
 
@@ -73,6 +73,8 @@ it('the popup names the target, the REA it found and its sandbox, and asks you t
 it('missing REA or an engine without a per-session MCP option stops at the popup with one line', async () => {
   const { cwd, service: s } = await service(new Error("REA isn't installed · install it yourself with npm install --global rea-agents, or point to it with /reverse path <path>"));
   await expect(s.plan('reverse', 'Notes.app', cwd, CLAUDE)).rejects.toThrow('npm install --global rea-agents');
+  // MEDIUM (security review): Codex merges -c mcp_servers into your own config, so it would keep your other servers.
+  await expect(s.plan('reverse', 'Notes.app', cwd, { engine: 'codex', model: null, auth: { kind: 'account' } })).rejects.toThrow('Engine unavailable');
 });
 
 it('the installed CLI decides: Claude Code needs --mcp-config and --strict-mcp-config, Codex needs -c', async () => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { createServer, type Server } from 'node:net';
-import { findRea, reverseServer, reverseTarget, REA_MISSING } from '../src/daemon/reverse.js';
+import { findRea, reaIdentity, reverseServer, reverseTarget, REA_MISSING } from '../src/daemon/reverse.js';
 import { buildArgs } from '../src/daemon/env.js';
 
 // v1.0.7 /reverse: one agent gets the REA MCP server for itself only. REA is found, never installed; it runs under the
@@ -89,3 +89,42 @@ it.skipIf(!MAC)('macOS: REA runs in the agent sandbox with no network: it can\'t
   expect(stdout.trim().split('\n')).toEqual(['write-target-refused', 'read-home-refused', 'tcp-refused', 'dns-refused', 'read-target-ok', 'args:mcp']);
   expect(await readFile(join(target, 'main.bin'), 'utf8')).toBe('original');
 }, 30_000);
+
+it.skipIf(!MAC)('HIGH/MEDIUM (reviews): REA reads no key folder or secret-named file, writes only its own state and temp, makes no hard link, opens no app and reaches no unix socket', async () => {
+  const folder = await temp('ai-rea-gate-'), root = await temp('ai-rea-gate-root-'), home = await temp('ai-rea-gate-home-'), target = join(folder, 'Target.app');
+  await mkdir(target); await writeFile(join(target, 'main.bin'), 'original'); await writeFile(join(target, '.env'), 'TOKEN=x');
+  await mkdir(join(home, '.ssh')); await writeFile(join(home, '.ssh', 'id_ed25519'), 'key'); await mkdir(join(home, '.rea'));
+  const sock = join(folder, 's.sock'); listener = createServer(socket => socket.end('hi')); await new Promise<void>(done => listener?.listen(sock, done));
+  const rea = await script(join(folder, 'rea'), [
+    `cat '${join(home, '.ssh', 'id_ed25519')}' >/dev/null 2>&1 && echo key-ok || echo key-refused`,
+    `cat '${join(target, '.env')}' >/dev/null 2>&1 && echo env-ok || echo env-refused`,
+    `echo x > '${join(folder, 'elsewhere.txt')}' 2>/dev/null && echo write-elsewhere-ok || echo write-elsewhere-refused`,
+    `mv '${target}' '${target}.moved' 2>/dev/null && echo move-ok || echo move-refused`,
+    `ln '${join(target, 'main.bin')}' "$TMPDIR/hard" 2>/dev/null && echo link-ok || echo link-refused`,
+    `echo x > '${join(home, '.rea', 'state')}' && echo rea-state-ok`,
+    `echo x > "$TMPDIR/scratch" && echo temp-ok`,
+    `/usr/bin/osascript -e 'return 1' >/dev/null 2>&1 && echo osascript-ok || echo osascript-refused`,
+    `${process.execPath} -e "const s=require('net').connect('${sock}');s.on('connect',()=>{console.log('unix-ok');s.destroy()});s.on('error',()=>console.log('unix-refused'))"`,
+  ].join('\n'));
+  const server = await reverseServer({ rea, target, cwd: folder, root, home, env: { PATH: '/usr/bin:/bin', HOME: home } });
+  const stdout = await new Promise<string>((done, fail) => execFile(server.command, server.args, { timeout: 20_000 }, (error, text) => error ? fail(error) : done(text)));
+  expect(stdout.trim().split('\n')).toEqual(['key-refused', 'env-refused', 'write-elsewhere-refused', 'move-refused', 'link-refused', 'rea-state-ok', 'temp-ok', 'osascript-refused', 'unix-refused']);
+  await expect(stat(join(folder, 'elsewhere.txt'))).rejects.toThrow();
+}, 30_000);
+
+it.skipIf(!MAC)('MEDIUM (TS review): a PATH too long for one argument is shortened, never dropped: REA\'s and node\'s folders come first', async () => {
+  const folder = await temp('ai-rea-path-'), root = await temp('ai-rea-path-root-'), rea = await script(join(folder, 'rea'), 'exit 0');
+  const long = Array.from({ length: 200 }, (_, i) => `/opt/tool-${i}/bin`).join(':');
+  const server = await reverseServer({ rea, target: folder, cwd: folder, root, home: root, env: { PATH: `${long}:/usr/bin:/bin`, HOME: root } });
+  const path = server.args.find(arg => arg.startsWith('PATH='));
+  expect(path).toBeDefined();
+  expect(Buffer.byteLength(path ?? '')).toBeLessThanOrEqual(2048);
+  expect(path?.slice(5).split(':').slice(0, 2)).toEqual([folder, join(process.execPath, '..')]);
+  expect(path?.split(':')).toContain('/usr/bin');
+});
+
+it('LOW (TS review): the receipt binds REA\'s file itself, so a REA replaced after the popup is a changed input', async () => {
+  const bin = await temp('ai-rea-id-'), rea = await script(join(bin, 'rea'), 'exit 0'), before = await reaIdentity(rea);
+  await rm(rea); await script(rea, 'exit 1');
+  expect(await reaIdentity(rea)).not.toEqual(before);
+});
