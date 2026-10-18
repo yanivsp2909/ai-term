@@ -83,9 +83,9 @@ import { prepareProfile } from './accounts.js';
 import { parseLimit } from './limit-detect.js';
 import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
-import { link, lstat, open, unlink } from 'node:fs/promises';
+import { link, lstat, open, stat, unlink } from 'node:fs/promises';
 import { closeSync, constants, constants as fsConstants, existsSync, openSync, unlinkSync, writeSync } from 'node:fs';
-import { dirname, join, sep, resolve } from 'node:path';
+import { dirname, join, relative, sep, resolve } from 'node:path';
 import { MAX_RECORD_COST_USD, validatePriceOverrides } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
@@ -708,7 +708,12 @@ export class SessionManager extends EventEmitter {
         switch(kind){
             case 'github-issue': case 'github-pr':
                 return githubView(kind==='github-issue'?'issue':'pr',args,{gh:await resolveExecutable('gh',process.env.PATH??''),cwd:top,env:buildGhEnv(process.env)});
-            case 'deps': return {...await depsQueries(top,{path:process.env.PATH??'',env:buildTestEnv(process.env)}),subject:'outdated and vulnerable dependencies'};
+            case 'deps':{
+                // /deps [path]: that folder's manifests (a package in a monorepo), inside this repository.
+                const folder=args.trim()?await resolveInside(top,resolve(cwd,args.trim())):top;
+                if(!(await stat(folder)).isDirectory())throw new Error('/deps [path] names a folder in this repository');
+                return {...await depsQueries(folder,{path:process.env.PATH??'',env:buildTestEnv(process.env)}),subject:`dependencies of ${relative(top,folder)||'this repository'}`};
+            }
             case 'commit':{
                 if(!args.trim())return stagedChanges(top);
                 const agent=await this.addonAgent(args.trim());
@@ -1792,6 +1797,7 @@ import { depsQueries } from './deps-query.js';
 import { opensourceScan } from './opensource-scan.js';
 import { changelogRange, contextFiles, stagedChanges, type Gathered } from './addon-gather.js';
 import { ExtensionReader } from '../agent/extensions/reader.js';
+import { resolveInside } from '../agent/jail.js';
 import { resolveExecutable } from './engines.js';
 import { buildBisectEnv, buildGhEnv } from './env.js';
 import { AB_NO_SANDBOX, type AbView, type AddonResult } from '../shared/addon-results.js';

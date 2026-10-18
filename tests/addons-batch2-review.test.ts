@@ -11,7 +11,7 @@ async function temp(): Promise<string> { const dir = await realpath(await mkdtem
 // A stand-in tool that records where it ran, what it saw there, its argv and the env names it got.
 async function tool(bin: string, log: string, name: string, answer: string) {
   await mkdir(bin, { recursive: true });
-  await writeFile(join(bin, name), `#!/bin/sh\n{ echo "cwd=$(pwd)"; echo "files=$(ls -A | tr '\\n' ' ')"; echo "argv=$*"; env | cut -d= -f1 | sort | tr '\\n' ' '; echo; env | grep -E '^(GOTOOLCHAIN|GOFLAGS|GOWORK|npm_config_ignore_scripts|npm_config_update_notifier|CARGO_BUILD_RUSTC_WRAPPER)='; } >> ${log}\n${answer}\n`);
+  await writeFile(join(bin, name), `#!/bin/sh\n{ echo "cwd=$(pwd)"; echo "files=$(/bin/ls -A | /usr/bin/tr '\\n' ' ')"; echo "argv=$*"; /usr/bin/env | /usr/bin/grep -E '^(GOTOOLCHAIN|GOFLAGS|GOWORK|npm_config_ignore_scripts|npm_config_update_notifier|CARGO_BUILD_RUSTC_WRAPPER)='; } >> ${log}\n${answer}\n`);
   await chmod(join(bin, name), 0o755);
 }
 
