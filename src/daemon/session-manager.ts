@@ -777,23 +777,24 @@ export class SessionManager extends EventEmitter {
     // v1.1 o and s: a file an add-on made in its worktree (the service already checked it is under the command's folder).
     // Review: only a viewable type (never one macOS would run), no exec bit, one link only, no link on the way, read
     // through one no-follow descriptor; o opens AI Term's private copy of those bytes (a swap after the check changes
-    // nothing), s writes them to Downloads without overwriting.
+    // nothing), s writes them to Downloads without overwriting. Its refusals are AddonErrors: AI Term's own words, which
+    // reach you (live suite: as plain errors the server showed "Session operation failed" instead).
     async addonFile(id:string,file:string,action:'open'|'save'):Promise<string|null>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id),tree=live?.info.worktree;
-        if(!live||!tree||!this.worktreeRecords.has(tree))throw new Error('This agent has no worktree');
-        if(!viewable(file))throw new Error("That's not a file type AI Term opens or saves");
+        if(!live||!tree||!this.worktreeRecords.has(tree))throw new AddonError('This agent has no worktree');
+        if(!viewable(file))throw new AddonError("That's not a file type AI Term opens or saves");
         // A running agent could still swap its folder for a link between the checks below and the open (gate LOW).
-        if(['starting','running'].includes(live.info.status))throw new Error('Wait until the agent finishes, then press o or s');
+        if(['starting','running'].includes(live.info.status))throw new AddonError('Wait until the agent finishes, then press o or s');
         const root=await realpath(tree),full=await resolveInside(root,file);
-        if(full!==join(root,file))throw new Error('A made file is never opened through a link');
+        if(full!==join(root,file))throw new AddonError('A made file is never opened through a link');
         const handle=await open(full,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
         let data:Buffer;
         try{
             const info=await handle.stat();
-            if(!info.isFile()||info.size>ADDON_FILE_MAX)throw new Error('Only a regular file up to 64 MB is opened or saved');
-            if(info.mode&0o111)throw new Error("That file is executable; AI Term doesn't open or save it");
-            if(info.nlink!==1)throw new Error('Only a file with one link is opened or saved');
+            if(!info.isFile()||info.size>ADDON_FILE_MAX)throw new AddonError('Only a regular file up to 64 MB is opened or saved');
+            if(info.mode&0o111)throw new AddonError("That file is executable; AI Term doesn't open or save it");
+            if(info.nlink!==1)throw new AddonError('Only a file with one link is opened or saved');
             data=await handle.readFile();
         }finally{await handle.close();}
         const name=basename(file),lower=name.toLowerCase(),html=lower.endsWith('.html')||lower.endsWith('.htm');
@@ -810,13 +811,13 @@ export class SessionManager extends EventEmitter {
         }
         const folder=SessionManager.downloads??join(homedir(),'Downloads');
         let isFolder=false;try{isFolder=(await stat(folder)).isDirectory();}catch(error){if(!isFsError(error,'ENOENT'))throw error;}
-        if(!isFolder)throw new Error('No Downloads folder to save into');
+        if(!isFolder)throw new AddonError('No Downloads folder to save into');
         const dot=name.lastIndexOf('.'),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):'';
         for(let n=1;n<=99;n++){
             const target=join(folder,n===1?name:`${stem} (${n})${ext}`);
             try{await writeFile(target,data,{flag:'wx',mode:0o644});return target;}catch(error){if(!isFsError(error,'EEXIST'))throw error;}
         }
-        throw new Error('Downloads already has 99 copies of this file');
+        throw new AddonError('Downloads already has 99 copies of this file');
     }
     // v1.0.7 /reverse: the target (checked), REA (found, never installed) and its sandboxed server, for an engine whose
     // installed CLI takes a per-session MCP list. Errors are one line each and reach the popup.
@@ -1894,6 +1895,7 @@ export class SessionManager extends EventEmitter {
 }
 import { AddonService, type AddonRunOptions, type ReversePlan } from './addons.js';
 import { bisectPlan, BisectError, runBisect } from './bisect.js';
+import { AddonError } from './addon-error.js';
 import { AB_RUN_TIMEOUT_MS, copyBenchFile, runAb } from './perf-ab.js';
 import { tempClone } from './temp-clone.js';
 import { githubView } from './github.js';
