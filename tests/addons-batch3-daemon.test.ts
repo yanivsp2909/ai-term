@@ -65,7 +65,8 @@ it('o opens a made file with your default app; s copies it to Downloads without 
   expect(await m.addonFile(agent.id, 'out/deck/pitch.html', 'save')).toBe(join(downloads, 'pitch.html'));
   expect(await m.addonFile(agent.id, 'out/deck/pitch.html', 'save')).toBe(join(downloads, 'pitch (2).html'));
   expect((await readdir(downloads)).sort()).toEqual(['pitch (2).html', 'pitch.html']);
-  expect(await readFile(join(downloads, 'pitch.html'), 'utf8')).toBe('<h1>deck</h1>');
+  // Saved with the no-script policy in front (v1.0 gate), the deck itself unchanged.
+  expect(await readFile(join(downloads, 'pitch.html'), 'utf8')).toMatch(/^<meta http-equiv="Content-Security-Policy" content="default-src 'none'[^"]*"><h1>deck<\/h1>$/);
   await writeFile(join(dir, 'private.txt'), 'secret'); await symlink(join(dir, 'private.txt'), join(tree, 'out', 'deck', 'link.html'));
   await expect(m.addonFile(agent.id, 'out/deck/link.html', 'save')).rejects.toThrow();
   await expect(m.addonFile(agent.id, '../outside.html', 'open')).rejects.toThrow();
@@ -88,7 +89,7 @@ it('HIGH (both reviews): o and s take only a viewable file type, never an execut
   await m.addonFile(agent.id, 'out/deck/pitch.html', 'open');
   // The opened file is AI Term's own private copy, not the agent's path: a swap after the check changes nothing.
   expect(opened).toHaveLength(1); expect(opened[0]).not.toContain(tree); expect(opened[0]?.endsWith('.html')).toBe(true);
-  expect(await readFile(opened[0] ?? '', 'utf8')).toBe('<h1>deck</h1>');
+  expect((await readFile(opened[0] ?? '', 'utf8')).endsWith('<h1>deck</h1>')).toBe(true);
   SessionManager.downloads = join(dir, 'no-such-folder');
   await expect(m.addonFile(agent.id, 'out/deck/pitch.html', 'save')).rejects.toThrow('No Downloads folder');
 });

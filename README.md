@@ -227,7 +227,7 @@ Homepage slash commands:
 | /changelog c / w | Copy the section / write it into CHANGELOG.md in a worktree |
 | /pr-review c · /standup m | Copy the review (nothing is posted) / polish today's standup with a model |
 | /opensource f | Fix every finding a file change can fix, in a worktree |
-| Made files o / s | Open the selected file with your default app / save a copy to Downloads (only when you press it) |
+| Made files o / s | Open the selected file with your default app / save a copy to Downloads (only when you press it, and not while the agent runs). HTML opens and saves with a no-script, no-network policy; an SVG opens as an image in such a page |
 | /a11y f · /study Space | Fix the selected accessibility finding in a worktree / next chunk, then the recap |
 | ↑ / ↓ | Slash menu selects a command with wrapping; otherwise homepage selects session; pickers/settings select rows |
 | Enter | Slash menu picks highlighted command (`/theme`, `/effort`, `/mode` insert argument prefixes); empty homepage field attaches; task text opens start confirmation; selected finished session shows removal hint |

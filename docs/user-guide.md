@@ -53,7 +53,7 @@ Same popup and rules: nothing starts before `y`, agents work in Ask mode, and an
 
 ## Making things with add-ons
 
-Same popup and rules. These make files in a new worktree, so nothing lands in your checkout until you merge. When a result has files to look at, ↑↓ picks one, `o` opens it with your default app (a browser for HTML), and `s` saves a copy to Downloads. Neither happens until you press the key.
+Same popup and rules. These make files in a new worktree, so nothing lands in your checkout until you merge. When a result has files to look at, ↑↓ picks one, `o` opens it with your default app (a browser for HTML), and `s` saves a copy to Downloads. Neither happens until you press the key, nor while the agent is still running. A model wrote these files, so HTML opens and saves with a policy that lets no script or network request run, and an SVG opens as an image inside such a page; styles and pictures still show.
 
 - `/deck <topic>` builds an investor or pitch deck (problem, solution, market, traction, team, ask) from what the repository and its docs say. A fact that isn't there becomes a TODO line, listed in the popup; numbers are never invented.
 - `/slides <topic>` builds any other presentation: a talk, a lesson or a walkthrough.

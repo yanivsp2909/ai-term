@@ -782,6 +782,8 @@ export class SessionManager extends EventEmitter {
         const live=this.sessions.get(id),tree=live?.info.worktree;
         if(!live||!tree||!this.worktreeRecords.has(tree))throw new Error('This agent has no worktree');
         if(!viewable(file))throw new Error("That's not a file type AI Term opens or saves");
+        // A running agent could still swap its folder for a link between the checks below and the open (gate LOW).
+        if(['starting','running'].includes(live.info.status))throw new Error('Wait until the agent finishes, then press o or s');
         const root=await realpath(tree),full=await resolveInside(root,file);
         if(full!==join(root,file))throw new Error('A made file is never opened through a link');
         const handle=await open(full,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
@@ -793,13 +795,17 @@ export class SessionManager extends EventEmitter {
             if(info.nlink!==1)throw new Error('Only a file with one link is opened or saved');
             data=await handle.readFile();
         }finally{await handle.close();}
-        const name=basename(file);
+        const name=basename(file),lower=name.toLowerCase(),html=lower.endsWith('.html')||lower.endsWith('.htm');
+        // HTML opens and saves with no script able to run; an SVG opens as an image in such a page (inert-copy.ts).
+        if(html)data=Buffer.from(inertHtml(data.toString('utf8')));
         if(action==='open'){
             // A fresh private folder per open; earlier copies go first.
             const opened=join(this.paths.root,'opened');await rm(opened,{recursive:true,force:true});await privateDirectory(opened);
             const folder=join(opened,randomUUID());await privateDirectory(folder);
             const copy=join(folder,name);await writeFile(copy,data,{flag:'wx',mode:0o600});
-            await(SessionManager.fileOpener??openWithDefaultApp)(copy);return null;
+            let shown=copy;
+            if(lower.endsWith('.svg')){shown=join(folder,`${name}.html`);await writeFile(shown,svgPage(name),{flag:'wx',mode:0o600});}
+            await(SessionManager.fileOpener??openWithDefaultApp)(shown);return null;
         }
         const folder=SessionManager.downloads??join(homedir(),'Downloads');
         let isFolder=false;try{isFolder=(await stat(folder)).isDirectory();}catch(error){if(!isFsError(error,'ENOENT'))throw error;}
@@ -1909,6 +1915,7 @@ async function openWithDefaultApp(path:string):Promise<void>{
     await new Promise<void>((done,fail)=>{execFile(opener,[path],{timeout:15_000,windowsHide:true},error=>error?fail(new Error('The file could not be opened')):done());});
 }
 import { checkAddonCli, checkReverseCli } from './addon-cli.js';
+import { inertHtml, svgPage } from './inert-copy.js';
 import { answerRefusal, approvable, screenFingerprint } from './remote/backend.js';
 const REMOTE_SCREEN_ROWS=200;
 import { findRea, reaIdentity, reverseServer, reverseTarget } from './reverse.js';
