@@ -810,9 +810,9 @@ export class SessionManager extends EventEmitter {
     // v1.1 /bisect: the plan reads your checkout only; whether a sandbox starts here decides y or a capital Y.
     async addonBisectPlan(cwd:string,args:string):Promise<BisectAsk>{
         const repo=await repoTopLevel(cwd);if(!repo)throw new BisectError("This folder isn't in a git repository; /bisect needs one");
-        const plan=await bisectPlan(repo,args),box=await this.sandboxFor(repo,repo);
+        const box=await this.sandboxFor(repo,repo);
         await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));
-        return {...plan,sandbox:!!box};
+        return {...await bisectPlan(repo,args,!!box),sandbox:!!box};
     }
     async addonBisect(cwd:string,plan:BisectAsk,unsandboxed:boolean):Promise<Extract<AddonResult,{kind:'bisect'}>>{
         const repo=await repoTopLevel(cwd);if(!repo)throw new BisectError("This folder isn't in a git repository; /bisect needs one");
