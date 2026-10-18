@@ -59,13 +59,25 @@ it('the plan links the installed dependency folders it finds; --no-deps turns th
   expect((await bisectPlan(repo, 'npm test')).deps).toEqual(['node_modules', 'venv']);
 });
 
-it('Y (no sandbox): finds the planted commit in a Node project whose test needs node_modules; --no-deps can\'t', async () => {
-  const { repo, badCommit } = await nodeRepo();
+it('HIGH (TS review): with Y and no sandbox nothing is linked, so the test can\'t write into your installed dependencies', async () => {
+  const { repo } = await nodeRepo();
   const env = buildBisectEnv(process.env), none = async () => null;
-  const result = await runBisect({ repo, plan: await bisectPlan(repo, 'npm test'), sandbox: none, unsandboxed: true, env, log: () => {} });
-  expect(result).toMatchObject({ kind: 'bisect', commit: badCommit, subject: 'planted: break the state' });
-  await expect(runBisect({ repo, plan: await bisectPlan(repo, '--no-deps npm test'), sandbox: none, unsandboxed: true, env, log: () => {} })).rejects.toThrow('also fails at');
+  await expect(runBisect({ repo, plan: await bisectPlan(repo, 'npm test'), sandbox: none, unsandboxed: true, env, log: () => {} })).rejects.toThrow('also fails at');
+  await expect(stat(join(repo, 'node_modules', 'dep', 'planted.txt'))).rejects.toThrow();
 }, 60_000);
+
+it.skipIf(!MAC)('MEDIUM (TS review): a sandbox that couldn\'t open a dependency folder for reading gets no link, and says so', async () => {
+  const { repo } = await nodeRepo(), logs: string[] = [];
+  // A profile without the folder (as when a path can't go into a profile): the link would only fail every test.
+  const without = async (path: string) => sandboxFor(repo)(path, []);
+  await expect(runBisect({ repo, plan: await bisectPlan(repo, 'npm test'), sandbox: without, unsandboxed: false, env: buildBisectEnv(process.env), log: text => logs.push(text) })).rejects.toThrow('only committed files are there');
+  expect(logs).toContain('Bisect: the sandbox couldn\'t open node_modules for reading; it isn\'t linked');
+}, 60_000);
+
+it('the popup\'s plan lists no dependencies where no sandbox can start, since nothing would be linked', async () => {
+  const { repo } = await nodeRepo();
+  expect((await bisectPlan(repo, 'npm test', false)).deps).toEqual([]);
+});
 
 it.skipIf(!MAC)('macOS: npm test finds the planted commit in the sandbox through read-only links; nothing is written into your node_modules', async () => {
   const { repo, badCommit } = await nodeRepo();
