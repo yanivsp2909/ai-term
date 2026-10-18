@@ -1,6 +1,56 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 1802d90 test: split the /bisect dependency tests into three files so they run in parallel (one file took 43 s)
+Last commit: Part A handover (this commit)
+Roadmap step: 2026-10-18 live-suite run · Part A (B33) done · Part B (live smoke suite) next · Part C (run it, shrink the manual list) after
+Branch: main, pushed.
+
+## What works
+- B33: /bisect gives its temporary copy its own copy-on-write clone of each installed dependency folder (node_modules, .venv, venv, vendor) once its sandbox has started, so a test runner that writes a cache inside node_modules (Vitest's node_modules/.vite) writes into the clone and your folder never changes. src/daemon/dep-clone.ts:
+  - macOS: `/bin/cp -c -P -R -- <folder> <copy>/<name>`, only when the folder and the copy are on one APFS volume (same st_dev, `df -T apfs` exits 0), because `cp -c` silently falls back to a full copy elsewhere.
+  - Linux: `cp --reflink=always -P -R --`, same device only. `always`, not the prompt's `auto`: `auto` quietly makes a full copy; `always` fails, and the folder gets B32's read-only link.
+  - `-P`: every link is copied as a link (the source folder too); a result that isn't a real folder is removed. A clone that fails leaves nothing and says why in the log (`this disk can't clone`, `cp exited 1`, `cp timed out`); that folder is then linked read-only as before.
+  - The clone lives in the copy and goes with it. `removeTree` (temp-clone.ts) runs `chmod -R u+rwX` once and removes again when a read-only folder inside stops `rm`.
+  - Every planned folder stays readable in the sandbox, cloned or not (a venv's scripts run its python from your folder's absolute path). Without a sandbox (Y) nothing is cloned or linked, as the plan says. `--no-deps` still turns it all off.
+- The popup line is now "dependencies: node_modules cloned from your checkout (copy-on-write; read-only links where the disk can't clone) · --no-deps turns this off". README command list, /help, docs/user-guide.md, addons/bisect/addon.md and docs/architecture.md §12.27 updated.
+- Tests:
+  - tests/b33-bisect-clone.test.ts: a real temporary Node repository whose runner writes node_modules/.cache finds the planted commit in a clone; without the clone it stops with "also fails at"; node_modules is byte-identical afterwards (digest of every entry's path, mode, size, link target and bytes). Also: links copied as links, writes stay in the clone, a source swapped for a link gives no clone, cp's argv per platform, a .venv whose script reads the original venv by its absolute path.
+  - tests/b33-bisect-clone-review.test.ts: a failed clone (an unreadable file) says "cp exited 1", leaves nothing, and links instead. A read-only folder in node_modules doesn't leave the copy behind.
+  - tests/addons-bisect-deps.test.ts: B32's plan, Y, the link where no clone is made, and the refusal before any clone.
+  - tests/b33-bisect-self.test.ts (opt-in, `AITERM_BISECT_SELF_TEST=1`): /bisect `npx vitest run tests/protocol.test.ts <HEAD~12>` on a temporary clone of AI Term with one planted failing test on top finds the planted commit. **14.4 s and 15.0 s for 4 steps over 13 commits** (setup excluded; about 19 s with the clone of this repository and its node_modules). With B32's link it stopped with "also fails at" the good commit (the RED run).
+
+## What's next
+- Part B: the live smoke suite (`npm run live`), then Part C.
+
+## Manual checks
+- typecheck: ran · exit 0. lint: ran · "ESLint: No issues found". build: ran · "ESM ⚡️ Build success in 51ms". app:build: ran · "✓ built in 60ms".
+- Full suite, default workers, twice in a row: ran · Test Files 287 passed | 1 skipped (288), Tests 1912 passed | 8 skipped (1920), 49.92 s and 50.23 s (the 8th skip is the opt-in self-bisect).
+- Hidden Electron smoke (AI_TERM_BACKGROUND=1 npm run app:test): ran · 9 passed (37.2s).
+- B33 on AI Term itself: ran · `AITERM_BISECT_SELF_TEST=1 npx vitest run tests/b33-bisect-self.test.ts` passed, "B33 self-bisect: 14.4 s, 4 steps".
+- Live /bisect in a Node repo of yours: still open (in the list below, item 13); Part B's suite covers it with a temporary repository.
+
+## Gotchas
+- Where the code disagreed with the prompt: the prompt's Linux `cp --reflink=auto` would silently make a full copy on file systems without reflinks; `--reflink=always` gives "clone when supported, else the read-only link" exactly. On most Linux machines (tmpfs /tmp, ext4) that means the link, so B33 is effectively fixed on macOS only (README says so). B33 wasn't recorded anywhere in the repository besides Part A's gotcha in the last run; the prompt was the spec. Its premise held: Vitest 5 fails without a writable node_modules/.vite.
+- Reviews (fresh context):
+  - TypeScript: 1 HIGH (a cloned .venv's console scripts name the original venv's python by absolute path, and B33 had made the original unreadable: "the sandbox stopped it (…/.venv/pyvenv.cfg)", reproduced), 1 MEDIUM (a failed clone's reason was dropped and the log blamed the disk), 2 LOW (a read-only folder in the source left the clone behind and could abort the run with a raw EACCES; Linux seldom clones).
+  - Security: no CRITICAL, HIGH or MEDIUM. 3 LOW: the same leftover and dropped reason, and the clones running before the "No sandbox here" refusal.
+  - Pairs: 27086a2 RED → 34cc3a1 (feature); 2745efc RED → 66dd457 (TS HIGH, MEDIUM, LOW; the Linux LOW is documented); f44318c RED → a02f191 (security LOW ordering). 1802d90 splits the test file (43 s alone) into three that run in parallel.
+  - Not changed, with reasons (security LOW-3 residuals): a clone isn't cancellable once started (10 minutes per folder at most) and a daemon that exits mid-clone leaves cp writing into a temp folder nobody removes; cp -c falls back to a plain copy for a file it can't clone (a nested mount inside node_modules, an iCloud-evicted file), since only the top folder is checked; a concurrent writer in your checkout could swap a subfolder for a link mid-walk (needs your rights; not reproduced in 70 tries). Suggestion: a daemon-start sweep of stale ai-term-clone-* and ai-term-test-* temp folders.
+- macOS `chmod` takes no `--` after the mode ("chmod: --: No such file or directory"), so removeTree passes an absolute path instead.
+- The full suite takes about 50 s now (43 s before Part A's review tests): every new macOS test runs a real sandboxed bisect.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Copy-on-write clones: src/daemon/dep-clone.ts. APFS clonefile and Linux reflinks make a new file that shares the original's data blocks; the first write to either side copies only the blocks it changes. So a 678 MB node_modules is "copied" in 2.5 s using almost no disk, and writes into the clone can never reach the original. They work only inside one volume (one st_dev), which is why the code checks that first instead of trusting `cp -c`'s silent fallback.
+
+---
+
+# Previous run: 2026-10-18 final long run (1.0)
+
+## Checkpoint
 Last code commit: 5a7ea39 chore: 1.0.0 (version, CHANGELOG 1.0.0 section, README status)
 Last commit: final handover (this commit), tagged v1.0.0
 Roadmap step: 2026-10-18 final long run (1.0) · A (B32) done · B (v1.0.7 /reverse) done · C (v1.0.8 /remote) done · D (v0.9 + v1.0 gate) done · E (1.0.0) done
