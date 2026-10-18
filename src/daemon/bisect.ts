@@ -8,6 +8,7 @@ import { addonFile } from '../agent/addon-bundle.js';
 import { GIT } from './git-path.js';
 import { runTests, type TestOutcome } from './test-run.js';
 import { tempClone } from './temp-clone.js';
+import { cloneFolder } from './dep-clone.js';
 import type { PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_WORDS, parseTestCommand, testCommandText } from '../shared/test-run.js';
 import type { AddonResult } from '../shared/addon-results.js';
@@ -22,7 +23,8 @@ export interface BisectPlan { command: string[]; good: string; bad: string; good
 export const NO_DEPS = '--no-deps';
 type Run = (command: readonly string[], cwd: string, env: Record<string, string>, box: PreparedSandbox | null, timeoutMs: number) => Promise<TestOutcome>;
 // sandbox: readable is the linked dependency folders (real paths), opened for reading only: writes stay the copy's and the run's.
-export interface BisectOptions { repo: string; plan: BisectPlan; sandbox: (path: string, readable: readonly string[]) => Promise<PreparedSandbox | null>; unsandboxed: boolean; env: Record<string, string>; run?: Run; log: (text: string) => void }
+// clone (B33): makes dest a copy-on-write clone of source, or returns false (dep-clone.ts; tests pass their own).
+export interface BisectOptions { repo: string; plan: BisectPlan; sandbox: (path: string, readable: readonly string[]) => Promise<PreparedSandbox | null>; unsandboxed: boolean; env: Record<string, string>; run?: Run; clone?: (source: string, dest: string) => Promise<boolean>; log: (text: string) => void }
 
 const commitOf = async (cwd: string, ref: string): Promise<string | null> => {
   // A ref the user typed: --end-of-options keeps it from reading as an option, ^{commit} from naming a tree.
@@ -86,22 +88,32 @@ async function depSources(repo: string, copy: string, deps: readonly string[]): 
   }
   return found;
 }
+// B33: each folder becomes the copy's own copy-on-write clone first, so a test runner may write its cache inside it (the
+// writes stay in the clone; your folder is never written). Only what can't be cloned here is left for linkDeps.
+async function cloneDeps(copy: string, sources: readonly { name: string; source: string }[], clone: (source: string, dest: string) => Promise<boolean>): Promise<string[]> {
+  const names: string[] = [];
+  for (const { name, source } of sources) if (await clone(source, join(copy, name))) names.push(name);
+  return names;
+}
 // Read-only comes from the sandbox alone: a link is a path, and writes are allowed only inside the copy and the run's temp
 // folder, matched on the real path (macOS) or bound read-only (Linux). So a folder is linked only into a sandbox that
-// opened it for reading (review: without one, Y would have let the test write into your installed dependencies), and the
-// copy's git is told to ignore the links. A later commit that tracks one of these paths replaces its link in the copy.
-async function linkDeps(copy: string, sources: readonly { name: string; source: string }[], box: PreparedSandbox, log: (text: string) => void): Promise<number> {
+// opened it for reading (review: without one, Y would have let the test write into your installed dependencies). A
+// later commit that tracks one of these paths replaces its link in the copy.
+async function linkDeps(copy: string, sources: readonly { name: string; source: string }[], box: PreparedSandbox, log: (text: string) => void): Promise<string[]> {
   const names: string[] = [];
   for (const { name, source } of sources) {
     if (!box.spec.readable?.includes(source)) { log(`Bisect: the sandbox couldn't open ${name} for reading; it isn't linked`); continue; }
     await symlink(source, join(copy, name), 'dir');
+    log(`Bisect: ${name} can't be cloned on this disk; it's linked read-only`);
     names.push(name);
   }
-  if (names.length) {
-    await mkdir(join(copy, '.git', 'info'), { recursive: true });
-    await appendFile(join(copy, '.git', 'info', 'exclude'), names.map(name => `/${name}\n`).join(''));
-  }
-  return names.length;
+  return names;
+}
+// The copy's git ignores the clones and links, as your checkout's .gitignore would.
+async function excludeInCopy(copy: string, names: readonly string[]): Promise<void> {
+  if (!names.length) return;
+  await mkdir(join(copy, '.git', 'info'), { recursive: true });
+  await appendFile(join(copy, '.git', 'info', 'exclude'), names.map(name => `/${name}\n`).join(''));
 }
 
 const realRun: Run = (command, cwd, env, box, timeoutMs) => runTests(command, cwd, { ...env, ...box?.env }, { timeoutMs, ...(box ? { sandbox: box } : {}) });
@@ -121,18 +133,22 @@ export async function runBisect(options: BisectOptions): Promise<Extract<AddonRe
   const gitInCopy = (args: string[], timeoutMs = BISECT_STEP_TIMEOUT_MS) => run([GIT ?? 'git', ...SAFE_GIT, ...args], copy.path, env, box, timeoutMs);
   try {
     const sources = await depSources(repo, copy.path, plan.deps);
-    box = await options.sandbox(copy.path, sources.map(found => found.source));
+    // Cloned and linked while the copy is still fresh: nothing in it has run yet. With Y (no sandbox) nothing is added,
+    // as the plan said; the sandbox opens only the folders left to link.
+    const cloned = options.unsandboxed ? [] : await cloneDeps(copy.path, sources, options.clone ?? cloneFolder);
+    const rest = sources.filter(found => !cloned.includes(found.name));
+    box = await options.sandbox(copy.path, rest.map(found => found.source));
     if (!box && !options.unsandboxed) throw new BisectError('No sandbox here · open /bisect again and press Y to run the test command with your rights');
-    // Linked while the copy is still fresh: nothing in it has run yet.
-    const linked = box ? await linkDeps(copy.path, sources, box, log) : 0;
+    const linked = box ? await linkDeps(copy.path, rest, box, log) : [];
+    await excludeInCopy(copy.path, [...cloned, ...linked]);
     // The copy starts at HEAD (a fresh clone: nothing planted yet); the good side is checked out from inside the sandbox.
     const atBad = await run(plan.command, copy.path, env, box, BISECT_STEP_TIMEOUT_MS);
     if (atBad.state === 'pass') throw new BisectError(`${testCommandText(plan.command)} passes at HEAD; nothing to bisect`);
     if (atBad.state !== 'fail') throw new BisectError(`The test command didn't run at HEAD: ${why(atBad)}`);
     if ((await gitInCopy(['checkout', '--quiet', '--detach', '--end-of-options', plan.good])).state !== 'pass') throw new BisectError(`git couldn't check out ${plan.goodLabel} in the temporary copy`);
     const atGood = await run(plan.command, copy.path, env, box, BISECT_STEP_TIMEOUT_MS);
-    // The copy has committed files and the linked dependency folders, no build output: say so where it most often bites.
-    if (atGood.state === 'fail') throw new BisectError(`${testCommandText(plan.command)} also fails at ${plan.goodLabel}; pick an older good ref, or the test needs files the copy doesn't have (only committed files${linked ? ' and your installed dependencies' : ''} are there)`);
+    // The copy has committed files and the cloned or linked dependency folders, no build output: say so where it most often bites.
+    if (atGood.state === 'fail') throw new BisectError(`${testCommandText(plan.command)} also fails at ${plan.goodLabel}; pick an older good ref, or the test needs files the copy doesn't have (only committed files${cloned.length + linked.length ? ' and your installed dependencies' : ''} are there)`);
     if (atGood.state !== 'pass') throw new BisectError(`The test command didn't run at ${plan.goodLabel}: ${why(atGood)}`);
     started = true;
     // bisect start reads its own argv and refuses --end-of-options; both ids are checked commit hashes, and -- ends them.

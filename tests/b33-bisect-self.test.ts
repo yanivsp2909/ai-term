@@ -56,7 +56,10 @@ it.skipIf(!SELF)('B33: /bisect npx vitest on a temporary clone of AI Term finds 
   try {
     const plan = await bisectPlan(repo, `npx vitest run tests/protocol.test.ts ${good}`);
     expect(plan).toMatchObject({ command: ['npx', 'vitest', 'run', 'tests/protocol.test.ts'], good, deps: ['node_modules'], commits: 13 });
+    const started = performance.now();
     result = await runBisect({ repo, plan, sandbox, unsandboxed: false, env: buildBisectEnv(process.env), log: text => logs.push(text) });
+    // The time the report asks for: the bisect alone (clone, checks at both ends, the steps, removal), without the setup above.
+    console.info(`B33 self-bisect: ${((performance.now() - started) / 1000).toFixed(1)} s, ${result.steps} steps`);
   } finally { if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved; }
   expect(result).toMatchObject({ kind: 'bisect', commit: planted, subject: 'planted: a failing protocol test' });
   expect(logs, logs.join(' | ')).toEqual([]);

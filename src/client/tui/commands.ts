@@ -60,7 +60,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/teach',description:'Teach the diff an agent just made in small chunks; a quiz only if you ask (asks first)',argumentHint:()=>ADDON_HINTS.teach??'',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/fix',description:'Root cause, a failing test, then the fix, in a worktree; stops if it can\'t reproduce (asks first)',argumentHint:()=>ADDON_HINTS.fix??'',current:none},
  {name:'/cover',description:'Write tests for untested behavior in a worktree; sandboxed test run (asks first)',argumentHint:()=>ADDON_HINTS.cover??'',current:none},
- {name:'/bisect',description:'Find the first bad commit with git bisect in a sandboxed temporary copy with your dependencies linked read-only; no model, no tokens',argumentHint:()=>ADDON_HINTS.bisect??'',current:none},
+ {name:'/bisect',description:'Find the first bad commit with git bisect in a sandboxed temporary copy with a clone of your dependencies; no model, no tokens',argumentHint:()=>ADDON_HINTS.bisect??'',current:none},
  {name:'/refactor',description:'Tech-debt list; Space picks items, r refactors only those in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.refactor??'',current:none},
  {name:'/perf',description:'Measure, optimize in a worktree, then an A/B before and after (asks first)',argumentHint:()=>ADDON_HINTS.perf??'',current:none},
  {name:'/types',description:'Read-only type-design review; f fixes a finding in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.types??'',current:none},

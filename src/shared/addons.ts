@@ -23,7 +23,8 @@ export interface Addon {
   input: AddonInput; tests: boolean; cost: 'normal' | 'high'; local: LocalAddon | null; web: boolean;
 }
 // What /bisect will do, shown before anything runs; good and bad are commit ids read from your checkout.
-// deps (B32): the installed dependency folders of your checkout linked read-only into the copy (none with --no-deps).
+// deps (B32, B33): the installed dependency folders of your checkout, cloned into the copy (linked read-only where the disk
+// can't clone; none with --no-deps).
 export const BISECT_DEPS = ['node_modules', '.venv', 'venv', 'vendor'] as const;
 export interface BisectAsk { command: string[]; good: string; bad: string; goodLabel: string; commits: number; deps: string[]; sandbox: boolean }
 export interface AddonAsk {

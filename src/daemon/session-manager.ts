@@ -1320,7 +1320,7 @@ export class SessionManager extends EventEmitter {
     // The run's sandbox, or null when this Mac can't give one (not macOS, no sandbox-exec, a path no profile can hold, or a
     // profile the system refuses): then nothing runs by itself. The caller disposes what it gets.
     // loopback: a dev server listens on 127.0.0.1 whatever the project's test switch says (v0.9.2).
-    // readable: more folders the run may read but never write (/bisect's linked dependency folders, B32).
+    // readable: more folders the run may read but never write (/bisect's dependency folders that couldn't be cloned, B32/B33).
     private async sandboxFor(path:string,repo:string|undefined,force?:{loopback:boolean;ports?:number[]},readable:readonly string[]=[]):Promise<PreparedSandbox|null>{
         // Windows has no sandbox: said as it is, not as a path that couldn't go into a profile (gate).
         if(process.platform==='win32'){this.log.error('Test sandbox: Windows has none; tests ask first');return null;}
