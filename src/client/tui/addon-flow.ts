@@ -22,6 +22,9 @@ export class AddonFlow {
       copy: text => { void this.action(() => (options.copy ?? copyText)(text)); },
       choose: kind => { void this.action(() => this.choose(kind)); },
       apply: items => { void this.action(async () => { if (!this.session) return; const response = await options.request({ kind: 'addons.apply', sessionId: this.session, items }); const title = validateSession(response.session).title; await options.started(response); this.panel.setApplied(`✓ started ${title} in a worktree (Ask) · it is selected on the homepage · Esc closes`); }); },
+      commit: () => { void this.action(async () => { if (!this.session) return; const sha = (await options.request({ kind: 'addons.commit', sessionId: this.session })).addonCommit; if (typeof sha !== 'string' || !/^[0-9a-f]{4,64}$/.test(sha)) throw new Error('The commit was not confirmed'); this.panel.setApplied(`✓ committed ${sha} in the agent's worktree · /pr publishes it when you're ready · Esc closes`); }); },
+      // /standup m: the same popup becomes the standup-polish add-on, with its own estimate and y.
+      polish: text => { void this.action(async () => { this.dispose(); this.ended = false; this.name = 'standup-polish'; this.args = text; this.local = false; this.session = undefined; this.resultReady = false; await this.estimate(); }); },
       ab: unsandboxed => { void this.action(async () => { if (!this.session) return; this.panel.setAb(validateAbView((await options.request({ kind: 'addons.ab', sessionId: this.session, unsandboxed })).addonAb)); this.abRunning = true; await this.poll(); }); },
     });
   }
@@ -31,7 +34,10 @@ export class AddonFlow {
   update(session: SessionInfo): void { if (session.id === this.session) { this.panel.setUsage(session.taskUsage ?? null); this.panel.setTests(session.tests ?? null); } }
   private async estimate(): Promise<void> {
     const target = this.local ? null : this.targets[this.choice]; if (target === undefined) throw new Error('No add-on engine available');
-    this.ask = validateAddonAsk((await this.options.request({ kind: 'addons.plan', name: this.name, args: this.args, cwd: this.cwd, target })).addonAsk); if (!this.ended) this.panel.setAsk(this.ask);
+    this.ask = validateAddonAsk((await this.options.request({ kind: 'addons.plan', name: this.name, args: this.args, cwd: this.cwd, target })).addonAsk); if (this.ended) return;
+    this.panel.setAsk(this.ask);
+    // Free: no model and nothing run (AI Term's own records), so there is nothing to approve.
+    if (this.ask.free) await this.start(false);
   }
   private async choose(kind: 'engine' | 'model'): Promise<void> {
     const current = this.targets[this.choice]; if (!current) return;

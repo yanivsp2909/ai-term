@@ -36,7 +36,7 @@ import { BudgetForm, PriceForm, CapsForm, drawUsageForm } from './usage-forms.js
 import { DEFAULT_AGENT_CAPS } from '../../shared/agent-facts.js';
 import {WorktreeQuestion} from './worktree-question.js';
 import {WorktreesPanel} from './worktrees-panel.js';
-import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,ADDON_COMMANDS,ADDON_HINTS,type CommandContext} from './commands.js';
+import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,ADDON_COMMANDS,ADDON_HINTS,LOCAL_ADDON_COMMANDS,type CommandContext} from './commands.js';
 import {drawHelp,wrapHelpLines} from './help.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
 import { MAX_PANES } from '../split-layout.js';
@@ -784,11 +784,14 @@ export class Homepage {
     if(!args&&hint.startsWith('<')){const previous=this.addonFlows.get(`${this.folder}:${name}:`);if(previous){this.popup=previous.panel;await previous.open();this.draw(true);return;}this.showNote(`/${name} ${hint}`);return;}
     let subject=args;
     if(name==='teach'||name==='review-deep'){const session=this.namedOrSelected(args,name==='teach'?'/teach':'/review <agent> deep');if(!session)return;subject=session.id;}
+    // /commit <agent>: that agent's work (y commits in its worktree); /commit alone: what is staged in this folder.
+    if(name==='commit'&&args){const session=this.namedOrSelected(args,'/commit');if(!session)return;subject=session.id;}
     const key=`${this.folder}:${name}:${hint.startsWith('<')?'':subject}`,previous=this.addonFlows.get(key);
     if(!args&&previous){this.popup=previous.panel;await previous.open();this.draw(true);return;}
     try{
-      const local=name==='bisect',keys=local?[]:(await this.connection.request({kind:'keys.list'})).keys??[];
-      const targets:AddonTarget[]=local?[]:modelChoices(keys,this.engines,'ai-term').map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
+      // A local add-on sends no target; /standup still gets the choices, for its m (a model pass that asks first).
+      const local=LOCAL_ADDON_COMMANDS.includes(name),keys=(await this.connection.request({kind:'keys.list'})).keys??[];
+      const targets:AddonTarget[]=modelChoices(keys,this.engines,'ai-term').map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
       previous?.dispose();
       const flow=new AddonFlow(name,subject,this.folder,targets,{request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{if(this.popup===flow.panel)this.popup=undefined;this.draw(true);},started:response=>this.selectNew(response),copy:this.options.copy},local);
       this.addonFlows.set(key,flow);if(hint.startsWith('<'))this.addonFlows.set(`${this.folder}:${name}:`,flow);this.popup=flow.panel;await flow.open();this.draw(true);

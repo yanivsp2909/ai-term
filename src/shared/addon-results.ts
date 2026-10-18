@@ -6,7 +6,9 @@ import { isTestCommand } from './test-run.js';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 export interface Finding { file: string; line: number; severity: Severity; title: string; detail: string; fix?: string; reviewer?: 'code' | 'security'; reproduction?: string }
 type Explained = { why: string; diagram: string[]; chunks: string[][]; recap: string[] };
-export type FindingsKind = 'types' | 'failures' | 'review-deep' | 'security';
+export type FindingsKind = 'types' | 'failures' | 'review-deep' | 'security' | 'pr-review' | 'context' | 'opensource';
+// An add-on that changes files in its worktree and says what it did (v1.1 batch 2).
+export type MadeKind = 'issue' | 'docs' | 'handover' | 'adr';
 export type AddonResult = { kind: 'plan'; title: string; steps: { title: string; prompt: string }[] }
   | { kind: 'prompt'; issues: string[]; diff: string }
   | ({ kind: 'explain' } & Explained)
@@ -17,7 +19,13 @@ export type AddonResult = { kind: 'plan'; title: string; steps: { title: string;
   | { kind: 'refactor'; items: { title: string; why: string; files: string[]; risk: 'low' | 'medium' | 'high' }[] }
   | { kind: 'perf'; measured: string; change: string; benchmark: string[]; files: string[] }
   | { kind: FindingsKind; summary: string; findings: Finding[]; dropped: number }
-  | { kind: 'bisect'; commit: string; subject: string; author: string; date: string; steps: number; diff: string[] };
+  | { kind: 'bisect'; commit: string; subject: string; author: string; date: string; steps: number; diff: string[] }
+  | { kind: MadeKind; summary: string; files: string[] }
+  | { kind: 'deps'; summary: string; files: string[]; upgraded: string[]; skipped: string[] }
+  | { kind: 'commit'; subject: string; body: string }
+  | { kind: 'changelog'; section: string }
+  | { kind: 'standup'; lines: string[] }
+  | { kind: 'standup-polish'; text: string };
 // /perf's A/B, run by AI Term on the code before and after the change, back to back on this machine.
 // AI Term's answer when /perf's A/B has no sandbox: the popup then accepts a capital Y, like /dev.
 export const AB_NO_SANDBOX = 'No sandbox here · Y runs the A/B with your rights';
@@ -59,9 +67,10 @@ function explained(p: Record<string, unknown>): boolean {
   return line(p.why) && lines(p.diagram, 4) && Array.isArray(p.chunks) && p.chunks.length > 0 && p.chunks.length <= 16 && p.chunks.every(chunk) && lines(p.recap, 3) && p.recap.length === 3;
 }
 function finding(kind: FindingsKind, f: Record<string, unknown>): boolean {
-  const extra = kind === 'types' ? 'fix' : kind === 'review-deep' ? 'reviewer' : kind === 'security' ? 'reproduction' : null;
+  // /opensource's fix is optional: only some findings can be fixed by changing files.
+  const extra = kind === 'types' || kind === 'context' || kind === 'opensource' && f.fix !== undefined ? 'fix' : kind === 'review-deep' ? 'reviewer' : kind === 'security' ? 'reproduction' : null;
   return keys(f, 'file', 'line', 'severity', 'title', 'detail', ...extra ? [extra] : []) && relPath(f.file) && Number.isSafeInteger(f.line) && Number(f.line) >= 1 && SEVERITIES.includes(String(f.severity)) && line(f.title) && text(f.detail, 1200)
-    && (kind !== 'types' || text(f.fix, 600)) && (kind !== 'review-deep' || f.reviewer === 'code' || f.reviewer === 'security') && (kind !== 'security' || text(f.reproduction, 1600));
+    && (extra !== 'fix' || text(f.fix, 600)) && (kind !== 'review-deep' || f.reviewer === 'code' || f.reviewer === 'security') && (kind !== 'security' || text(f.reproduction, 1600));
 }
 function findings(kind: FindingsKind, p: Record<string, unknown>, kept: boolean): AddonResult {
   // dropped is AI Term's count, never the model's: only a result the daemon already checked (kept) carries it.
@@ -87,7 +96,14 @@ export function parseAddonResult(source: string, name: string, kept = false): Ad
     case 'refactor': return ok(keys(p, 'kind', 'items') && list(p.items, 24, i => keys(i, 'title', 'why', 'files', 'risk') && line(i.title, 120) && line(i.why, 400) && paths(i.files, 12) && ['low', 'medium', 'high'].includes(String(i.risk))));
     // The benchmark runs on the code before and after: argv only, new files only under bench/.
     case 'perf': return ok(keys(p, 'kind', 'measured', 'change', 'benchmark', 'files') && text(p.measured, 600) && text(p.change, 600) && isTestCommand(p.benchmark) && paths(p.files, 5) && p.files.every(f => f.startsWith('bench/')));
-    case 'types': case 'failures': case 'review-deep': case 'security': return findings(name, p, kept);
+    case 'types': case 'failures': case 'review-deep': case 'security': case 'pr-review': case 'context': case 'opensource': return findings(name, p, kept);
+    case 'issue': case 'docs': case 'handover': case 'adr': return ok(keys(p, 'kind', 'summary', 'files') && text(p.summary, 600) && paths(p.files, 40));
+    case 'deps': return ok(keys(p, 'kind', 'summary', 'files', 'upgraded', 'skipped') && text(p.summary, 600) && paths(p.files, 40) && [p.upgraded, p.skipped].every(l => Array.isArray(l) && l.length <= 40 && l.every(x => line(x, 300))));
+    case 'commit': return ok(keys(p, 'kind', 'subject', 'body') && line(p.subject, 120) && typeof p.body === 'string' && (p.body === '' || text(p.body, 4000)));
+    case 'changelog': return ok(keys(p, 'kind', 'section') && text(p.section, 8000));
+    case 'standup-polish': return ok(keys(p, 'kind', 'text') && text(p.text, 4000));
+    // AI Term's own record (no model): only a kept copy.
+    case 'standup': return ok(kept && keys(p, 'kind', 'lines') && lines(p.lines, 60, 300));
     // Only AI Term writes this one (no model runs), so only a kept copy is accepted.
     case 'bisect': return ok(kept && keys(p, 'kind', 'commit', 'subject', 'author', 'date', 'steps', 'diff') && typeof p.commit === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(p.commit) && line(p.subject, 300) && line(p.author, 200) && line(p.date, 64) && Number.isSafeInteger(p.steps) && Number(p.steps) >= 0 && Array.isArray(p.diff) && p.diff.length <= 400 && p.diff.every(d => typeof d === 'string' && Buffer.byteLength(d) <= 400 && !/[\p{C}]/u.test(d.replace(/\t/g, ''))));
     default: throw new Error('Add-on result has the wrong kind');

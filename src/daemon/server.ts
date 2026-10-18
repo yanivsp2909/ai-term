@@ -299,6 +299,7 @@ export class DaemonServer {
                 case 'addons.start': { const started=await this.manager.addons.start(request.receipt,request.unsandboxed===true); this.control(peer,{id:request.id,ok:true,...('run' in started?{addonRun:started.run}:{session:started.session})}); break; }
                 case 'addons.result': { const live=this.manager.list().find(s=>s.id===request.sessionId); this.control(peer,{id:request.id,ok:true,addonResult:await this.manager.addons.result(request.sessionId),addonUsage:live?.taskUsage??null,addonTests:live?.tests??null,addonAb:this.manager.addons.ab(request.sessionId)}); break; }
                 case 'addons.apply': this.control(peer,{id:request.id,ok:true,session:await this.manager.addons.apply(request.sessionId,request.items)}); break;
+                case 'addons.commit': this.control(peer,{id:request.id,ok:true,addonCommit:await this.manager.addons.commit(request.sessionId)}); break;
                 case 'addons.ab': this.control(peer,{id:request.id,ok:true,addonAb:this.manager.addons.startAb(request.sessionId,request.unsandboxed)}); break;
                 case 'addons.approve': this.control(peer,{id:request.id,ok:true,savedPlan:await this.manager.addons.approve(request.sessionId)}); break;
                 case 'addons.step': this.control(peer,{id:request.id,ok:true,session:await this.manager.addons.step(request.sessionId,request.step)}); break;

@@ -37,7 +37,21 @@ These use the same popup as `/plan`: it shows what runs, where, whether it can e
 
 When `/fix`, `/cover` and a picked `/refactor` finish, AI Term runs the project's `/test-cmd` in the test sandbox, even with auto-test off, and the popup shows the result. Without a test command they say so instead.
 
-One section per area: [Add-ons](#learn-fix-test-and-review-with-add-ons) · [Agents](#agents) · [Sessions](#sessions) · [Worktrees](#worktrees) · [Review and merge](#review-and-merge) · [Budgets](#budgets) · [Accounts](#accounts) · [Queue](#queue) · [Dev servers](#dev-servers) · [Diagnostics](#diagnostics) · [Brain](#brain)
+## Repository and GitHub add-ons
+
+Same popup and rules: nothing starts before `y`, agents work in Ask mode, and anything that changes files does it in a new worktree. AI Term never commits or pushes in your checkout and never runs a `gh` command that writes; publishing stays with `/pr` or you.
+
+- `/issue <#number or issue URL>` reads the issue through your own gh login with `gh issue view`, and the agent gets it as quoted data written by other people (secrets removed). It works the issue in a worktree, and AI Term runs the tests in the sandbox. When you're happy, `/pr <agent>` publishes. Without gh, or logged out, one line says so.
+- `/pr-review <#number or PR URL>` reviews a pull request read through `gh pr view` and `gh pr diff`. `c` copies the review; nothing is posted.
+- `/deps [path]` shows outdated and vulnerable packages from read-only queries AI Term runs itself (npm, go, pip, cargo, when the project uses them and they're installed). The agent upgrades one package at a time in a worktree.
+- `/commit [agent]` writes a commit message. For your checkout it reads only what is staged and `c` copies the message. For an agent, `y` commits its work in its worktree with your git name.
+- `/changelog [from..to]` turns git history into a changelog section; `c` copies it, `w` writes it into CHANGELOG.md in a worktree.
+- `/docs`, `/handover` and `/adr <decision>` write documentation, a PROGRESS.md-style handover and a decision record in a worktree, following what the repository already has.
+- `/standup` lists what every agent did today from AI Term's own records: no model, no tokens, nothing to approve. `m` polishes it with a model after its own estimate.
+- `/context` measures what an agent loads here (AGENTS.md, CLAUDE.md, their imports, the loaded skills) and finds contradicting or stale rules.
+- `/opensource` checks whether the repository is ready to be public: secrets anywhere in its history (masked), license, README, personal paths and emails. `f` fixes what a file change can fix. Rotating a leaked secret and rewriting history stay with you.
+
+One section per area: [Add-ons](#learn-fix-test-and-review-with-add-ons) · [Repository add-ons](#repository-and-github-add-ons) · [Agents](#agents) · [Sessions](#sessions) · [Worktrees](#worktrees) · [Review and merge](#review-and-merge) · [Budgets](#budgets) · [Accounts](#accounts) · [Queue](#queue) · [Dev servers](#dev-servers) · [Diagnostics](#diagnostics) · [Brain](#brain)
 
 ## Agents
 

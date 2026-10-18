@@ -9,8 +9,10 @@ export const effortValues=(engine:AgentEngine):readonly string[]=>['CLI default'
 const none=()=>'';
 // D58 add-ons typed as commands (review-deep is reached through /review <agent> deep). A hint in <> needs an argument;
 // one in [] has a default: the whole folder, or the selected agent.
-export const ADDON_COMMANDS=['plan','prompt','explain','teach','fix','cover','bisect','refactor','perf','types','failures','security'] as const;
-export const ADDON_HINTS:Readonly<Record<string,string>>={plan:'<goal>',prompt:'<file or text>',explain:'<path or question>',teach:'[agent]',fix:'<error text or file>',cover:'[path]',bisect:'<test command> [good ref]',refactor:'[path]',perf:'[path or command]',types:'[path]',failures:'[path]',security:'[path]','review-deep':'[agent]'};
+export const ADDON_COMMANDS=['plan','prompt','explain','teach','fix','cover','bisect','refactor','perf','types','failures','security','issue','pr-review','deps','commit','changelog','docs','handover','standup','adr','context','opensource'] as const;
+// Add-ons that run no model: no engine target is sent (their m or follow-ups ask for one themselves).
+export const LOCAL_ADDON_COMMANDS:readonly string[]=['bisect','standup'];
+export const ADDON_HINTS:Readonly<Record<string,string>>={plan:'<goal>',prompt:'<file or text>',explain:'<path or question>',teach:'[agent]',fix:'<error text or file>',cover:'[path]',bisect:'<test command> [good ref]',refactor:'[path]',perf:'[path or command]',types:'[path]',failures:'[path]',security:'[path]','review-deep':'[agent]',issue:'<#number or issue URL>','pr-review':'<#number or PR URL>',deps:'[path]',commit:'[agent]',changelog:'[from..to]',docs:'[path]',handover:'[path]',standup:'',adr:'<decision>',context:'[path]',opensource:'[path]'};
 export const commandRegistry:readonly Command[]=[
  {name:'/model',description:'Choose model and provider',current:c=>`${c.model??'CLI default'} · ${c.engine==='codex'?'codex':'claude code'}`},
  {name:'/cd',description:'Choose the next agent folder',current:c=>c.cwd},
@@ -61,6 +63,17 @@ export const commandRegistry:readonly Command[]=[
  {name:'/perf',description:'Measure, optimize in a worktree, then an A/B before and after (asks first)',argumentHint:()=>ADDON_HINTS.perf??'',current:none},
  {name:'/types',description:'Read-only type-design review; f fixes a finding in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.types??'',current:none},
  {name:'/failures',description:'Read-only hunt for silently swallowed errors; a long, expensive read (asks first)',argumentHint:()=>ADDON_HINTS.failures??'',current:none},
+ {name:'/issue',description:'Work a GitHub issue in a worktree, read with your gh login; /pr publishes (asks first)',argumentHint:()=>ADDON_HINTS.issue??'',current:none},
+ {name:'/pr-review',description:'Read-only review of a GitHub pull request; c copies it, nothing is posted (asks first)',argumentHint:()=>ADDON_HINTS['pr-review']??'',current:none},
+ {name:'/deps',description:'Outdated and vulnerable dependencies; the agent upgrades in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.deps??'',current:none},
+ {name:'/commit',description:'A commit message for the staged changes or an agent\'s work; c copies, y commits in its worktree (asks first)',argumentHint:()=>ADDON_HINTS.commit??'',values:c=>c.agents??[],current:none},
+ {name:'/changelog',description:'A changelog section from git history; c copies, w writes it in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.changelog??'',current:none},
+ {name:'/docs',description:'Bring README and docs up to date with the code, in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.docs??'',current:none},
+ {name:'/handover',description:'Write a handover for this repository in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.handover??'',current:none},
+ {name:'/standup',description:'What every agent did today, from AI Term\'s records; no model; m polishes it',current:none},
+ {name:'/adr',description:'Write a decision record into the repository\'s decision log, in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.adr??'',current:none},
+ {name:'/context',description:'Audit what an agent loads here: size, contradictions, stale rules; read-only (asks first)',argumentHint:()=>ADDON_HINTS.context??'',current:none},
+ {name:'/opensource',description:'Is this repository ready to be public? Read-only scan; f fixes what files can fix (asks first)',argumentHint:()=>ADDON_HINTS.opensource??'',current:none},
  {name:'/security',description:'Read-only security review and bug-bounty hunt, reproduced against this repo only (asks first)',argumentHint:()=>ADDON_HINTS.security??'',current:none},
  {name:'/dev',description:'Run the project\'s dev server in an agent\'s worktree on its own port (asks first; D55, off; /settings y)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/dev-cmd',description:'The project\'s dev server command, like npm run dev (none clears it)',argumentHint:()=>'<command> | none',current:none},
@@ -77,6 +90,10 @@ export const keyTable:readonly [string,string][]=[
  ['/types f · /failures, /security, /review deep ↑↓','Fix the selected finding in a worktree / select a finding to read it'],
  ['/perf a / Y','Run the A/B in the sandbox / without one, only after AI Term says there is none'],
  ['/bisect y / Y','Start in the test sandbox / start without one (capital Y) when there is none'],
+ ['/commit c / y','Copy the message / commit it in the agent\'s worktree (never in your checkout)'],
+ ['/changelog c / w','Copy the section / write it into CHANGELOG.md in a worktree'],
+ ['/pr-review c · /standup m','Copy the review (nothing is posted) / polish today\'s standup with a model'],
+ ['/opensource f','Fix every finding a file change can fix, in a worktree'],
  ['c','Empty field copies Claude last reply; cleaned session fallback (v0.2)'],['u','Empty field opens usage details by period and provider'],['/find ↑↓ / Enter / Esc','Select a hit / select its agent and scroll the preview to it / close'],['/doctor, /usage ↑↓ / PgUp / PgDn / Esc','Scroll / page / close'],
  ['/skills, /agents ←→ / ↑↓ / Space / Enter / Esc','Tab / item / on-off / read-only full file / close'],
  ['Paste','Over 1 line or 200 chars: [pasted · N lines]; 16 KB first-message limit'],

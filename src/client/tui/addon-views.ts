@@ -3,9 +3,9 @@ import type { TestResult } from '../../shared/test-run.js';
 import { testCommandText } from '../../shared/test-run.js';
 import { testsText } from './agent-card.js';
 
-// The lines of a batch-1 add-on result (v1.1). Pure: the panel owns the keys and passes what is selected or revealed.
+// The lines of a batch-1 and batch-2 add-on result (v1.1). Pure: the panel owns the keys and passes what is selected or revealed.
 // Every status keeps its glyph and a word (never color alone).
-export interface ResultView { selected: number; picked: ReadonlySet<number>; tests: TestResult | null; ab: AbView | null; applied: string | null; quiz: 'hidden' | 'offered' | 'declined' | { question: number; answer: boolean } }
+export interface ResultView { selected: number; picked: ReadonlySet<number>; tests: TestResult | null; ab: AbView | null; applied: string | null; quiz: 'hidden' | 'offered' | 'declined' | { question: number; answer: boolean }; commits?: boolean }
 type Batch = Exclude<AddonResult, { kind: 'plan' | 'prompt' | 'explain' }>;
 const SEVERITY: Record<Finding['severity'], string> = { critical: '✗ CRITICAL', high: '✗ HIGH', medium: '● MEDIUM', low: '· LOW' };
 const testsLine = (tests: TestResult | null): string => `tests (AI Term's sandbox): ${tests ? testsText(tests).text : 'not run yet · they run when the agent finishes, if the project has a /test-cmd'}`;
@@ -19,7 +19,27 @@ function findingLines(kind: FindingsKind, r: { summary: string; findings: Findin
   return [r.summary, ...r.dropped ? [`${r.dropped} finding${r.dropped === 1 ? '' : 's'} dropped: the reproduction reached outside this repository`] : [], '',
     ...r.findings.length ? windowed(r.findings, view.selected, (f, i) => `${i === view.selected ? '›' : ' '} ${SEVERITY[f.severity]} ${f.file}:${f.line} ${f.title}`) : ['✓ no findings'],
     ...chosen ? ['', `${chosen.file}:${chosen.line}${chosen.reviewer ? ` · ${chosen.reviewer} reviewer` : ''}`, ...chosen.detail.split('\n'), ...chosen.fix ? [`Fix: ${chosen.fix}`] : [], ...chosen.reproduction ? ['Reproduction (this repository only):', ...chosen.reproduction.split('\n')] : []] : [],
-    '', kind === 'types' && chosen ? view.applied ?? '↑↓ finding · f fixes this one in a worktree (Ask) · Esc closes' : r.findings.length ? '↑↓ finding · Esc closes' : 'Esc closes'];
+    '', findingKeys(kind, r.findings, chosen, view)];
+}
+function findingKeys(kind: FindingsKind, findings: readonly Finding[], chosen: Finding | undefined, view: ResultView): string {
+  const fixable = findings.filter(f => f.fix).length;
+  if (kind === 'types' && chosen) return view.applied ?? '↑↓ finding · f fixes this one in a worktree (Ask) · Esc closes';
+  if (kind === 'opensource' && fixable) return view.applied ?? `↑↓ finding · f fixes the ${fixable} a file change can fix, in a worktree (Ask) · Esc closes`;
+  if (kind === 'pr-review') return `${findings.length ? '↑↓ finding · ' : ''}c copies the review · nothing is posted to GitHub · Esc closes`;
+  return findings.length ? '↑↓ finding · Esc closes' : 'Esc closes';
+}
+const made = (summary: string, files: readonly string[], extra: string[], tests: TestResult | null | undefined, hint: string) =>
+  [summary, `Changed: ${files.join(', ') || 'nothing'}`, ...extra, ...tests !== undefined ? [testsLine(tests)] : [], `Work is in the agent's worktree · d shows its diff on the homepage · ${hint}Esc closes`];
+// What c copies, for the results that have something to copy.
+export function copyText(r: AddonResult): string | null {
+  switch (r.kind) {
+    case 'commit': return r.body.trim() ? `${r.subject}\n\n${r.body.trim()}` : r.subject;
+    case 'changelog': return r.section;
+    case 'standup': return r.lines.join('\n');
+    case 'standup-polish': return r.text;
+    case 'pr-review': return [r.summary, ...r.findings.map(f => `${f.severity.toUpperCase()} ${f.file}:${f.line} ${f.title}\n  ${f.detail.replace(/\n/g, '\n  ')}`)].join('\n');
+    default: return null;
+  }
 }
 export function batchLines(r: Batch, view: ResultView): string[] {
   switch (r.kind) {
@@ -43,7 +63,14 @@ export function batchLines(r: Batch, view: ResultView): string[] {
           : [`✓ A/B · ${ab.rounds} runs each, alternating, ${ab.sandbox ? 'sandboxed' : 'without a sandbox'}`, `  before: ${ab.beforeMs} ms median`, `  after:  ${ab.afterMs} ms median${change === null ? '' : ` · ${change > 0 ? '+' : ''}${change}%`}`],
         'Esc closes'];
     }
-    case 'types': case 'failures': case 'review-deep': case 'security': return findingLines(r.kind, r, view);
+    case 'types': case 'failures': case 'review-deep': case 'security': case 'pr-review': case 'context': case 'opensource': return findingLines(r.kind, r, view);
+    case 'issue': return made(r.summary, r.files, [], view.tests, "/pr <agent> opens a pull request when you're ready · ");
+    case 'docs': case 'handover': case 'adr': return made(r.summary, r.files, [], undefined, '');
+    case 'deps': return made(r.summary, r.files, [...r.upgraded.length ? ['Upgraded:', ...r.upgraded.map(u => `  ${u}`)] : [], ...r.skipped.length ? ['Skipped:', ...r.skipped.map(u => `  ${u}`)] : []], view.tests, '');
+    case 'commit': return [r.subject, ...r.body ? ['', ...r.body.split('\n')] : [], '', view.applied ?? (view.commits ? "c copies it · y commits it in the agent's worktree, with your name · Esc closes" : 'c copies it · AI Term never commits in your checkout · Esc closes')];
+    case 'changelog': return [...r.section.split('\n'), '', view.applied ?? 'c copies it · w writes it into CHANGELOG.md in a worktree (Ask) · Esc closes'];
+    case 'standup': return ['no model · no tokens · from AI Term\'s own records', ...r.lines, '', 'c copies it · m polishes it with a model (asks first) · Esc closes'];
+    case 'standup-polish': return [...r.text.split('\n'), '', 'c copies it · Esc closes'];
     case 'bisect': return [`First bad commit: ${r.commit.slice(0, 12)} ${r.subject}`, `${r.author} · ${r.date} · ${r.steps} step${r.steps === 1 ? '' : 's'} tested`, 'git bisect reset ran and the temporary copy was removed; your checkout was never touched.', '', ...r.diff];
   }
 }

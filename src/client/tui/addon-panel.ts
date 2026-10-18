@@ -5,9 +5,9 @@ import type { AddonAsk } from '../../shared/addons.js';
 import { AB_NO_SANDBOX, type AbView, type AddonResult } from '../../shared/addon-results.js';
 import type { TaskUsage } from '../../shared/protocol.js';
 import type { TestResult } from '../../shared/test-run.js';
-import { batchLines, teachEnd, type ResultView } from './addon-views.js';
+import { batchLines, copyText, teachEnd, type ResultView } from './addon-views.js';
 import { testCommandText } from '../../shared/test-run.js';
-interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void }
+interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void }
 export class AddonPanel {
   private panel: TextPanel; private ask?: AddonAsk; private result?: AddonResult;
   private chunk = 0; private selected = 0; private approved = false; private busy = false;
@@ -19,8 +19,8 @@ export class AddonPanel {
   wait(message = 'Running in Ask mode · close this popup to inspect or attach the agent.'): void { this.busy = true; this.show([message, 'Esc closes']); }
   // A refused action on a shown result: say why above the result and keep it usable (review: busy stayed on).
   fail(message: string): void { if (!this.result) { this.wait(message); return; } this.problem = message; this.busy = false; this.refresh(); }
-  setAsk(ask: AddonAsk): void { this.ask = ask; this.busy = false; this.result = undefined; this.show(ask.bisect ? this.bisectAsk(ask, ask.bisect) : [
-    `/${ask.name} · ${ask.summary}`, ...ask.cost === 'high' ? [this.expensive(ask)] : [], `${ask.target?.engine ?? 'no engine'} · ${ask.target?.model ?? 'CLI default'} · ${ask.authLabel ?? (ask.subscription ? 'subscription' : 'API key')} · Ask`,
+  setAsk(ask: AddonAsk): void { this.ask = ask; this.busy = false; this.result = undefined; this.show(ask.bisect ? this.bisectAsk(ask, ask.bisect) : ask.free ? [`/${ask.name} · ${ask.summary}`, 'no model · no tokens', ...ask.facts ?? []] : [
+    `/${ask.name} · ${ask.summary}`, ...ask.cost === 'high' ? [this.expensive(ask)] : [], ...ask.facts ?? [], `${ask.target?.engine ?? 'no engine'} · ${ask.target?.model ?? 'CLI default'} · ${ask.authLabel ?? (ask.subscription ? 'subscription' : 'API key')} · Ask`,
     `folder: ${ask.cwd}`, ...ask.subject ? [ask.subject] : [], `${ask.readOnly ? 'read-only' : 'can edit'} · worktree ${ask.worktree ? 'yes' : 'no'}`,
     `brain: ${ask.brain} · ${ask.brainNeed}`, ...(ask.brainNeed !== 'none' && ask.brain !== 'fresh' ? ['b builds the free local /brain first: folders, entry points and import ranks save repeated exploration.'] : []),
     `uses: ${ask.files.join(', ') || 'prompt only'}`, ...this.estimate(ask),
@@ -57,7 +57,8 @@ export class AddonPanel {
       if (this.chunk < r.chunks.length) this.show([...problem, actual, ...(this.chunk === 0 ? [r.why, ...r.diagram, ''] : []), ...r.chunks[this.chunk] ?? [], `Space next · ${this.chunk + 1}/${r.chunks.length} · Esc closes`]);
       else this.show(r.kind === 'teach' ? [actual, ...teachEnd(r, this.quiz)] : [actual, 'Recap · Esc closes', ...r.recap]);
     }
-    else this.show([...problem, actual, ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz })]);
+    // AI Term's own facts (what it read before the model ran) stay above the result.
+    else this.show([...problem, ...r.kind === 'standup' ? [] : [actual], ...this.ask?.facts ?? [], ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz, commits: this.ask?.commits === true })]);
   }
   private move(key: 'up' | 'down', count: number): void { this.selected = Math.max(0, Math.min(count - 1, this.selected + (key === 'up' ? -1 : 1))); this.panel.resetScroll(); this.refresh(); }
   key(key: string): void {
@@ -84,6 +85,13 @@ export class AddonPanel {
     else if (r?.kind === 'refactor' && key === 'r' && this.picked.size && !this.applied) { this.busy = true; this.actions.apply?.([...this.picked].sort((a, b) => a - b)); }
     else if ((r?.kind === 'types' || r?.kind === 'failures' || r?.kind === 'review-deep' || r?.kind === 'security') && (key === 'up' || key === 'down') && r.findings.length) this.move(key, r.findings.length);
     else if (r?.kind === 'types' && key === 'f' && r.findings[this.selected] && !this.applied) { this.busy = true; this.actions.apply?.([this.selected]); }
+    else if ((r?.kind === 'pr-review' || r?.kind === 'context' || r?.kind === 'opensource') && (key === 'up' || key === 'down') && r.findings.length) this.move(key, r.findings.length);
+    else if (r?.kind === 'opensource' && key === 'f' && !this.applied && r.findings.some(f => f.fix)) { this.busy = true; this.actions.apply?.(r.findings.flatMap((f, i) => f.fix ? [i] : [])); }
+    else if (r && key === 'c' && copyText(r) !== null) this.actions.copy(copyText(r) ?? '');
+    // y commits only a message written for an agent's worktree; the daemon checks again.
+    else if (r?.kind === 'commit' && key === 'y' && this.ask?.commits && !this.applied) { this.busy = true; this.actions.commit?.(); }
+    else if (r?.kind === 'changelog' && key === 'w' && !this.applied) { this.busy = true; this.actions.apply?.([0]); }
+    else if (r?.kind === 'standup' && key === 'm') this.actions.polish?.(r.lines.join('\n'));
     else if (r?.kind === 'perf' && key === 'a' && this.ab?.state !== 'running' && this.ab?.state !== 'done' && !(this.ab?.state === 'failed' && this.ab.reason === AB_NO_SANDBOX)) { this.busy = true; this.actions.ab?.(false); }
     // Y only once AI Term said there is no sandbox for this A/B.
     else if (r?.kind === 'perf' && key === 'Y' && this.ab?.state === 'failed' && this.ab.reason === AB_NO_SANDBOX) { this.busy = true; this.actions.ab?.(true); }

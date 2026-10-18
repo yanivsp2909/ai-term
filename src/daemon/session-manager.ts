@@ -702,6 +702,59 @@ export class SessionManager extends EventEmitter {
         do{room=Math.floor(room*0.9);cut=`${cutText(text,room)}\n(the diff is cut here; read the rest in the worktree)`;}while(room>0&&!fits(cut));
         return {title:live.info.title,cwd:live.info.worktree??live.info.cwd,diff:cut};
     }
+    // v1.1 batch 2: the data an add-on gets, read by AI Term read-only (gh, package queries, git, instruction files).
+    async addonGather(kind:import('../shared/addons.js').AddonInput,cwd:string,args:string):Promise<Gathered>{
+        const top=await repoTopLevel(cwd);if(!top)throw new Error("This folder isn't in a git repository");
+        switch(kind){
+            case 'github-issue': case 'github-pr':
+                return githubView(kind==='github-issue'?'issue':'pr',args,{gh:await resolveExecutable('gh',process.env.PATH??''),cwd:top,env:buildGhEnv(process.env)});
+            case 'deps': return {...await depsQueries(top,{path:process.env.PATH??'',env:buildTestEnv(process.env)}),subject:'outdated and vulnerable dependencies'};
+            case 'commit':{
+                if(!args.trim())return stagedChanges(top);
+                const agent=await this.addonAgent(args.trim());
+                return {data:agent.diff,subject:`agent: ${agent.title} (y commits there)`,facts:[`changes in ${agent.title}'s worktree`],cwd:agent.cwd,commitAgent:args.trim()};
+            }
+            case 'git-range': return changelogRange(top,args);
+            case 'context':{
+                // The skills and agents an agent here would load (D48, read-only): names, sizes and descriptions.
+                const catalog=new ExtensionReader(homedir(),top).scan((await new SettingsStore(this.paths.root).get()).extensions),loaded=catalog.items.filter(item=>item.enabled&&item.kind!=='command');
+                const total=loaded.reduce((n,item)=>n+item.tokens,0);
+                return contextFiles(top,{facts:[`loaded skills and agents: ${loaded.length}, ≈${total.toLocaleString('en-US')} tokens`],data:['Loaded skills and agents (name, tokens, description):',...loaded.slice(0,80).map(item=>`${item.kind} ${item.name} ≈${item.tokens} — ${item.description}`)]});
+            }
+            case 'opensource': return {...await opensourceScan(top),subject:'release readiness of this repository'};
+            default: throw new Error('Nothing to gather for this add-on');
+        }
+    }
+    // v1.1 /commit y: the agent's own work, committed in its own worktree with your name (from your git config), hooks
+    // off. Never in your checkout: the worktree is the one AI Term recorded for this agent, checked again here.
+    async addonCommit(id:string,message:string):Promise<string>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        if(typeof message!=='string'||!message.trim()||Buffer.byteLength(message)>8000||/[\p{C}]/u.test(message.replace(/[\n\t]/g,'')))throw new Error('Invalid commit message');
+        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
+        if(this.working(live))throw new Error('The agent is still working; commit when it has finished');
+        const {path}=await this.diffTarget(live);
+        if(!(await runGit(path,['status','--porcelain','-z','--'])).trim())throw new Error("Nothing to commit in this agent's worktree");
+        const identity=async(key:string)=>(await runGit(path,['config','--get',key],'Git check failed',{env:{GIT_CONFIG_GLOBAL:this.userGit.globalConfig}}).catch((error:unknown)=>{if(error instanceof GitError)return '';throw error;})).trim();
+        const name=await identity('user.name'),email=await identity('user.email');
+        if(!name||!email)throw new Error('Set your git user.name and user.email first');
+        await runGit(path,['add','-A','--','.'],'Git check failed',{timeout:60_000});
+        await runGit(path,['commit','--quiet','--no-verify','--no-gpg-sign','-F','-','--'],'Git check failed',{input:message,timeout:60_000,env:{GIT_AUTHOR_NAME:name,GIT_AUTHOR_EMAIL:email,GIT_COMMITTER_NAME:name,GIT_COMMITTER_EMAIL:email}});
+        return (await runGit(path,['rev-parse','--short','--verify','--end-of-options','HEAD'])).trim();
+    }
+    // v1.1 /standup: today's agents from AI Term's own records; no model, no tokens.
+    async addonStandup():Promise<string[]>{
+        const today=new Date().toDateString(),seen=(iso:string|null|undefined)=>!!iso&&new Date(iso).toDateString()===today,lines:string[]=[];
+        for(const live of this.sessions.values()){
+            const info=live.info;if(info.engine==='shell'||!(seen(info.createdAt)||seen(info.statusSince)||seen(info.lastOutputAt)))continue;
+            let commits='no worktree';
+            // Only the agent's own commits: after its recorded start, not the history its branch carries.
+            const base=info.worktree?this.worktreeRecords.get(info.worktree)?.baseCommit:undefined;
+            if(info.worktree&&base&&/^[0-9a-f]{40,64}$/.test(base))try{const n=(await runGit(info.worktree,['log','--since=midnight','--format=%h','--end-of-options',`${base}..HEAD`,'--'])).split('\n').filter(Boolean).length;commits=`${n} commit${n===1?'':'s'} today`;}catch(error){if(!(error instanceof GitError))throw error;commits='commits unreadable';}
+            const usage=info.taskUsage?`${info.taskUsage.tokens.toLocaleString('en-US')} tokens · ${info.taskUsage.unknownPrice?'price unknown':info.taskUsage.costUsd===null?'subscription':`$${info.taskUsage.costUsd.toFixed(2)}`}`:'no usage reported';
+            lines.push(`${info.title} · ${info.status} · ${commits} · ${usage}`);
+        }
+        return lines.length?lines:['No agent was active today'];
+    }
     // v1.1 /bisect: the plan reads your checkout only; whether a sandbox starts here decides y or a capital Y.
     async addonBisectPlan(cwd:string,args:string):Promise<BisectAsk>{
         const repo=await repoTopLevel(cwd);if(!repo)throw new BisectError("This folder isn't in a git repository; /bisect needs one");
@@ -1734,7 +1787,13 @@ import { AddonService, type AddonRunOptions } from './addons.js';
 import { bisectPlan, BisectError, runBisect } from './bisect.js';
 import { AB_RUN_TIMEOUT_MS, copyBenchFile, runAb } from './perf-ab.js';
 import { tempClone } from './temp-clone.js';
-import { buildBisectEnv } from './env.js';
+import { githubView } from './github.js';
+import { depsQueries } from './deps-query.js';
+import { opensourceScan } from './opensource-scan.js';
+import { changelogRange, contextFiles, stagedChanges, type Gathered } from './addon-gather.js';
+import { ExtensionReader } from '../agent/extensions/reader.js';
+import { resolveExecutable } from './engines.js';
+import { buildBisectEnv, buildGhEnv } from './env.js';
 import { AB_NO_SANDBOX, type AbView, type AddonResult } from '../shared/addon-results.js';
 import type { BisectAsk } from '../shared/addons.js';
 import { isTestCommand } from '../shared/test-run.js';

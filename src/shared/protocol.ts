@@ -141,6 +141,7 @@ export type Request = {
   | {kind:'addons.start';receipt:string;unsandboxed?:true}
   | {kind:'addons.apply';sessionId:string;items:number[]}
   | {kind:'addons.ab';sessionId:string;unsandboxed:boolean}
+  | {kind:'addons.commit';sessionId:string}
   | {kind:'addons.result'|'addons.approve';sessionId:string}
   | {kind:'addons.step';sessionId:string;step:number}
   | {kind:'extensions.list';cwd:string} | {kind:'extensions.read';cwd:string;extensionId:string} | {kind:'extensions.toggle';cwd:string;extensionId:string;enabled:boolean} | {
@@ -263,6 +264,7 @@ export interface SuccessResponse {
     addonRun?: string;
     addonTests?: import('./test-run.js').TestResult | null;
     addonAb?: import('./addon-results.js').AbView | null;
+    addonCommit?: string;
     addonUsage?: TaskUsage | null;
     savedPlan?: string;
     kind?: 'hello';

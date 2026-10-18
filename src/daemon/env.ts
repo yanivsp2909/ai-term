@@ -176,6 +176,15 @@ export function buildTestEnv(base:NodeJS.ProcessEnv):Record<string,string>{
     return {...result,CI:'1',NO_COLOR:'1',FORCE_COLOR:'0',TERM:'dumb',PAGER:'cat',GIT_PAGER:'cat',GIT_TERMINAL_PROMPT:'0'};
 }
 
+// v1.1 /issue and /pr-review: gh runs read-only with your own login (its stored credential), never a token from the
+// environment: GH_TOKEN, GITHUB_TOKEN and every other key or token variable stay out, and gh never prompts or pages.
+const GH_BASE_VARS=['PATH','HOME','USER','LOGNAME','LANG','LC_ALL','TMPDIR','XDG_CONFIG_HOME','GH_CONFIG_DIR','GH_HOST'];
+export function buildGhEnv(base:NodeJS.ProcessEnv):Record<string,string>{
+    const result=pick(base,GH_BASE_VARS);
+    for(const name of Object.keys(result))if(/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AITERM|AI_TERM/i.test(name)||/sk-|ghp_|gho_|github_pat_/.test(result[name]??''))delete result[name];
+    return {...result,GH_PROMPT_DISABLED:'1',GH_NO_UPDATE_NOTIFIER:'1',GH_SPINNER_DISABLED:'1',GH_PAGER:'cat',NO_COLOR:'1',CLICOLOR:'0'};
+}
+
 // v1.1 /bisect: the test env, with git told to skip your global and system config (aliases, hooks, filters), so the bisect
 // in its temporary copy runs only git's defaults. GIT_DIR and the like never reach it: the test env doesn't carry them.
 export function buildBisectEnv(base:NodeJS.ProcessEnv):Record<string,string>{

@@ -1,0 +1,63 @@
+import { lstat } from 'node:fs/promises';
+import { relative } from 'node:path';
+import { GitError, runGit } from './git.js';
+import { addonFile } from '../agent/addon-bundle.js';
+import { JailError, resolveInside } from '../agent/jail.js';
+import { isFsError } from '../shared/paths.js';
+import { fitEscaped } from './addon-text.js';
+
+// v1.1 batch 2: what AI Term reads itself, read-only, before an add-on's model runs. Each returns the data the model gets
+// (cut to fit its first message), the subject the popup names, and AI Term's own facts shown before you start.
+export interface Gathered { data: string; subject: string; facts: string[]; cwd?: string; commitAgent?: string }
+export const GATHER_DATA_BYTES = 9000, CHANGELOG_COMMITS = 300;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// /changelog [from..to]: two revision words joined by .., neither one able to read as an option. Default: since the
+// latest tag, or the last 50 commits when there is none.
+const REV = '[A-Za-z0-9_./~^@{}][A-Za-z0-9_./~^@{}-]*';
+export async function changelogRange(repo: string, args: string): Promise<Gathered> {
+  const wanted = args.trim();
+  if (wanted && !new RegExp(`^${REV}\\.\\.(?:${REV})?$`).test(wanted)) throw new Error('/changelog [from..to] · two refs joined by .., like v1.2.0..HEAD');
+  let range = wanted, limit = CHANGELOG_COMMITS;
+  if (!range) {
+    // describe exits non-zero when there's no tag: then the last 50 commits.
+    const tag = await runGit(repo, ['describe', '--tags', '--abbrev=0', '--end-of-options', 'HEAD']).then(out => out.trim(), (error: unknown) => { if (error instanceof GitError) return ''; throw error; });
+    range = tag ? `${tag}..HEAD` : 'HEAD'; if (!tag) limit = 50;
+  }
+  const log = (await runGit(repo, ['log', '--no-merges', `--max-count=${limit}`, '--no-color', '--format=%h%x09%an%x09%s', '--end-of-options', range, '--'], 'Git check failed', { maxBuffer: 4 * 1024 * 1024 })).split('\n').filter(Boolean);
+  const label = range === 'HEAD' ? `the last ${log.length} commits` : `range ${range}`;
+  return { data: fitEscaped([`Commits (${label}; hash, author, subject):`, ...log].join('\n'), GATHER_DATA_BYTES), subject: label, facts: [`${label} · ${plural(log.length, 'commit')}`] };
+}
+
+// /context: AGENTS.md and CLAUDE.md at the repository's top, with their @imports (one level, inside the repository
+// only), numbered so findings can name a line. Sizes are AI Term's estimate (bytes / 4).
+export const CONTEXT_FILES = ['AGENTS.md', 'CLAUDE.md'], CONTEXT_IMPORTS = 8, CONTEXT_FILE_MAX = 64 * 1024;
+const tokens = (text: string) => Math.ceil(Buffer.byteLength(text) / 4);
+const regular = async (path: string) => { try { return (await lstat(path)).isFile(); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return false; throw error; } };
+export async function contextFiles(repo: string, extra: { facts: string[]; data: string[] } = { facts: [], data: [] }): Promise<Gathered> {
+  const facts: string[] = [], parts: string[] = [], seen = new Set<string>(), queue = [...CONTEXT_FILES];
+  for (let n = 0; n < queue.length && seen.size < CONTEXT_FILES.length + CONTEXT_IMPORTS; n++) {
+    const name = queue[n] ?? '';
+    let full: string;
+    try { full = await resolveInside(repo, name); } catch (error) { if (error instanceof JailError) { facts.push(`skipped: ${name} (outside the repository)`); continue; } throw error; }
+    const shown = relative(repo, full);
+    if (seen.has(shown) || !await regular(full)) continue;
+    seen.add(shown);
+    const text = await addonFile(repo, shown, CONTEXT_FILE_MAX);
+    facts.push(`${shown} ≈${tokens(text).toLocaleString('en-US')} tokens`);
+    parts.push(`File ${shown}:`, ...text.split('\n').map((line, i) => `${shown}:${i + 1}: ${line}`));
+    for (const line of text.split('\n')) { const m = line.match(/^@(\S+)$/); if (m?.[1] && CONTEXT_FILES.includes(name)) queue.push(m[1]); }
+  }
+  if (!seen.size) facts.push('no AGENTS.md or CLAUDE.md at the repository top');
+  return { data: fitEscaped([...parts, ...extra.data].join('\n'), GATHER_DATA_BYTES), subject: 'instruction files and loaded skills', facts: [...facts, ...extra.facts] };
+}
+
+// /commit in your checkout: only what is staged, read-only. Nothing staged is said, not guessed.
+export async function stagedChanges(repo: string): Promise<Gathered> {
+  const flags = ['--no-color', '--no-ext-diff', '--no-textconv'];
+  const stat = (await runGit(repo, ['diff', '--cached', '--numstat', ...flags, '--'], 'Git check failed', { maxBuffer: 4 * 1024 * 1024 })).split('\n').filter(Boolean);
+  if (!stat.length) throw new Error('Nothing is staged in this folder · git add what belongs in the commit, or /commit <agent>');
+  const added = stat.reduce((n, l) => n + (Number(l.split('\t')[0]) || 0), 0), removed = stat.reduce((n, l) => n + (Number(l.split('\t')[1]) || 0), 0);
+  const patch = await runGit(repo, ['diff', '--cached', '--unified=3', ...flags, '--'], 'Git check failed', { maxBuffer: 32 * 1024 * 1024 });
+  return { data: fitEscaped(patch, GATHER_DATA_BYTES), subject: 'staged in your checkout (c copies; AI Term never commits here)', facts: [`staged: ${plural(stat.length, 'file')}, +${added} −${removed}`] };
+}
