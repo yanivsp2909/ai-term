@@ -134,9 +134,8 @@ export class QueueService extends EventEmitter {
     // while the panel said failed).
     try { this.manager.setQueueLimit(session.id, item.limit, note => { item.note = note; this.save().catch(() => this.log.error(UNSAVED)); }); }
     catch {
-      item.note = "its limit couldn't be set, so AI Term stopped it";
-      this.log.error('Queued agent started, but its limit could not be set; it was stopped');
-      await this.manager.stop(session.id).catch(() => this.log.error('Queued agent without its limit could not be stopped; stop it on the homepage'));
+      try { await this.manager.stop(session.id); item.note = "its limit couldn't be set, so AI Term stopped it"; this.log.error('Queued agent started, but its limit could not be set; it was stopped'); }
+      catch { item.note = "its limit couldn't be set and AI Term couldn't stop it: stop it on the homepage"; this.log.error('Queued agent without its limit could not be stopped; stop it on the homepage'); }
     }
     await this.save().catch(() => this.log.error(UNSAVED));
   }

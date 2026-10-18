@@ -94,13 +94,23 @@ function reverseFacts(plan: ReversePlan): string[] {
   return [`target: ${tail(plan.target, 200)} · read-only: neither the agent nor REA can change it`, `REA: ${tail(plan.rea, 160)} · your install; AI Term never installs it · only this agent uses it`,
     "REA runs in a sandbox: no network · no key folders · it writes only its own state and temp files", "● y confirms this target is yours, or that you're allowed to analyze it"];
 }
+export const RUN_FAILED = 'The add-on run failed; the daemon log says why';
 const exists = async (path: string): Promise<boolean> => { try { await lstat(path); return true; } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return false; throw error; } };
 export class AddonService {
   private receipts = new Map<string, { input: Input; ask: AddonAsk; expires: number }>();
   private runs = new Map<string, Run>();
   // Sessions whose finished turns run the project's tests in the sandbox even with auto-test off (/fix, /cover, /refactor).
   private tests = new Set<string>();
-  constructor(private root: string, private definitions: string, private runner: Runner, private price: (target: AddonTarget, input: AddonAsk['inputTokens'], output: AddonAsk['outputTokens']) => Promise<AddonAsk['priceUsd']> = async () => null) {}
+  // log: where a background run's unexpected failure is recorded (its class and code only; S5).
+  constructor(private root: string, private definitions: string, private runner: Runner, private price: (target: AddonTarget, input: AddonAsk['inputTokens'], output: AddonAsk['outputTokens']) => Promise<AddonAsk['priceUsd']> = async () => null, private log: (text: string) => void = () => {}) {}
+  // A background run keeps its own refusal for the popup; anything else (a system error that may name a path) becomes one
+  // fixed line, and the log says what kind of error it was (follow-up review).
+  private runFailure(error: unknown): string {
+    if (error instanceof AddonError) return error.message;
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? ` ${error.code}` : '';
+    this.log(`Add-on run failed (${error instanceof Error ? error.constructor.name : typeof error}${code})`);
+    return RUN_FAILED;
+  }
   wantsTests(id: string): boolean { return this.tests.has(id); }
   // A scope inside the folder (default the whole folder); never a credential or env file.
   private async scope(cwd: string, args: string): Promise<string> {
@@ -248,7 +258,7 @@ export class AddonService {
     const bisect = this.runner.addonBisect; if (!bisect) throw new AddonError('Bisect is unavailable');
     if (!plan.sandbox && !unsandboxed) throw new AddonError('No sandbox here · press Y to run the test command with your rights');
     const id = randomUUID(), run: Run = { input, nonce: '' }; this.runs.set(id, run);
-    void bisect.call(this.runner, input.cwd, plan, !plan.sandbox && unsandboxed).then(result => { run.result = result; }, (error: unknown) => { run.error = error instanceof Error ? error.message : 'Bisect failed'; });
+    void bisect.call(this.runner, input.cwd, plan, !plan.sandbox && unsandboxed).then(result => { run.result = result; }, (error: unknown) => { run.error = this.runFailure(error); });
     return id;
   }
   // /standup (and /study's due list): AI Term's own records, read in the background like a run.
@@ -257,7 +267,7 @@ export class AddonService {
     const work = input.addon.local === 'standup' && this.runner.addonStandup ? this.runner.addonStandup().then((lines): AddonResult => ({ kind: 'standup', lines }))
       : input.addon.local === 'study-due' ? dueStudies(this.root).then((topics): AddonResult => ({ kind: 'study-due', topics }))
       : Promise.reject(new Error('This add-on is unavailable'));
-    void work.then(result => { run.result = result; }, (error: unknown) => { run.error = error instanceof Error ? error.message : 'Add-on failed'; });
+    void work.then(result => { run.result = result; }, (error: unknown) => { run.error = this.runFailure(error); });
     return id;
   }
   async result(id: string): Promise<AddonResult | null> {
