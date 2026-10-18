@@ -155,3 +155,41 @@ it('MEDIUM (follow-up): /deps never contacts a host a manifest names, and reads 
   const text = await readFile(log, 'utf8');
   expect(text).not.toContain('evil'); expect(text).toContain('GOPROXY=https://proxy.golang.org'); expect(text).toContain('GOVCS=*:off');
 });
+
+it('LOW-MEDIUM (follow-up): /context never imports git\'s own files; every fact stays a short plain line', async () => {
+  const { contextFiles } = await import('../src/daemon/addon-gather.js');
+  const { validateAddonAsk } = await import('../src/shared/addons.js');
+  const { randomUUID } = await import('node:crypto');
+  const dir = await temp(), repo = join(dir, 'repo'); await mkdir(join(repo, '.git'), { recursive: true });
+  await writeFile(join(repo, '.git', 'config'), '[remote "origin"]\n\turl = https://token123@github.com/o/r\n');
+  const odd = `\u001b${'é'.repeat(110)}.md`; await writeFile(join(repo, odd), 'odd\n');
+  await writeFile(join(repo, 'AGENTS.md'), `@.git/config\n@${odd}\n`);
+  const found = await contextFiles(repo);
+  expect(found.data).not.toContain('token123'); expect(found.facts).toContain('skipped: .git/config (git\'s own files)');
+  expect(() => validateAddonAsk({ receipt: randomUUID(), name: 'context', summary: 's', cwd: '/tmp', target: { engine: 'codex', model: null, auth: { kind: 'account' } }, brain: 'none', brainNeed: 'none', worktree: false, readOnly: true, files: [], inputTokens: { low: 0, high: 1 }, outputTokens: { low: 0, high: 1 }, priceUsd: { low: 0, high: 0 }, subscription: true, facts: found.facts })).not.toThrow();
+});
+
+it('LOW (follow-up): a credential file renamed in the staged changes stays left out, and more credential names are known', async () => {
+  const { stagedChanges } = await import('../src/daemon/addon-gather.js');
+  const { SECRET_FILE } = await import('../src/shared/review.js');
+  const { execFile } = await import('node:child_process'), { promisify } = await import('node:util'), run = promisify(execFile);
+  const git = (cwd: string, ...args: string[]) => run('/usr/bin/git', ['-c', 'user.name=T', '-c', 'user.email=t@e.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd });
+  const dir = await temp(), repo = join(dir, 'repo'); await mkdir(repo); await git(dir, 'init', '-q', '--', repo);
+  await writeFile(join(repo, '.env'), 'DB_PASSWORD=hunter2\nOTHER=1\n'); await writeFile(join(repo, 'a.txt'), 'a\n'); await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-qm', 'first', '--');
+  await git(repo, 'mv', '--', '.env', 'settings.txt');
+  const staged = await stagedChanges(repo);
+  expect(staged.data).not.toContain('hunter2'); expect(staged.facts.join('\n')).toContain('left out');
+  for (const name of ['.pgpass', '.htpasswd', 'prod.tfstate', 'AuthKey_X.p8', '.dockercfg', '.docker/config.json']) expect(SECRET_FILE.test(name), name).toBe(true);
+});
+
+it('LOW (follow-up): a standup whose first line alone is too long is cut, not emptied', async () => {
+  const { AddonFlow } = await import('../src/client/tui/addon-flow.js');
+  const { randomUUID } = await import('node:crypto'), { vi } = await import('vitest');
+  const sent: { kind: string; args?: string }[] = [];
+  const flow = new AddonFlow('standup', '', '/tmp', [{ engine: 'claude-code', model: null, auth: { kind: 'account' } }], { request: async body => { sent.push(body as { kind: string }); if (body.kind === 'addons.plan') throw new Error('stop here'); return { id: randomUUID(), ok: true }; }, started: async () => {}, changed: () => {}, close: () => {} }, true);
+  flow.panel.setResult({ kind: 'standup', lines: ['x'.repeat(10_000)] });
+  (flow as unknown as { panel: { key(k: string): void } }).panel.key('m');
+  await vi.waitFor(() => expect(sent.some(s => s.kind === 'addons.plan')).toBe(true), { timeout: 10_000 });
+  expect(sent.find(s => s.kind === 'addons.plan')?.args).toBe('x'.repeat(9000));
+  flow.dispose();
+});
