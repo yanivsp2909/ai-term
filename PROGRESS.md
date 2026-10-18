@@ -1,6 +1,44 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 50590dc fix: /bisect links dependencies only into a sandbox that opened them for reading (B32 review)
+Last commit: Part A handover (this commit)
+Roadmap step: 2026-10-18 final long run (1.0) · Part A (B32) done · Part B (v1.0.7 /reverse) next
+Branch: main. Part A is pushed with this handover.
+
+## What works
+- B32: /bisect links your checkout's installed dependency folders (node_modules, .venv, venv, vendor: each a real folder, not a link, and not tracked at HEAD) into its temporary copy, readable but not writable, inside the D56 sandbox. `/bisect --no-deps <command>` (first word) leaves them out. The popup names the linked folders and says a commit that needs other dependency versions can misreport.
+- Without a sandbox (capital Y) nothing is linked and the popup lists no dependencies, because read-only would not hold there.
+- tests/addons-bisect-deps.test.ts: a real temporary Node repository whose `npm test` needs a dependency only node_modules has, with a planted bad commit at 6 of 10; sandboxed /bisect finds it, and the test's write through the link fails every time (your node_modules unchanged). `--no-deps` and Y stop with "also fails at".
+- README command list, /help and docs/user-guide.md updated; docs/architecture.md §12.27 has the B32 paragraph.
+
+## What's next
+- Part B: v1.0.7 /reverse.
+
+## Manual checks
+- typecheck: ran · exit 0. lint: ran · `eslint .` exit 0. build: ran · "ESM ⚡️ Build success in 43ms". app:build: ran · "✓ built in 56ms".
+- Full suite, default workers, twice in a row: ran · Test Files 276 passed (276), Tests 1849 passed | 7 skipped (1856), 39.74 s and 40.87 s.
+- Hidden Electron smoke (AI_TERM_BACKGROUND=1 npm run app:test): ran · 9 passed (36.5s).
+- Live /bisect in a real Node project: needs Yaniv · cd ~/ai-term && npm run dev  # in a Node repo with a known regression: /bisect npm test <good tag>, y
+
+## Gotchas
+- Where the code disagreed with the prompt: "link read-only, still inside the D56 sandbox" can only hold with a sandbox; without one (Y) the safer reading is no links at all. A committed vendor/ is already in the copy, so only untracked folders are linked.
+- Reviews (fresh context): TypeScript 1 HIGH (Y linked writable folders while the popup said read-only), 2 MEDIUM (a readable path the profile dropped still got a link; a commit that tracks a linked folder), 1 LOW (workspace links and venv base interpreters). Security: 0 CRITICAL/HIGH/MEDIUM; 1 LOW (a race between the plan's check and the sandbox's realpath), and the same Y note. Seatbelt write, rename, delete and hard-link routes through the link were all denied in its experiment.
+  - Pair: e94b791 RED → 50590dc fix (HIGH and the dropped-path MEDIUM). Feature pair: 78d91ca RED → 128e502.
+  - Not changed, with reasons: a commit that tracks node_modules/vendor makes git replace the link in the copy for the rest of the run (checked by hand: checkout succeeds, your folder untouched; this is the popup's "can misreport"). Workspace links inside node_modules pointing back into the checkout stay unreadable in the sandbox (documented). The LOW race needs an unsandboxed writer in your checkout, which already has your rights; the key folders stay closed either way.
+- Vitest writes a cache under node_modules/.vite: in the sandbox that write is refused, which vitest tolerates for results caching; a tool that requires writing into node_modules will fail there by design.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Read-only by sandbox: src/daemon/bisect.ts links a folder into the copy, but the link itself grants nothing. macOS Seatbelt checks every write against the real path, and only the copy and the run's temp folder are writable, so writing through the link is refused; Linux binds the folder read-only. That's why the link is made only when a sandbox actually opened the folder.
+
+---
+
+# Previous long run: 2026-10-18 (add-on batches 2 and 3)
+
+## Checkpoint
 Last code commit: 9742357 fix: batch-3 add-ons name their result shape
 Last commit: Part B handover (this commit)
 Roadmap step: 2026-10-18 long run · Part A (add-on batch 2) done · Part B (add-on batch 3, making things) done
