@@ -105,3 +105,22 @@ it('/study keeps a review schedule; /study alone lists what is due, with no mode
   await vi.waitFor(async () => expect(await service.result(run.run)).toMatchObject({ kind: 'study-due' }), { timeout: 10_000 });
   expect(runs).toHaveLength(1);
 });
+
+it('HIGH/LOW (reviews): a result may name only viewable files, a rendered diagram or video must include its rendering, sources carry no userinfo', () => {
+  expect(() => parseAddonResult(JSON.stringify({ ...batch3.deck, files: ['out/deck/run.command'] }), 'deck')).toThrow();
+  expect(() => parseAddonResult(JSON.stringify({ ...batch3.research, files: ['docs/research/page.html'] }), 'research')).toThrow();
+  expect(() => parseAddonResult(JSON.stringify({ ...batch3.diagram, rendered: true }), 'diagram')).toThrow();
+  expect(parseAddonResult(JSON.stringify({ ...batch3.diagram, files: ['docs/diagrams/processes.mmd', 'docs/diagrams/processes.svg'], rendered: true }), 'diagram')).toMatchObject({ rendered: true });
+  expect(() => parseAddonResult(JSON.stringify({ ...batch3.video, rendered: true }), 'video')).toThrow();
+  expect(() => parseAddonResult(JSON.stringify({ ...batch3.research, sources: ['https://github.com@evil.example/x'] }), 'research')).toThrow();
+});
+
+it('MEDIUM (reviews): /study records a topic once, cleaned up; never an empty one; a repeat the same day does not jump ahead', async () => {
+  const { repo, home, service } = await setup(), { recordStudy } = await import('../src/daemon/study.js');
+  const session = started(await service.start((await service.plan('study', '  git\tworktrees\n', repo, CODEX)).receipt)).id;
+  await Promise.all([service.result(session), service.result(session)]);
+  const schedule = JSON.parse(await readFile(join(home, 'study', 'schedule.json'), 'utf8')) as { topic: string; step: number }[];
+  expect(schedule).toEqual([expect.objectContaining({ topic: 'git worktrees', step: 0 })]);
+  await recordStudy(home, 'git worktrees'); await recordStudy(home, '   ');
+  expect(JSON.parse(await readFile(join(home, 'study', 'schedule.json'), 'utf8'))).toEqual([expect.objectContaining({ topic: 'git worktrees', step: 0 })]);
+});

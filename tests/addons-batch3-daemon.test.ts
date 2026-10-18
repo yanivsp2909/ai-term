@@ -70,3 +70,24 @@ it('o opens a made file with your default app; s copies it to Downloads without 
   await expect(m.addonFile(agent.id, '../outside.html', 'open')).rejects.toThrow();
   expect(opened).toHaveLength(1);
 });
+
+// ---- Batch 3 review findings (security HIGH/MEDIUM, TS MEDIUM-HIGH) ----
+it('HIGH (both reviews): o and s take only a viewable file type, never an executable one or one with extra links, and o opens a private copy', async () => {
+  const { dir, m, agent, tree } = await manager(), downloads = join(dir, 'Downloads'), opened: string[] = [];
+  await mkdir(downloads); SessionManager.downloads = downloads; SessionManager.fileOpener = async path => { opened.push(path); };
+  const deck = join(tree, 'out', 'deck'); await mkdir(deck, { recursive: true });
+  const { chmod, link } = await import('node:fs/promises');
+  await writeFile(join(deck, 'run.command'), '#!/bin/sh\ntouch pwned\n'); await chmod(join(deck, 'run.command'), 0o755);
+  await expect(m.addonFile(agent.id, 'out/deck/run.command', 'open')).rejects.toThrow('not a file type AI Term opens');
+  await writeFile(join(deck, 'x.html'), '<p>x</p>'); await chmod(join(deck, 'x.html'), 0o755);
+  await expect(m.addonFile(agent.id, 'out/deck/x.html', 'open')).rejects.toThrow('executable');
+  await writeFile(join(dir, 'private.md'), 'secret'); await link(join(dir, 'private.md'), join(deck, 'notes.md'));
+  await expect(m.addonFile(agent.id, 'out/deck/notes.md', 'save')).rejects.toThrow('one link');
+  await writeFile(join(deck, 'pitch.html'), '<h1>deck</h1>');
+  await m.addonFile(agent.id, 'out/deck/pitch.html', 'open');
+  // The opened file is AI Term's own private copy, not the agent's path: a swap after the check changes nothing.
+  expect(opened).toHaveLength(1); expect(opened[0]).not.toContain(tree); expect(opened[0]?.endsWith('.html')).toBe(true);
+  expect(await readFile(opened[0] ?? '', 'utf8')).toBe('<h1>deck</h1>');
+  SessionManager.downloads = join(dir, 'no-such-folder');
+  await expect(m.addonFile(agent.id, 'out/deck/pitch.html', 'save')).rejects.toThrow('No Downloads folder');
+});
