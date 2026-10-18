@@ -5,9 +5,9 @@ import type { AddonAsk } from '../../shared/addons.js';
 import { AB_NO_SANDBOX, type AbView, type AddonResult } from '../../shared/addon-results.js';
 import type { TaskUsage } from '../../shared/protocol.js';
 import type { TestResult } from '../../shared/test-run.js';
-import { batchLines, copyText, teachEnd, type ResultView } from './addon-views.js';
+import { batchLines, copyText, hasOutputs, teachEnd, type ResultView } from './addon-views.js';
 import { testCommandText } from '../../shared/test-run.js';
-interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void }
+interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; file?(index: number, action: 'open' | 'save'): void }
 export class AddonPanel {
   private panel: TextPanel; private ask?: AddonAsk; private result?: AddonResult;
   private chunk = 0; private selected = 0; private approved = false; private busy = false;
@@ -53,9 +53,9 @@ export class AddonPanel {
         ...r.steps.slice(start, start + 3).map((s, i) => `${start + i === this.selected ? '›' : ' '} ${start + i + 1}. ${s.title}`), `Selected step ${this.selected + 1}/${r.steps.length}:`, ...(r.steps[this.selected]?.prompt.split('\n') ?? [])]);
     }
     else if (r.kind === 'prompt') this.show([...problem, actual, ...r.issues.map(s => `• ${s}`), ...r.diff.split('\n'), 'c copies the improved diff · Esc closes']);
-    else if (r.kind === 'explain' || r.kind === 'teach') {
-      if (this.chunk < r.chunks.length) this.show([...problem, actual, ...(this.chunk === 0 ? [r.why, ...r.diagram, ''] : []), ...r.chunks[this.chunk] ?? [], `Space next · ${this.chunk + 1}/${r.chunks.length} · Esc closes`]);
-      else this.show(r.kind === 'teach' ? [actual, ...teachEnd(r, this.quiz)] : [actual, 'Recap · Esc closes', ...r.recap]);
+    else if (r.kind === 'explain' || r.kind === 'teach' || r.kind === 'study') {
+      if (this.chunk < r.chunks.length) this.show([...problem, actual, ...(this.chunk === 0 ? [r.why, ...'diagram' in r ? r.diagram : [], ''] : []), ...r.chunks[this.chunk] ?? [], `Space next · ${this.chunk + 1}/${r.chunks.length} · Esc closes`]);
+      else this.show(r.kind === 'teach' ? [actual, ...teachEnd(r, this.quiz)] : [actual, r.kind === 'study' ? 'Recap · on your review schedule; /study lists what is due · Esc closes' : 'Recap · Esc closes', ...r.recap]);
     }
     // AI Term's own facts (what it read before the model ran) stay above the result.
     else this.show([...problem, ...r.kind === 'standup' ? [] : [actual], ...this.ask?.facts ?? [], ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz, commits: this.ask?.commits === true })]);
@@ -78,7 +78,12 @@ export class AddonPanel {
       else if (key === 's' && this.approved) this.actions.step(this.selected);
       else this.panel.key(key);
     } else if (r?.kind === 'prompt' && key === 'c') this.actions.copy(r.diff);
-    else if ((r?.kind === 'explain' || r?.kind === 'teach') && this.chunk < r.chunks.length && key === 'space') { this.chunk++; this.panel.resetScroll(); this.refresh(); }
+    else if ((r?.kind === 'explain' || r?.kind === 'teach' || r?.kind === 'study') && this.chunk < r.chunks.length && key === 'space') { this.chunk++; this.panel.resetScroll(); this.refresh(); }
+    // o and s act on the selected made file only when pressed; the daemon opens it or saves a copy to Downloads.
+    else if (r && hasOutputs(r) && (key === 'up' || key === 'down') && r.files.length > 1) this.move(key, r.files.length);
+    else if (r && hasOutputs(r) && (key === 'o' || key === 's') && r.files[this.selected]) this.actions.file?.(this.selected, key === 'o' ? 'open' : 'save');
+    else if (r?.kind === 'a11y' && (key === 'up' || key === 'down') && r.findings.length) this.move(key, r.findings.length);
+    else if (r?.kind === 'a11y' && key === 'f' && r.findings[this.selected] && !this.applied) { this.busy = true; this.actions.apply?.([this.selected]); }
     else if (r?.kind === 'teach' && this.chunk >= r.chunks.length) this.quizKey(key, r.quiz.length);
     else if (r?.kind === 'refactor' && (key === 'up' || key === 'down')) this.move(key, r.items.length);
     else if (r?.kind === 'refactor' && key === 'space') { if (!this.picked.delete(this.selected)) this.picked.add(this.selected); this.refresh(); }

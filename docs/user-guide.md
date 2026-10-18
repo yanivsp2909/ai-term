@@ -51,7 +51,23 @@ Same popup and rules: nothing starts before `y`, agents work in Ask mode, and an
 - `/context` measures what an agent loads here (AGENTS.md, CLAUDE.md, their imports, the loaded skills) and finds contradicting or stale rules.
 - `/opensource` checks whether the repository is ready to be public: secrets anywhere in its history (masked), license, README, personal paths and emails. `f` fixes what a file change can fix. Rotating a leaked secret and rewriting history stay with you.
 
-One section per area: [Add-ons](#learn-fix-test-and-review-with-add-ons) · [Repository add-ons](#repository-and-github-add-ons) · [Agents](#agents) · [Sessions](#sessions) · [Worktrees](#worktrees) · [Review and merge](#review-and-merge) · [Budgets](#budgets) · [Accounts](#accounts) · [Queue](#queue) · [Dev servers](#dev-servers) · [Diagnostics](#diagnostics) · [Brain](#brain)
+## Making things with add-ons
+
+Same popup and rules. These make files in a new worktree, so nothing lands in your checkout until you merge. When a result has files to look at, ↑↓ picks one, `o` opens it with your default app (a browser for HTML), and `s` saves a copy to Downloads. Neither happens until you press the key.
+
+- `/deck <topic>` builds an investor or pitch deck (problem, solution, market, traction, team, ask) from what the repository and its docs say. A fact that isn't there becomes a TODO line, listed in the popup; numbers are never invented.
+- `/slides <topic>` builds any other presentation: a talk, a lesson or a walkthrough.
+- `/diagram <what to draw>` draws Mermaid or D2 from the real code under docs/diagrams/, and renders an SVG only if a renderer is already installed.
+- `/design <screen>` makes one to three HTML mockups under out/design/ in the product's own look.
+- `/polish <path>` refines an existing UI's details without redesigning it.
+- `/a11y <path>` reviews accessibility read-only; `f` fixes the selected finding in a worktree.
+- `/e2e <app or flow>` writes browser tests, and AI Term runs them in the test sandbox. Your project's 127.0.0.1 setting decides whether a local server may listen.
+- `/animate <motion>` first decides whether it should animate at all, and says so; it only builds the animation when the answer is yes.
+- `/video <topic>` writes a terminal demo (VHS) or a Remotion composition under out/video/, and renders it only when the tools are already installed.
+- `/research <question>` researches the web with the engine's own web tools and saves a cited report under docs/research/. It needs Claude Code or Codex; AI Term's own agent has no web tools.
+- `/study <topic>` is a short study session: one idea per chunk, a check question each, Space for the next. Finished topics go on a small review schedule, and `/study` alone shows what is due today.
+
+One section per area: [Add-ons](#learn-fix-test-and-review-with-add-ons) · [Repository add-ons](#repository-and-github-add-ons) · [Making things](#making-things-with-add-ons) · [Agents](#agents) · [Sessions](#sessions) · [Worktrees](#worktrees) · [Review and merge](#review-and-merge) · [Budgets](#budgets) · [Accounts](#accounts) · [Queue](#queue) · [Dev servers](#dev-servers) · [Diagnostics](#diagnostics) · [Brain](#brain)
 
 ## Agents
 

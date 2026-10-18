@@ -83,9 +83,10 @@ import { prepareProfile } from './accounts.js';
 import { parseLimit } from './limit-detect.js';
 import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
-import { link, lstat, open, stat, unlink } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { link, lstat, open, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { closeSync, constants, constants as fsConstants, existsSync, openSync, unlinkSync, writeSync } from 'node:fs';
-import { dirname, join, relative, sep, resolve } from 'node:path';
+import { basename, dirname, join, relative, sep, resolve } from 'node:path';
 import { MAX_RECORD_COST_USD, validatePriceOverrides } from '../shared/validate.js';
 import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
@@ -146,6 +147,9 @@ export class SessionManager extends EventEmitter {
     // B26: the sandbox auto-test runs under (a test points it at a missing file to see the no-sandbox path).
     // null: the system's own (sandbox-exec on macOS, bwrap on Linux).
     static sandboxExec: string | null = null;
+    // v1.1 o and s on a made file; tests replace the opener and the Downloads folder.
+    static fileOpener: ((path: string) => Promise<void>) | null = null;
+    static downloads: string | null = null;
     private secretTimers=new Map<string,ReturnType<typeof setTimeout>>();
     // v0.9.2: dev servers, and each worktree's port (kept while the daemon runs).
     private readonly dev=new DevServers({error:(text:string)=>this.log.error(text)});
@@ -764,6 +768,27 @@ export class SessionManager extends EventEmitter {
             lines.push(`${info.title} · ${info.status} · ${commits} · ${usage}`);
         }
         return lines.length?lines:['No agent was active today'];
+    }
+    // v1.1 o and s: a file an add-on made in its worktree (the service already checked it is under the command's folder).
+    // No link anywhere on the way, a regular file read through one no-follow descriptor; s never overwrites in Downloads.
+    async addonFile(id:string,file:string,action:'open'|'save'):Promise<string|null>{
+        if(!isUUID(id))throw new Error('Invalid session UUID');
+        const live=this.sessions.get(id),tree=live?.info.worktree;
+        if(!live||!tree||!this.worktreeRecords.has(tree))throw new Error('This agent has no worktree');
+        const root=await realpath(tree),full=await resolveInside(root,file);
+        if(full!==join(root,file))throw new Error('A made file is never opened through a link');
+        const handle=await open(full,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        try{
+            const info=await handle.stat();if(!info.isFile()||info.size>ADDON_FILE_MAX)throw new Error('Only a regular file up to 64 MB is opened or saved');
+            if(action==='open'){await(SessionManager.fileOpener??openWithDefaultApp)(full);return null;}
+            const folder=SessionManager.downloads??join(homedir(),'Downloads'),name=basename(file),dot=name.lastIndexOf('.'),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):'';
+            const data=await handle.readFile();
+            for(let n=1;n<=99;n++){
+                const target=join(folder,n===1?name:`${stem} (${n})${ext}`);
+                try{await writeFile(target,data,{flag:'wx',mode:0o644});return target;}catch(error){if(!isFsError(error,'EEXIST'))throw error;}
+            }
+            throw new Error('Downloads already has 99 copies of this file');
+        }finally{await handle.close();}
     }
     // v1.1 /bisect: the plan reads your checkout only; whether a sandbox starts here decides y or a capital Y.
     async addonBisectPlan(cwd:string,args:string):Promise<BisectAsk>{
@@ -1811,5 +1836,11 @@ import type { BisectAsk } from '../shared/addons.js';
 import { isTestCommand } from '../shared/test-run.js';
 import { cutText } from '../shared/text-cut.js';
 // Room for an agent's diff in an add-on's first message, next to its prompt and format (16 KB in all).
-const ADDON_DIFF_BYTES=8800;
+const ADDON_DIFF_BYTES=8800,ADDON_FILE_MAX=64*1024*1024;
+// o on a made file: your default app (a browser for HTML), argv only.
+async function openWithDefaultApp(path:string):Promise<void>{
+    const opener=process.platform==='darwin'?'/usr/bin/open':process.platform==='linux'?await resolveExecutable('xdg-open',process.env.PATH??''):null;
+    if(!opener)throw new Error('Opening a file is available on macOS and Linux');
+    await new Promise<void>((done,fail)=>{execFile(opener,[path],{timeout:15_000,windowsHide:true},error=>error?fail(new Error('The file could not be opened')):done());});
+}
 import { checkAddonCli } from './addon-cli.js';

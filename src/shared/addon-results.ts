@@ -6,9 +6,12 @@ import { isTestCommand } from './test-run.js';
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 export interface Finding { file: string; line: number; severity: Severity; title: string; detail: string; fix?: string; reviewer?: 'code' | 'security'; reproduction?: string }
 type Explained = { why: string; diagram: string[]; chunks: string[][]; recap: string[] };
-export type FindingsKind = 'types' | 'failures' | 'review-deep' | 'security' | 'pr-review' | 'context' | 'opensource';
+export type FindingsKind = 'types' | 'failures' | 'review-deep' | 'security' | 'pr-review' | 'context' | 'opensource' | 'a11y';
 // An add-on that changes files in its worktree and says what it did (v1.1 batch 2).
-export type MadeKind = 'issue' | 'docs' | 'handover' | 'adr';
+export type MadeKind = 'issue' | 'docs' | 'handover' | 'adr' | 'polish' | 'e2e';
+// Batch 3: add-ons that make files you look at. Every file stays under its command's folder in the agent's worktree,
+// and only these are opened (o) or saved to Downloads (s), and only when you press the key.
+export const OUTPUT_FOLDERS: Readonly<Record<string, string>> = { deck: 'out/deck/', slides: 'out/slides/', design: 'out/design/', video: 'out/video/', diagram: 'docs/diagrams/', research: 'docs/research/' };
 export type AddonResult = { kind: 'plan'; title: string; steps: { title: string; prompt: string }[] }
   | { kind: 'prompt'; issues: string[]; diff: string }
   | ({ kind: 'explain' } & Explained)
@@ -25,7 +28,15 @@ export type AddonResult = { kind: 'plan'; title: string; steps: { title: string;
   | { kind: 'commit'; subject: string; body: string }
   | { kind: 'changelog'; section: string }
   | { kind: 'standup'; lines: string[] }
-  | { kind: 'standup-polish'; text: string };
+  | { kind: 'standup-polish'; text: string }
+  | { kind: 'deck' | 'slides'; summary: string; files: string[]; todo: string[] }
+  | { kind: 'design'; summary: string; files: string[] }
+  | { kind: 'diagram'; summary: string; files: string[]; rendered: boolean }
+  | { kind: 'video'; summary: string; files: string[]; rendered: boolean; missing: string[] }
+  | { kind: 'research'; summary: string; files: string[]; sources: string[] }
+  | { kind: 'animate'; verdict: 'animate' | 'skip'; why: string; summary: string; files: string[] }
+  | { kind: 'study'; why: string; chunks: string[][]; recap: string[] }
+  | { kind: 'study-due'; topics: { topic: string; due: string; step: number }[] };
 // /perf's A/B, run by AI Term on the code before and after the change, back to back on this machine.
 // AI Term's answer when /perf's A/B has no sandbox: the popup then accepts a capital Y, like /dev.
 export const AB_NO_SANDBOX = 'No sandbox here · Y runs the A/B with your rights';
@@ -62,13 +73,18 @@ function outside(text: string): boolean {
   return !loopback && !/\blocalhost\b|\b127\.0\.0\.1\b|\[::1\]/i.test(text);
 }
 
+// Made files: a summary, at least one file, every file under the command's own folder.
+function made(kind: string, p: Record<string, unknown>): boolean {
+  const folder = OUTPUT_FOLDERS[kind] ?? '';
+  return text(p.summary, 600) && paths(p.files, 40) && p.files.length > 0 && p.files.every(f => f.startsWith(folder) && f.length > folder.length);
+}
 function explained(p: Record<string, unknown>): boolean {
   const chunk = (c: unknown): boolean => lines(c, 6) && c.some(s => /^Example:/i.test(s)) && c.some(s => /^You are here:/i.test(s)) && c.some(s => /^Quick check:/i.test(s));
   return line(p.why) && lines(p.diagram, 4) && Array.isArray(p.chunks) && p.chunks.length > 0 && p.chunks.length <= 16 && p.chunks.every(chunk) && lines(p.recap, 3) && p.recap.length === 3;
 }
 function finding(kind: FindingsKind, f: Record<string, unknown>): boolean {
   // /opensource's fix is optional: only some findings can be fixed by changing files.
-  const extra = kind === 'types' || kind === 'context' || kind === 'opensource' && f.fix !== undefined ? 'fix' : kind === 'review-deep' ? 'reviewer' : kind === 'security' ? 'reproduction' : null;
+  const extra = kind === 'types' || kind === 'context' || kind === 'a11y' || kind === 'opensource' && f.fix !== undefined ? 'fix' : kind === 'review-deep' ? 'reviewer' : kind === 'security' ? 'reproduction' : null;
   return keys(f, 'file', 'line', 'severity', 'title', 'detail', ...extra ? [extra] : []) && relPath(f.file) && Number.isSafeInteger(f.line) && Number(f.line) >= 1 && SEVERITIES.includes(String(f.severity)) && line(f.title) && text(f.detail, 1200)
     && (extra !== 'fix' || text(f.fix, 600)) && (kind !== 'review-deep' || f.reviewer === 'code' || f.reviewer === 'security') && (kind !== 'security' || text(f.reproduction, 1600));
 }
@@ -96,8 +112,18 @@ export function parseAddonResult(source: string, name: string, kept = false): Ad
     case 'refactor': return ok(keys(p, 'kind', 'items') && list(p.items, 24, i => keys(i, 'title', 'why', 'files', 'risk') && line(i.title, 120) && line(i.why, 400) && paths(i.files, 12) && ['low', 'medium', 'high'].includes(String(i.risk))));
     // The benchmark runs on the code before and after: argv only, new files only under bench/.
     case 'perf': return ok(keys(p, 'kind', 'measured', 'change', 'benchmark', 'files') && text(p.measured, 600) && text(p.change, 600) && isTestCommand(p.benchmark) && paths(p.files, 5) && p.files.every(f => f.startsWith('bench/')));
-    case 'types': case 'failures': case 'review-deep': case 'security': case 'pr-review': case 'context': case 'opensource': return findings(name, p, kept);
-    case 'issue': case 'docs': case 'handover': case 'adr': return ok(keys(p, 'kind', 'summary', 'files') && text(p.summary, 600) && paths(p.files, 40));
+    case 'types': case 'failures': case 'review-deep': case 'security': case 'pr-review': case 'context': case 'opensource': case 'a11y': return findings(name, p, kept);
+    case 'deck': case 'slides': return ok(keys(p, 'kind', 'summary', 'files', 'todo') && made(name, p) && Array.isArray(p.todo) && p.todo.length <= 24 && p.todo.every(t => line(t, 300)));
+    case 'design': return ok(keys(p, 'kind', 'summary', 'files') && made(name, p));
+    case 'diagram': return ok(keys(p, 'kind', 'summary', 'files', 'rendered') && made(name, p) && typeof p.rendered === 'boolean');
+    case 'video': return ok(keys(p, 'kind', 'summary', 'files', 'rendered', 'missing') && made(name, p) && typeof p.rendered === 'boolean' && Array.isArray(p.missing) && p.missing.length <= 12 && p.missing.every(m => line(m, 200)));
+    // Sources are shown and copied, never opened by AI Term: https or http only (no javascript:, file: or data:).
+    case 'research': return ok(keys(p, 'kind', 'summary', 'files', 'sources') && made(name, p) && Array.isArray(p.sources) && p.sources.length <= 40 && p.sources.every(u => line(u, 500) && /^https?:\/\/[^\s/]+/i.test(u)));
+    case 'animate': return ok(keys(p, 'kind', 'verdict', 'why', 'summary', 'files') && (p.verdict === 'animate' || p.verdict === 'skip') && line(p.why, 300) && text(p.summary, 600) && paths(p.files, 40) && (p.verdict === 'animate' || p.files.length === 0));
+    case 'study': return ok(keys(p, 'kind', 'why', 'chunks', 'recap') && line(p.why) && Array.isArray(p.chunks) && p.chunks.length > 0 && p.chunks.length <= 16 && p.chunks.every(c => lines(c, 6) && c.some(x => /^Check:/i.test(x))) && lines(p.recap, 3) && p.recap.length === 3);
+    // AI Term's own schedule (no model): only a kept copy.
+    case 'study-due': return ok(kept && keys(p, 'kind', 'topics') && list(p.topics, 200, t => keys(t, 'topic', 'due', 'step') && line(t.topic, 200) && typeof t.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.due) && Number.isSafeInteger(t.step) && Number(t.step) >= 0, 0));
+    case 'issue': case 'docs': case 'handover': case 'adr': case 'polish': case 'e2e': return ok(keys(p, 'kind', 'summary', 'files') && text(p.summary, 600) && paths(p.files, 40));
     case 'deps': return ok(keys(p, 'kind', 'summary', 'files', 'upgraded', 'skipped') && text(p.summary, 600) && paths(p.files, 40) && [p.upgraded, p.skipped].every(l => Array.isArray(l) && l.length <= 40 && l.every(x => line(x, 300))));
     case 'commit': return ok(keys(p, 'kind', 'subject', 'body') && line(p.subject, 120) && typeof p.body === 'string' && (p.body === '' || text(p.body, 4000)));
     case 'changelog': return ok(keys(p, 'kind', 'section') && text(p.section, 8000));

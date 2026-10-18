@@ -15,7 +15,7 @@ it('every command reads the same in /help and in its README row', async () => {
   const readme = (await readFile(new URL('../README.md', import.meta.url), 'utf8')).split('\n'), help = helpLines(context).join('\n');
   for (const command of commandRegistry) {
     expect(help, command.name).toContain(command.description);
-    const rows = readme.filter(line => line.startsWith('| `') && (line.split(' | ')[0] ?? '').match(/`(\/[a-z-]+)/g)?.some(name => name === '`' + command.name));
+    const rows = readme.filter(line => line.startsWith('| `') && (line.split(' | ')[0] ?? '').match(/`(\/[a-z0-9-]+)/g)?.some(name => name === '`' + command.name));
     expect(rows.some(row => row.includes(command.description)), `${command.name}: README row should say "${command.description}"`).toBe(true);
   }
 });

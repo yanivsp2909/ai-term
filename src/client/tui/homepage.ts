@@ -36,7 +36,7 @@ import { BudgetForm, PriceForm, CapsForm, drawUsageForm } from './usage-forms.js
 import { DEFAULT_AGENT_CAPS } from '../../shared/agent-facts.js';
 import {WorktreeQuestion} from './worktree-question.js';
 import {WorktreesPanel} from './worktrees-panel.js';
-import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,ADDON_COMMANDS,ADDON_HINTS,LOCAL_ADDON_COMMANDS,type CommandContext} from './commands.js';
+import {commandRegistry,completeCommand,effortValues,modeValues,modeLabel,helpLines,ADDON_COMMANDS,ADDON_HINTS,LOCAL_ADDON_COMMANDS,WEB_ADDON_COMMANDS,type CommandContext} from './commands.js';
 import {drawHelp,wrapHelpLines} from './help.js';
 import { SPARKLINE_SAMPLES } from './this-mac.js';
 import { MAX_PANES } from '../split-layout.js';
@@ -566,6 +566,8 @@ export class Homepage {
   private queueSubmit(text:string,message?:MessageField):void{const selected=this.sessions.find(s=>s.id===this.selectedId)??null;this.enqueue(()=>this.submit(text,selected,message));}
   private async submit(text: string, copyTarget:SessionInfo|null=null,message?:MessageField): Promise<void> {
     const addonCommand = ADDON_COMMANDS.find(name => text.trim() === `/${name}` || text.trim().startsWith(`/${name} `));
+    // /study alone: what the review schedule says is due (no model, nothing to approve).
+    if(addonCommand==='study'&&text.trim()==='/study'){await this.addonCommand('study-due','');return;}
     if(addonCommand){await this.addonCommand(addonCommand,text.trim().slice(addonCommand.length+1).trim());return;}
     // /send carries its text, paste tokens included, to the agent; it never opens the start box.
     if(text==='/send'||text.startsWith('/send ')){await this.send(text);return;}
@@ -791,7 +793,10 @@ export class Homepage {
     try{
       // A local add-on sends no target; /standup still gets the choices, for its m (a model pass that asks first).
       const local=LOCAL_ADDON_COMMANDS.includes(name),keys=(await this.connection.request({kind:'keys.list'})).keys??[];
-      const targets:AddonTarget[]=modelChoices(keys,this.engines,'ai-term').map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
+      let targets:AddonTarget[]=modelChoices(keys,this.engines,'ai-term').map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
+      // /research needs an engine with its own web tools; AI Term's agent stays offered only when nothing else is, so the
+      // daemon's one-line reason can say why.
+      if(WEB_ADDON_COMMANDS.includes(name)){const web=targets.filter(t=>t.engine!=='ai-term');if(web.length)targets=web;}
       previous?.dispose();
       const flow=new AddonFlow(name,subject,this.folder,targets,{request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{if(this.popup===flow.panel)this.popup=undefined;this.draw(true);},started:response=>this.selectNew(response),copy:this.options.copy},local);
       this.addonFlows.set(key,flow);if(hint.startsWith('<'))this.addonFlows.set(`${this.folder}:${name}:`,flow);this.popup=flow.panel;await flow.open();this.draw(true);

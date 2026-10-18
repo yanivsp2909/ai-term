@@ -1,4 +1,4 @@
-import { AB_NO_SANDBOX, type AbView, type AddonResult, type Finding, type FindingsKind } from '../../shared/addon-results.js';
+import { AB_NO_SANDBOX, OUTPUT_FOLDERS, type AbView, type AddonResult, type Finding, type FindingsKind } from '../../shared/addon-results.js';
 import type { TestResult } from '../../shared/test-run.js';
 import { testCommandText } from '../../shared/test-run.js';
 import { testsText } from './agent-card.js';
@@ -23,13 +23,16 @@ function findingLines(kind: FindingsKind, r: { summary: string; findings: Findin
 }
 function findingKeys(kind: FindingsKind, findings: readonly Finding[], chosen: Finding | undefined, view: ResultView): string {
   const fixable = findings.filter(f => f.fix).length;
-  if (kind === 'types' && chosen) return view.applied ?? '↑↓ finding · f fixes this one in a worktree (Ask) · Esc closes';
+  if ((kind === 'types' || kind === 'a11y') && chosen) return view.applied ?? '↑↓ finding · f fixes this one in a worktree (Ask) · Esc closes';
   if (kind === 'opensource' && fixable) return view.applied ?? `↑↓ finding · f fixes the ${fixable} a file change can fix, in a worktree (Ask) · Esc closes`;
   if (kind === 'pr-review') return `${findings.length ? '↑↓ finding · ' : ''}c copies the review · nothing is posted to GitHub · Esc closes`;
   return findings.length ? '↑↓ finding · Esc closes' : 'Esc closes';
 }
 const made = (summary: string, files: readonly string[], extra: string[], tests: TestResult | null | undefined, hint: string) =>
   [summary, `Changed: ${files.join(', ') || 'nothing'}`, ...extra, ...tests !== undefined ? [testsLine(tests)] : [], `Work is in the agent's worktree · d shows its diff on the homepage · ${hint}Esc closes`];
+// Batch 3: made files to look at, with the one ↑↓ selects; o and s act on it.
+const outputs = (files: readonly string[], view: ResultView, extra: string[], summary: string) =>
+  [summary, ...windowed(files, view.selected, (f, i) => `${i === view.selected ? '›' : ' '} ${f}`), ...extra, '', view.applied ?? `${files.length > 1 ? '↑↓ file · ' : ''}o opens it · s saves a copy to Downloads · Esc closes`];
 // What c copies, for the results that have something to copy.
 export function copyText(r: AddonResult): string | null {
   switch (r.kind) {
@@ -41,6 +44,7 @@ export function copyText(r: AddonResult): string | null {
     default: return null;
   }
 }
+export const hasOutputs = (r: AddonResult): r is Extract<AddonResult, { files: string[] }> => r.kind in OUTPUT_FOLDERS && 'files' in r;
 export function batchLines(r: Batch, view: ResultView): string[] {
   switch (r.kind) {
     case 'teach': return [];
@@ -63,7 +67,7 @@ export function batchLines(r: Batch, view: ResultView): string[] {
           : [`✓ A/B · ${ab.rounds} runs each, alternating, ${ab.sandbox ? 'sandboxed' : 'without a sandbox'}`, `  before: ${ab.beforeMs} ms median`, `  after:  ${ab.afterMs} ms median${change === null ? '' : ` · ${change > 0 ? '+' : ''}${change}%`}`],
         'Esc closes'];
     }
-    case 'types': case 'failures': case 'review-deep': case 'security': case 'pr-review': case 'context': case 'opensource': return findingLines(r.kind, r, view);
+    case 'types': case 'failures': case 'review-deep': case 'security': case 'pr-review': case 'context': case 'opensource': case 'a11y': return findingLines(r.kind, r, view);
     case 'issue': return made(r.summary, r.files, [], view.tests, "/pr <agent> opens a pull request when you're ready · ");
     case 'docs': case 'handover': case 'adr': return made(r.summary, r.files, [], undefined, '');
     case 'deps': return made(r.summary, r.files, [...r.upgraded.length ? ['Upgraded:', ...r.upgraded.map(u => `  ${u}`)] : [], ...r.skipped.length ? ['Skipped:', ...r.skipped.map(u => `  ${u}`)] : []], view.tests, '');
@@ -71,6 +75,16 @@ export function batchLines(r: Batch, view: ResultView): string[] {
     case 'changelog': return [...r.section.split('\n'), '', view.applied ?? 'c copies it · w writes it into CHANGELOG.md in a worktree (Ask) · Esc closes'];
     case 'standup': return ['no model · no tokens · from AI Term\'s own records', ...r.lines, '', 'c copies it · m polishes it with a model (asks first) · Esc closes'];
     case 'standup-polish': return [...r.text.split('\n'), '', 'c copies it · Esc closes'];
+    case 'deck': case 'slides': return outputs(r.files, view, r.todo.length ? ["TODO (facts the repository doesn't have; nothing was invented):", ...r.todo.map(t => `  ${t}`)] : ['✓ no TODOs left'], r.summary);
+    case 'design': return outputs(r.files, view, [], r.summary);
+    case 'diagram': return outputs(r.files, view, [r.rendered ? '✓ rendered with the renderer already installed' : 'not rendered · no mmdc or d2 installed (the source still works on GitHub and in editors)'], r.summary);
+    case 'video': return outputs(r.files, view, [r.rendered ? '✓ rendered' : `not rendered · missing: ${r.missing.join(', ') || 'a renderer'}`], r.summary);
+    case 'research': return outputs(r.files, view, ['Sources:', ...r.sources.map(u => `  ${u}`)], r.summary);
+    case 'polish': return made(r.summary, r.files, [], undefined, '');
+    case 'e2e': return made(r.summary, r.files, [], view.tests, '');
+    case 'animate': return r.verdict === 'skip' ? [`■ no animation: ${r.why}`, r.summary, 'Nothing was changed · Esc closes'] : [`✓ animate: ${r.why}`, ...made(r.summary, r.files, [], undefined, '')];
+    case 'study': return [];
+    case 'study-due': return ['no model · no tokens · from your study schedule', ...r.topics.length ? r.topics.map(t => `${t.topic} · review ${t.step + 1} · due ${t.due}`) : ['Nothing is due today'], '', '/study <topic> starts a session · Esc closes'];
     case 'bisect': return [`First bad commit: ${r.commit.slice(0, 12)} ${r.subject}`, `${r.author} · ${r.date} · ${r.steps} step${r.steps === 1 ? '' : 's'} tested`, 'git bisect reset ran and the temporary copy was removed; your checkout was never touched.', '', ...r.diff];
   }
 }

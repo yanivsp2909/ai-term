@@ -92,6 +92,8 @@ export function buildArgs(request:{engine:CliEngine;model:string|null;permission
     if(request.addon && (!isAddonBundle(request.addon.bundle) || request.permission !== 'ask')) throw new Error('Invalid add-on arguments');
     args.push(...(request.engine === 'codex' && request.addon?.readOnly ? ['--ask-for-approval=on-request','--sandbox=read-only'] : PERMISSION_ARGS[request.engine][request.permission]??[]));
     if(request.engine === 'claude-code' && request.addon) args.push(`--plugin-dir=${request.addon.bundle}`, ...(request.addon.readOnly ? ['--tools=Read,Grep,Glob','--strict-mcp-config'] : []));
+    // v1.1 /research: Codex has live web search only with --search; Claude Code has its web tools unless --tools narrows.
+    if(request.engine === 'codex' && request.addon?.web === true) args.push('--search');
     // v1.0.2: the repository map as extra system-prompt text, the path one argv element. Claude Code only: Codex has no
     // flag that adds instructions from a file (its model_instructions_file replaces its own), so the start box offers a
     // first-message mention instead.

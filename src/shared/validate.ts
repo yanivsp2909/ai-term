@@ -152,6 +152,8 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['receipt','unsandboxed'];if(!isUUID(v.receipt)||v.unsandboxed!==undefined&&v.unsandboxed!==true)throw new ValidationError('Invalid add-on approval');break;
         case 'addons.apply':
             fields=['sessionId','items'];if(!isUUID(v.sessionId)||!Array.isArray(v.items)||!v.items.length||v.items.length>24||!v.items.every(i=>Number.isSafeInteger(i)&&Number(i)>=0&&Number(i)<24)||new Set(v.items).size!==v.items.length)throw new ValidationError('Invalid add-on items');break;
+        case 'addons.file':
+            fields=['sessionId','index','action'];if(!isUUID(v.sessionId)||!Number.isSafeInteger(v.index)||Number(v.index)<0||Number(v.index)>=40||v.action!=='open'&&v.action!=='save')throw new ValidationError('Invalid add-on file request');break;
         case 'addons.ab':
             fields=['sessionId','unsandboxed'];if(!isUUID(v.sessionId)||typeof v.unsandboxed!=='boolean')throw new ValidationError('Invalid add-on A/B request');break;
         case 'addons.result': case 'addons.approve': case 'addons.step': case 'addons.commit':

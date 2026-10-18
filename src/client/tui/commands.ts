@@ -9,10 +9,12 @@ export const effortValues=(engine:AgentEngine):readonly string[]=>['CLI default'
 const none=()=>'';
 // D58 add-ons typed as commands (review-deep is reached through /review <agent> deep). A hint in <> needs an argument;
 // one in [] has a default: the whole folder, or the selected agent.
-export const ADDON_COMMANDS=['plan','prompt','explain','teach','fix','cover','bisect','refactor','perf','types','failures','security','issue','pr-review','deps','commit','changelog','docs','handover','standup','adr','context','opensource'] as const;
+export const ADDON_COMMANDS=['plan','prompt','explain','teach','fix','cover','bisect','refactor','perf','types','failures','security','issue','pr-review','deps','commit','changelog','docs','handover','standup','adr','context','opensource','deck','slides','diagram','design','polish','a11y','e2e','animate','video','research','study'] as const;
 // Add-ons that run no model: no engine target is sent (their m or follow-ups ask for one themselves).
-export const LOCAL_ADDON_COMMANDS:readonly string[]=['bisect','standup'];
-export const ADDON_HINTS:Readonly<Record<string,string>>={plan:'<goal>',prompt:'<file or text>',explain:'<path or question>',teach:'[agent]',fix:'<error text or file>',cover:'[path]',bisect:'<test command> [good ref]',refactor:'[path]',perf:'[path or command]',types:'[path]',failures:'[path]',security:'[path]','review-deep':'[agent]',issue:'<#number or issue URL>','pr-review':'<#number or PR URL>',deps:'[path]',commit:'[agent]',changelog:'[from..to]',docs:'[path]',handover:'[path]',standup:'',adr:'<decision>',context:'',opensource:''};
+export const LOCAL_ADDON_COMMANDS:readonly string[]=['bisect','standup','study-due'];
+// Add-ons that need an engine with its own web tools: AI Term's agent is offered only when nothing else is.
+export const WEB_ADDON_COMMANDS:readonly string[]=['research'];
+export const ADDON_HINTS:Readonly<Record<string,string>>={plan:'<goal>',prompt:'<file or text>',explain:'<path or question>',teach:'[agent]',fix:'<error text or file>',cover:'[path]',bisect:'<test command> [good ref]',refactor:'[path]',perf:'[path or command]',types:'[path]',failures:'[path]',security:'[path]','review-deep':'[agent]',issue:'<#number or issue URL>','pr-review':'<#number or PR URL>',deps:'[path]',commit:'[agent]',changelog:'[from..to]',docs:'[path]',handover:'[path]',standup:'',adr:'<decision>',context:'',opensource:'',deck:'<topic>',slides:'<topic>',diagram:'<what to draw>',design:'<screen>',polish:'<path>',a11y:'<path>',e2e:'<app or flow>',animate:'<motion>',video:'<topic>',research:'<question>',study:'[topic]','study-due':''};
 export const commandRegistry:readonly Command[]=[
  {name:'/model',description:'Choose model and provider',current:c=>`${c.model??'CLI default'} · ${c.engine==='codex'?'codex':'claude code'}`},
  {name:'/cd',description:'Choose the next agent folder',current:c=>c.cwd},
@@ -74,6 +76,17 @@ export const commandRegistry:readonly Command[]=[
  {name:'/adr',description:'Write a decision record into the repository\'s decision log, in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.adr??'',current:none},
  {name:'/context',description:'Audit what an agent loads here: size, contradictions, stale rules; read-only (asks first)',argumentHint:()=>ADDON_HINTS.context??'',current:none},
  {name:'/opensource',description:'Is this repository ready to be public? Read-only scan; f fixes what files can fix (asks first)',argumentHint:()=>ADDON_HINTS.opensource??'',current:none},
+ {name:'/deck',description:'An investor or pitch deck from the product\'s real facts, as HTML in a worktree; missing facts stay TODO (asks first)',argumentHint:()=>ADDON_HINTS.deck??'',current:none},
+ {name:'/slides',description:'A presentation (a talk, a lesson, a walkthrough) as HTML in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.slides??'',current:none},
+ {name:'/diagram',description:'A Mermaid or D2 diagram drawn from the real code, under docs/diagrams/ in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.diagram??'',current:none},
+ {name:'/design',description:'UI mockups for a screen as HTML in a worktree; o opens them (asks first)',argumentHint:()=>ADDON_HINTS.design??'',current:none},
+ {name:'/polish',description:'Polish an existing UI\'s details in a worktree, without redesigning it (asks first)',argumentHint:()=>ADDON_HINTS.polish??'',current:none},
+ {name:'/a11y',description:'Read-only accessibility review (WCAG 2.2 AA); f fixes a finding in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.a11y??'',current:none},
+ {name:'/e2e',description:'Browser tests for an app\'s key flows in a worktree, run in the test sandbox (asks first)',argumentHint:()=>ADDON_HINTS.e2e??'',current:none},
+ {name:'/animate',description:'Decide whether something should animate at all, then build it in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.animate??'',current:none},
+ {name:'/video',description:'A short video as code (Remotion) or a terminal demo (VHS) in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.video??'',current:none},
+ {name:'/research',description:'Web research with sources, saved under docs/research/ in a worktree; Claude Code or Codex only (asks first)',argumentHint:()=>ADDON_HINTS.research??'',current:none},
+ {name:'/study',description:'A short study session, one idea and one check question per chunk; /study alone shows what is due',argumentHint:()=>ADDON_HINTS.study??'',current:none},
  {name:'/security',description:'Read-only security review and bug-bounty hunt, reproduced against this repo only (asks first)',argumentHint:()=>ADDON_HINTS.security??'',current:none},
  {name:'/dev',description:'Run the project\'s dev server in an agent\'s worktree on its own port (asks first; D55, off; /settings y)',argumentHint:()=>'[agent]',values:c=>c.agents??[],current:c=>c.selectedTitle??''},
  {name:'/dev-cmd',description:'The project\'s dev server command, like npm run dev (none clears it)',argumentHint:()=>'<command> | none',current:none},
@@ -94,6 +107,8 @@ export const keyTable:readonly [string,string][]=[
  ['/changelog c / w','Copy the section / write it into CHANGELOG.md in a worktree'],
  ['/pr-review c · /standup m','Copy the review (nothing is posted) / polish today\'s standup with a model'],
  ['/opensource f','Fix every finding a file change can fix, in a worktree'],
+ ['Made files o / s','Open the selected file with your default app / save a copy to Downloads (only when you press it)'],
+ ['/a11y f · /study Space','Fix the selected accessibility finding in a worktree / next chunk, then the recap'],
  ['c','Empty field copies Claude last reply; cleaned session fallback (v0.2)'],['u','Empty field opens usage details by period and provider'],['/find ↑↓ / Enter / Esc','Select a hit / select its agent and scroll the preview to it / close'],['/doctor, /usage ↑↓ / PgUp / PgDn / Esc','Scroll / page / close'],
  ['/skills, /agents ←→ / ↑↓ / Space / Enter / Esc','Tab / item / on-off / read-only full file / close'],
  ['Paste','Over 1 line or 200 chars: [pasted · N lines]; 16 KB first-message limit'],
