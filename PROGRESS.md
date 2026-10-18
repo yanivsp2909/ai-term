@@ -1,6 +1,45 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: c164d05 fix: a background add-on run shows only its own refusals; a queued agent that couldn't be stopped says so (follow-up)
+Last commit: Part D handover (this commit)
+Roadmap step: 2026-10-18 final long run (1.0) · Parts A, B, C done · Part D (v0.9 + v1.0 release gate) done · Part E (1.0.0) next
+Branch: main. Parts A to D are pushed.
+v0.9: closed (2026-10-18 release gate, docs/architecture.md §12.29). v1.0: closed (same gate).
+
+## What works
+- Everything Parts A–C list below, plus the gate fixes (docs/architecture.md §12.29).
+
+## What's next
+- Part E: 1.0.0 (no unfixed CRITICAL or HIGH remains).
+
+## Manual checks
+- typecheck: ran · exit 0. lint: ran · "ESLint: No issues found". build: ran · "ESM ⚡️ Build success in 46ms". app:build: ran · "✓ built in 56ms".
+- Full suite, default workers, twice in a row: ran · Test Files 285 passed (285), Tests 1904 passed | 7 skipped (1911), 41.32 s and 42.03 s.
+- Hidden Electron smoke: ran · 9 passed (36.7s).
+
+## Gotchas
+- Reviewers (fresh context, none had seen the code): security-reviewer on /remote as an attacker (tailnet and internet); security-reviewer on the add-on core and 35 add-ons; security-bounty-hunter (skill) on /brain, queue, dev servers, test sandbox, LSP, /reverse; silent-failure-hunter across 8722739..HEAD; engineering:code-review (skill) on the whole gate diff; then a follow-up security review of the fix commits.
+- Findings by severity: CRITICAL 0. HIGH 2, both fixed. MEDIUM 5, all fixed. LOW 11: 6 fixed, 5 left with reasons (below).
+  - HIGH add-on refusals masked: fea032e RED → 15d3643. HIGH LSP read through a swapped link (reproduced by the bounty hunter with a background link loop): b640863 RED → 786653f.
+  - MEDIUM queued agent without its limit: acbf0c6 → 50de3c0. MEDIUM /remote option 1 vouched by an earlier line (reproduced): 3e3a82a → b235dbb (with the LOW cross-page activity). MEDIUM o opened active HTML/SVG: 48dc8a8 → fbf5a8d (with the LOW o/s race). MEDIUM /deps wrong data: 3d82441 → 1e30368. MEDIUM (follow-up) a background run's raw error shown: c36a9ba → c164d05 (with the LOW stop note).
+  - LOW pairing blocked by forged requests: cb55041 → f95934b. LOW two dev servers on one port: f5fcbb4 → a037f1e. LOW untrusted start index named the main map: 5dc6487 (its RED commit is the one before it). Lint follow-up: 638b047.
+  - Not fixed, with reasons: /commit's glob pathspec (not reproducible: runGit sets GIT_LITERAL_PATHSPECS=1; the reviewer's case is now a guard test); `s` saves an SVG as the agent wrote it (documented in README; o opens it inert); a meta refresh in inert HTML can navigate (no script, no file access; navigation only); bash background jobs outlive their tool call (agent bash is meant to start servers; the diagnostics read that leaked through them is fixed); queue and dev-server log lines without error codes, and unreadable queue items not named in the panel (diagnostics detail, suggestions); /remote residuals in §12.28 (local header forgery grants nothing, cookies shared across ports of one host, a serve entry left by a SIGKILLed daemon until its next start, Don't ask switched on later inside an agent).
+  - The bounty hunt stopped before finishing /reverse and /bisect's links; both were reviewed by fresh security and TypeScript reviewers in Parts A and B and by the gate's code review.
+- Where the code disagreed with the prompt: none new in this part.
+
+## New dependencies
+- None in this part (uqr came in Part C).
+
+## Concepts introduced
+- A refusal class that may speak: src/daemon/addon-error.ts. The daemon normally replaces every error text with one fixed line, so nothing a system call says (a path, a credential file name) reaches a client. AddonError marks text AI Term wrote for the person who typed the command, which passes with control characters removed.
+- Reading without following: src/agent/lsp.ts `diagnosable` resolves the path inside the worktree, then opens it with Darwin's O_NOFOLLOW_ANY, which refuses a link in any component, and requires one hard link. A check-then-read by name is a race when someone else can change the path in between.
+
+---
+
+# Part C of this run: v1.0.8 /remote
+
+## Checkpoint
 Last code commit: f878a14 test: the queue's close waits for a save in flight, so the after-trigger test can't remove its folder mid-write
 Last commit: Part C handover (this commit)
 Roadmap step: 2026-10-18 final long run (1.0) · Parts A (B32) and B (v1.0.7 /reverse) done · Part C (v1.0.8 /remote) done · Part D (release gate) next
