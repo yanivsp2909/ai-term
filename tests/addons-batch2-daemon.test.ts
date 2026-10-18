@@ -143,3 +143,46 @@ it('/standup lists today\'s agents from AI Term\'s own records', async () => {
   await writeFile(join(tree, 'a.txt'), '1'); await git(tree, 'add', '--', '.'); await git(tree, 'commit', '-qm', 'work', '--');
   expect(await m.addonStandup()).toEqual(['fixer · done · 1 commit today · no usage reported']);
 });
+
+// ---- Batch 2 review findings (security HIGH/MEDIUM/LOW, TS MEDIUM) ----
+it('HIGH (security review): /commit y refuses a worktree whose .git the agent pointed elsewhere, and runs nothing it planted', async () => {
+  const { m, agent, tree } = await manager(), marker = join(tree, '..', 'filter-ran');
+  await writeFile(join(tree, 'new.txt'), 'hello\n');
+  const fake = join(tree, '.fake'); await mkdir(join(fake, 'objects'), { recursive: true }); await mkdir(join(fake, 'refs'), { recursive: true });
+  await writeFile(join(fake, 'HEAD'), 'ref: refs/heads/x\n'); await writeFile(join(fake, 'config'), `[core]\n\trepositoryformatversion = 0\n[filter "x"]\n\tclean = touch ${marker} && cat\n`);
+  await writeFile(join(tree, '.git'), 'gitdir: .fake\n'); await writeFile(join(tree, '.gitattributes'), '* filter=x\n');
+  await expect(m.addonCommit(agent.id, 'feat: x')).rejects.toThrow();
+  await expect(readFile(marker)).rejects.toThrow();
+});
+
+it('MEDIUM (both reviews): /commit y commits exactly what the message was written for; a change since then, or a credential file, stops it', async () => {
+  const { repo: checkout, m, agent, tree } = await manager();
+  // The agent's earlier commit is not what y commits: the message covers only what is still uncommitted.
+  await writeFile(join(tree, 'done.txt'), 'old\n'); await git(tree, 'add', '--', '.'); await git(tree, 'commit', '-qm', 'earlier', '--');
+  await writeFile(join(tree, 'new.txt'), 'hello\n');
+  const gathered = await m.addonGather('commit', checkout, agent.id);
+  expect(gathered.data).toContain('new.txt'); expect(gathered.data).not.toContain('done.txt');
+  await writeFile(join(tree, 'later.txt'), 'added after the message\n');
+  await expect(m.addonCommit(agent.id, 'feat: new', gathered.commitState)).rejects.toThrow("The agent's work changed since the message was written");
+  const again = await m.addonGather('commit', checkout, agent.id);
+  await writeFile(join(tree, '.env'), 'DB_PASSWORD=hunter2\n');
+  const withSecret = await m.addonGather('commit', checkout, agent.id).catch((error: unknown) => error);
+  expect(String(withSecret)).toContain('.env');
+  void again;
+});
+
+it('LOW (security review): /commit y signs with your global git identity, not one the repository config sets', async () => {
+  const { repo: checkout, m, agent, tree } = await manager();
+  await git(checkout, 'config', 'user.name', 'Chosen By Repo'); await git(checkout, 'config', 'user.email', 'repo@evil.invalid');
+  await writeFile(join(tree, 'new.txt'), 'hello\n');
+  const gathered = await m.addonGather('commit', checkout, agent.id);
+  await m.addonCommit(agent.id, 'feat: new', gathered.commitState);
+  expect(await git(tree, 'log', '-1', '--format=%an <%ae>')).toBe('Yaniv Test <yaniv@example.invalid>');
+});
+
+it('/commit y refuses a repository that uses git filters (they would change what is committed)', async () => {
+  const { repo: checkout, m, agent, tree } = await manager();
+  await writeFile(join(tree, '.gitattributes'), '*.bin filter=lfs\n'); await writeFile(join(tree, 'a.bin'), 'x');
+  const gathered = await m.addonGather('commit', checkout, agent.id);
+  await expect(m.addonCommit(agent.id, 'feat: bin', gathered.commitState)).rejects.toThrow('uses git filters; commit it yourself');
+});
