@@ -133,12 +133,14 @@ export async function runBisect(options: BisectOptions): Promise<Extract<AddonRe
   const gitInCopy = (args: string[], timeoutMs = BISECT_STEP_TIMEOUT_MS) => run([GIT ?? 'git', ...SAFE_GIT, ...args], copy.path, env, box, timeoutMs);
   try {
     const sources = await depSources(repo, copy.path, plan.deps);
-    // Cloned and linked while the copy is still fresh: nothing in it has run yet. With Y (no sandbox) nothing is added,
-    // as the plan said. The sandbox keeps every one of your folders readable, cloned or not (TS review: a venv's
-    // scripts name its python by your folder's absolute path, and that python reads your venv's pyvenv.cfg).
-    const { cloned, why: notCloned } = options.unsandboxed ? { cloned: [], why: new Map<string, string>() } : await cloneDeps(copy.path, sources, options.clone ?? cloneFolder);
+    // The sandbox keeps every one of your folders readable, cloned or not (TS review: a venv's scripts name its python
+    // by your folder's absolute path, and that python reads your venv's pyvenv.cfg). It starts first, so a run that
+    // can't go ahead never waits for clones (security review).
     box = await options.sandbox(copy.path, sources.map(found => found.source));
     if (!box && !options.unsandboxed) throw new BisectError('No sandbox here · open /bisect again and press Y to run the test command with your rights');
+    // Cloned and linked while the copy is still fresh: nothing in it has run yet. Without a sandbox (Y) nothing is
+    // added, as the plan said.
+    const { cloned, why: notCloned } = box ? await cloneDeps(copy.path, sources, options.clone ?? cloneFolder) : { cloned: [], why: new Map<string, string>() };
     const linked = box ? await linkDeps(copy.path, sources.filter(found => !cloned.includes(found.name)), box, notCloned, log) : [];
     await excludeInCopy(copy.path, [...cloned, ...linked]);
     // The copy starts at HEAD (a fresh clone: nothing planted yet); the good side is checked out from inside the sandbox.
