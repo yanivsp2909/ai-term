@@ -141,7 +141,7 @@ export const TIER1: readonly Check<Tier1>[] = [
     // Renamed, so the next AI Term agent can be told apart.
     await rename(t, 'AI Term', 'builder');
   }),
-  step('asks', 'AI Term\'s agent in Ask: n denies a command, Esc interrupts one that runs, Ctrl+K kills one, a read outside its folder is refused, /caps turns pauses it', '"✗ denied", "■ interrupted", "killed: the request and 1 running command", "Path is outside the folder", "cap reached: 2 turns this run"', async t => {
+  step('asks', 'AI Term\'s agent in Ask: n denies a command, y approves an edit, Esc interrupts one that runs, Ctrl+K kills one, a read outside its folder is refused, /caps turns pauses it', '"✗ denied", approved.txt written after y, "■ interrupted", "killed: the request and 1 running command", "Path is outside the folder", "cap reached: 2 turns this run"', async t => {
     const toolResults = t.stub.toolResults.length;
     await t.home.command('/send builder LIVE run: echo LIVE_DENY_ME'); await t.home.waitStatus('builder', /● waiting/, 20_000, 'asking for permission');
     await t.home.attach('builder'); await waitAsk(t, 'echo LIVE_DENY_ME');
@@ -149,6 +149,10 @@ export const TIER1: readonly Check<Tier1>[] = [
     await until(t, () => t.stub.toolResults.slice(toolResults).some(r => r.includes('The user denied this')), 'the model being told the command was denied');
     // Back at its prompt: the last line on screen is an empty "›".
     const prompt = () => until(t, async () => /^› *$/.test((await t.ai.text()).split('\n').filter(line => line.trim()).at(-1) ?? ''), 'the agent back at its prompt');
+    await prompt();
+    // y approves an edit: the write waits for it, then the file is there.
+    await t.ai.type('LIVE write: approved.txt LIVE_APPROVED_EDIT'); await waitAsk(t, 'approved.txt'); t.ai.write('y');
+    await until(t, async () => (await textOf(join(await worktreeOf(t.repo, 'ai/ai-term'), 'approved.txt'))).trim() === 'LIVE_APPROVED_EDIT', 'approved.txt written in builder\'s worktree after y');
     await prompt();
     // Esc while an approved command runs ends the turn.
     await t.ai.type('LIVE run: sleep 30'); await waitAsk(t, 'sleep 30'); t.ai.write('y'); await until(t, async () => (await t.ai.text()).split('\n').filter(l => l.trim()).slice(-3).some(l => l.includes('✓ allowed')), 'sleep 30 allowed'); await sleep(1500);

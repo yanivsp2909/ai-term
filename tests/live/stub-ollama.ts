@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 // A stand-in for Ollama on 127.0.0.1 (no key, no network): GET /api/tags lists one model, and POST /v1/chat/completions
 // answers in OpenAI's streaming format.
 // - A user message with a line "LIVE run: <command>" gets one bash tool call with that command, and "LIVE read: <path>"
-//   one read call (LIVE first: on an empty command bar a lowercase letter is a homepage key).
+//   one read call, "LIVE write: <path> <text>" one write call (LIVE first: on an empty command bar a lowercase letter is
+//   a homepage key).
 // - An add-on's first message (it asks for the result between RESULT_<nonce>_BEGIN and _END) gets the reply the check
 //   queued with `addon()`: optionally one bash call first, then the result block with that nonce.
 // - A tool result gets a short text answer; any other message gets "LIVE-STUB: hello.".
@@ -62,8 +63,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, state: State): 
   }
   if (last?.role === 'tool') { state.toolResults.push(text(last.content)); say('LIVE-STUB: the command finished.'); return; }
   if (last?.role === 'user') state.userMessages.push(text(last.content));
-  const command = text(last?.content).match(/^LIVE run: (.+)$/m)?.[1], read = text(last?.content).match(/^LIVE read: (.+)$/m)?.[1];
+  const command = text(last?.content).match(/^LIVE run: (.+)$/m)?.[1], read = text(last?.content).match(/^LIVE read: (.+)$/m)?.[1], write = text(last?.content).match(/^LIVE write: (\S+) (.+)$/m);
   if (last?.role === 'user' && command) { bash(command); return; }
   if (last?.role === 'user' && read) { call('read', { path: read }); return; }
+  if (last?.role === 'user' && write?.[1] && write[2]) { call('write', { path: write[1], content: `${write[2]}\n` }); return; }
   say('LIVE-STUB: hello.');
 }

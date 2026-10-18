@@ -26,7 +26,7 @@ export const plain = (raw: string) => raw.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1
 // answered one stays on screen above it).
 export async function waitAsk(t: Tier1, command: string): Promise<void> {
   await until(t, async () => {
-    const lines = (await t.ai.text()).split('\n').filter(line => line.trim()), last = lines.slice(-4).join('\n');
+    const lines = (await t.ai.text()).split('\n').filter(line => line.trim()), last = lines.slice(-6).join('\n');
     return /y allows · n denies/.test(lines.at(-1) ?? '') && last.includes(command);
   }, `the agent asking to run ${command}`);
 }
