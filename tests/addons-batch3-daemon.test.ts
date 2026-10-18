@@ -60,7 +60,8 @@ it('o opens a made file with your default app; s copies it to Downloads without 
   await mkdir(downloads); SessionManager.downloads = downloads; SessionManager.fileOpener = async path => { opened.push(path); };
   await mkdir(join(tree, 'out', 'deck'), { recursive: true }); await writeFile(join(tree, 'out', 'deck', 'pitch.html'), '<h1>deck</h1>');
   expect(await m.addonFile(agent.id, 'out/deck/pitch.html', 'open')).toBeNull();
-  expect(opened).toEqual([join(tree, 'out', 'deck', 'pitch.html')]);
+  // o opens AI Term's private copy of the checked bytes, never the agent's path (batch 3 review).
+  expect(opened).toHaveLength(1); expect(opened[0]?.endsWith('/pitch.html')).toBe(true); expect(opened[0]).not.toContain(tree);
   expect(await m.addonFile(agent.id, 'out/deck/pitch.html', 'save')).toBe(join(downloads, 'pitch.html'));
   expect(await m.addonFile(agent.id, 'out/deck/pitch.html', 'save')).toBe(join(downloads, 'pitch (2).html'));
   expect((await readdir(downloads)).sort()).toEqual(['pitch (2).html', 'pitch.html']);

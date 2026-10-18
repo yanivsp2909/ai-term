@@ -12,6 +12,16 @@ export type MadeKind = 'issue' | 'docs' | 'handover' | 'adr' | 'polish' | 'e2e';
 // Batch 3: add-ons that make files you look at. Every file stays under its command's folder in the agent's worktree,
 // and only these are opened (o) or saved to Downloads (s), and only when you press the key.
 export const OUTPUT_FOLDERS: Readonly<Record<string, string>> = { deck: 'out/deck/', slides: 'out/slides/', design: 'out/design/', video: 'out/video/', diagram: 'docs/diagrams/', research: 'docs/research/' };
+// Only file types meant to be looked at (review: macOS opens a .command, .terminal, .webloc or a +x script by running
+// it). Anything else is refused in the result and again before o or s.
+const PAGES = ['.html', '.svg', '.png', '.pdf', '.md'];
+export const OUTPUT_TYPES: Readonly<Record<string, readonly string[]>> = { deck: PAGES, slides: PAGES, design: PAGES, diagram: ['.mmd', '.d2', '.svg', '.png', '.md'], video: ['.mp4', '.webm', '.gif', '.tape', '.tsx', '.ts', '.md'], research: ['.md'] };
+const extension = (file: string) => { const name = file.split('/').at(-1) ?? '', dot = name.lastIndexOf('.'); return dot > 0 ? name.slice(dot).toLowerCase() : ''; };
+// The command whose folder holds this file, and whether its type may be opened or saved.
+export function viewable(file: string): boolean {
+  const kind = Object.keys(OUTPUT_FOLDERS).find(k => file.startsWith(OUTPUT_FOLDERS[k] ?? '\0'));
+  return !!kind && (OUTPUT_TYPES[kind] ?? []).includes(extension(file));
+}
 export type AddonResult = { kind: 'plan'; title: string; steps: { title: string; prompt: string }[] }
   | { kind: 'prompt'; issues: string[]; diff: string }
   | ({ kind: 'explain' } & Explained)
@@ -73,10 +83,12 @@ function outside(text: string): boolean {
   return !loopback && !/\blocalhost\b|\b127\.0\.0\.1\b|\[::1\]/i.test(text);
 }
 
+// A source shown as a link names its real host: no user:password@ in front of it (review).
+function plainUrl(value: string): boolean { try { const url = new URL(value); return !url.username && !url.password; } catch (error) { if (error instanceof TypeError) return false; throw error; } }
 // Made files: a summary, at least one file, every file under the command's own folder.
 function made(kind: string, p: Record<string, unknown>): boolean {
   const folder = OUTPUT_FOLDERS[kind] ?? '';
-  return text(p.summary, 600) && paths(p.files, 40) && p.files.length > 0 && p.files.every(f => f.startsWith(folder) && f.length > folder.length);
+  return text(p.summary, 600) && paths(p.files, 40) && p.files.length > 0 && p.files.every(f => f.startsWith(folder) && f.length > folder.length && (OUTPUT_TYPES[kind] ?? []).includes(extension(f)));
 }
 function explained(p: Record<string, unknown>): boolean {
   const chunk = (c: unknown): boolean => lines(c, 6) && c.some(s => /^Example:/i.test(s)) && c.some(s => /^You are here:/i.test(s)) && c.some(s => /^Quick check:/i.test(s));
@@ -115,10 +127,11 @@ export function parseAddonResult(source: string, name: string, kept = false): Ad
     case 'types': case 'failures': case 'review-deep': case 'security': case 'pr-review': case 'context': case 'opensource': case 'a11y': return findings(name, p, kept);
     case 'deck': case 'slides': return ok(keys(p, 'kind', 'summary', 'files', 'todo') && made(name, p) && Array.isArray(p.todo) && p.todo.length <= 24 && p.todo.every(t => line(t, 300)));
     case 'design': return ok(keys(p, 'kind', 'summary', 'files') && made(name, p));
-    case 'diagram': return ok(keys(p, 'kind', 'summary', 'files', 'rendered') && made(name, p) && typeof p.rendered === 'boolean');
-    case 'video': return ok(keys(p, 'kind', 'summary', 'files', 'rendered', 'missing') && made(name, p) && typeof p.rendered === 'boolean' && Array.isArray(p.missing) && p.missing.length <= 12 && p.missing.every(m => line(m, 200)));
+    // "rendered" must come with the rendering itself among the files (review: a claim alone isn't shown as done).
+    case 'diagram': return ok(keys(p, 'kind', 'summary', 'files', 'rendered') && made(name, p) && typeof p.rendered === 'boolean' && (!p.rendered || (p.files as string[]).some(f => ['.svg', '.png'].includes(extension(f)))));
+    case 'video': return ok(keys(p, 'kind', 'summary', 'files', 'rendered', 'missing') && made(name, p) && typeof p.rendered === 'boolean' && (!p.rendered || (p.files as string[]).some(f => ['.mp4', '.webm', '.gif'].includes(extension(f)))) && Array.isArray(p.missing) && p.missing.length <= 12 && p.missing.every(m => line(m, 200)));
     // Sources are shown and copied, never opened by AI Term: https or http only (no javascript:, file: or data:).
-    case 'research': return ok(keys(p, 'kind', 'summary', 'files', 'sources') && made(name, p) && Array.isArray(p.sources) && p.sources.length <= 40 && p.sources.every(u => line(u, 500) && /^https?:\/\/[^\s/]+/i.test(u)));
+    case 'research': return ok(keys(p, 'kind', 'summary', 'files', 'sources') && made(name, p) && Array.isArray(p.sources) && p.sources.length <= 40 && p.sources.every(u => line(u, 500) && /^https?:\/\/[^\s/]+/i.test(u) && plainUrl(u)));
     case 'animate': return ok(keys(p, 'kind', 'verdict', 'why', 'summary', 'files') && (p.verdict === 'animate' || p.verdict === 'skip') && line(p.why, 300) && text(p.summary, 600) && paths(p.files, 40) && (p.verdict === 'animate' || p.files.length === 0));
     case 'study': return ok(keys(p, 'kind', 'why', 'chunks', 'recap') && line(p.why) && Array.isArray(p.chunks) && p.chunks.length > 0 && p.chunks.length <= 16 && p.chunks.every(c => lines(c, 6) && c.some(x => /^Check:/i.test(x))) && lines(p.recap, 3) && p.recap.length === 3);
     // AI Term's own schedule (no model): only a kept copy.

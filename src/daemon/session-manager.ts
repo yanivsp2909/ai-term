@@ -84,7 +84,7 @@ import { parseLimit } from './limit-detect.js';
 import { OWN_ACCOUNT } from '../shared/accounts.js';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { link, lstat, open, realpath, stat, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, open, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { closeSync, constants, constants as fsConstants, existsSync, openSync, unlinkSync, writeSync } from 'node:fs';
 import { basename, dirname, join, relative, sep, resolve } from 'node:path';
 import { MAX_RECORD_COST_USD, validatePriceOverrides } from '../shared/validate.js';
@@ -770,25 +770,41 @@ export class SessionManager extends EventEmitter {
         return lines.length?lines:['No agent was active today'];
     }
     // v1.1 o and s: a file an add-on made in its worktree (the service already checked it is under the command's folder).
-    // No link anywhere on the way, a regular file read through one no-follow descriptor; s never overwrites in Downloads.
+    // Review: only a viewable type (never one macOS would run), no exec bit, one link only, no link on the way, read
+    // through one no-follow descriptor; o opens AI Term's private copy of those bytes (a swap after the check changes
+    // nothing), s writes them to Downloads without overwriting.
     async addonFile(id:string,file:string,action:'open'|'save'):Promise<string|null>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id),tree=live?.info.worktree;
         if(!live||!tree||!this.worktreeRecords.has(tree))throw new Error('This agent has no worktree');
+        if(!viewable(file))throw new Error("That's not a file type AI Term opens or saves");
         const root=await realpath(tree),full=await resolveInside(root,file);
         if(full!==join(root,file))throw new Error('A made file is never opened through a link');
         const handle=await open(full,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        let data:Buffer;
         try{
-            const info=await handle.stat();if(!info.isFile()||info.size>ADDON_FILE_MAX)throw new Error('Only a regular file up to 64 MB is opened or saved');
-            if(action==='open'){await(SessionManager.fileOpener??openWithDefaultApp)(full);return null;}
-            const folder=SessionManager.downloads??join(homedir(),'Downloads'),name=basename(file),dot=name.lastIndexOf('.'),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):'';
-            const data=await handle.readFile();
-            for(let n=1;n<=99;n++){
-                const target=join(folder,n===1?name:`${stem} (${n})${ext}`);
-                try{await writeFile(target,data,{flag:'wx',mode:0o644});return target;}catch(error){if(!isFsError(error,'EEXIST'))throw error;}
-            }
-            throw new Error('Downloads already has 99 copies of this file');
+            const info=await handle.stat();
+            if(!info.isFile()||info.size>ADDON_FILE_MAX)throw new Error('Only a regular file up to 64 MB is opened or saved');
+            if(info.mode&0o111)throw new Error("That file is executable; AI Term doesn't open or save it");
+            if(info.nlink!==1)throw new Error('Only a file with one link is opened or saved');
+            data=await handle.readFile();
         }finally{await handle.close();}
+        const name=basename(file);
+        if(action==='open'){
+            // A fresh private folder per open; earlier copies go first.
+            const opened=join(this.paths.root,'opened');await rm(opened,{recursive:true,force:true});await privateDirectory(opened);
+            const folder=join(opened,randomUUID());await privateDirectory(folder);
+            const copy=join(folder,name);await writeFile(copy,data,{flag:'wx',mode:0o600});
+            await(SessionManager.fileOpener??openWithDefaultApp)(copy);return null;
+        }
+        const folder=SessionManager.downloads??join(homedir(),'Downloads');
+        try{if(!(await stat(folder)).isDirectory())throw new Error('No Downloads folder to save into');}catch(error){if(isFsError(error,'ENOENT'))throw new Error('No Downloads folder to save into');throw error;}
+        const dot=name.lastIndexOf('.'),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):'';
+        for(let n=1;n<=99;n++){
+            const target=join(folder,n===1?name:`${stem} (${n})${ext}`);
+            try{await writeFile(target,data,{flag:'wx',mode:0o644});return target;}catch(error){if(!isFsError(error,'EEXIST'))throw error;}
+        }
+        throw new Error('Downloads already has 99 copies of this file');
     }
     // v1.1 /bisect: the plan reads your checkout only; whether a sandbox starts here decides y or a capital Y.
     async addonBisectPlan(cwd:string,args:string):Promise<BisectAsk>{
@@ -1829,9 +1845,10 @@ import { changelogRange, contextFiles, stagedChanges, type Gathered } from './ad
 import { agentWork, commitWork } from './agent-commit.js';
 import { ExtensionReader } from '../agent/extensions/reader.js';
 import { resolveInside } from '../agent/jail.js';
+import { privateDirectory } from '../shared/paths.js';
 import { resolveExecutable } from './engines.js';
 import { buildBisectEnv, buildGhEnv } from './env.js';
-import { AB_NO_SANDBOX, type AbView, type AddonResult } from '../shared/addon-results.js';
+import { AB_NO_SANDBOX, viewable, type AbView, type AddonResult } from '../shared/addon-results.js';
 import type { BisectAsk } from '../shared/addons.js';
 import { isTestCommand } from '../shared/test-run.js';
 import { cutText } from '../shared/text-cut.js';

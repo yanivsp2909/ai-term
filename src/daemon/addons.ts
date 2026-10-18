@@ -230,9 +230,11 @@ export class AddonService {
     if (run.input.addon.local) return null;
     const reply = await this.runner.text(id, true); const result = extractAddonResult(reply.text, run.nonce, run.input.addon.name);
     if (!result) return null;
-    // A finished study session goes on the review schedule once (/study alone lists what is due).
+    // Kept first, so an overlapping poll returns it instead of recording again; then the session goes on the review
+    // schedule once (/study alone lists what is due).
+    run.result = result;
     if (result.kind === 'study') await recordStudy(this.root, run.input.rawArgs);
-    run.result = result; return result;
+    return result;
   }
   ab(id: string): AbView | null { return this.runs.get(id)?.ab ?? null; }
   async approve(id: string): Promise<string> {
