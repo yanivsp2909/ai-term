@@ -46,7 +46,9 @@ export type AddonResult = { kind: 'plan'; title: string; steps: { title: string;
   | { kind: 'research'; summary: string; files: string[]; sources: string[] }
   | { kind: 'animate'; verdict: 'animate' | 'skip'; why: string; summary: string; files: string[] }
   | { kind: 'study'; why: string; chunks: string[][]; recap: string[] }
-  | { kind: 'study-due'; topics: { topic: string; due: string; step: number }[] };
+  | { kind: 'study-due'; topics: { topic: string; due: string; step: number }[] }
+  // v1.0.7 /reverse: what the target does, each finding with the evidence REA showed, and what couldn't be seen.
+  | { kind: 'reverse'; summary: string; findings: { title: string; detail: string; evidence: string }[]; limits: string[] };
 // /perf's A/B, run by AI Term on the code before and after the change, back to back on this machine.
 // AI Term's answer when /perf's A/B has no sandbox: the popup then accepts a capital Y, like /dev.
 export const AB_NO_SANDBOX = 'No sandbox here · Y runs the A/B with your rights';
@@ -133,6 +135,7 @@ export function parseAddonResult(source: string, name: string, kept = false): Ad
     // Sources are shown and copied, never opened by AI Term: https or http only (no javascript:, file: or data:).
     case 'research': return ok(keys(p, 'kind', 'summary', 'files', 'sources') && made(name, p) && Array.isArray(p.sources) && p.sources.length <= 40 && p.sources.every(u => line(u, 500) && /^https?:\/\/[^\s/]+/i.test(u) && plainUrl(u)));
     case 'animate': return ok(keys(p, 'kind', 'verdict', 'why', 'summary', 'files') && (p.verdict === 'animate' || p.verdict === 'skip') && line(p.why, 300) && text(p.summary, 600) && paths(p.files, 40) && (p.verdict === 'animate' || p.files.length === 0));
+    case 'reverse': return ok(keys(p, 'kind', 'summary', 'findings', 'limits') && text(p.summary, 600) && list(p.findings, 24, f => keys(f, 'title', 'detail', 'evidence') && line(f.title, 120) && text(f.detail, 1200) && text(f.evidence, 1200), 0) && Array.isArray(p.limits) && p.limits.length <= 12 && p.limits.every(l => line(l, 300)));
     case 'study': return ok(keys(p, 'kind', 'why', 'chunks', 'recap') && line(p.why) && Array.isArray(p.chunks) && p.chunks.length > 0 && p.chunks.length <= 16 && p.chunks.every(c => lines(c, 6) && c.some(x => /^Check:/i.test(x))) && lines(p.recap, 3) && p.recap.length === 3);
     // AI Term's own schedule (no model): only a kept copy.
     case 'study-due': return ok(kept && keys(p, 'kind', 'topics') && list(p.topics, 200, t => keys(t, 'topic', 'due', 'step') && line(t.topic, 200) && typeof t.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.due) && Number.isSafeInteger(t.step) && Number(t.step) >= 0, 0));

@@ -5,7 +5,7 @@ export interface McpValue { name: string; last4: string }
 export type McpConfig = { name: string; type: 'stdio'; command: string; args: string[]; env: string[] } | { name: string; type: 'http'; url: string; headers: string[] };
 export interface McpServer { id: string; config: McpConfig; hash: string; enabled: boolean; values: McpValue[]; tools: Record<string, boolean> }
 export interface McpTool { name: string; description: string; enabled: boolean; tokens: number }
-export interface McpView extends McpServer { source: 'AI Term'|'this project'; approved: boolean; note?: string; available: McpTool[] }
+export interface McpView extends McpServer { source: 'AI Term'|'this project'|'this session'; approved: boolean; note?: string; available: McpTool[] }
 export interface McpCatalog { servers: McpView[]; notes: string[]; tokens: number }
 export interface McpAccess {
   list(cwd: string): Promise<McpCatalog>;

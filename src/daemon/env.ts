@@ -89,7 +89,7 @@ export function buildArgs(request:{engine:CliEngine;model:string|null;permission
     if(request.model!==null)args.push(`--model=${request.model}`);
     if(request.effort!==undefined&&request.effort!==null)args.push(...(request.engine==='codex'?['-c',`model_reasoning_effort="${request.effort}"`]:[`--effort=${request.effort}`]));
     if(request.conversationId)args.push(`${request.resume?'--resume':'--session-id'}=${request.conversationId}`);
-    if(request.addon && (!isAddonBundle(request.addon.bundle) || request.permission !== 'ask')) throw new Error('Invalid add-on arguments');
+    if(request.addon && (!isAddonBundle(request.addon.bundle) || request.permission !== 'ask' || request.addon.mcp && !request.addon.readOnly)) throw new Error('Invalid add-on arguments');
     args.push(...(request.engine === 'codex' && request.addon?.readOnly ? ['--ask-for-approval=on-request','--sandbox=read-only'] : PERMISSION_ARGS[request.engine][request.permission]??[]));
     if(request.engine === 'claude-code' && request.addon) args.push(`--plugin-dir=${request.addon.bundle}`, ...(request.addon.readOnly ? ['--tools=Read,Grep,Glob'] : []), ...(request.addon.readOnly || request.addon.mcp ? ['--strict-mcp-config'] : []));
     // v1.0.7 /reverse: the one MCP server for this agent, as argv elements. Claude Code reads it from --mcp-config's JSON
@@ -142,8 +142,8 @@ export function buildAgentArgs(request:{command:AgentCommand;provider:KeyProvide
     if(!absolute(command.node)||!absolute(command.entry)||command.loader!==undefined&&!absolute(command.loader)||command.entry.endsWith('.ts')&&command.loader===undefined)throw new Error('Invalid agent command');
     if(!isKeyProvider(request.provider)||!isValidModelId(request.model)||!request.models.length||request.models.length>MAX_AGENT_MODELS||!request.models.every(isValidModelId)||!request.models.includes(request.model)||!isPermissionForEngine('ai-term',request.permission)||!isThemeName(request.theme)||!absolute(request.transcript)||request.firstMessage!==undefined&&(Buffer.byteLength(request.firstMessage)>16384||request.firstMessage.includes('\0')))throw new Error('Invalid agent arguments');
     if(request.brainFile!==undefined&&!isBrainFile(request.brainFile))throw new Error('Invalid brain file');
-    if(request.addon && (!isAddonBundle(request.addon.bundle) || request.permission !== 'ask')) throw new Error('Invalid add-on arguments');
-    const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--provider=${request.provider}`,`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[]),...(request.lsp===true?[AGENT_LSP_FLAG]:[]),...(request.brainFile!==undefined?[`--brain=${request.brainFile}`]:[]),...(request.addon?[`--addon=${request.addon.bundle}`, ...(request.addon.readOnly?['--read-only']:[])]:[])];
+    if(request.addon && (!isAddonBundle(request.addon.bundle) || request.permission !== 'ask' || request.addon.mcp && !request.addon.readOnly)) throw new Error('Invalid add-on arguments');
+    const args=[...(command.loader?['--import',command.loader]:[]),command.entry,'agent',`--provider=${request.provider}`,`--model=${request.model}`,`--models=${request.models.join(',')}`,`--theme=${request.theme}`,`--transcript=${request.transcript}`,...(PERMISSION_ARGS['ai-term'][request.permission]??[]),...(request.lsp===true?[AGENT_LSP_FLAG]:[]),...(request.brainFile!==undefined?[`--brain=${request.brainFile}`]:[]),...(request.addon?[`--addon=${request.addon.bundle}`, ...(request.addon.readOnly?['--read-only']:[]), ...(request.addon.mcp?['--session-mcp']:[])]:[])];
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return {executable:command.node,args};
 }

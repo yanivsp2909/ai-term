@@ -80,6 +80,13 @@ export function batchLines(r: Batch, view: ResultView): string[] {
     case 'diagram': return outputs(r.files, view, [r.rendered ? '✓ rendered with the renderer already installed' : 'not rendered · no mmdc or d2 installed (the source still works on GitHub and in editors)'], r.summary);
     case 'video': return outputs(r.files, view, [r.rendered ? '✓ rendered' : `not rendered · missing: ${r.missing.join(', ') || 'a renderer'}`], r.summary);
     case 'research': return outputs(r.files, view, ['Sources:', ...r.sources.map(u => `  ${u}`)], r.summary);
+    case 'reverse': {
+      const chosen = r.findings[view.selected];
+      return [r.summary, '', ...r.findings.length ? windowed(r.findings, view.selected, (f, i) => `${i === view.selected ? '›' : ' '} ${f.title}`) : ['no findings'],
+        ...chosen ? ['', ...chosen.detail.split('\n'), ...`Evidence: ${chosen.evidence}`.split('\n')] : [],
+        ...r.limits.length ? ['', 'Not seen or not confirmed:', ...r.limits.map(l => `  ${l}`)] : [],
+        '', `${r.findings.length > 1 ? '↑↓ finding · ' : ''}read-only: the target was not changed · the agent stays open for questions · Esc closes`];
+    }
     case 'polish': return made(r.summary, r.files, [], undefined, '');
     case 'e2e': return made(r.summary, r.files, [], view.tests, '');
     case 'animate': return r.verdict === 'skip' ? [`■ no animation: ${r.why}`, r.summary, 'Nothing was changed · Esc closes'] : [`✓ animate: ${r.why}`, ...made(r.summary, r.files, [], undefined, '')];

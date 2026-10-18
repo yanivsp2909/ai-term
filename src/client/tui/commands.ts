@@ -9,12 +9,12 @@ export const effortValues=(engine:AgentEngine):readonly string[]=>['CLI default'
 const none=()=>'';
 // D58 add-ons typed as commands (review-deep is reached through /review <agent> deep). A hint in <> needs an argument;
 // one in [] has a default: the whole folder, or the selected agent.
-export const ADDON_COMMANDS=['plan','prompt','explain','teach','fix','cover','bisect','refactor','perf','types','failures','security','issue','pr-review','deps','commit','changelog','docs','handover','standup','adr','context','opensource','deck','slides','diagram','design','polish','a11y','e2e','animate','video','research','study'] as const;
+export const ADDON_COMMANDS=['plan','prompt','explain','teach','fix','cover','bisect','refactor','perf','types','failures','security','issue','pr-review','deps','commit','changelog','docs','handover','standup','adr','context','opensource','deck','slides','diagram','design','polish','a11y','e2e','animate','video','research','study','reverse'] as const;
 // Add-ons that run no model: no engine target is sent (their m or follow-ups ask for one themselves).
 export const LOCAL_ADDON_COMMANDS:readonly string[]=['bisect','standup','study-due'];
 // Add-ons that need an engine with its own web tools: AI Term's agent is offered only when nothing else is.
 export const WEB_ADDON_COMMANDS:readonly string[]=['research'];
-export const ADDON_HINTS:Readonly<Record<string,string>>={plan:'<goal>',prompt:'<file or text>',explain:'<path or question>',teach:'[agent]',fix:'<error text or file>',cover:'[path]',bisect:'[--no-deps] <test command> [good ref]',refactor:'[path]',perf:'[path or command]',types:'[path]',failures:'[path]',security:'[path]','review-deep':'[agent]',issue:'<#number or issue URL>','pr-review':'<#number or PR URL>',deps:'[path]',commit:'[agent]',changelog:'[from..to]',docs:'[path]',handover:'[path]',standup:'',adr:'<decision>',context:'',opensource:'',deck:'<topic>',slides:'<topic>',diagram:'<what to draw>',design:'<screen>',polish:'<path>',a11y:'<path>',e2e:'<app or flow>',animate:'<motion>',video:'<topic>',research:'<question>',study:'[topic]','study-due':''};
+export const ADDON_HINTS:Readonly<Record<string,string>>={plan:'<goal>',prompt:'<file or text>',explain:'<path or question>',teach:'[agent]',fix:'<error text or file>',cover:'[path]',bisect:'[--no-deps] <test command> [good ref]',refactor:'[path]',perf:'[path or command]',types:'[path]',failures:'[path]',security:'[path]','review-deep':'[agent]',issue:'<#number or issue URL>','pr-review':'<#number or PR URL>',deps:'[path]',commit:'[agent]',changelog:'[from..to]',docs:'[path]',handover:'[path]',standup:'',adr:'<decision>',context:'',opensource:'',deck:'<topic>',slides:'<topic>',diagram:'<what to draw>',design:'<screen>',polish:'<path>',a11y:'<path>',e2e:'<app or flow>',animate:'<motion>',video:'<topic>',research:'<question>',study:'[topic]','study-due':'',reverse:'<target> | path <path>'};
 export const commandRegistry:readonly Command[]=[
  {name:'/model',description:'Choose model and provider',current:c=>`${c.model??'CLI default'} · ${c.engine==='codex'?'codex':'claude code'}`},
  {name:'/cd',description:'Choose the next agent folder',current:c=>c.cwd},
@@ -85,6 +85,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/e2e',description:'Browser tests for an app\'s key flows in a worktree, run in the test sandbox (asks first)',argumentHint:()=>ADDON_HINTS.e2e??'',current:none},
  {name:'/animate',description:'Decide whether something should animate at all, then build it in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.animate??'',current:none},
  {name:'/video',description:'A short video as code (Remotion) or a terminal demo (VHS) in a worktree (asks first)',argumentHint:()=>ADDON_HINTS.video??'',current:none},
+ {name:'/reverse',description:'Reverse-engineer an app or binary that is yours with REA\'s MCP tools, read-only; REA runs sandboxed with no network (asks first)',argumentHint:()=>ADDON_HINTS.reverse??'',current:none},
  {name:'/research',description:'Web research with sources, saved under docs/research/ in a worktree; Claude Code or Codex only (asks first)',argumentHint:()=>ADDON_HINTS.research??'',current:none},
  {name:'/study',description:'A short study session, one idea and one check question per chunk; /study alone shows what is due',argumentHint:()=>ADDON_HINTS.study??'',current:none},
  {name:'/security',description:'Read-only security review and bug-bounty hunt, reproduced against this repo only (asks first)',argumentHint:()=>ADDON_HINTS.security??'',current:none},

@@ -71,7 +71,7 @@ it('the popup names the target, the REA it found and its sandbox, and asks you t
 });
 
 it('missing REA or an engine without a per-session MCP option stops at the popup with one line', async () => {
-  const { cwd, service: s } = await service(new Error("REA isn't installed · install it yourself (npm install --global rea-agents), or set its path with /reverse path <path>"));
+  const { cwd, service: s } = await service(new Error("REA isn't installed · install it yourself with npm install --global rea-agents, or point to it with /reverse path <path>"));
   await expect(s.plan('reverse', 'Notes.app', cwd, CLAUDE)).rejects.toThrow('npm install --global rea-agents');
 });
 

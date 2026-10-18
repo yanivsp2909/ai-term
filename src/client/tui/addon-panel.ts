@@ -87,6 +87,7 @@ export class AddonPanel {
     else if (r?.kind === 'a11y' && key === 'f' && r.findings[this.selected] && !this.applied) { this.busy = true; this.actions.apply?.([this.selected]); }
     else if (r?.kind === 'teach' && this.chunk >= r.chunks.length) this.quizKey(key, r.quiz.length);
     else if (r?.kind === 'refactor' && (key === 'up' || key === 'down')) this.move(key, r.items.length);
+    else if (r?.kind === 'reverse' && (key === 'up' || key === 'down') && r.findings.length) this.move(key, r.findings.length);
     else if (r?.kind === 'refactor' && key === 'space') { if (!this.picked.delete(this.selected)) this.picked.add(this.selected); this.refresh(); }
     else if (r?.kind === 'refactor' && key === 'r' && this.picked.size && !this.applied) { this.busy = true; this.actions.apply?.([...this.picked].sort((a, b) => a - b)); }
     else if ((r?.kind === 'types' || r?.kind === 'failures' || r?.kind === 'review-deep' || r?.kind === 'security') && (key === 'up' || key === 'down') && r.findings.length) this.move(key, r.findings.length);

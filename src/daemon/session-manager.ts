@@ -398,6 +398,7 @@ export class SessionManager extends EventEmitter {
             const status = await checkEngine(engine,process.env,undefined,profilePath);
             if (!status.installed || !status.path) throw new Error(`${agent.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`);
             if(addon&&engine==='claude-code')await checkAddonCli(status.path,addon.readOnly);
+            if(addon?.mcp)await checkReverseCli(engine,status.path);
             if (agent.auth.kind==='account' && !agent.login && status.loggedIn !== true) throw new Error(status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable');
             if(addon&&agent.auth.kind==='account'&&status.authMethod!=='subscription')throw new Error('Add-on CLI runs require a confirmed subscription login');
             authMethod = status.authMethod;
@@ -416,6 +417,8 @@ export class SessionManager extends EventEmitter {
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account',...(profile?{profile}:{}) }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
         if(brain)info.brain={builtAt:brain.builtAt};
+        // v1.0.7 /reverse on AI Term's agent: its own MCP list (REA alone), there before the agent first asks for it.
+        if(addon?.mcp&&agent?.engine==='ai-term')this.mcp.session(info.id,addon.mcp);
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
             const forkWorktree=fork!==undefined;
@@ -539,7 +542,7 @@ export class SessionManager extends EventEmitter {
                 });
             });
             host.pty.onExit(event => {
-                this.usage?.revoke(info.id);this.trackRelease(info.id);if(live.limitTimer){clearTimeout(live.limitTimer);live.limitTimer=undefined;}live.outputClock?.dispose();void this.mcp.stop(info.id).catch(()=>this.log.error('MCP session stop failed'));
+                this.usage?.revoke(info.id);this.trackRelease(info.id);if(live.limitTimer){clearTimeout(live.limitTimer);live.limitTimer=undefined;}live.outputClock?.dispose();void this.mcp.stop(info.id).then(()=>this.mcp.endSession(info.id),()=>{this.mcp.endSession(info.id);this.log.error('MCP session stop failed');});
                 // Set terminal precedence synchronously: queued hook bodies must not win a process-exit race.
                 if(live.statusState)live.statusState=reduceStatus(live.statusState,{seq:live.statusState.seq+1,at:new Date().toISOString(),kind:'exit',status:'exited',detail:'exited',exitCode:event.exitCode});
                 live.output = live.output.then(async () => {
@@ -806,6 +809,15 @@ export class SessionManager extends EventEmitter {
             try{await writeFile(target,data,{flag:'wx',mode:0o644});return target;}catch(error){if(!isFsError(error,'EEXIST'))throw error;}
         }
         throw new Error('Downloads already has 99 copies of this file');
+    }
+    // v1.0.7 /reverse: the target (checked), REA (found, never installed) and its sandboxed server, for an engine whose
+    // installed CLI takes a per-session MCP list. Errors are one line each and reach the popup.
+    async addonReverse(cwd:string,args:string,target:import('../shared/addons.js').AddonTarget):Promise<ReversePlan>{
+        if(target.engine!=='ai-term'){const status=await checkEngine(target.engine,process.env);if(!status.installed||!status.path)throw new Error(`${target.engine==='codex'?'codex':'claude'} not found in PATH`);await checkReverseCli(target.engine,status.path);}
+        let setting:string|undefined;
+        try{const value=(await new SettingsStore(this.paths.root).get()).reversePath;if(typeof value==='string')setting=value;}catch{this.log.error('Settings unreadable; /reverse looks for REA on PATH');}
+        const reverseTargetPath=await reverseTarget(cwd,args,this.paths.root),rea=await findRea(setting,process.env.PATH??'',cwd);
+        return {target:reverseTargetPath,rea,mcp:await reverseServer({rea,target:reverseTargetPath,cwd,root:this.paths.root,env:process.env})};
     }
     // v1.1 /bisect: the plan reads your checkout only; whether a sandbox starts here decides y or a capital Y.
     async addonBisectPlan(cwd:string,args:string):Promise<BisectAsk>{
@@ -1836,7 +1848,7 @@ export class SessionManager extends EventEmitter {
         this.log.off('writeFailed',this.onLogFailure);this.log.off('writeRecovered',this.onLogRecovery);
     }
 }
-import { AddonService, type AddonRunOptions } from './addons.js';
+import { AddonService, type AddonRunOptions, type ReversePlan } from './addons.js';
 import { bisectPlan, BisectError, runBisect } from './bisect.js';
 import { AB_RUN_TIMEOUT_MS, copyBenchFile, runAb } from './perf-ab.js';
 import { tempClone } from './temp-clone.js';
@@ -1862,4 +1874,5 @@ async function openWithDefaultApp(path:string):Promise<void>{
     if(!opener)throw new Error('Opening a file is available on macOS and Linux');
     await new Promise<void>((done,fail)=>{execFile(opener,[path],{timeout:15_000,windowsHide:true},error=>error?fail(new Error('The file could not be opened')):done());});
 }
-import { checkAddonCli } from './addon-cli.js';
+import { checkAddonCli, checkReverseCli } from './addon-cli.js';
+import { findRea, reverseServer, reverseTarget } from './reverse.js';

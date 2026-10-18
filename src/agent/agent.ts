@@ -215,7 +215,8 @@ export class Agent {
       bash: tool({ description: 'Run a shell command in the folder with /bin/sh -c. No stdin; output is capped.', inputSchema: schema<{ command: string; timeoutSeconds?: number }>({ command: 'string' }, { timeoutSeconds: 'number' }, { command: 'The command line', timeoutSeconds: 'Time limit in seconds (default 120, at most 600)' }), execute: (input, { abortSignal }) => bash(input, abortSignal ?? new AbortController().signal) }),
       search: tool({ description: this.options.rg ? 'Search file contents in the folder for a regular expression (ripgrep; respects .gitignore).' : 'Search file contents in the folder for plain text.', inputSchema: schema<{ pattern: string; path?: string }>({ pattern: 'string' }, { path: 'string' }, { pattern: this.options.rg ? 'Regular expression' : 'Plain text', path: 'Folder or file to search, relative to the folder' }), execute: (input, { abortSignal }) => search(input, abortSignal ?? new AbortController().signal) }),
     };
-    return this.options.readOnly ? Object.fromEntries(Object.entries(tools).filter(([name]) => name === 'read' || name === 'search')) : tools;
+    // A read-only add-on reads and searches; /reverse's also reaches its one session MCP server (each call still asks).
+    return this.options.readOnly ? Object.fromEntries(Object.entries(tools).filter(([name]) => name === 'read' || name === 'search' || !!this.options.mcp && (name === 'mcp_tools' || name === 'mcp_call'))) : tools;
   }
 
   // One message from the user: model requests and tool rounds until the model answers, the user interrupts, or a limit

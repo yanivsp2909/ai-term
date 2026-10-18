@@ -23,6 +23,8 @@ import { atomicWrite } from './store.js';
 export interface AddonMcp { command: string; args: string[] }
 export interface AddonRunOptions { bundle: string; readOnly: boolean; web?: boolean; mcp?: AddonMcp }
 export type BisectResult = Extract<AddonResult, { kind: 'bisect' }>;
+// v1.0.7 /reverse: the checked target's real path, the REA AI Term found, and its sandboxed server for that agent.
+export interface ReversePlan { target: string; rea: string; mcp: AddonMcp }
 interface Runner {
   create(request: Exclude<CreateSession, { engine: 'shell' }>, continuation?: undefined, fork?: undefined, addon?: AddonRunOptions, strictIsolation?: boolean): Promise<SessionInfo>;
   text(id: string, lastReply?: boolean): Promise<SessionText>;
@@ -39,8 +41,10 @@ interface Runner {
   addonStandup?(): Promise<string[]>;
   // v1.1 batch 3: o opens a made file, s saves a copy to Downloads (returns where).
   addonFile?(id: string, file: string, action: 'open' | 'save'): Promise<string | null>;
+  // v1.0.7: /reverse's target and REA, checked for the engine that will run it.
+  addonReverse?(cwd: string, args: string, target: AddonTarget): Promise<ReversePlan>;
 }
-type Input = { addon: Addon; cwd: string; target: AddonTarget | null; args: string; rawArgs: string; subject: string; facts: string[]; commitAgent?: string; commitState?: string; brain: BrainPlan | null; files: { path: string; text: string }[]; bisect?: BisectAsk; hash: string };
+type Input = { addon: Addon; cwd: string; target: AddonTarget | null; args: string; rawArgs: string; subject: string; facts: string[]; commitAgent?: string; commitState?: string; brain: BrainPlan | null; files: { path: string; text: string }[]; bisect?: BisectAsk; reverse?: ReversePlan; hash: string };
 type Run = { input: Input; nonce: string; result?: AddonResult; error?: string; saved?: string; ab?: AbView };
 const FORMATS: Record<string, string> = {
   plan: 'JSON object: kind="plan", title:string, steps:array of {title:string,prompt:string}. Maximum 24 steps.',
@@ -77,9 +81,17 @@ const FORMATS: Record<string, string> = {
   research: 'JSON object: kind="research", summary:the answer in one or two sentences, files:array with the report path under docs/research/ ending .md, sources:array of <=40 http(s) URLs you actually read.',
   study: 'JSON object: kind="study", why:one sentence, chunks:array of 1-16 arrays of <=6 short lines, one idea each, each with a line starting "Check:", recap:exactly 3 lines.',
   'standup-polish': 'JSON object: kind="standup-polish", text:the standup as plain text lines.',
+  reverse: 'JSON object: kind="reverse", summary:what the target is and does in one to three sentences, findings:array of <=24 {title:string,detail:how it works,evidence:the symbol, address, string, file or call path REA showed}, limits:array of <=12 lines naming what you could not see or confirm.',
 };
 // Follow-ups that start a worktree agent from a result: picked items, one finding, every fixable finding, or a section.
 const APPLY: readonly string[] = ['refactor', 'types', 'opensource', 'changelog', 'a11y'], ONE_ITEM: readonly string[] = ['types', 'changelog', 'a11y'];
+// A long path keeps its end (the app or file name) within a popup line.
+const tail = (text: string, most: number): string => { const chars = [...text]; return chars.length <= most ? text : `…${chars.slice(chars.length - most + 1).join('')}`; };
+// What the /reverse popup says before y: the target, the REA that runs, its sandbox, and what y confirms.
+function reverseFacts(plan: ReversePlan): string[] {
+  return [`target: ${tail(plan.target, 200)} · read-only: neither the agent nor REA can change it`, `REA: ${tail(plan.rea, 160)} · your install; AI Term never installs it · only this agent uses it`,
+    "REA runs in a sandbox: no network · it can't write the target or AI Term's folder", "● y confirms this target is yours, or that you're allowed to analyze it"];
+}
 const exists = async (path: string): Promise<boolean> => { try { await lstat(path); return true; } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return false; throw error; } };
 export class AddonService {
   private receipts = new Map<string, { input: Input; ask: AddonAsk; expires: number }>();
@@ -123,6 +135,8 @@ export class AddonService {
         return { args: `Benchmark command (argument list): ${JSON.stringify(command)}`, cwd, subject: `benchmark: ${testCommandText(command)}` };
       }
       case 'command-ref': if (!args.trim()) throw new Error(`/${addon.name} ${addon.args}`); return { args, cwd, subject: '' };
+      // The daemon checks the target and finds REA in input(), which knows the engine.
+      case 'target': return { args, cwd, subject: '' };
       case 'none': return { args: '', cwd, subject: '' };
       default: {
         // Batch 2: AI Term reads the data itself (read-only); the model gets it quoted, never as instructions.
@@ -140,6 +154,12 @@ export class AddonService {
     if (addon.web && target?.engine === 'ai-term') throw new Error(`/${addon.name} needs an engine with its own web tools (Claude Code or Codex); AI Term's agent has none`);
     if (addon.local ? target !== null : target === null || !isAddonTarget(target) || !addon.engines.includes(target.engine)) throw new Error('Engine unavailable for this add-on');
     const resolved = await this.resolveInput(addon, args, await realpath(cwd)); cwd = resolved.cwd;
+    let reverse: ReversePlan | undefined;
+    if (addon.input === 'target') {
+      if (!this.runner.addonReverse || !target) throw new Error('This add-on is unavailable');
+      reverse = await this.runner.addonReverse(cwd, args, target);
+      Object.assign(resolved, { args: `Target (read-only): ${reverse.target}`, subject: `target: ${tail(reverse.target, 280)}`, facts: reverseFacts(reverse) });
+    }
     const secret = resolved.args.split('\n').some(line => scanLine(line) !== null);
     const redacted = redactSecrets(resolved.args).split('\n').map(line => scanLine(line) ? '[redacted: secret-bearing line]' : line).join('\n');
     args = `${secret ? 'Local scan: secret detected and removed.\n' : ''}${redacted}`;
@@ -149,8 +169,8 @@ export class AddonService {
     if (addon.brain !== 'none') { try { brain = await this.runner.brainPlan(cwd); } catch (error) { if (!(error instanceof Error) || !error.message.includes("isn't in a git repository")) throw error; } }
     let bisect: BisectAsk | undefined;
     if (addon.local === 'bisect') { if (!this.runner.addonBisectPlan) throw new Error('Bisect is unavailable'); bisect = await this.runner.addonBisectPlan(cwd, rawArgs); }
-    const hash = createHash('sha256').update(JSON.stringify([addon, args, cwd, target, files, brain?.fingerprint ?? null, bisect ?? null, resolved.commitAgent ?? null])).digest('hex');
-    return { addon, cwd, target, args, rawArgs, subject: resolved.subject, facts: resolved.facts ?? [], ...resolved.commitAgent ? { commitAgent: resolved.commitAgent, ...resolved.commitState ? { commitState: resolved.commitState } : {} } : {}, files, brain, ...bisect ? { bisect } : {}, hash };
+    const hash = createHash('sha256').update(JSON.stringify([addon, args, cwd, target, files, brain?.fingerprint ?? null, bisect ?? null, resolved.commitAgent ?? null, reverse ?? null])).digest('hex');
+    return { addon, cwd, target, args, rawArgs, subject: resolved.subject, facts: resolved.facts ?? [], ...resolved.commitAgent ? { commitAgent: resolved.commitAgent, ...resolved.commitState ? { commitState: resolved.commitState } : {} } : {}, files, brain, ...bisect ? { bisect } : {}, ...reverse ? { reverse } : {}, hash };
   }
   async plan(name: string, args: string, cwd: string, target: AddonTarget | null): Promise<AddonAsk> {
     const input = await this.input(name, args, cwd, target), state = !input.brain?.builtAt ? 'none' : input.brain.changed || input.brain.removed ? 'stale' : 'fresh';
@@ -216,7 +236,7 @@ export class AddonService {
     const prompt = original.addon.prompt.replace(/\{\{(args|brainIndex)\}\}/g, (_match: string, name: string) => name === 'args' ? JSON.stringify(original.args) : brainIndex);
     const firstMessage = `${prompt}\n\nRead these bundled skill/agent files: ${original.files.map(f => JSON.stringify(join(bundle, f.path))).join(', ')}.\n${FORMATS[original.addon.name] ?? 'Return the answer as text.'}\nReturn the final JSON between these marker lines, with no Markdown fence:\nRESULT_${nonce}_BEGIN\n(the JSON result goes here)\nRESULT_${nonce}_END`;
     if (Buffer.byteLength(firstMessage) > 16384) throw new Error('Add-on prompt exceeds the first-message limit');
-    const session = await this.runner.create({ ...target, cwd: original.cwd, permission: 'ask', title: '/' + original.addon.name, firstMessage, useWorktree: original.addon.worktree, brain: original.addon.brain !== 'none' && !!original.brain?.builtAt }, undefined, undefined, { bundle, readOnly: original.addon.readOnly, ...original.addon.web ? { web: true } : {} });
+    const session = await this.runner.create({ ...target, cwd: original.cwd, permission: 'ask', title: '/' + original.addon.name, firstMessage, useWorktree: original.addon.worktree, brain: original.addon.brain !== 'none' && !!original.brain?.builtAt }, undefined, undefined, { bundle, readOnly: original.addon.readOnly, ...original.addon.web ? { web: true } : {}, ...original.reverse ? { mcp: original.reverse.mcp } : {} });
     this.runs.set(session.id, { input: original, nonce });
     if (original.addon.tests) this.tests.add(session.id);
     return { session };

@@ -66,7 +66,7 @@ import { validateHandoffPlan, validateHandoffSummary } from '../../shared/handof
 import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.js';
 import { openFolder, OpenError, type FolderApp } from './open-folder.js';
 import { parseSend, sendFailure, sendRefusal, SEND_TOO_LONG } from './send-command.js';
-import { basename, sep } from 'node:path';
+import { basename, isAbsolute, sep } from 'node:path';
 import { QueueForm, QueuePanel } from './queue-panel.js';
 import { validateQueue } from '../../shared/queue.js';
 import { DevAsk } from './dev-ask.js';
@@ -568,6 +568,8 @@ export class Homepage {
     const addonCommand = ADDON_COMMANDS.find(name => text.trim() === `/${name}` || text.trim().startsWith(`/${name} `));
     // /study alone: what the review schedule says is due (no model, nothing to approve).
     if(addonCommand==='study'&&text.trim()==='/study'){await this.addonCommand('study-due','');return;}
+    // /reverse path <path> | none: where REA is, when it isn't on PATH. Only that is saved; nothing is installed.
+    if(addonCommand==='reverse'&&/^\/reverse path(?:\s|$)/.test(text.trim())){await this.reversePathCommand(text.trim().slice('/reverse path'.length).trim());return;}
     if(addonCommand){await this.addonCommand(addonCommand,text.trim().slice(addonCommand.length+1).trim());return;}
     // /send carries its text, paste tokens included, to the agent; it never opens the start box.
     if(text==='/send'||text.startsWith('/send ')){await this.send(text);return;}
@@ -742,6 +744,15 @@ export class Homepage {
     const session=this.sessions.find(s=>s.id===this.selectedId);if(!session)this.showNote(`select an agent, then ${command}`);return session;
   }
   // v0.7.4 /test-cmd [command|none]: the project of the selected agent (else of the next agent's folder).
+  private async reversePathCommand(argument:string):Promise<void>{
+    const path=argument.replace(/^(["'])(.*)\1$/s,'$2');
+    try{
+      if(!path){const saved=validateSettings((await this.connection.request({kind:'settings.get'})).settings).reversePath;this.showNote(typeof saved==='string'?`REA: ${saved} · /reverse path none looks on PATH again`:'REA: looked up on PATH · /reverse path <path> sets where it is');return;}
+      if(path!=='none'&&!isAbsolute(path)){this.showNote('/reverse path <absolute path to rea> · none clears it');return;}
+      await this.connection.request({kind:'settings.set',patch:{reversePath:path==='none'?null:path}});
+      this.showNote(path==='none'?'✓ /reverse looks for REA on PATH':`✓ /reverse uses REA at ${path} · AI Term never installs or updates it`);
+    }catch(error){this.showNote(error instanceof Error?error.message:'Settings unavailable');}
+  }
   private async testCmdCommand(argument:string):Promise<void>{
     const selected=this.sessions.find(s=>s.id===this.selectedId),cwd=selected?.worktree??selected?.cwd??this.folder;
     const command=argument===''||argument==='none'?null:parseTestCommand(argument);

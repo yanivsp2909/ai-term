@@ -38,7 +38,7 @@ it('the target is a real path that exists; credential files and AI Term\'s own f
   expect(await reverseTarget(folder, 'app.bin', root)).toBe(join(folder, 'app.bin'));
   expect(await reverseTarget(folder, `"${join(folder, 'app.bin')}"`, root)).toBe(join(folder, 'app.bin'));
   await expect(reverseTarget(folder, '', root)).rejects.toThrow('/reverse <target>');
-  await expect(reverseTarget(folder, 'missing.bin', root)).rejects.toThrow('No such target');
+  await expect(reverseTarget(folder, 'missing.bin', root)).rejects.toThrow('No such target · check the path');
   await expect(reverseTarget(folder, '.env', root)).rejects.toThrow('credential');
   await expect(reverseTarget(folder, join(root, 'state.json'), root)).rejects.toThrow("AI Term's own folder");
 });

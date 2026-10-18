@@ -31,6 +31,8 @@ import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
 import { currentAgentSandbox, dontAskNote, AGENT_SANDBOX_ERRORS } from './agent-sandbox.js';
 import { CLI_LAUNCH_ERRORS } from './win-launch.js';
 import { QUEUE_ERRORS, type QueueService } from './queue.js';
+import { REVERSE_ERRORS } from './reverse.js';
+import { REVERSE_CLI_ERRORS } from './addon-cli.js';
 import packageInfo from '../../package.json' with { type: 'json' };
 interface Peer {
     socket: Socket;
@@ -488,7 +490,7 @@ export class DaemonServer {
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
-                ...PRICE_ERRORS,'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS
+                ...PRICE_ERRORS,'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS,...REVERSE_ERRORS,...REVERSE_CLI_ERRORS,'This add-on is unavailable'
             ]);
             const message = error instanceof Error && (fixed.has(error.message) || error instanceof MergeError && CHECKOUT_NOT_ON_BASE.test(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.

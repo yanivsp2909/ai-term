@@ -7,7 +7,8 @@ export interface AddonTarget { engine: AgentEngine; model: string | null; auth: 
 // (default the whole folder), a path or a benchmark command, or /bisect's test command with an optional good ref.
 // Batch 2: data AI Term gathers read-only before the model runs (a GitHub issue or PR through gh, package queries, the
 // staged changes, a git range, the instruction files, the open-source scan), or none at all (a local add-on).
-export const ADDON_INPUTS = ['text', 'file-or-text', 'agent', 'path', 'path-or-command', 'command-ref', 'github-issue', 'github-pr', 'deps', 'commit', 'git-range', 'context', 'opensource', 'none'] as const;
+// v1.0.7: target is /reverse's app, binary or folder, checked by the daemon, which also finds REA for it.
+export const ADDON_INPUTS = ['text', 'file-or-text', 'agent', 'path', 'path-or-command', 'command-ref', 'github-issue', 'github-pr', 'deps', 'commit', 'git-range', 'context', 'opensource', 'target', 'none'] as const;
 export const GATHERED_INPUTS: readonly AddonInput[] = ['github-issue', 'github-pr', 'deps', 'commit', 'git-range', 'context', 'opensource'];
 // Local add-ons run no model: /bisect runs your test command (it asks), /standup and /study's due list only read
 // AI Term's own records (free: they start without a y).
