@@ -63,6 +63,17 @@ const FORMATS: Record<string, string> = {
   adr: 'JSON object: kind="adr", summary:the record and where it lives, files:array of changed relative paths.',
   context: 'JSON object: kind="context", summary:one line, findings:array of <=24 {file:relative path,line:number,severity:"critical"|"high"|"medium"|"low",title:string,detail:string,fix:the smallest edit}.',
   opensource: 'JSON object: kind="opensource", summary:one line verdict, findings:array of <=24 {file:relative path,line:number,severity:"critical"|"high"|"medium"|"low",title:string,detail:what to do, fix (optional):the file change that fixes it}.',
+  deck: 'JSON object: kind="deck", summary:one or two sentences, files:array of the files you wrote, each under out/deck/ and ending .html, .svg, .png, .pdf or .md, todo:array of <=24 lines, one per fact the repository does not state (never an invented number).',
+  slides: 'JSON object: kind="slides", summary:one or two sentences, files:array of the files you wrote, each under out/slides/ and ending .html, .svg, .png, .pdf or .md, todo:array of <=24 lines, one per fact you could not confirm.',
+  diagram: 'JSON object: kind="diagram", summary:one or two sentences, files:array of the files you wrote, each under docs/diagrams/ and ending .mmd, .d2, .svg, .png or .md, rendered:true only if an already-installed renderer made an .svg or .png listed in files.',
+  design: 'JSON object: kind="design", summary:one or two sentences, files:array of 1-3 mockups you wrote, each under out/design/ and ending .html, .svg, .png, .pdf or .md.',
+  polish: 'JSON object: kind="polish", summary:what you refined and why in one or two sentences, files:array of changed relative paths.',
+  a11y: 'JSON object: kind="a11y", summary:one line, findings:array of <=24 {file:relative path,line:number,severity:"critical"|"high"|"medium"|"low",title:string,detail:string,fix:the smallest edit} (name the WCAG 2.2 criterion in detail).',
+  e2e: 'JSON object: kind="e2e", summary:the flows covered in one or two sentences, files:array of changed relative paths.',
+  animate: 'JSON object: kind="animate", verdict:"animate"|"skip", why:one line, summary:one or two sentences, files:array of changed relative paths (empty when verdict is "skip").',
+  video: 'JSON object: kind="video", summary:one or two sentences, files:array of the files you wrote, each under out/video/ and ending .tape, .tsx, .ts, .md, .mp4, .webm or .gif, rendered:true only if an already-installed tool made an .mp4, .webm or .gif listed in files, missing:array of <=12 lines naming each tool needed to render and how to install it.',
+  research: 'JSON object: kind="research", summary:the answer in one or two sentences, files:array with the report path under docs/research/ ending .md, sources:array of <=40 http(s) URLs you actually read.',
+  study: 'JSON object: kind="study", why:one sentence, chunks:array of 1-16 arrays of <=6 short lines, one idea each, each with a line starting "Check:", recap:exactly 3 lines.',
   'standup-polish': 'JSON object: kind="standup-polish", text:the standup as plain text lines.',
 };
 // Follow-ups that start a worktree agent from a result: picked items, one finding, every fixable finding, or a section.

@@ -128,7 +128,7 @@ it('MEDIUM (reviews): /study records a topic once, cleaned up; never an empty on
 it('every batch-3 model add-on tells the engine the exact result shape it must return', async () => {
   const { repo, runs, service } = await setup();
   for (const name of NAMES) {
-    started(await service.start((await service.plan(name, 'x', repo, CODEX)).receipt));
+    started(await service.start((await service.plan(name, 'src/ui', repo, CODEX)).receipt));
     const first = String(runs.at(-1)?.firstMessage);
     expect(first, name).toContain(`kind="${name}"`); expect(first, name).not.toContain('Return the answer as text.');
   }
