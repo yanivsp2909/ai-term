@@ -11,15 +11,16 @@ import type { AddressInfo } from 'node:net';
 // Every tool result and user message it receives is kept, so a check can read exactly what an agent's command printed.
 export const STUB_MODEL = 'live-stub';
 export interface AddonReply { bash?: string; result: Record<string, unknown> }
-export interface StubOllama { endpoint: string; toolResults: string[]; userMessages: string[]; requests: number; addon(reply: AddonReply): void; close(): Promise<void> }
+// errors: requests the stub itself couldn't answer (a run fails on any: review, they were a bare 500 before).
+export interface StubOllama { endpoint: string; toolResults: string[]; userMessages: string[]; requests: number; errors: string[]; addon(reply: AddonReply): void; close(): Promise<void> }
 interface Message { role?: unknown; content?: unknown }
-interface State { toolResults: string[]; userMessages: string[]; requests: number; calls: number; addons: AddonReply[]; pending: Map<string, AddonReply> }
+interface State { toolResults: string[]; userMessages: string[]; requests: number; calls: number; addons: AddonReply[]; pending: Map<string, AddonReply>; errors: string[] }
 const text = (content: unknown): string => typeof content === 'string' ? content : Array.isArray(content) ? content.map(part => part && typeof part === 'object' && 'text' in part && typeof part.text === 'string' ? part.text : '').join('') : '';
 const NONCE = /RESULT_([0-9a-f]{32})_BEGIN/;
 
 export async function startStubOllama(): Promise<StubOllama> {
-  const state: State = { toolResults: [], userMessages: [], requests: 0, calls: 0, addons: [], pending: new Map() };
-  const server: Server = createServer((req, res) => { handle(req, res, state).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); }); });
+  const state: State = { toolResults: [], userMessages: [], requests: 0, calls: 0, addons: [], pending: new Map(), errors: [] };
+  const server: Server = createServer((req, res) => { handle(req, res, state).catch((error: unknown) => { state.errors.push(`${req.method ?? '?'} ${req.url ?? '?'}: ${error instanceof Error ? error.message : String(error)}`); if (!res.headersSent) res.writeHead(500); res.end(); }); });
   await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
   const { port } = server.address() as AddressInfo;
   return {
@@ -27,6 +28,7 @@ export async function startStubOllama(): Promise<StubOllama> {
     get toolResults() { return state.toolResults; },
     get userMessages() { return state.userMessages; },
     get requests() { return state.requests; },
+    get errors() { return state.errors; },
     addon: reply => { state.addons.push(reply); },
     close: () => new Promise<void>(done => { server.closeAllConnections(); server.close(() => done()); }),
   };

@@ -14,6 +14,8 @@ export class Screen {
   private output = '';
   private done = false;
   private readonly taps = new Set<(data: string) => void>();
+  // While your own terminal shows the program (tier 2's hand-off), it answers the program's queries; the mirror doesn't.
+  answering = true;
   readonly exited: Promise<number>;
   constructor(file: string, args: readonly string[], options: { env: Record<string, string>; cwd: string; cols?: number; rows?: number }) {
     const cols = options.cols ?? 120, rows = options.rows ?? 40;
@@ -21,7 +23,7 @@ export class Screen {
     this.child = pty.spawn(file, [...args], { env: options.env, cwd: options.cwd, cols, rows, name: 'xterm-256color' });
     this.exited = new Promise(resolve => this.child.onExit(event => { this.done = true; resolve(event.exitCode); }));
     // The TUI asks the terminal things (cursor position, device attributes): the headless xterm answers like a real one.
-    this.term.onData(data => { if (!this.done) this.child.write(data); });
+    this.term.onData(data => { if (!this.done && this.answering) this.child.write(data); });
     this.child.onData(data => { for (const tap of this.taps) tap(data); this.output += data; if (this.output.length > 4 * 1024 * 1024) this.output = this.output.slice(-2 * 1024 * 1024); this.term.write(data); });
   }
   get finished(): boolean { return this.done; }

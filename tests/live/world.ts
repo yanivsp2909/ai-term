@@ -1,5 +1,5 @@
-import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { access, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -28,7 +28,12 @@ export async function makeWorld(options: { realHome?: boolean } = {}): Promise<W
   // Only node, npm and npx on PATH beyond the system folders: no claude, codex, gh or tailscale, so tier 1 can't find
   // (or make AI Term ask about) a login.
   const node = process.execPath;
-  for (const name of ['node', 'npm', 'npx']) await symlink(name === 'node' ? node : join(dirname(node), name), join(bin, name));
+  for (const name of ['node', 'npm', 'npx']) {
+    const target = name === 'node' ? node : join(dirname(node), name);
+    // nvm and volta keep npm elsewhere: say so rather than leave a link that fails later in /bisect (review).
+    try { await access(target); } catch { throw new LiveFailure(`${name} isn't next to this node (${dirname(node)}): the live suite needs node, npm and npx in one folder`); }
+    await symlink(target, join(bin, name));
+  }
   let downloads = join(home, 'Downloads');
   if (!realHome) {
     await mkdir(join(home, '.ssh'), { recursive: true, mode: 0o700 }); await writeFile(join(home, '.ssh', 'known_hosts'), FAKE_KNOWN_HOSTS, { mode: 0o600 });
@@ -52,10 +57,24 @@ function guard(world: World): void {
 }
 
 // `ai` itself, the built one, in a PTY; the daemon starts by itself on its first connection, as it does for you.
-export const startAi = (world: World, cwd: string, args: readonly string[] = [], size = { cols: 120, rows: 40 }) =>
-  new Screen(process.execPath, [ENTRY, ...args], { env: world.env, cwd, ...size });
+// The world's env is checked again at every start (security review: one dropped HOME would point ~ at your real home).
+export function startAi(world: World, cwd: string, args: readonly string[] = [], size = { cols: 120, rows: 40 }): Screen {
+  guard(world);
+  if (world.env.HOME !== world.home || world.env.TMPDIR !== world.tmp) throw new LiveFailure('the world\'s HOME or TMPDIR changed');
+  return new Screen(process.execPath, [ENTRY, ...args], { env: world.env, cwd, ...size });
+}
 export async function connect(world: World): Promise<Connection> {
   return Connection.connect(getPaths(world.aiHome), { entry: ENTRY, autoStart: false });
+}
+// The run's daemon, started again in the same world (with the world's env, not the suite's own) if it died: tier 2 must
+// still remove your key then.
+export async function connectOrStart(world: World): Promise<Connection> {
+  try { return await connect(world); } catch (error) { if (!(error instanceof Error)) throw error; }
+  spawn(process.execPath, [ENTRY, 'daemon'], { env: world.env, detached: true, stdio: 'ignore' }).unref();
+  for (let i = 0; ; i++) {
+    try { return await connect(world); } catch (error) { if (i >= 50) throw error; }
+    await sleep(200);
+  }
 }
 export async function aiCommand(world: World, args: readonly string[], cwd = world.root, timeout = 60_000): Promise<{ code: number; stdout: string; stderr: string }> {
   try { const { stdout, stderr } = await run(process.execPath, [ENTRY, ...args], { env: world.env, cwd, timeout, maxBuffer: 4 * 1024 * 1024 }); return { code: 0, stdout, stderr }; }
@@ -77,14 +96,31 @@ export async function makeRepo(world: World, name: string, files: Record<string,
   await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-qm', 'first commit', '--');
   return realpath(repo);
 }
+// Whether this pid is the built ai's daemon running in this world (its env names the world's AI Term folder).
+async function isWorldDaemon(world: World, pid: number): Promise<boolean> {
+  try {
+    const { stdout } = await run('/bin/ps', ['-E', '-ww', '-o', 'command=', '-p', String(pid)], { env: { PATH: '/usr/bin:/bin' } });
+    return stdout.includes(`${ENTRY} daemon`) && stdout.includes(`AI_TERM_HOME=${world.aiHome}`);
+  } catch { return false; }
+}
 // Stops the throwaway daemon (and with it every agent it runs), then removes the world.
 export async function endWorld(world: World): Promise<string[]> {
   const notes: string[] = [];
   const stop = await aiCommand(world, ['daemon', 'stop'], world.root, 30_000).catch((error: unknown) => ({ code: -1, stdout: '', stderr: String(error) }));
   if (stop.code !== 0) notes.push(`ai daemon stop exited ${stop.code}`);
-  // A daemon that didn't answer is stopped by its own pid file (it lives in the world, so it's this run's).
-  const pid = Number((await readFile(getPaths(world.aiHome).pid, 'utf8').catch(() => '')).trim());
-  if (Number.isInteger(pid) && pid > 1) for (let i = 0; i < 50; i++) { try { process.kill(pid, 0); } catch { break; } if (i === 20) { try { process.kill(pid, 'SIGTERM'); } catch { break; } } await sleep(100); }
+  // A daemon that didn't answer is stopped by its pid file, and only if that pid is still this world's daemon (review: a
+  // stale pid could name someone else's process by now): TERM, then KILL.
+  let pidText = '';
+  try { pidText = await readFile(getPaths(world.aiHome).pid, 'utf8'); } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) notes.push(`the daemon's pid file couldn't be read (${error instanceof Error ? error.message : 'unknown error'})`); }
+  const pid = Number(pidText.trim());
+  if (Number.isInteger(pid) && pid > 1 && await isWorldDaemon(world, pid)) {
+    for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+      try { process.kill(pid, signal); } catch { break; }
+      for (let i = 0; i < 30 && await isWorldDaemon(world, pid); i++) await sleep(100);
+      if (!await isWorldDaemon(world, pid)) break;
+    }
+    if (await isWorldDaemon(world, pid)) notes.push(`the daemon (pid ${pid}) is still running`);
+  }
   await removeTree(world.root).catch((error: unknown) => { notes.push(`the temp folder ${world.root} could not be removed (${error instanceof Error ? error.message : 'unknown error'})`); });
   return notes;
 }
