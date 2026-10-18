@@ -145,9 +145,9 @@ it('MEDIUM (TS review): /bisect and the /perf A/B say up front that the copy has
   expect(perf.panel.lines.join('\n')).toContain('only committed files: no installed dependencies or build output');
 });
 
-it('B32: /bisect names the dependency folders it links read-only, says versions can misreport and how to turn it off', () => {
+it('B32/B33: /bisect names the dependency folders it clones (read-only links where the disk can\'t), says versions can misreport and how to turn it off', () => {
   const { panel: p } = panel(); p.setAsk(ask({ name: 'bisect', target: null, priceUsd: { low: 0, high: 0 }, bisect: { command: ['npm', 'test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, deps: ['node_modules', '.venv'], sandbox: true } }));
-  expect(p.lines).toContain('dependencies: node_modules, .venv linked read-only from your checkout (--no-deps turns this off)');
+  expect(p.lines).toContain('dependencies: node_modules, .venv cloned from your checkout (copy-on-write; read-only links where the disk can\'t clone) · --no-deps turns this off');
   expect(p.lines.join('\n')).toContain('other dependency versions than those can misreport');
   expect(p.lines.join('\n')).not.toContain('only committed files');
   // The client checks what the daemon sent: only the four known folder names, each once.
