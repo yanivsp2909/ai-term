@@ -65,3 +65,10 @@ it('MEDIUM (security review): an agent in Don\'t ask is shown as such and takes 
   expect(backend.agents()[0]).toMatchObject({ dontAsk: true });
   await expect(backend.send(agent.id, 'run it')).rejects.toThrow(ANSWER_ERRORS[4]);
 });
+
+it('MEDIUM (gate): only the live prompt counts: an earlier "1. Yes" line can\'t vouch for a later prompt whose option 1 means more', () => {
+  expect(approvable('claude-code', ['  1. Yes', 'Ready to code?', ' ❯ 1. Yes, and bypass permissions', ' 2. Yes, manually approve edits', ' 3. No'])).toBe(false);
+  expect(approvable('claude-code', ['1. Yes, and auto-accept', 'Bash command', 'Do you want to proceed?', '❯ 1. Yes', '  2. No'])).toBe(true);
+  expect(approvable('codex', ['› 1. Yes, proceed (y)', 'later', '› 1. Always allow (a)'])).toBe(false);
+  expect(approvable('ai-term', ['  y allows · n denies · Esc denies and stops', 'more output after the prompt', 'Space shows the next page'])).toBe(false);
+});

@@ -192,3 +192,13 @@ it('LOW-MEDIUM (TS review): revoking while requests are in flight keeps the phon
 it('MEDIUM (security review): the phone shows the bottom of the screen, where the prompt is', () => {
   expect(PAGE_JS).toContain('scrollTop = pre.scrollHeight');
 });
+
+it('LOW (gate): a request another tailnet page can make (no CSRF header) doesn\'t keep /remote on', async () => {
+  const s = await setup();
+  const { cookie } = await s.pair(), { csrf } = await s.me(cookie), paired = s.activity();
+  await s.send('GET', '/api/me', { cookie });
+  expect(s.activity()).toBe(paired);
+  await s.send('GET', '/api/agents', { cookie, 'x-ai-term-csrf': csrf });
+  expect(s.activity()).toBe(paired + 1);
+  expect(PAGE_JS).toContain("headers['x-ai-term-csrf'] = csrf");
+});
