@@ -20,6 +20,7 @@ export interface QueueManager {
   create(request: QueueRequest): Promise<{ id: string }>;
   on(event: 'statusChanged', listener: (session: SessionInfo, previous: StatusState, next: StatusState) => void): unknown;
   setQueueLimit(sessionId: string, limit: QueueLimit, onStop: (note: string) => void): void;
+  stop(sessionId: string): Promise<void>;
   // The agents running now, by title: an `after` trigger must name one (review: a typo would wait forever).
   titles?(): string[];
 }
@@ -121,13 +122,21 @@ export class QueueService extends EventEmitter {
     // Saved as started before the start, so a crash in between can't start it twice later.
     item.state = 'started'; delete item.note;
     await this.save().catch(() => this.log.error(UNSAVED));
-    try {
-      const session = await this.manager.create(item.request);
-      item.sessionId = session.id;
-      this.manager.setQueueLimit(session.id, item.limit, note => { item.note = note; this.save().catch(() => this.log.error(UNSAVED)); });
-    } catch (error) {
+    let session: { id: string };
+    try { session = await this.manager.create(item.request); }
+    catch (error) {
       item.state = 'failed'; item.note = shown(error);
       this.log.error('Queued agent could not start');
+      await this.save().catch(() => this.log.error(UNSAVED)); return;
+    }
+    item.sessionId = session.id;
+    // Every queued agent runs with its limit or not at all (gate: one that started and lost its limit ran on unlimited
+    // while the panel said failed).
+    try { this.manager.setQueueLimit(session.id, item.limit, note => { item.note = note; this.save().catch(() => this.log.error(UNSAVED)); }); }
+    catch {
+      item.note = "its limit couldn't be set, so AI Term stopped it";
+      this.log.error('Queued agent started, but its limit could not be set; it was stopped');
+      await this.manager.stop(session.id).catch(() => this.log.error('Queued agent without its limit could not be stopped; stop it on the homepage'));
     }
     await this.save().catch(() => this.log.error(UNSAVED));
   }

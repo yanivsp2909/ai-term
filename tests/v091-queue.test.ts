@@ -140,7 +140,7 @@ it('end to end: /queue add over the socket, the due item starts a real session t
   const log = new Logger(paths.log), manager = new SessionManager(paths, log); await manager.load();
   const server = new DaemonServer(paths, manager, log); await server.listen();
   let clock = new Date(2026, 9, 15, 20, 0);
-  const queue = new QueueService(paths.root, { create: r => manager.create({ ...r }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop) }, log, () => clock);
+  const queue = new QueueService(paths.root, { create: r => manager.create({ ...r }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop), stop: id => manager.stop(id) }, log, () => clock);
   await queue.load(); server.setQueue(queue);
   const client = await Connection.connect(paths, { entry: join(process.cwd(), 'src', 'cli', 'index.ts'), autoStart: false });
   try {

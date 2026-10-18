@@ -40,7 +40,7 @@ export async function runDaemon(entry?:string): Promise<void> {
     const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage,notifier);
     manager.on('statusChanged', (session: SessionInfo, previous: StatusState, next: StatusState, attached: boolean) => notifier.transition(session, previous, next, attached));
     // v0.9.1 queue (D55, off by default): starts through the same create() as a manual start.
-    const queue = new QueueService(paths.root, { create: request => manager.create({ ...request }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop), titles: () => manager.titles() }, log);
+    const queue = new QueueService(paths.root, { create: request => manager.create({ ...request }), on: (event, listener) => manager.on(event, listener), setQueueLimit: (id, limit, onStop) => manager.setQueueLimit(id, limit, onStop), stop: id => manager.stop(id), titles: () => manager.titles() }, log);
     server.setQueue(queue);
     // v1.0.8 /remote (D54): off until you turn it on, and off again after this daemon restarts.
     const remote = new RemoteService({ root: paths.root, keys: new KeyStore(paths.root), backend: managerBackend(manager), log, allowed: async () => { try { return (await new SettingsStore(paths.root).get()).remote === true; } catch { log.error('Settings unreadable; /remote stays off'); return false; } } });
