@@ -46,3 +46,26 @@ it('LOW (TS review): /deps [path] queries that folder\'s manifests, and long res
   expect(await readFile(log, 'utf8')).toMatch(/files=[^\n]*package\.json/);
   expect(Buffer.byteLength(JSON.stringify(result.data))).toBeLessThanOrEqual(9000);
 });
+
+it('HIGH (TS review): /context never reads a credential or env file an @import names, and never fails on a large or odd one', async () => {
+  const { contextFiles } = await import('../src/daemon/addon-gather.js');
+  const dir = await temp(), repo = join(dir, 'repo'); await mkdir(join(repo, 'config'), { recursive: true });
+  await writeFile(join(repo, '.env'), 'DB_PASSWORD=hunter2\n'); await writeFile(join(repo, 'config', 'secrets.json'), '{"pw":"hunter3"}\n');
+  await writeFile(join(repo, 'AGENTS.md'), `# Rules\n@.env\n@config/secrets.json\n@${'x'.repeat(400)}\n@bad\u001b[31mname\n`);
+  await writeFile(join(repo, 'CLAUDE.md'), 'y'.repeat(70 * 1024));
+  const found = await contextFiles(repo);
+  expect(found.data).not.toContain('hunter2'); expect(found.data).not.toContain('hunter3');
+  expect(found.facts).toEqual(expect.arrayContaining(['skipped: .env (a file that usually holds secrets)', 'skipped: config/secrets.json (a file that usually holds secrets)', 'skipped: CLAUDE.md (over 64 KB)']));
+  expect(found.facts.every(fact => fact.length <= 200 && !/[\p{C}]/u.test(fact))).toBe(true);
+  // LOW (security review): repository text reaches the model quoted, like GitHub's.
+  expect(found.data.split('\n').filter(Boolean).every(line => line.startsWith('> '))).toBe(true);
+});
+
+it('LOW (TS review): /context and /opensource take no argument instead of quietly ignoring one', async () => {
+  const { AddonService } = await import('../src/daemon/addons.js');
+  const dir = await temp(), service = new AddonService(join(dir, 'home'), new URL('../addons/', import.meta.url).pathname, { create: async () => { throw new Error('no'); }, text: async () => { throw new Error('no'); }, brainPlan: async () => null, addonGather: async () => ({ data: 'd', subject: 's', facts: [] }) });
+  const codex = { engine: 'codex' as const, model: null, auth: { kind: 'account' as const } };
+  await expect(service.plan('context', 'src', dir, codex)).rejects.toThrow('/context takes no argument');
+  await expect(service.plan('opensource', 'src', dir, codex)).rejects.toThrow('/opensource takes no argument');
+  await expect(service.plan('context', '', dir, codex)).resolves.toMatchObject({ name: 'context' });
+});
