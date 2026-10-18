@@ -193,3 +193,18 @@ it('LOW (follow-up): a standup whose first line alone is too long is cut, not em
   expect(sent.find(s => s.kind === 'addons.plan')?.args).toBe('x'.repeat(9000));
   flow.dispose();
 });
+
+it('MEDIUM (final check): /deps lets only registry specs through, quoted TOML keys included', async () => {
+  const dir = await temp(), bin = join(dir, 'bin'), log = join(dir, 'log');
+  await tool(bin, log, 'npm', 'echo "{}"'); await tool(bin, log, 'cargo', 'echo "{}"'); await tool(bin, log, 'cargo-outdated', 'true');
+  for (const spec of ['git@evil.com:x/y.git', 'evil.com:u/r', 'gist:abc', 'sourcehut:~u/r', 'npm:x@git+https://evil.example/x']) {
+    const path = join(dir, `npm-${Math.random().toString(16).slice(2)}`); await mkdir(path); await writeFile(join(path, 'package.json'), JSON.stringify({ dependencies: { x: spec } }));
+    expect((await depsQueries(path, { path: bin, env: { PATH: bin, HOME: dir } })).facts.join('\n'), spec).toContain('npm: skipped');
+  }
+  for (const toml of ['[dependencies]\nfoo = { "git" = "https://evil.example/x" }\n', "[dependencies]\nfoo = { 'path' = '../..' }\n", '[ patch.crates-io ]\nfoo = { version = "1" }\n']) {
+    const path = join(dir, `cargo-${Math.random().toString(16).slice(2)}`); await mkdir(path); await writeFile(join(path, 'Cargo.toml'), toml);
+    expect((await depsQueries(path, { path: bin, env: { PATH: bin, HOME: dir } })).facts.join('\n'), toml).toContain('cargo: skipped');
+  }
+  const ok = join(dir, 'npm-ok'); await mkdir(ok); await writeFile(join(ok, 'package.json'), JSON.stringify({ dependencies: { a: '^1.2.3', b: 'latest', c: 'npm:d@^2', e: '>=1 <3 || 4.x' } }));
+  expect((await depsQueries(ok, { path: bin, env: { PATH: bin, HOME: dir } })).facts.join('\n')).not.toContain('skipped');
+});

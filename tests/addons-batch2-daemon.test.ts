@@ -215,3 +215,15 @@ it('LOW (follow-up): a new file changed with the same size and time still counts
   await writeFile(join(tree, 'new.txt'), 'bbbb\n'); await utimes(join(tree, 'new.txt'), when, when);
   await expect(m.addonCommit(agent.id, 'feat: x', gathered.commitState)).rejects.toThrow('changed since the message was written');
 });
+
+it('LOW (final check): a filter section later on a line, or a tracked credential file renamed, still stops /commit', async () => {
+  const { repo: checkout, m, agent, tree } = await manager();
+  await git(checkout, 'config', 'core.x', '1');
+  const config = join(checkout, '.git', 'config'), { appendFile } = await import('node:fs/promises');
+  await appendFile(config, '[core] [filter "x"]\n\tclean = cat\n'); await writeFile(join(tree, 'n.txt'), '1\n');
+  await expect(m.addonGather('commit', checkout, agent.id)).rejects.toThrow('uses git filters');
+  await writeFile(config, (await readFile(config, 'utf8')).replace('[core] [filter "x"]\n\tclean = cat\n', ''));
+  await writeFile(join(tree, '.env'), 'A=1\n'); await git(tree, 'add', '-f', '--', '.env'); await git(tree, 'commit', '-qm', 'env', '--');
+  await git(tree, 'mv', '--', '.env', 'notes.txt');
+  await expect(m.addonGather('commit', checkout, agent.id)).rejects.toThrow('a file that usually holds secrets');
+});
