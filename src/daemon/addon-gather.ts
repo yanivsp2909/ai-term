@@ -4,7 +4,8 @@ import { GitError, runGit } from './git.js';
 import { addonFile } from '../agent/addon-bundle.js';
 import { JailError, resolveInside } from '../agent/jail.js';
 import { isFsError } from '../shared/paths.js';
-import { fitEscaped } from './addon-text.js';
+import { fitEscaped, quoted } from './addon-text.js';
+import { SECRET_FILE } from '../shared/review.js';
 
 // v1.1 batch 2: what AI Term reads itself, read-only, before an add-on's model runs. Each returns the data the model gets
 // (cut to fit its first message), the subject the popup names, and AI Term's own facts shown before you start.
@@ -30,26 +31,37 @@ export async function changelogRange(repo: string, args: string): Promise<Gather
 }
 
 // /context: AGENTS.md and CLAUDE.md at the repository's top, with their @imports (one level, inside the repository
-// only), numbered so findings can name a line. Sizes are AI Term's estimate (bytes / 4).
+// only), numbered so findings can name a line. Sizes are AI Term's estimate (bytes / 4). Review: an import never reads
+// a credential or env file (/prompt's rule), a file over 64 KB is skipped and said, and a name shown in the facts is
+// cut and stripped of control characters (it comes from the repository).
 export const CONTEXT_FILES = ['AGENTS.md', 'CLAUDE.md'], CONTEXT_IMPORTS = 8, CONTEXT_FILE_MAX = 64 * 1024;
 const tokens = (text: string) => Math.ceil(Buffer.byteLength(text) / 4);
 const regular = async (path: string) => { try { return (await lstat(path)).isFile(); } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return false; throw error; } };
 export async function contextFiles(repo: string, extra: { facts: string[]; data: string[] } = { facts: [], data: [] }): Promise<Gathered> {
   const facts: string[] = [], parts: string[] = [], seen = new Set<string>(), queue = [...CONTEXT_FILES];
   for (let n = 0; n < queue.length && seen.size < CONTEXT_FILES.length + CONTEXT_IMPORTS; n++) {
-    const name = queue[n] ?? '';
-    let full: string;
-    try { full = await resolveInside(repo, name); } catch (error) { if (error instanceof JailError) { facts.push(`skipped: ${name} (outside the repository)`); continue; } throw error; }
+    const name = queue[n] ?? '', label = name.replace(/[\p{C}]/gu, '?').slice(0, 120);
+    if (SECRET_FILE.test(name.replaceAll('\\', '/'))) { facts.push(`skipped: ${label} (a file that usually holds secrets)`); continue; }
+    let full: string, isFile: boolean;
+    try { full = await resolveInside(repo, name); isFile = await regular(full); }
+    catch (error) {
+      if (error instanceof JailError) { facts.push(`skipped: ${label} (outside the repository)`); continue; }
+      // A name the file system refuses (too long, a loop, no access) is said, not a failure of the whole audit.
+      if (['ENAMETOOLONG', 'ELOOP', 'EACCES', 'EINVAL'].some(code => isFsError(error, code))) { facts.push(`skipped: ${label} (not a readable file name)`); continue; }
+      throw error;
+    }
     const shown = relative(repo, full);
-    if (seen.has(shown) || !await regular(full)) continue;
+    if (SECRET_FILE.test(shown)) { facts.push(`skipped: ${label} (a file that usually holds secrets)`); continue; }
+    if (seen.has(shown) || !isFile) continue;
     seen.add(shown);
+    if ((await lstat(full)).size > CONTEXT_FILE_MAX) { facts.push(`skipped: ${shown.slice(0, 120)} (over 64 KB)`); continue; }
     const text = await addonFile(repo, shown, CONTEXT_FILE_MAX);
     facts.push(`${shown} ≈${tokens(text).toLocaleString('en-US')} tokens`);
     parts.push(`File ${shown}:`, ...text.split('\n').map((line, i) => `${shown}:${i + 1}: ${line}`));
     for (const line of text.split('\n')) { const m = line.match(/^@(\S+)$/); if (m?.[1] && CONTEXT_FILES.includes(name)) queue.push(m[1]); }
   }
   if (!seen.size) facts.push('no AGENTS.md or CLAUDE.md at the repository top');
-  return { data: fitEscaped([...parts, ...extra.data].join('\n'), GATHER_DATA_BYTES), subject: 'instruction files and loaded skills', facts: [...facts, ...extra.facts] };
+  return { data: fitEscaped(quoted([...parts, ...extra.data].join('\n')), GATHER_DATA_BYTES), subject: 'instruction files and loaded skills', facts: [...facts.slice(0, 20), ...extra.facts] };
 }
 
 // /commit in your checkout: only what is staged, read-only. Nothing staged is said, not guessed.

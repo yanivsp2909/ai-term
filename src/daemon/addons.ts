@@ -110,6 +110,7 @@ export class AddonService {
       case 'none': return { args: '', cwd, subject: '' };
       default: {
         // Batch 2: AI Term reads the data itself (read-only); the model gets it quoted, never as instructions.
+        if ((addon.input === 'context' || addon.input === 'opensource') && args.trim()) throw new Error(`/${addon.name} takes no argument: it reads the whole repository`);
         if (!GATHERED_INPUTS.includes(addon.input) || !this.runner.addonGather) throw new Error('This add-on is unavailable');
         const got = await this.runner.addonGather(addon.input, cwd, args);
         return { args: got.data, cwd: got.cwd ? await realpath(got.cwd) : cwd, subject: got.subject, facts: got.facts, ...got.commitAgent ? { commitAgent: got.commitAgent } : {} };
