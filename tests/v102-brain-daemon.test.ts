@@ -212,3 +212,19 @@ it('MEDIUM security review: an untrusted start index is immutable when a later t
   expect(await readFile(untrusted, 'utf8')).not.toContain('trusted-model-note');
   expect(await readFile(trusted, 'utf8')).toContain('trusted-model-note');
 });
+
+it('LOW (v1.0 gate): an untrusted start\'s index names its own stripped full map, never the main brain.md that keeps model notes', async () => {
+  const d = await daemon();
+  const plan = await d.manager.brainPlan(d.repo); await d.manager.buildBrain(d.repo, plan.fingerprint);
+  const brain = await import('../src/daemon/brain.js'), { dirname, join } = await import('node:path');
+  const index = await brain.readBrain(d.home, d.repo); if (!index) throw new Error('missing index');
+  index.files['src/a.ts'] = { ...index.files['src/a.ts']!, summary: 'trusted-model-note' };
+  await brain.writeBrain(d.home, d.repo, index, new Date(), true);
+  const untrusted = await brain.writeBrainIndex(d.home, d.repo, index, false, true);
+  const named = /Full map: ("[^"]+")/.exec(await readFile(untrusted, 'utf8'))?.[1];
+  expect(named && JSON.parse(named)).toBe(join(dirname(untrusted), 'brain.md'));
+  expect(await readFile(join(dirname(untrusted), 'brain.md'), 'utf8')).not.toContain('trusted-model-note');
+  // AI Term's own agent reads it at that path too, through its one brain exception.
+  const { readTool } = await import('../src/agent/tools.js');
+  expect(await readTool(d.repo, { path: join(dirname(untrusted), 'brain.md') }, untrusted)).not.toContain('trusted-model-note');
+});
