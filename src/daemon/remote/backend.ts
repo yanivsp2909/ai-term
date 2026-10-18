@@ -6,7 +6,7 @@ import { RemoteRefusal, type RemoteBackend } from './http.js';
 // v1.0.8 /remote: what the phone may do, mapped onto the session manager. Agents only: a shell would run whatever the
 // phone sends, so shells and login sessions never appear. Refusals the phone should read are passed on as they are;
 // anything else becomes one fixed line.
-export const ANSWER_ERRORS = ['Agent is open on your Mac · answer it there', "The agent isn't asking for permission now", 'The prompt changed · look at it again', 'Pick one of the folders shown'] as const;
+export const ANSWER_ERRORS = ['Agent is open on your Mac · answer it there', "The agent isn't asking for permission now", 'The prompt changed · look at it again', 'Pick one of the folders shown', "This agent runs in Don't ask · send to it on your Mac", "This prompt can't be answered from the phone · answer it on your Mac"] as const;
 const PASSED = new Set<string>([...ANSWER_ERRORS, 'Session not found', 'Agent has exited', 'Agent is open in a session', 'Agent is asking for permission', 'Agent is asking a question', 'Agent is running a tool',
   'Agent has not reported its status yet', 'Agent is printing too fast to check', 'Agent does not accept pasted lines', 'Text pasted but not sent; go inside', 'Agent is busy with another send', 'Agent is being handed off',
   'Invalid send request', 'claude not found in PATH', 'codex not found in PATH', 'Engine is not logged in', 'Engine login status unavailable', 'Add-on CLI runs require a confirmed subscription login']);
@@ -18,14 +18,25 @@ export function answerKeys(engine: SessionInfo['engine'], yes: boolean): string 
   if (engine === 'ai-term') return yes ? 'y' : 'n';
   throw new RemoteRefusal(ANSWER_ERRORS[1]);
 }
+// The only prompts the phone may answer: a plain yes-or-no permission prompt whose yes is exactly the key it sends
+// (review: Claude Code's plan exit, its folder trust and other prompts also have an option 1 that means more than yes,
+// such as auto-accepting every edit). Claude Code: a "1. Yes" line on its own; Codex: a Yes option marked (y); AI Term's
+// agent: its last page, which says y allows.
+export function approvable(engine: SessionInfo['engine'], lines: readonly string[]): boolean {
+  if (engine === 'claude-code') return lines.some(line => /^\s*(?:[❯>›]\s*)?1\.\s*Yes\s*$/.test(line));
+  if (engine === 'codex') return lines.some(line => /\bYes\b[^()]*\(y\)/.test(line));
+  if (engine === 'ai-term') return lines.some(line => /\by allows · n denies\b/.test(line));
+  return false;
+}
 // What the phone saw, and when the agent's status last changed: an answer counts only for exactly that screen.
 export const screenFingerprint = (id: string, since: string, lines: readonly string[]): string => createHash('sha256').update(JSON.stringify([id, since, lines])).digest('hex');
 // Whether an answer may go to the agent now: not while you're attached on the Mac, only to a permission prompt, and only
 // for the screen the phone saw. Returns the refusal, or null.
-export function answerRefusal(state: { attached: boolean; waiting: RemoteScreen['waiting']; current: string; given: string }): string | null {
+export function answerRefusal(state: { attached: boolean; waiting: RemoteScreen['waiting']; current: string; given: string; approvable: boolean }): string | null {
   if (state.attached) return ANSWER_ERRORS[0];
   if (state.waiting !== 'permission') return ANSWER_ERRORS[1];
-  return state.current === state.given ? null : ANSWER_ERRORS[2];
+  if (state.current !== state.given) return ANSWER_ERRORS[2];
+  return state.approvable ? null : ANSWER_ERRORS[5];
 }
 export interface RemoteManager {
   list(): SessionInfo[];
@@ -43,11 +54,12 @@ export function managerBackend(manager: RemoteManager): RemoteBackend {
   const visible = (s: SessionInfo) => s.engine !== 'shell' && !s.login;
   return {
     agents: () => manager.list().filter(visible).map((s): RemoteAgent => ({ id: s.id, title: s.title, engine: s.engine, status: s.status, detail: s.statusDetail ?? '', ctx: s.ctxPercent ?? null, tokens: s.taskUsage?.tokens ?? null, costUsd: s.taskUsage?.costUsd ?? null,
-      waiting: s.status === 'waiting' && (s.statusDetail === 'permission' || s.statusDetail === 'question') ? s.statusDetail : null })),
+      waiting: s.status === 'waiting' && (s.statusDetail === 'permission' || s.statusDetail === 'question') ? s.statusDetail : null, dontAsk: s.permission === 'dontAsk' })),
     folders: () => manager.remoteFolders(),
     screen: id => passed(() => manager.remoteScreen(id)),
     answer: (id, yes, fingerprint) => passed(() => manager.remoteAnswer(id, engine => answerKeys(engine, yes), fingerprint)),
-    send: (id, text) => passed(() => manager.send(id, text)),
+    // An agent in Don't ask runs whatever a message leads to without asking: the phone may watch and stop it, not steer it.
+    send: (id, text) => passed(() => { if (manager.list().find(s => s.id === id)?.permission === 'dontAsk') throw new RemoteRefusal(ANSWER_ERRORS[4]); return manager.send(id, text); }),
     stop: id => passed(() => manager.stop(id)),
     // Ask, always: the phone has no other choice to send, and this line is the only one that starts an agent from it.
     start: request => passed(async () => {

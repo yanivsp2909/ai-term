@@ -33,7 +33,12 @@ export class PhoneError extends Error {}
 export const PHONE_ERRORS = ['No paired phone has that name or id · /remote lists them', 'Two phones have that name · revoke it by its id (/remote lists it)', 'Too many paired phones · revoke one first'] as const;
 export class RemotePhones {
   private hashes = new Map<string, Buffer>();
+  // Revoked here: never cached again, whatever a request in flight read before (review).
+  private revoked = new Set<string>();
+  // Every change of the file goes through one queue (review: a lastSeen update overlapping a revoke wrote the phone back).
+  private queue: Promise<unknown> = Promise.resolve();
   constructor(private root: string, private keys: KeyStore) {}
+  private serial<T>(work: () => Promise<T>): Promise<T> { const next = this.queue.then(work); this.queue = next.then(() => undefined, () => undefined); return next; }
   private get file() { return join(this.root, 'remote-phones.json'); }
   async list(): Promise<RemotePhone[]> {
     // A missing file reads as an empty record; an unreadable one fails loudly (never "no phones" by accident).
@@ -42,13 +47,15 @@ export class RemotePhones {
     return phones.filter((p): p is RemotePhone => !!p && typeof p === 'object' && isPhoneId((p as RemotePhone).id) && isPhoneName((p as RemotePhone).name) && typeof (p as RemotePhone).pairedAt === 'string');
   }
   private save(phones: RemotePhone[]): Promise<void> { return atomicWrite(this.file, phones); }
-  async pair(name: string, now = Date.now()): Promise<{ phone: RemotePhone; cookie: string }> {
+  pair(name: string, now = Date.now()): Promise<{ phone: RemotePhone; cookie: string }> { return this.serial(() => this.add(name, now)); }
+  private async add(name: string, now: number): Promise<{ phone: RemotePhone; cookie: string }> {
     const phones = await this.list();
     if (phones.length >= MAX_PHONES) throw new PhoneError(PHONE_ERRORS[2]);
     const id = randomBytes(8).toString('hex'), token = randomBytes(32).toString('base64url');
     const phone: RemotePhone = { id, name: isPhoneName(name) ? name : 'phone', pairedAt: new Date(now).toISOString(), lastSeen: null };
     await this.keys.savePhone(id, sha256(token).toString('hex'));
-    await this.save([...phones, phone]);
+    // A record that can't be saved takes its Keychain entry with it, so no hash is left that nothing lists.
+    try { await this.save([...phones, phone]); } catch (error) { await this.keys.removePhone(id).catch(() => undefined); throw error; }
     return { phone, cookie: `${id}.${token}` };
   }
   // The cookie's phone, if its token's hash matches the Keychain's (constant time) and the phone is still paired.
@@ -56,24 +63,27 @@ export class RemotePhones {
     const match = (value ?? '').match(/^([0-9a-f]{16})\.([A-Za-z0-9_-]{43})$/);
     if (!match?.[1] || !match[2]) return null;
     const phone = (await this.list()).find(p => p.id === match[1]);
-    if (!phone) return null;
+    if (!phone || this.revoked.has(phone.id)) return null;
     let stored = this.hashes.get(phone.id);
-    if (!stored) { const hex = await this.keys.phoneHash(phone.id); if (!hex) return null; stored = Buffer.from(hex, 'hex'); this.hashes.set(phone.id, stored); }
+    if (!stored) { const hex = await this.keys.phoneHash(phone.id); if (!hex || this.revoked.has(phone.id)) return null; stored = Buffer.from(hex, 'hex'); this.hashes.set(phone.id, stored); }
     return same(sha256(match[2]), stored) ? phone : null;
   }
-  async seen(id: string, now = Date.now()): Promise<void> {
-    const phones = await this.list(), at = new Date(now).toISOString();
-    // At most once a minute: every request would otherwise rewrite the file.
-    if (!phones.some(p => p.id === id && (p.lastSeen === null || now - Date.parse(p.lastSeen) > 60_000))) return;
-    await this.save(phones.map(p => p.id === id ? { ...p, lastSeen: at } : p));
+  seen(id: string, now = Date.now()): Promise<void> {
+    return this.serial(async () => {
+      const phones = await this.list(), at = new Date(now).toISOString();
+      // At most once a minute: every request would otherwise rewrite the file.
+      if (!phones.some(p => p.id === id && (p.lastSeen === null || now - Date.parse(p.lastSeen) > 60_000))) return;
+      await this.save(phones.map(p => p.id === id ? { ...p, lastSeen: at } : p));
+    });
   }
-  async revoke(which: string): Promise<RemotePhone> {
+  revoke(which: string): Promise<RemotePhone> { return this.serial(() => this.remove(which)); }
+  private async remove(which: string): Promise<RemotePhone> {
     const phones = await this.list(), found = phones.filter(p => p.id === which || p.name === which);
     if (!found.length) throw new PhoneError(PHONE_ERRORS[0]);
     if (found.length > 1) throw new PhoneError(PHONE_ERRORS[1]);
     const phone = found[0] as RemotePhone;
     // The token stops working first (memory, then the record), then its hash leaves the Keychain.
-    this.hashes.delete(phone.id);
+    this.revoked.add(phone.id); this.hashes.delete(phone.id);
     await this.save(phones.filter(p => p.id !== phone.id));
     await this.keys.removePhone(phone.id);
     return phone;

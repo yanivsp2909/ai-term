@@ -36,7 +36,7 @@ async function setup(options: { status?: unknown; serve?: string; allowed?: bool
   const backend: RemoteBackend = { agents: () => [], folders: async () => [], screen: async () => ({ lines: [], fingerprint: 'f'.repeat(64), waiting: null }), answer: async () => {}, send: async () => {}, stop: async () => {}, start: async () => ({ id: 'x', title: 'x' }) };
   let clock = Date.now(), awake = 0;
   const awakeFor: number[] = [];
-  const make = () => { const s = new RemoteService({ root, keys: new KeyStore(root, { vault: stub }), backend, log: { error: () => {}, info: () => {} }, tailscale: program, allowed: async () => options.allowed ?? true, power: { onAc: async () => options.ac ?? true, keepAwake: pid => { awake++; awakeFor.push(pid); return { stop: () => { awake--; } }; } }, now: () => clock, pid: 4242 }); services.push(s); return s; };
+  const make = () => { const s = new RemoteService({ root, keys: new KeyStore(root, { vault: stub }), backend, log: { error: () => {}, info: () => {} }, tailscale: program, allowed: async () => options.allowed ?? true, power: { onAc: async () => options.ac ?? true, keepAwake: (pid: number) => { awake++; awakeFor.push(pid); return { stop: () => { awake--; } }; } }, now: () => clock, pid: 4242 }); services.push(s); return s; };
   const calls = async () => (await readFile(join(root, 'calls.log'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean);
   return { root, program, make, calls, tick: (ms: number) => { clock += ms; }, awake: () => awake, awakeFor };
 }
@@ -121,7 +121,7 @@ it('LOW (TS review): a caffeinate that can\'t start is logged, and the Mac is no
   const program = await stubTailscale(root), errors: string[] = [];
   const vault: KeyVault = { read: async () => null, write: async () => {}, remove: async () => {} };
   const backend: RemoteBackend = { agents: () => [], folders: async () => [], screen: async () => ({ lines: [], fingerprint: 'f'.repeat(64), waiting: null }), answer: async () => {}, send: async () => {}, stop: async () => {}, start: async () => ({ id: 'x', title: 'x' }) };
-  const remote = new RemoteService({ root, keys: new KeyStore(root, { vault }), backend, log: { error: text => errors.push(text), info: () => {} }, tailscale: program, allowed: async () => true, power: { onAc: async () => true, keepAwake: (_pid, failed) => { setImmediate(failed); return { stop: () => {} }; } }, pid: 1 });
+  const remote = new RemoteService({ root, keys: new KeyStore(root, { vault }), backend, log: { error: text => errors.push(text), info: () => {} }, tailscale: program, allowed: async () => true, power: { onAc: async () => true, keepAwake: (_pid: number, failed: () => void) => { setImmediate(failed); return { stop: () => {} }; } }, pid: 1 });
   services.push(remote);
   await remote.on();
   await new Promise(done => setImmediate(done));

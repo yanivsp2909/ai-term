@@ -7,7 +7,7 @@ export interface RemotePhone { id: string; name: string; pairedAt: string; lastS
 // pair: the one-time pairing URL, only in the answer to /remote on (the code is in the fragment, so no log sees it).
 export interface RemoteStatus { state: 'on' | 'off'; host?: string; since?: string; lastRequest?: string; awake?: boolean; phones: RemotePhone[]; pair?: { url: string; expiresAt: string } }
 // What the phone sees of an agent: never keys, env, logins or settings.
-export interface RemoteAgent { id: string; title: string; engine: 'claude-code' | 'codex' | 'ai-term' | 'shell'; status: string; detail: string; ctx: number | null; tokens: number | null; costUsd: number | null; waiting: 'permission' | 'question' | null }
+export interface RemoteAgent { id: string; title: string; engine: 'claude-code' | 'codex' | 'ai-term' | 'shell'; status: string; detail: string; ctx: number | null; tokens: number | null; costUsd: number | null; waiting: 'permission' | 'question' | null; dontAsk: boolean }
 // fingerprint: of exactly these lines and the prompt they show; an answer must send it back unchanged.
 export interface RemoteScreen { lines: string[]; fingerprint: string; waiting: 'permission' | 'question' | null }
 export interface RemoteStart { engine: 'claude-code' | 'codex'; folder: string; message: string }

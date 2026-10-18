@@ -26,8 +26,9 @@ export const PAGE_JS = `'use strict';
   function el(tag, text, cls) { var e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
   function clear() { clearTimeout(timer); while (main.firstChild) main.removeChild(main.firstChild); }
   function note(text, cls) { clear(); main.appendChild(el('p', text, cls || 'note')); }
-  function api(method, path, body) {
-    var init = { method: method, credentials: 'same-origin', headers: {} };
+  // poll: the page's own refresh, which doesn't count as you using it (only what you do keeps /remote on).
+  function api(method, path, body, poll) {
+    var init = { method: method, credentials: 'same-origin', headers: poll ? { 'x-ai-term-poll': '1' } : {} };
     if (body !== undefined) { init.headers = { 'content-type': 'application/json', 'x-ai-term-csrf': csrf }; init.body = JSON.stringify(body); }
     return fetch(path, init).then(function (r) {
       return r.json().catch(function () { return null; }).then(function (data) { if (!r.ok) throw new Error(data && data.error ? data.error : 'Request failed (' + r.status + ')'); return data; });
@@ -44,23 +45,26 @@ export const PAGE_JS = `'use strict';
     button.onclick = function () { csrf = 'pair'; button.disabled = true; api('POST', '/api/pair', { code: code, name: input.value.trim() || 'phone' }).then(function () { location.replace('/'); }, function (e) { note(e.message, 'error'); }); };
     main.appendChild(label); main.appendChild(button);
   }
-  function list() {
-    api('GET', '/api/agents').then(function (data) {
+  function list(poll) {
+    if (poll && document.hidden) { timer = setTimeout(function () { list(true); }, 5000); return; }
+    api('GET', '/api/agents', undefined, poll).then(function (data) {
       clear(); main.appendChild(el('h2', 'Agents'));
       if (!data.agents.length) main.appendChild(el('p', 'No agents yet.', 'note'));
       data.agents.forEach(function (a) {
         var row = el('button', undefined, 'row'); row.appendChild(el('strong', a.title));
-        row.appendChild(el('span', (WORDS[a.status] || a.status) + (a.waiting ? ' for ' + a.waiting : '') + ' · ' + usage(a), a.waiting ? 'meta waiting' : 'meta'));
+        row.appendChild(el('span', (WORDS[a.status] || a.status) + (a.waiting ? ' for ' + a.waiting : '') + (a.dontAsk ? " · ! Don't ask" : '') + ' · ' + usage(a), a.waiting ? 'meta waiting' : 'meta'));
         row.onclick = function () { agent(a); }; main.appendChild(row);
       });
       var add = el('button', 'New agent (Ask mode)', 'primary'); add.onclick = function () { form(data.folders); }; main.appendChild(add);
-      timer = setTimeout(list, 5000);
+      timer = setTimeout(function () { list(true); }, 5000);
     }, function (e) { note(e.message, 'error'); });
   }
   function agent(a) {
     api('GET', '/api/agents/' + a.id + '/screen').then(function (s) {
-      clear(); main.appendChild(el('h2', a.title)); main.appendChild(el('pre', s.lines.join('\\n')));
-      var back = el('button', 'Back'); back.onclick = list;
+      // The prompt is at the bottom of the screen: show that end first (review: a fake prompt drawn at the top could
+      // otherwise be what you read before tapping Approve).
+      clear(); main.appendChild(el('h2', a.title)); var pre = el('pre', s.lines.join('\\n')); main.appendChild(pre); pre.scrollTop = pre.scrollHeight;
+      var back = el('button', 'Back'); back.onclick = function () { list(); };
       var refresh = el('button', 'Refresh'); refresh.onclick = function () { agent(a); };
       if (s.waiting === 'permission') {
         main.appendChild(el('p', 'The agent is asking for permission. The screen above is exactly what it shows; your answer counts only if it is still the same.', 'note waiting'));
@@ -73,8 +77,9 @@ export const PAGE_JS = `'use strict';
       var label = el('label', 'Send a message (the same rules as /send)'), text = el('textarea'); text.rows = 3; text.maxLength = 8000; label.appendChild(text);
       var send = el('button', 'Send', 'primary');
       send.onclick = function () { if (!text.value.trim()) return; send.disabled = true; api('POST', '/api/agents/' + a.id + '/send', { text: text.value }).then(function () { agent(a); }, function (e) { note(e.message, 'error'); }); };
-      var stop = el('button', 'Stop agent'); stop.onclick = function () { if (confirm('Stop ' + a.title + '?')) api('POST', '/api/agents/' + a.id + '/stop', {}).then(list, function (e) { note(e.message, 'error'); }); };
-      [label, send, stop, refresh, back].forEach(function (n) { main.appendChild(n); });
+      var stop = el('button', 'Stop agent'); stop.onclick = function () { if (confirm('Stop ' + a.title + '?')) api('POST', '/api/agents/' + a.id + '/stop', {}).then(function () { list(); }, function (e) { note(e.message, 'error'); }); };
+      if (a.dontAsk) main.appendChild(el('p', "This agent runs in Don't ask: you can watch and stop it here, and send it messages only on your Mac.", 'note waiting'));
+      (a.dontAsk ? [stop, refresh, back] : [label, send, stop, refresh, back]).forEach(function (n) { main.appendChild(n); });
     }, function (e) { note(e.message, 'error'); });
   }
   function form(folders) {
@@ -85,8 +90,8 @@ export const PAGE_JS = `'use strict';
     var message = el('textarea'); message.rows = 4; message.maxLength = 8000;
     [['Engine (your subscription login)', engine], ['Folder', folder], ['What should it do?', message]].forEach(function (p) { var l = el('label', p[0]); l.appendChild(p[1]); main.appendChild(l); });
     main.appendChild(el('p', 'Ask mode: the agent asks before every change or command.', 'note'));
-    var start = el('button', 'Start', 'primary'), back = el('button', 'Back'); back.onclick = list;
-    start.onclick = function () { if (!message.value.trim() || !folder.value) return; start.disabled = true; api('POST', '/api/agents', { engine: engine.value, folder: folder.value, message: message.value }).then(list, function (e) { note(e.message, 'error'); }); };
+    var start = el('button', 'Start', 'primary'), back = el('button', 'Back'); back.onclick = function () { list(); };
+    start.onclick = function () { if (!message.value.trim() || !folder.value) return; start.disabled = true; api('POST', '/api/agents', { engine: engine.value, folder: folder.value, message: message.value }).then(function () { list(); }, function (e) { note(e.message, 'error'); }); };
     main.appendChild(start); main.appendChild(back);
   }
   if (location.pathname === '/pair') { pair(); return; }

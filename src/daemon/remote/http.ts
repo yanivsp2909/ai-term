@@ -32,7 +32,11 @@ class Window {
   private hits = new Map<string, number[]>();
   constructor(private limit: number) {}
   full(key: string, now: number): boolean { return (this.hits.get(key) ?? []).filter(at => now - at < WINDOW_MS).length >= this.limit; }
-  add(key: string, now: number): void { const kept = (this.hits.get(key) ?? []).filter(at => now - at < WINDOW_MS); kept.push(now); this.hits.set(key, kept); }
+  add(key: string, now: number): void {
+    // Bounded: names that only ever failed are forgotten once their minute is over.
+    if (this.hits.size > 256) for (const [name, hits] of this.hits) if (hits.every(at => now - at >= WINDOW_MS)) this.hits.delete(name);
+    const kept = (this.hits.get(key) ?? []).filter(at => now - at < WINDOW_MS); kept.push(now); this.hits.set(key, kept);
+  }
 }
 // JSON that stays text even if something sniffs it as HTML: no raw < > & or line separators.
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
@@ -73,22 +77,24 @@ export class RemoteHttp {
     const value = object(parsed); if (!value) throw new Refused(400, 'Malformed request');
     return value;
   }
+  // Refusals are counted per Tailscale identity (every request reaches this server from Tailscale's own 127.0.0.1, so
+  // there is no address to count by), and a paired phone's valid cookie is never held back by them (review: one shared
+  // count let anyone who could reach the port lock your phone out).
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const now = this.now();
-    if (this.failures.full('all', now)) { this.reply(res, 429, { error: 'Too many refused requests · wait a minute' }); return; }
-    try { await this.route(req, res, now); }
+    const now = this.now(), header = req.headers['tailscale-user-login'], who = typeof header === 'string' ? header.slice(0, 320) : '-';
+    if (this.failures.full(who, now) && !await this.options.phones.check(cookie(req.headers.cookie))) { this.reply(res, 429, { error: 'Too many refused requests · wait a minute' }); return; }
+    try { await this.route(req, res, now, who); }
     catch (error) {
-      if (error instanceof Refused) { if (error.status !== 429) this.failures.add('all', now); this.reply(res, error.status, { error: error.message }); return; }
+      if (error instanceof Refused) { if (error.status !== 429) this.failures.add(who, now); this.reply(res, error.status, { error: error.message }); return; }
       if (error instanceof RemoteRefusal || error instanceof PhoneError) { this.reply(res, 409, { error: error.message }); return; }
       throw error;
     }
   }
-  private async route(req: IncomingMessage, res: ServerResponse, now: number): Promise<void> {
+  private async route(req: IncomingMessage, res: ServerResponse, now: number, who: string): Promise<void> {
     const { host, login } = this.options, origin = req.headers.origin, own = `https://${host}`;
     if (req.headers.host !== host) throw new Refused(421, 'Wrong host');
     const user = req.headers['tailscale-user-login'];
     if (typeof user !== 'string' || !user || !same(user, login)) throw new Refused(403, 'Only your own tailnet user can use this page');
-    this.options.activity();
     if (origin !== undefined && origin !== own) throw new Refused(403, 'Wrong origin');
     const path = new URL(req.url ?? '/', 'http://local').pathname, method = req.method ?? 'GET';
     if (method === 'GET' && (path === '/' || path === '/pair')) { this.reply(res, 200, PAGE_HTML, 'text/html; charset=utf-8'); return; }
@@ -97,11 +103,14 @@ export class RemoteHttp {
     if (method !== 'GET' && method !== 'POST') throw new Refused(405, 'Not allowed');
     // A change must come from this page: its own Origin, a JSON body, and a CSRF header (which no other site can send).
     const body = method === 'POST' ? origin === own ? await this.body(req) : (() => { throw new Refused(403, 'Wrong origin'); })() : null;
-    if (method === 'POST' && path === '/api/pair') { await this.pair(req, res, body ?? {}, now); return; }
+    if (method === 'POST' && path === '/api/pair') { await this.pair(req, res, body ?? {}, now, who); return; }
     const phone = await this.options.phones.check(cookie(req.headers.cookie));
     if (!phone) throw new Refused(401, "This phone isn't paired, or it was revoked · run /remote on on your Mac to pair it");
     if (this.phones.full(phone.id, now)) throw new Refused(429, 'Too many requests · wait a minute');
     this.phones.add(phone.id, now);
+    // Only what you do on a paired phone keeps /remote on: the page's own polling says so in a header, and a request that
+    // names no paired phone never counts (review: an open tab, or a forged request, kept it on for ever).
+    if (req.headers['x-ai-term-poll'] !== '1') this.options.activity();
     await this.options.phones.seen(phone.id, now).catch(() => this.options.fail?.('Remote: the phone record could not be updated'));
     if (body) { const header = req.headers['x-ai-term-csrf']; if (typeof header !== 'string' || !same(header, this.csrf(phone.id))) throw new Refused(403, 'Missing or wrong CSRF header'); }
     const log = (entry: Omit<RemoteLogEntry, 'phone' | 'phoneId'>) => this.options.log({ ...entry, phone: phone.name, phoneId: phone.id });
@@ -130,14 +139,14 @@ export class RemoteHttp {
     }
     this.reply(res, 200, { ok: true });
   }
-  private async pair(req: IncomingMessage, res: ServerResponse, body: Record<string, unknown>, now: number): Promise<void> {
+  private async pair(req: IncomingMessage, res: ServerResponse, body: Record<string, unknown>, now: number, who: string): Promise<void> {
     if (req.headers['x-ai-term-csrf'] !== 'pair') throw new Refused(403, 'Missing or wrong CSRF header');
-    if (this.pairs.full('all', now)) throw new Refused(429, 'Too many pairing attempts · wait a minute');
-    this.pairs.add('all', now);
+    if (this.pairs.full(who, now)) throw new Refused(429, 'Too many pairing attempts · wait a minute');
+    this.pairs.add(who, now);
     if (Object.keys(body).length !== 2 || typeof body.name !== 'string' || !this.options.codes.redeem(body.code, now)) throw new Refused(403, 'This pairing code expired or was already used · run /remote on on your Mac for a new one');
     const name = body.name.trim().replace(/[\p{C}]/gu, '').slice(0, 40) || 'phone';
     const { phone, cookie: value } = await this.options.phones.pair(name, now);
-    this.options.log({ action: 'pair', phone: phone.name, phoneId: phone.id });
+    this.options.log({ action: 'pair', phone: phone.name, phoneId: phone.id }); this.options.activity();
     this.reply(res, 200, { ok: true }, undefined, { 'Set-Cookie': `${COOKIE}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=31536000` });
   }
 }

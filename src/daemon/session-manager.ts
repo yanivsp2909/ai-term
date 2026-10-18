@@ -1136,7 +1136,8 @@ export class SessionManager extends EventEmitter {
         try{
             await this.caughtUp(live);
             if(!live.host||['exited','error'].includes(live.info.status))throw new Error('Agent has exited');
-            const refused=answerRefusal({attached:live.attached,waiting:this.remoteWaiting(live),current:screenFingerprint(id,live.info.statusSince,live.mirror.tail(REMOTE_SCREEN_ROWS).split('\n')),given:fingerprint});
+            const lines=live.mirror.tail(REMOTE_SCREEN_ROWS).split('\n');
+            const refused=answerRefusal({attached:live.attached,waiting:this.remoteWaiting(live),current:screenFingerprint(id,live.info.statusSince,lines),given:fingerprint,approvable:approvable(live.info.engine,lines)});
             if(refused)throw new Error(refused);
             live.host.write(keys(live.info.engine));
         }finally{this.sending.delete(id);}
@@ -1908,6 +1909,6 @@ async function openWithDefaultApp(path:string):Promise<void>{
     await new Promise<void>((done,fail)=>{execFile(opener,[path],{timeout:15_000,windowsHide:true},error=>error?fail(new Error('The file could not be opened')):done());});
 }
 import { checkAddonCli, checkReverseCli } from './addon-cli.js';
-import { answerRefusal, screenFingerprint } from './remote/backend.js';
+import { answerRefusal, approvable, screenFingerprint } from './remote/backend.js';
 const REMOTE_SCREEN_ROWS=200;
 import { findRea, reaIdentity, reverseServer, reverseTarget } from './reverse.js';

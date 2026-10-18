@@ -167,9 +167,10 @@ Open `/settings` to manage keys and defaults. Press `a` to add a key, `x` to rem
 
 - `/remote on` starts the phone page and shows a QR code. Scan it with the phone's camera within 2 minutes and give the phone a name. The code works once; `/remote on` again shows a new one.
 - On the phone you see your agents with their status, ctx % and usage. Tap one to read its screen, approve or deny the permission prompt it shows, send it a message (the same rules as `/send`), or stop it. You can also start a new agent in Ask mode, with Claude Code or Codex, in a folder one of your agents already uses. The phone never sees keys, env, logins or settings, and it can't turn on Don't ask.
-- An approval counts only if the agent's screen is still the one the phone showed you; if it changed, look again. It's refused while you're inside that agent on the Mac.
+- An approval counts only if the agent's screen is still the one the phone showed you; if it changed, look again. Only a plain yes/no prompt can be answered (Claude Code's plan approval or folder trust can't, since their first option means more than yes), and never while you're inside that agent on the Mac. The phone shows the bottom of the screen first, where the prompt is.
+- An agent you started in Don't ask shows `! Don't ask` on the phone. You can watch and stop it there, but send it messages only on your Mac.
 - `/remote` alone shows whether it's on and which phones are paired. `/remote revoke <name>` unpairs a phone; its cookie stops working at once.
-- `/remote off` turns it off. It also turns off by itself after 30 minutes without a request, and whenever AI Term's background service restarts. While it's on and the Mac is on AC power, AI Term keeps the Mac awake; on battery it may sleep.
+- `/remote off` turns it off. It also turns off by itself after 30 minutes without anything done on a paired phone (an open page refreshing itself doesn't count), and whenever AI Term's background service restarts. While it's on and the Mac is on AC power, AI Term keeps the Mac awake; on battery it may sleep.
 - Every action is written to `~/.ai-term/remote.log`: which phone, what it did, which agent, and when. Messages are logged by length only.
 
 

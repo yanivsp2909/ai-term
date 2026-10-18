@@ -32,11 +32,12 @@ it('approval spoofing: an answer goes only to the prompt the phone saw, only for
   const fp = screenFingerprint('id', now, ['Bash command', 'rm -rf build']);
   expect(screenFingerprint('id', now, ['Bash command', 'rm -rf /'])).not.toBe(fp);
   expect(screenFingerprint('id', new Date(Date.now() + 1000).toISOString(), ['Bash command', 'rm -rf build'])).not.toBe(fp);
-  expect(answerRefusal({ attached: false, waiting: 'permission', current: fp, given: fp })).toBeNull();
-  expect(answerRefusal({ attached: true, waiting: 'permission', current: fp, given: fp })).toBe(ANSWER_ERRORS[0]);
-  expect(answerRefusal({ attached: false, waiting: 'question', current: fp, given: fp })).toBe(ANSWER_ERRORS[1]);
-  expect(answerRefusal({ attached: false, waiting: null, current: fp, given: fp })).toBe(ANSWER_ERRORS[1]);
-  expect(answerRefusal({ attached: false, waiting: 'permission', current: fp, given: 'a'.repeat(64) })).toBe(ANSWER_ERRORS[2]);
+  expect(answerRefusal({ attached: false, waiting: 'permission', current: fp, given: fp, approvable: true })).toBeNull();
+  expect(answerRefusal({ attached: true, waiting: 'permission', current: fp, given: fp, approvable: true })).toBe(ANSWER_ERRORS[0]);
+  expect(answerRefusal({ attached: false, waiting: 'question', current: fp, given: fp, approvable: true })).toBe(ANSWER_ERRORS[1]);
+  expect(answerRefusal({ attached: false, waiting: null, current: fp, given: fp, approvable: true })).toBe(ANSWER_ERRORS[1]);
+  expect(answerRefusal({ attached: false, waiting: 'permission', current: fp, given: 'a'.repeat(64), approvable: true })).toBe(ANSWER_ERRORS[2]);
+  expect(answerRefusal({ attached: false, waiting: 'permission', current: fp, given: fp, approvable: false })).toBe(ANSWER_ERRORS[5]);
 });
 
 it('a start is Ask in an offered folder; known refusals reach the phone and anything else is one fixed line', async () => {

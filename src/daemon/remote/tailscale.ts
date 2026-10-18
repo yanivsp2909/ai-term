@@ -10,6 +10,8 @@ import { REMOTE_HTTPS_PORT } from '../../shared/remote.js';
 // and never changes a serve entry that isn't its own.
 export const TAILSCALE_PATHS: readonly string[] = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/usr/local/bin/tailscale', '/opt/homebrew/bin/tailscale', '/usr/bin/tailscale'];
 export class TailscaleError extends Error {}
+// serve ran, but its entry isn't the one AI Term asked for: the caller removes it again.
+export class ServeUnconfirmed extends TailscaleError {}
 export const TAILSCALE_ERRORS = [
   "Tailscale isn't installed · install it from tailscale.com and log in, then /remote on",
   "Tailscale isn't logged in or connected · open Tailscale and log in, then /remote on",
@@ -62,8 +64,10 @@ export class Tailscale {
     if (!/--bg\b/.test(help) || !/--https\b/.test(help)) throw new TailscaleError(TAILSCALE_ERRORS[3]);
     if (await this.user(port) !== null) throw new TailscaleError(TAILSCALE_ERRORS[2]);
     await this.run(['serve', '--bg', `--https=${port}`, backend]);
-    if (await this.user(port) !== backend) throw new TailscaleError(TAILSCALE_ERRORS[5]);
+    if (await this.user(port) !== backend) throw new ServeUnconfirmed(TAILSCALE_ERRORS[5]);
   }
+  // Only right after AI Term's own serve on a port that was free: removes that port's entry whatever it now says.
+  async drop(port: number): Promise<void> { await this.run(['serve', `--https=${port}`, 'off']); }
   // Only AI Term's own entry (this port, proxying to this backend) is removed; true when it was.
   async off(port: number, backend: string): Promise<boolean> {
     if (await this.user(port) !== backend) return false;
