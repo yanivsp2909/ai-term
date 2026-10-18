@@ -29,3 +29,30 @@ it('an add-on\'s own refusal reaches the popup as written; anything else stays f
     expect(await readFile(paths.log, 'utf8')).not.toContain('AITERMCANARY');
   } finally { client?.close(); await server.close(); await manager.shutdown(); await rm(root, { recursive: true, force: true }); }
 }, 30_000);
+
+it('MEDIUM (follow-up): a background run\'s own refusal is shown; a system error from it stays one fixed line', async () => {
+  const { AddonService } = await import('../src/daemon/addons.js'), { mkdtemp: temp } = await import('node:fs/promises');
+  const home = await temp('/tmp/ai-gate10-run-'), definitions = new URL('../addons/', import.meta.url).pathname;
+  const service = new AddonService(home, definitions, { create: vi.fn(), text: vi.fn(), brainPlan: async () => null, addonStandup: async () => { throw new Error("EACCES: permission denied, open '/Users/me/.ai-term/AITERMCANARY'"); } });
+  try {
+    const ask = await service.plan('standup', '', home, null), started = await service.start(ask.receipt);
+    if (!('run' in started)) throw new Error('expected a run');
+    await vi.waitFor(async () => { await expect(service.result(started.run)).rejects.toThrow('The add-on run failed; the daemon log says why'); });
+    await expect(service.result(started.run)).rejects.not.toThrow('AITERMCANARY');
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+it('LOW (follow-up): a queued agent that couldn\'t be stopped after losing its limit says so', async () => {
+  const { QueueService } = await import('../src/daemon/queue.js'), { mkdtemp: temp } = await import('node:fs/promises'), { randomUUID } = await import('node:crypto');
+  const root = await temp('/tmp/ai-gate10-q-'), listeners: ((s: { title: string }, p: { status: string }, n: { status: string }) => void)[] = [], id = randomUUID();
+  const manager = { create: vi.fn(async () => ({ id })), on: (event: string, listener: never) => { if (event === 'statusChanged') listeners.push(listener); }, list: () => [], titles: () => ['fixer'],
+    setQueueLimit: vi.fn(() => { throw new Error('no timer'); }), stop: vi.fn(async () => { throw new Error('stuck'); }) };
+  const queue = new QueueService(root, manager as never, { error: vi.fn(), info: vi.fn() }, () => new Date(2026, 9, 15, 12, 0), async () => true);
+  try {
+    await queue.load();
+    await queue.add({ trigger: { kind: 'after', agent: 'fixer' }, limit: { until: '23:59' }, request: { engine: 'codex', model: null, auth: { kind: 'account' }, cwd: '/tmp', permission: 'ask', effort: null, firstMessage: 'go' } });
+    listeners.forEach(listener => listener({ title: 'fixer' }, { status: 'running' }, { status: 'done' }));
+    await vi.waitFor(() => expect(queue.list()[0]?.note).toBe("its limit couldn't be set and AI Term couldn't stop it: stop it on the homepage"), { timeout: 10_000 });
+    await queue.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
+}, 20_000);
