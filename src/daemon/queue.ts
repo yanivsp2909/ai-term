@@ -62,7 +62,8 @@ export class QueueService extends EventEmitter {
   }
   start(): void { this.timer ??= setInterval(() => { this.tick().catch(() => this.log.error('Queue check failed')); }, TICK_MS); this.timer.unref(); }
   // While the daemon stops nothing starts or fails (review: shutdown's exits would otherwise fire `after` items).
-  close(): void { this.closed = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; }
+  // Resolves once a save already in flight has finished, so shutdown (and a test's cleanup) never races queue.json.
+  close(): Promise<void> { this.closed = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; return this.saving; }
   async add(entry: { trigger: QueueTrigger; limit: QueueLimit; request: QueueRequest }): Promise<QueueItem> {
     if (!await this.isOn()) throw new Error(OFF);
     if (this.items.length >= MAX_QUEUE_ITEMS) throw new Error(FULL);

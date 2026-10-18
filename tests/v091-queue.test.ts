@@ -108,6 +108,8 @@ it('after a named agent finishes, its waiting items start; one that ends with an
   await vi.waitFor(() => expect(queue.list().map(item => item.state)).toEqual(['started', 'failed']), { timeout: 10_000 });
   expect(queue.list()[1]?.note).toBe('broken ended with an error, so this one didn\'t start');
   expect(manager.setQueueLimit).toHaveBeenCalledWith(expect.any(String), { until: '23:59' }, expect.any(Function));
+  // The last save may still be running: closing waits for it, so cleanup never removes the folder under it.
+  await queue.close();
 // Its saves fsync queue.json; with the whole suite running in parallel that can outlast the default 5 s test timeout.
 }, 20_000);
 
