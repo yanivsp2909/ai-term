@@ -4,7 +4,7 @@ import { GitError, runGit } from './git.js';
 import { addonFile } from '../agent/addon-bundle.js';
 import { JailError, resolveInside } from '../agent/jail.js';
 import { isFsError } from '../shared/paths.js';
-import { fitEscaped, quoted } from './addon-text.js';
+import { factText, fitEscaped, quoted } from './addon-text.js';
 import { SECRET_FILE } from '../shared/review.js';
 
 // v1.1 batch 2: what AI Term reads itself, read-only, before an add-on's model runs. Each returns the data the model gets
@@ -46,8 +46,10 @@ const regular = async (path: string) => { try { return (await lstat(path)).isFil
 export async function contextFiles(repo: string, extra: { facts: string[]; data: string[] } = { facts: [], data: [] }): Promise<Gathered> {
   const facts: string[] = [], parts: string[] = [], seen = new Set<string>(), queue = [...CONTEXT_FILES];
   for (let n = 0; n < queue.length && seen.size < CONTEXT_FILES.length + CONTEXT_IMPORTS; n++) {
-    const name = queue[n] ?? '', label = name.replace(/[\p{C}]/gu, '?').slice(0, 120);
+    const name = queue[n] ?? '', label = factText(name, 160);
     if (SECRET_FILE.test(name.replaceAll('\\', '/'))) { facts.push(`skipped: ${label} (a file that usually holds secrets)`); continue; }
+    // git's own files (config can hold a remote URL with a token) are never instruction files (follow-up review).
+    if (name.split(/[\\/]/).includes('.git')) { facts.push(`skipped: ${label} (git's own files)`); continue; }
     let full: string, isFile: boolean;
     try { full = await resolveInside(repo, name); isFile = await regular(full); }
     catch (error) {
@@ -57,12 +59,12 @@ export async function contextFiles(repo: string, extra: { facts: string[]; data:
       throw error;
     }
     const shown = relative(repo, full);
-    if (SECRET_FILE.test(shown)) { facts.push(`skipped: ${label} (a file that usually holds secrets)`); continue; }
+    if (SECRET_FILE.test(shown) || shown.split('/').includes('.git')) { facts.push(`skipped: ${label} (${SECRET_FILE.test(shown) ? 'a file that usually holds secrets' : "git's own files"})`); continue; }
     if (seen.has(shown) || !isFile) continue;
     seen.add(shown);
-    if ((await lstat(full)).size > CONTEXT_FILE_MAX) { facts.push(`skipped: ${shown.slice(0, 120)} (over 64 KB)`); continue; }
+    if ((await lstat(full)).size > CONTEXT_FILE_MAX) { facts.push(`skipped: ${factText(shown, 160)} (over 64 KB)`); continue; }
     const text = await addonFile(repo, shown, CONTEXT_FILE_MAX);
-    facts.push(`${shown} ≈${tokens(text).toLocaleString('en-US')} tokens`);
+    facts.push(`${factText(shown, 200)} ≈${tokens(text).toLocaleString('en-US')} tokens`);
     parts.push(`File ${shown}:`, ...text.split('\n').map((line, i) => `${shown}:${i + 1}: ${line}`));
     for (const line of text.split('\n')) { const m = line.match(/^@(\S+)$/); if (m?.[1] && CONTEXT_FILES.includes(name)) queue.push(m[1]); }
   }
@@ -77,10 +79,16 @@ export async function stagedChanges(repo: string): Promise<Gathered> {
   const stat = (await runGit(repo, ['diff', '--cached', '--numstat', '-z', ...flags, '--'], 'Git check failed', { maxBuffer: 4 * 1024 * 1024 })).split('\0').filter(Boolean);
   if (!stat.length) throw new Error('Nothing is staged in this folder · git add what belongs in the commit, or /commit <agent>');
   // -z numstat: "added<TAB>removed<TAB>path"; a rename is "added<TAB>removed<TAB>" followed by two path entries.
-  const rows: { added: number; removed: number; path: string }[] = [];
-  for (let n = 0; n < stat.length; n++) { const [added = '', removed = '', path = ''] = (stat[n] ?? '').split('\t'); const name = path || (n += 2, stat[n] ?? ''); rows.push({ added: Number(added) || 0, removed: Number(removed) || 0, path: name }); }
-  const secret = rows.filter(r => SECRET_FILE.test(r.path)), shown = rows.filter(r => !SECRET_FILE.test(r.path));
+  const rows: { added: number; removed: number; path: string; from?: string }[] = [];
+  for (let n = 0; n < stat.length; n++) {
+    const [added = '', removed = '', path = ''] = (stat[n] ?? '').split('\t');
+    if (path) { rows.push({ added: Number(added) || 0, removed: Number(removed) || 0, path }); continue; }
+    rows.push({ added: Number(added) || 0, removed: Number(removed) || 0, from: stat[n + 1] ?? '', path: stat[n + 2] ?? '' }); n += 2;
+  }
+  // A credential file renamed to an innocent name is still one (follow-up review): either name counts.
+  const isSecret = (r: { path: string; from?: string }) => SECRET_FILE.test(r.path) || r.from !== undefined && SECRET_FILE.test(r.from);
+  const secret = rows.filter(isSecret), shown = rows.filter(r => !isSecret(r));
   const patch = shown.length ? await runGit(repo, ['diff', '--cached', '--unified=3', ...flags, '--', ...shown.map(r => r.path)], 'Git check failed', { maxBuffer: 32 * 1024 * 1024 }) : '(only files that usually hold secrets are staged; their contents are left out)';
   return { data: fitEscaped(patch, GATHER_DATA_BYTES), subject: 'staged in your checkout (c copies; AI Term never commits here)',
-    facts: [`staged: ${plural(rows.length, 'file')}, +${rows.reduce((n, r) => n + r.added, 0)} −${rows.reduce((n, r) => n + r.removed, 0)}`, ...secret.length ? [`left out: ${secret.map(r => r.path.replace(/[\p{C}]/gu, '?')).join(', ').slice(0, 200)} (${secret.length === 1 ? 'a file that usually holds' : 'files that usually hold'} secrets)`] : []] };
+    facts: [`staged: ${plural(rows.length, 'file')}, +${rows.reduce((n, r) => n + r.added, 0)} −${rows.reduce((n, r) => n + r.removed, 0)}`, ...secret.length ? [`left out: ${factText(secret.map(r => r.from ?? r.path).join(', '), 200)} (${secret.length === 1 ? 'a file that usually holds' : 'files that usually hold'} secrets)`] : []] };
 }

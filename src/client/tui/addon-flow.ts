@@ -9,7 +9,12 @@ import { AddonPanel } from './addon-panel.js';
 import { copyText } from './clipboard.js';
 // A standup handed to the polish pass is cut at a line to fit the add-on argument limit (review: 60 agents overflowed it).
 const POLISH_BYTES = 9000;
-const fitLines = (text: string, bytes: number) => { const kept: string[] = []; let used = 0; for (const line of text.split('\n')) { used += Buffer.byteLength(line) + 1; if (used > bytes) break; kept.push(line); } return kept.join('\n'); };
+const fitLines = (text: string, bytes: number) => {
+  const kept: string[] = []; let used = 0;
+  for (const line of text.split('\n')) { used += Buffer.byteLength(line) + 1; if (used > bytes) break; kept.push(line); }
+  // A first line too long by itself is cut, not dropped (follow-up review).
+  return kept.length ? kept.join('\n') : Buffer.from(text).subarray(0, bytes).toString('utf8').replace(/\uFFFD+$/, '');
+};
 interface FlowOptions { request(body: RequestBody): Promise<SuccessResponse>; changed(): void; close(): void; started(response: SuccessResponse): Promise<void>; copy?(text: string): Promise<void> }
 // One popup owns approval, the running state and the result. Closing it pauses polling, never stops the session.
 // targets: empty for an add-on that runs no model (/bisect); its estimate is asked for with no target.
