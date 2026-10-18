@@ -27,3 +27,18 @@ export const batch2: Record<string, Record<string, unknown>> = {
   opensource: { kind: 'opensource', summary: 'Not ready: a secret in history', findings: [{ file: 'config.js', line: 2, severity: 'critical', title: 'API key in history', detail: 'Committed in abc1234; rotate it.' }, { file: 'README.md', line: 1, severity: 'low', title: 'Personal path', detail: '/Users/someone appears in an example.', fix: 'Use ~/project instead.' }] },
   'standup-polish': { kind: 'standup-polish', text: 'Done: fixer fixed the parser.\nDoing: nothing.\nBlockers: none.' },
 };
+
+// v1.1 batch 3: making things.
+export const batch3: Record<string, Record<string, unknown>> = {
+  deck: { kind: 'deck', summary: 'Eight slides from the README and docs', files: ['out/deck/ai-term.html'], todo: ['TODO: paying users (no number in the repo)', 'TODO: team bios'] },
+  slides: { kind: 'slides', summary: 'A 12-slide walkthrough of the add-on core', files: ['out/slides/addons.html'], todo: [] },
+  diagram: { kind: 'diagram', summary: 'Client, daemon and agents as Mermaid', files: ['docs/diagrams/processes.mmd'], rendered: false },
+  design: { kind: 'design', summary: 'Two settings mockups', files: ['out/design/settings-a.html', 'out/design/settings-b.html'] },
+  polish: { kind: 'polish', summary: 'Focus rings and spacing fixed', files: ['src/ui/button.css'] },
+  a11y: { kind: 'a11y', summary: 'One real problem', findings: [{ file: 'src/ui/button.tsx', line: 4, severity: 'high', title: 'Icon button has no name', detail: '4.1.2: screen readers announce "button".', fix: 'Add aria-label="Close".' }] },
+  e2e: { kind: 'e2e', summary: 'Sign-in and save flows', files: ['e2e/signin.spec.ts'] },
+  animate: { kind: 'animate', verdict: 'animate', why: 'A dialog opens a few times a day: a standard animation fits.', summary: 'Dialog fades and scales in from 0.96', files: ['src/ui/dialog.css'] },
+  video: { kind: 'video', summary: 'A 20-second terminal demo of /plan', files: ['out/video/plan.tape'], rendered: false, missing: ['vhs (brew install vhs)'] },
+  research: { kind: 'research', summary: 'Three sources agree; one disagrees on limits', files: ['docs/research/pty-limits.md'], sources: ['https://nodejs.org/api/child_process.html', 'https://man7.org/linux/man-pages/man7/pty.7.html'] },
+  study: { kind: 'study', why: 'Worktrees let agents work without touching your checkout.', chunks: [['A worktree is a second folder on its own branch.', 'Example: ~/.ai-term/worktrees/<repo>/<agent>.', 'Check: two agents edit a.ts; why do they not collide?']], recap: ['Worktrees isolate agents.', 'Each has its own branch.', 'Merging brings work back.'] },
+};
