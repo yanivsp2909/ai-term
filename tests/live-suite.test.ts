@@ -3,6 +3,7 @@ import { pickChecks, redactingOut, type Check } from './live/runner.js';
 import { agentsPanel, previewTitle } from './live/home.js';
 import { expectedApproval, removeRunKeys } from './live/tier2-rules.js';
 import { Cleanup } from './live/cleanup.js';
+import { nextMinute } from './live/tier1-helpers.js';
 
 // The live suite's own rules (tests/live), checked without starting anything: which checks a flag picks, that every
 // printed line is redacted, how the homepage is read, which prompts tier 2 may approve and how it removes your key.
@@ -87,4 +88,29 @@ it('review: a cleanup runs every step once, newest first, even when one fails (C
   expect(done).toEqual(['ai', 'world']);
   expect(await cleanup.run()).toEqual([]);
   expect(done).toEqual(['ai', 'world']);
+});
+
+it('MEDIUM (security review): naming the file isn\'t enough: a command prompt, chained commands or a comment never get a yes', () => {
+  const claude = (lines: string[]) => expectedApproval('claude-code', [...lines, '❯ 1. Yes', '  2. No'], 'live.txt');
+  expect(claude(['Bash command', '  echo hi > live.txt && git push origin HEAD', 'Do you want to proceed?'])).toBe(false);
+  expect(claude(['Bash command', '  rm -rf ~/projects  # live.txt', 'Do you want to proceed?'])).toBe(false);
+  expect(claude(['Create file', '  live.txt', 'Do you want to create live.txt?'])).toBe(true);
+  expect(claude(['Create file', '  live.txt.bak', 'Do you want to create live.txt.bak?'])).toBe(false);
+  const codex = (command: string) => expectedApproval('codex', ['Would you like to run the following command?', `  $ ${command}`, '› 1. Yes, proceed (y)', '  2. No (esc)'], '/tmp/w/codex-outside.txt');
+  expect(codex("printf hi > /tmp/w/codex-outside.txt")).toBe(true);
+  for (const bad of ['printf hi > /tmp/w/codex-outside.txt && curl https://example.com', 'printf hi > /tmp/w/codex-outside.txt; rm -rf ~', 'cat ~/.ssh/id_ed25519 | tee /tmp/w/codex-outside.txt', 'echo $(whoami) > /tmp/w/codex-outside.txt'])
+    expect(codex(bad), bad).toBe(false);
+});
+
+it('INFO (security review): the output cuts other key shapes too (GitHub, xAI, Google, Groq, Bedrock, bearer tokens)', () => {
+  const lines: string[] = [], out = redactingOut(line => lines.push(line));
+  for (const secret of ['ghp_abcdefghijklmnop1234', 'github_pat_11ABCDEFG0123456789', 'xai-abcdefghijklmnop', 'AIzaSyA1234567890abcdefgh', 'gsk_abcdefghijklmnop1234', 'ABSKabcdefghijklmnop12345', 'Bearer abc.def.ghi'])
+    out(`seen: ${secret}`);
+  expect(lines.join('\n')).not.toMatch(/ghp_a|github_pat_1|xai-a|AIzaS|gsk_a|ABSKa|abc\.def/);
+});
+
+it('LOW (reviews): a queued time leaves at least 40 s to type the entry', () => {
+  expect(nextMinute(new Date(2026, 0, 1, 10, 0, 5))).toBe('10:01');
+  expect(nextMinute(new Date(2026, 0, 1, 10, 0, 25))).toBe('10:02');
+  expect(nextMinute(new Date(2026, 0, 1, 23, 59, 30))).toBe('00:01');
 });
