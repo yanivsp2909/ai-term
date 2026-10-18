@@ -11,6 +11,7 @@ import { getPaths, preparePaths } from '../src/shared/paths.js';
 import * as engines from '../src/daemon/engines.js';
 import { Logger } from '../src/daemon/log.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
+import { AddonError } from '../src/daemon/addon-error.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 
 // v1.1 batch 3, the daemon's own parts: /study's review schedule, o and s for made files, and Codex's web search flag.
@@ -92,6 +93,21 @@ it('HIGH (both reviews): o and s take only a viewable file type, never an execut
   expect((await readFile(opened[0] ?? '', 'utf8')).endsWith('<h1>deck</h1>')).toBe(true);
   SessionManager.downloads = join(dir, 'no-such-folder');
   await expect(m.addonFile(agent.id, 'out/deck/pitch.html', 'save')).rejects.toThrow('No Downloads folder');
+});
+
+it('live suite: o and s refusals reach you in their own words (an AddonError), never as "Session operation failed"', async () => {
+  const { dir, m, agent, tree } = await manager();
+  SessionManager.fileOpener = async () => { throw new Error('nothing may open'); };
+  const deck = join(tree, 'out', 'deck'); await mkdir(deck, { recursive: true });
+  const { chmod, link } = await import('node:fs/promises');
+  await writeFile(join(deck, 'run.html'), '<p>run me</p>'); await chmod(join(deck, 'run.html'), 0o755);
+  await writeFile(join(dir, 'private.md'), 'x'); await link(join(dir, 'private.md'), join(deck, 'notes.md'));
+  await writeFile(join(deck, 'pitch.html'), '<h1>deck</h1>'); SessionManager.downloads = join(dir, 'no-such-folder');
+  const refusals: [string, 'open' | 'save', string][] = [['out/deck/run.command', 'open', 'not a file type'], ['out/deck/run.html', 'open', 'executable'], ['out/deck/notes.md', 'save', 'one link'], ['out/deck/pitch.html', 'save', 'No Downloads folder']];
+  for (const [file, action, words] of refusals) {
+    const error = await m.addonFile(agent.id, file, action).then(() => null, (e: unknown) => e);
+    expect(error, file).toBeInstanceOf(AddonError); expect((error as Error).message, file).toContain(words);
+  }
 });
 
 it('MEDIUM (v1.0 gate): o opens model-written HTML and SVG with no script able to run, s saves HTML the same way; nothing opens while the agent runs', async () => {
