@@ -103,10 +103,13 @@ it('live suite: o and s refusals reach you in their own words (an AddonError), n
   await writeFile(join(deck, 'run.html'), '<p>run me</p>'); await chmod(join(deck, 'run.html'), 0o755);
   await writeFile(join(dir, 'private.md'), 'x'); await link(join(dir, 'private.md'), join(deck, 'notes.md'));
   await writeFile(join(deck, 'pitch.html'), '<h1>deck</h1>'); SessionManager.downloads = join(dir, 'no-such-folder');
-  const refusals: [string, 'open' | 'save', string][] = [['out/deck/run.command', 'open', 'not a file type'], ['out/deck/run.html', 'open', 'executable'], ['out/deck/notes.md', 'save', 'one link'], ['out/deck/pitch.html', 'save', 'No Downloads folder']];
+  // Part C review: a file the result names but the agent never wrote, and a link that leads out of the worktree.
+  await symlink(join(dir, 'private.md'), join(deck, 'away.md'));
+  const refusals: [string, 'open' | 'save', string][] = [['out/deck/run.command', 'open', 'not a file type'], ['out/deck/run.html', 'open', 'executable'], ['out/deck/notes.md', 'save', 'one link'], ['out/deck/pitch.html', 'save', 'No Downloads folder'],
+    ['out/deck/never-written.html', 'open', "isn't in the agent's folder"], ['out/deck/away.md', 'open', 'never opened through a link']];
   for (const [file, action, words] of refusals) {
     const error = await m.addonFile(agent.id, file, action).then(() => null, (e: unknown) => e);
-    expect(error, file).toBeInstanceOf(AddonError); expect((error as Error).message, file).toContain(words);
+    expect(error, file).toBeInstanceOf(AddonError); expect((error as Error).message, file).toContain(words); expect((error as Error).message, file).not.toContain(dir);
   }
 });
 
