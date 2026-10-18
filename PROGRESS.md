@@ -1,6 +1,109 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: a37ed44 test: version mask of any length, the split's /exit always on sandboxed, selection that survives a scrolled list, /study paged live (Part C review)
+Last commit: final handover (this commit)
+Roadmap step: 2026-10-18/19 live-suite run · A (B33) done · B (npm run live) done · C (run it, shrink the manual list) done
+Branch: main, pushed.
+
+## Final report (this run)
+- **A · B33: done.** /bisect gives its copy a copy-on-write clone of each dependency folder (APFS on macOS; `--reflink=always` on Linux; B32's read-only link where the disk can't clone). Commits 27086a2 RED → 34cc3a1; 2745efc RED → 66dd457; f44318c RED → a02f191; 1802d90 (test split); handover badabe4. Reviews: TypeScript 1 HIGH, 1 MEDIUM, 2 LOW; security 0 HIGH/MEDIUM, 3 LOW (all fixed, residuals listed in Part A below). **B33 /bisect on AI Term itself: 14.4 s (and 15.0 s), 4 steps over 13 commits** (`AITERM_BISECT_SELF_TEST=1 npx vitest run tests/b33-bisect-self.test.ts`; with B32's link it stopped with "also fails at").
+- **B · `npm run live`: done.** 1e89746 (the suite); 1a1e987 RED, 978bbbe RED → 30a1ce8 (review fixes); handover c4532ed. Reviews (fresh): TypeScript 1 HIGH, 5 MEDIUM, 12 LOW; security 1 HIGH, 1 MEDIUM, 9 LOW/INFO; e2e-runner 1 HIGH, 2 MEDIUM, LOWs and coverage gaps. No CRITICAL. All fixed or explained in Part B below.
+- **C · run it and shrink the list: done.** Real failures the suite found, each a RED commit then a fix: the homepage's hard-coded v0.1.8 (bf07339 → cb9a72b), o/s refusals shown as "Session operation failed" (2d617e8 → 95c1adc), a rename starting with a homepage key letter losing it (b57e84b → 26cba1b). The Part C review found 1 MEDIUM (a file the agent never wrote, or a link out of the worktree, still masked: 1f60a8e → fd92c57), 3 LOW (snapshot mask tied to the version's length, an order-dependent split check, selection on a scrolled list: a37ed44) and, outside the diff, Space dead in add-on results from a real keyboard (ff02664 → 6e1fbe1). Tier 1 grew from 27 to 32 checks so the manual list keeps only what needs you (2e925e6, 873da50, a37ed44); README f2b9061.
+- **Last check lines:** typecheck exit 0 · lint "ESLint: No issues found" · build "ESM ⚡️ Build success in 45ms" · app:build "✓ built in 56ms" · full suite twice: "Test Files 289 passed | 1 skipped (290) · Tests 1926 passed | 8 skipped (1934)", 46.71 s and 45.42 s · hidden Electron smoke "9 passed (36.9s)".
+- **Tier 1, twice in a row on this Mac:** "Tier 1 passed: 32 checks in 109 s" and "Tier 1 passed: 32 checks in 107 s"; no world folder, daemon or agent left after either.
+- **Tier 2:** prepared, never run here: `cd ~/ai-term && npm run live -- --with-logins`.
+- **Where the code disagreed with the prompt:**
+  - Part A: Linux `cp --reflink=auto` would quietly make a full copy; `--reflink=always` gives "clone where supported, else the read-only link" (on tmpfs or ext4 that's always the link). B33 was recorded nowhere but the last run's gotcha; its premise held (Vitest fails without a writable node_modules/.vite).
+  - Part B: /dev has no "loopback switch" (its sandbox always opens its own 127.0.0.1 port; the project's l switch is for tests, which the suite runs for real). `o` on an accepted file and `/open` call /usr/bin/open (a fixed path), so the suite presses `o` only where AI Term must refuse and runs `/open code` with a stand-in. Two agents with two branches are AI Term's agents (ai/ai-term, ai/ai-term-2): tier 1 has no real Codex or Claude Code, only a stand-in Claude Code for the trust prompt. `ai doctor` looks up AI Term's own `doctor-probe` Keychain entry (in the fake home: "Credential store: unavailable"). The daemon socket must fit 104 bytes, so the world's names are short.
+  - Part C: two agents' /dev at once: the second y is refused as "The dev server setup changed since it was shown; run /dev again", not "Another agent's dev server just took that port": the port is part of the plan you approved, so once the first server holds it the second plan has changed (DEV_PORT_TAKEN only covers a narrower window). A /study result can only be read in the popup it ran in: `/study` alone always lists what's due (suggestion below).
+
+## What works
+- Everything in Parts A and B below, plus:
+- The homepage's This Mac panel shows the version you run (src/client/tui/layout.ts).
+- Every o/s refusal for a made file reaches you in AI Term's own fixed words (src/daemon/session-manager.ts addonFile): not a viewable type, executable, more than one link, a link anywhere on the way or out of the worktree, a file the result names but the agent never wrote ("That file isn't in the agent's folder any more"), no Downloads folder, 99 copies.
+- Renaming an agent (r) types every letter, homepage keys included (CommandField.typeKey, src/client/tui/keys.ts).
+- Space pages /study, /explain and /teach results and picks in /refactor from a real keyboard (src/client/tui/addon-panel.ts takes ' ' as Space).
+- `npm run live`: 32 tier 1 checks (README "Live smoke suite"), now also: n, y on an edit, Esc, Ctrl+K, a read outside the folder and /caps turns in AI Term's agent; /study paged with Space; two agents' /dev on one free port; /queue after an agent; /clean and /worktrees; clicks focusing a split pane; the /doctor popup.
+- tests/live-found.test.ts pins what the suite found; tests/live-suite.test.ts the suite's own rules.
+
+## What's next
+- No step pending from this run. Suggestions, not done:
+  - /study: a result can't be reopened once its popup is closed (`/study` alone is the due list); e.g. `/study` could reopen this folder's last session when one is unread.
+  - More of the tier 2 group could become stub-driven tier 1 checks (no account needed): LSP with a stand-in language server, /mcp with a tiny local server.
+  - A daemon-start sweep of stale ai-term-clone-* and ai-term-test-* temp folders (Part A).
+  - DEV_PORT_TAKEN is effectively unreachable in a live race (the plan's port changes first); one refusal text would do.
+
+## Manual checks
+- typecheck, lint, build, app:build, the full suite twice, the hidden Electron smoke, tier 1 twice: ran (lines above).
+- The 36 open checks from v0.2–v1.0, rewritten (their numbers are the old list's):
+
+### Ran (live suite)
+- #8 D57 sandbox: ran (live suite) · a Don't ask AI Term agent (on the stub Ollama, not a key) ran `cat <home>/.ai-term/settings.json; env | sort`: its report said "blocked by sandbox: ~/.ai-term/settings.json"; env had HOME and PATH but none of OPENAI_API_KEY, ANTHROPIC_API_KEY, AITERM_LIVE_TOKEN, GITHUB_TOKEN (planted in the daemon's env).
+- #9 D56 test sandbox: ran (live suite) · the card said "✗ blocked by sandbox: ~/.ssh/known_hosts" (the planted fake); l showed "127.0.0.1: on for this project · l turns it off"; a test calling a local server was "✗ blocked by sandbox: network" with it off and "✓ tests pass" with it on.
+- #13 /bisect in a Node repo with a known regression: ran (live suite) · on a temporary Node repository whose runner writes node_modules/.cache: "dependencies: node_modules cloned from your checkout", the first bad commit "planted: break the state", node_modules byte-identical, no copy left; on AI Term itself (Part A) 14.4 s.
+- #14 o and s on /deck: ran (live suite) for s and for o's refusal · s: "✓ saved a copy to …/Downloads/live.html" in the world's own Downloads, with its Content-Security-Policy; o on an executable file: "That file is executable; AI Term doesn't open or save it" (it said "Session operation failed" before cb9a72b's run found it). o opening an accepted file: look and feel below.
+- #15 /commit y: ran (live suite) · "✓ committed <sha> in the agent's worktree"; that commit "LIVE: add made.txt" by your git name; your main and your checkout unchanged.
+- #21 /brain: ran (live suite) for the local map · "✓ brain for <repo>: N files", "Brain · … old" in /brain show, no model request. The trust and model part: tier 2 group below.
+- #22 /queue and /dev: ran (live suite) · "at HH:MM" started at its minute; "after builder" waited, then started when builder's next turn ended; /dev "▶ dev server for builder · http://127.0.0.1:4100", the page answered, x "stopped"; two agents' /dev on one free port: the second y refused ("The dev server setup changed since it was shown; run /dev again"), no second server.
+- #24 /send: ran (live suite) · "✓ sent to AI Term", "✓ sent to AI Term · 2 lines"; refused "AI Term is asking for permission, go inside to answer" and, for a stand-in Claude Code at its trust prompt, "Claude Code may be asking to trust its folder · go inside first"; exited and unknown names refused too.
+- #26 worktrees: ran (live suite) · two AI Term agents got ai/ai-term and ai/ai-term-2 (Codex agents are named the same way); x on a clean exited one: "✓ nothing would be lost", d "✓ deleted worktree and branch ai/ai-term-2"; on one with work: "! would be lost", a wrong name "type ai/ai-term exactly to delete", the right one deleted; k "worktree kept:"; /clean "kept 1 worktree · /worktrees reviews them"; /worktrees ⏎ then d and k.
+- #28 AI Term's agent in Ask: ran (live suite) except the budget · "✓ allowed" for a command and for an edit (the file there after y), "✗ denied" for n, "■ interrupted" for Esc while a command ran, "killed: the request and 1 running command" for Ctrl+K, a read of /etc/hosts refused ("Path is outside the folder"), /caps turns 2 "cap reached: 2 turns this run" with no model request. The daily budget: tier 2 group.
+- #30 splits: ran (live suite) · "2 marked · v opens them side by side"; the focused (underlined) header moved with Ctrl+\ and with clicks; Ctrl+E then v reopened it; /exit in a pane "■ exited · exit 0"; Ctrl+\ closed it and the other agent opened full screen.
+- #33 /find, /open code, /retry, /doctor: ran (live suite) · "Find “LIVE_SHELL_OK” · 1" and ⏎ showed the shell; /open code gave a stand-in code "--" and the worktree; /retry "✓ restarted sandboxed in its worktree · its first message isn't resent"; the /doctor popup had ai doctor's lines ("Daemon: running", "Sandbox: sandbox-exec", …). /open in Finder: look and feel below.
+- #23 typing, Ctrl+E home and back, resize, multiline paste: ran (live suite) on a shell and AI Term's agent · "stty size" said "30 100" after a resize while attached; ⏎ went back in with the earlier text drawn again; "[pasted · 3 lines]" in the command bar; a paste inside an agent arrived as one message. In Claude Code and Codex themselves: tier 2 and look and feel below.
+
+### Still needs you
+#### Tier 2: your logins, keys and tools (most important first)
+1. cd ~/ai-term && npm run live -- --with-logins  # #16, #23, #27 in one go: Claude Code and Codex in Ask on your logins (a prompt each, a permission prompt the card reports, approved only for the file asked for; never a Codex update), a keyed AI Term agent turn with its cost line (you type the key; it's removed after), /issue 1 (popup) and /pr-review 1 (y). Add --issue N --pr N if 1 doesn't exist
+2. cd ~/ai-term && npm run dev  # #27 rest: Foundry key test (t), a turn on a GPT and a chat deployment, m maps a deployment, ctx % on the card, /settings r falls back to the CLIs
+3. cd ~/ai-term && npm install --global rea-agents && npm run dev  # #11: /reverse /Applications/Calculator.app, y, approve one REA tool call on Claude Code; REA's answer shows evidence
+4. cd ~/ai-term && npm run dev  # #12: /reverse <an app of yours>, e to AI Term's agent, y; inside, /mcp lists only rea
+5. cd ~/ai-term && npm install --global typescript-language-server typescript && npm run dev  # #10 LSP (gate HIGH): /settings z, AI Term's agent writes a .ts file with an error → one diagnostics line; a file that is a link gets none
+6. cd ~/ai-term && npm run dev  # #28 rest: a keyed AI Term agent with a daily budget of 0.01 stops at it (the suite's stub model costs $0)
+7. cd ~/ai-term && npm run dev  # #29: /mcp add a local server, approve a project .mcp.json entry (a changed entry asks again), a allows a tool for the session; /skills, /agents, a command with arguments, a subagent job
+8. cd ~/ai-term && npm run dev  # #21 rest: /brain trust, the model pass on your key, start an agent with b on, /brain untrust: the next start's index names its own map without model notes
+9. cd ~/ai-term && npm run dev  # #17: /deps in this repo (npm's registry): the facts line (npm, go, cargo; Python says the agent compares pins), y
+10. cd ~/ai-term && npm run dev  # #18: /research how PTYs size windows on Codex, y; /study git worktrees, y, Space to the recap (keep the popup open); tomorrow /study lists it
+11. cd ~/ai-term && npm run dev  # #19: /e2e sign in in a web app repo; /diagram the daemon processes with a renderer installed, then o
+12. cd ~/ai-term && npm run dev  # #20: /teach, /fix <error line>, /perf <benchmark> then a, /review deep, /standup then m, /plan then a and s, /prompt then c, /explain src/daemon/addons.ts with Space
+13. cd ~/ai-term && curl -fsSL https://models.dev/api.json -o /tmp/models-dev.json && npx tsx scripts/update-prices.ts /tmp/models-dev.json && git diff --stat  # #36: refresh the price catalog (network on your side)
+
+#### Phone and Tailscale (#1–#7, unchanged)
+1. cd ~/ai-term && npm run dev  # /settings, R (phone remote on); /remote on; scan the QR with the phone within 2 minutes and name it (Tailscale app logged in on the Mac and the phone): the page lists your agents
+2. cd ~/ai-term && tailscale serve status --json  # while /remote is on: exactly one new entry, :8443 → http://127.0.0.1:<port>; your other entries unchanged. If the page answers 421, tailscale rewrote Host: report it
+3. cd ~/ai-term && npm run dev  # phone: open an agent waiting for permission, Approve; the agent received yes (Claude Code 1, Codex y, AI Term's agent y); Deny on another sends no
+4. cd ~/ai-term && npm run dev  # phone: send a message, stop an agent, start one (Ask) in a listed folder; then tail -5 ~/.ai-term/remote.log shows each with phone, action, agent and time, a message only by length
+5. cd ~/ai-term && npm run dev  # /remote revoke <phone>; reload the phone page: "This phone isn't paired"
+6. cd ~/ai-term && npm run dev  # /remote on, leave the phone page closed 31 minutes: /remote shows off and tailscale serve status --json has nothing on 8443; while on and on AC, pmset -g assertions lists caffeinate
+7. cd ~/ai-term && node dist/cli/index.js daemon stop && npm run dev  # (stops running agents) with /remote on before: after the restart /remote is off and the 8443 entry is gone
+
+#### Look and feel
+1. cd ~/ai-term && npm run app:dev  # #31: the Mac app: homepage, Cmd+K/T/,/F/E, Cmd+1–9, Cmd+D split, copy/paste, font size, light/dark/system appearance, Cmd+W then reopen with the agent still running, Cmd+Q
+2. cd ~/ai-term && npm run dev  # #25: notifications: waiting banner, done banner only when not attached, click with ai open selects the agent, click with ai closed opens a Terminal window inside it, /settings n off
+3. cd ~/ai-term && npm run dev  # #14, #33 rest: o on a /deck result opens the HTML in your browser with no script running; /open opens the folder in Finder (the suite never opens a window)
+4. cd ~/ai-term && npm run dev  # #23 rest: inside Claude Code and Codex: resize, a multiline paste, vim with the mouse (the bar on)
+5. cd ~/ai-term && "$HOME/.local/bin/ai"  # #32: the installed ai link in Terminal.app without Node on PATH
+6. cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace  # #34: Terminal.app bar trace; reply with the BAR_DIAGNOSTIC line
+7. cd ~/ai-term && npm exec -- tsx scripts/measure-app-latency.ts  # #35: on an idle Mac, the app's typing p95 must be ≤ 1.20 ms
+
+## Gotchas
+- Part C reviews (fresh): TypeScript 0 CRITICAL, 0 HIGH, 1 MEDIUM, 3 LOW, plus one real bug outside the diff (Space); all fixed (pairs above). The LOWs are in test code and have no RED commit (the reviewer reproduced the snapshot one by setting the version to 1.10.0).
+- Follow-up review of the fixes (2e925e6..a37ed44): 0 CRITICAL, HIGH or MEDIUM. 2 LOW left as they are: any path the jail refuses (a `..` escape too) reads "A made file is never opened through a link"; a folder on the way replaced by a file (ENOTDIR) or a worktree gone still shows the generic "Session operation failed", with no path.
+- Tier 1 now has 32 checks, about 2 minutes (one waits for a /queue minute). Its stub Ollama answers `LIVE run:`, `LIVE read:` and `LIVE write:` lines and add-on prompts; `--only`/`--from` pieces need the checks that create their agents.
+- The approved breakpoint snapshots show the version as "v<version>" (tests/homepage.test.ts masks it), so a release no longer changes them.
+
+## New dependencies
+- None this run.
+
+## Concepts introduced
+- A smoke suite that finds bugs unit tests can't: tests/live/. Unit tests call functions with the inputs their author imagined (`panel.key('space')`); the live suite sends the bytes a keyboard sends (`' '`) through the real parser, daemon and screen, which is how it found the Space and rename bugs, the masked refusals and the stale version label. tests/live-found.test.ts then pins each one as a fast unit test.
+
+---
+
+# Part B of this run: npm run live
+
+## Checkpoint
 Last code commit: 30a1ce8 fix: the live suite removes your key only on the daemon's word, cleans up on Ctrl+C, approves only the exact file, waits for the attach (Part B reviews)
 Last commit: Part B handover (this commit)
 Roadmap step: 2026-10-18 live-suite run · Part A (B33) done · Part B (live smoke suite) done · Part C (run it, shrink the manual list) next
@@ -118,43 +221,8 @@ v0.9: closed. v1.0: closed (docs/architecture.md §12.29). Version: 1.0.0 (packa
   - The tailscale and REA flags couldn't be read from installed binaries (neither is installed here); the code probes `tailscale serve --help` at run time.
   - The pasted D54 text (Pinned) replaced the architecture's older "Proposed" D54 row.
 
-## Manual checks still open, v0.2 to v1.0 (one list, most important first)
-1. cd ~/ai-term && npm run dev  # /settings, R (phone remote on); /remote on; scan the QR with the phone within 2 minutes and name it (Tailscale app logged in on the Mac and the phone): the page lists your agents
-2. cd ~/ai-term && tailscale serve status --json  # while /remote is on: exactly one new entry, :8443 → http://127.0.0.1:<port>; your other entries unchanged. If the page answers 421, tailscale rewrote Host: report it
-3. cd ~/ai-term && npm run dev  # phone: open an agent waiting for permission, Approve; the agent received yes (Claude Code 1, Codex y, AI Term's agent y); Deny on another sends no
-4. cd ~/ai-term && npm run dev  # phone: send a message, stop an agent, start one (Ask) in a listed folder; then tail -5 ~/.ai-term/remote.log shows each with phone, action, agent and time, a message only by length
-5. cd ~/ai-term && npm run dev  # /remote revoke <phone>; reload the phone page: "This phone isn't paired"
-6. cd ~/ai-term && npm run dev  # /remote on, leave the phone page closed 31 minutes: /remote shows off and tailscale serve status --json has nothing on 8443; while on and on AC, pmset -g assertions lists caffeinate
-7. cd ~/ai-term && node dist/cli/index.js daemon stop && npm run dev  # (stops running agents) with /remote on before: after the restart /remote is off and the 8443 entry is gone
-8. cd ~/ai-term && npm run dev  # Don't ask sandbox (D57): a keyed AI Term agent in Don't ask: Run cat ~/.ai-term/settings.json → blocked by sandbox; Run env | sort → no AITERM, OPENAI, ANTHROPIC or key value
-9. cd ~/ai-term && npm run dev  # test sandbox (D56): /test-cmd with a test that reads ~/.ssh/known_hosts → the card says blocked; /test l toggles 127.0.0.1
-10. cd ~/ai-term && npm run dev  # LSP (gate HIGH): /settings z, a keyed AI Term agent writes a .ts file with an error → one diagnostics line; a file that is a link gets none
-11. cd ~/ai-term && npm install --global rea-agents && npm run dev  # /reverse /Applications/Calculator.app, y, approve one REA tool call on Claude Code; REA's answer shows evidence
-12. cd ~/ai-term && npm run dev  # /reverse <an app of yours>, e to AI Term's agent, y; inside, /mcp lists only rea
-13. cd ~/ai-term && npm run dev  # in a Node repo with a known regression: /bisect npm test <good tag>, y (sandboxed; dependencies linked read-only)
-14. cd ~/ai-term && npm run dev  # o on a /deck result opens HTML with no script running; s saves it to Downloads
-15. cd ~/ai-term && npm run dev  # /commit <agent with changes>, y, then y again in the result: committed in the agent's worktree only
-16. cd ~/ai-term && npm run dev  # /issue 1 and /pr-review <number> in a repo with GitHub issues and PRs (your gh login), y
-17. cd ~/ai-term && npm run dev  # /deps in this repo: the facts line (npm, go, cargo; Python says the agent compares pins), y
-18. cd ~/ai-term && npm run dev  # /research how PTYs size windows on Codex, y; /study git worktrees, y, Space to the recap; tomorrow /study lists it
-19. cd ~/ai-term && npm run dev  # /e2e sign in in a web app repo; /diagram the daemon processes with a renderer installed, then o
-20. cd ~/ai-term && npm run dev  # /teach, /fix <error line>, /perf <benchmark> then a, /review deep, /standup then m, /plan then a and s, /prompt then c, /explain src/daemon/addons.ts with Space
-21. cd ~/ai-term && npm run dev  # /brain, /brain trust, optional model pass, start an agent with b on, /brain untrust: the next start's index names its own map without model notes
-22. cd ~/ai-term && npm run dev  # /queue add (after <agent> / at HH:MM with a limit) and /dev on an agent with /dev-cmd set; two agents' /dev at once: the second says the port was taken
-23. cd ~/ai-term && npm run dev  # Claude Code and Codex in Ask: typing, a permission prompt each, Ctrl+E home and back, resize, multiline paste, vim mouse (the bar on); never approve a Codex update
-24. cd ~/ai-term && npm run dev  # /send to an idle agent (two pasted lines), to one asking permission (refused), to a fresh one at its trust prompt (refused)
-25. cd ~/ai-term && npm run dev  # notifications: waiting banner, done banner only when not attached, click with ai open selects the agent, click with ai closed opens a Terminal window inside it, /settings n off
-26. cd ~/ai-term && npm run dev  # worktrees: two Codex agents get ai/codex and ai/codex-2; x on an exited clean one (k/d), on one with work (typed branch name); /worktrees and /clean
-27. cd ~/ai-term && npm run dev  # keys: Foundry key test (t) and a turn on a GPT and a chat deployment, m maps a deployment, Anthropic/OpenAI key turns, ctx % on the card, /settings r fallback to the CLIs
-28. cd ~/ai-term && npm run dev  # AI Term's agent in Ask: approve an edit (y), deny a command (n), Esc interrupts, Ctrl+K kills a running command, read /etc/hosts is refused, /caps turns 2 pauses, a daily budget of 0.01 stops it
-29. cd ~/ai-term && npm run dev  # /mcp add a local server, approve a project .mcp.json entry (changed entry asks again), a allows a tool for the session; /skills, /agents, a command with arguments, a subagent job
-30. cd ~/ai-term && npm run dev  # splits: Space marks two, v opens them side by side, Ctrl+\ switches focus, clicks focus a pane, Ctrl+E home, /exit in one pane
-31. cd ~/ai-term && npm run app:dev  # the Mac app: homepage, Cmd+K/T/,/F/E, Cmd+1–9, Cmd+D split, copy/paste, font size, light/dark/system appearance, Cmd+W then reopen with the agent still running, Cmd+Q
-32. cd ~/ai-term && "$HOME/.local/bin/ai"  # the installed ai link in Terminal.app without Node on PATH
-33. cd ~/ai-term && npm run dev  # /find error, /open and /open code, /retry on a failed agent, /doctor matches ai doctor
-34. cd ~/ai-term && node scripts/diagnose-bar.mjs redraw --trace  # Terminal.app bar trace; reply with the BAR_DIAGNOSTIC line
-35. cd ~/ai-term && npm exec -- tsx scripts/measure-app-latency.ts  # on an idle Mac: the app's typing p95 must be ≤ 1.20 ms (the last runs here were on a loaded Mac)
-36. cd ~/ai-term && curl -fsSL https://models.dev/api.json -o /tmp/models-dev.json && npx tsx scripts/update-prices.ts /tmp/models-dev.json && git diff --stat  # refresh the price catalog (network on your side)
+## Manual checks still open, v0.2 to v1.0
+Superseded: the 2026-10-19 live-suite run rewrote these 36 checks; see "Manual checks" at the top (what `npm run live` covers, and what still needs you).
 
 ---
 
