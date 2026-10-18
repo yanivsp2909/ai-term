@@ -10,10 +10,12 @@ export async function checkAddonCli(file: string, readOnly: boolean): Promise<vo
 }
 
 // v1.0.7 /reverse: the per-session MCP options, read from the installed binary's own help. Claude Code: --mcp-config (a
-// JSON string is one argv element) with --strict-mcp-config. Codex: -c overrides (TOML values, one argv element each).
-export const REVERSE_CLI_ERRORS = ["The installed Claude Code has no per-session MCP option, so /reverse can't use it · e picks another engine", "The installed Codex has no per-session MCP option, so /reverse can't use it · e picks another engine"] as const;
-const REVERSE_FLAGS: Record<CliEngine, readonly RegExp[]> = { 'claude-code': [/--mcp-config\s+</, /--strict-mcp-config/], codex: [/-c, --config\s+<key=value>/] };
+// JSON string is one argv element) with --strict-mcp-config. Codex has -c overrides, but they merge into your own
+// mcp_servers (security review), so no option keeps your other servers out: it's never offered.
+export const REVERSE_CLI_ERRORS = ["The installed Claude Code has no per-session MCP option, so /reverse can't use it · e picks another engine", "Codex has no per-session MCP list that leaves out your own MCP servers, so /reverse can't use it · e picks another engine"] as const;
+const CLAUDE_MCP_FLAGS: readonly RegExp[] = [/--mcp-config\s+</, /--strict-mcp-config/];
 export async function checkReverseCli(engine: CliEngine, file: string): Promise<void> {
+  if (engine === 'codex') throw new Error(REVERSE_CLI_ERRORS[1]);
   const { stdout } = await run(file, ['--help'], { timeout: 5000, maxBuffer: 512 * 1024, env: buildSpawnEnv(engine, { kind: 'account' }, process.env) });
-  if (!REVERSE_FLAGS[engine].every(flag => flag.test(stdout))) throw new Error(engine === 'codex' ? REVERSE_CLI_ERRORS[1] : REVERSE_CLI_ERRORS[0]);
+  if (!CLAUDE_MCP_FLAGS.every(flag => flag.test(stdout))) throw new Error(REVERSE_CLI_ERRORS[0]);
 }

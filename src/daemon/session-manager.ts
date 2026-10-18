@@ -417,8 +417,6 @@ export class SessionManager extends EventEmitter {
         const now = new Date().toISOString();
         const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account',...(profile?{profile}:{}) }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
         if(brain)info.brain={builtAt:brain.builtAt};
-        // v1.0.7 /reverse on AI Term's agent: its own MCP list (REA alone), there before the agent first asks for it.
-        if(addon?.mcp&&agent?.engine==='ai-term')this.mcp.session(info.id,addon.mcp);
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
             const forkWorktree=fork!==undefined;
@@ -457,6 +455,9 @@ export class SessionManager extends EventEmitter {
         live.outputClock=new OutputClock(()=>{if(!['exited','error'].includes(info.status))this.event({kind:'session.updated',session:{...info}});});
         if(agent?.firstMessage!==undefined)live.firstMessage=agent.firstMessage;
         this.sessions.set(info.id, live);
+        // v1.0.7 /reverse on AI Term's agent: its own MCP list (REA alone), there before the agent first asks for it, and
+        // gone again if the start fails (review).
+        if(addon?.mcp&&agent?.engine==='ai-term')this.mcp.session(info.id,addon.mcp);
         try {
             if(statusTelemetry&&agent?.engine==='codex'){
                 Object.assign(recipe.env,buildStatusEnv(statusTelemetry));
@@ -560,7 +561,7 @@ export class SessionManager extends EventEmitter {
             });
         }
         catch (error) {
-            this.usage?.revoke(info.id);
+            this.usage?.revoke(info.id);this.mcp.endSession(info.id);
             if(error instanceof KeyError){this.sessions.delete(info.id);live.outputClock?.dispose();live.mirror.dispose();throw error;}
             info.status = 'error';
             info.statusDetail = 'spawn failed';
@@ -817,7 +818,7 @@ export class SessionManager extends EventEmitter {
         let setting:string|undefined;
         try{const value=(await new SettingsStore(this.paths.root).get()).reversePath;if(typeof value==='string')setting=value;}catch{this.log.error('Settings unreadable; /reverse looks for REA on PATH');}
         const reverseTargetPath=await reverseTarget(cwd,args,this.paths.root),rea=await findRea(setting,process.env.PATH??'',cwd);
-        return {target:reverseTargetPath,rea,mcp:await reverseServer({rea,target:reverseTargetPath,cwd,root:this.paths.root,env:process.env})};
+        return {target:reverseTargetPath,rea,identity:await reaIdentity(rea),mcp:await reverseServer({rea,target:reverseTargetPath,cwd,root:this.paths.root,env:process.env})};
     }
     // v1.1 /bisect: the plan reads your checkout only; whether a sandbox starts here decides y or a capital Y.
     async addonBisectPlan(cwd:string,args:string):Promise<BisectAsk>{
@@ -1875,4 +1876,4 @@ async function openWithDefaultApp(path:string):Promise<void>{
     await new Promise<void>((done,fail)=>{execFile(opener,[path],{timeout:15_000,windowsHide:true},error=>error?fail(new Error('The file could not be opened')):done());});
 }
 import { checkAddonCli, checkReverseCli } from './addon-cli.js';
-import { findRea, reverseServer, reverseTarget } from './reverse.js';
+import { findRea, reaIdentity, reverseServer, reverseTarget } from './reverse.js';

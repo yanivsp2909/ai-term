@@ -24,7 +24,7 @@ export interface AddonMcp { command: string; args: string[] }
 export interface AddonRunOptions { bundle: string; readOnly: boolean; web?: boolean; mcp?: AddonMcp }
 export type BisectResult = Extract<AddonResult, { kind: 'bisect' }>;
 // v1.0.7 /reverse: the checked target's real path, the REA AI Term found, and its sandboxed server for that agent.
-export interface ReversePlan { target: string; rea: string; mcp: AddonMcp }
+export interface ReversePlan { target: string; rea: string; identity: string; mcp: AddonMcp }
 interface Runner {
   create(request: Exclude<CreateSession, { engine: 'shell' }>, continuation?: undefined, fork?: undefined, addon?: AddonRunOptions, strictIsolation?: boolean): Promise<SessionInfo>;
   text(id: string, lastReply?: boolean): Promise<SessionText>;
@@ -90,7 +90,7 @@ const tail = (text: string, most: number): string => { const chars = [...text]; 
 // What the /reverse popup says before y: the target, the REA that runs, its sandbox, and what y confirms.
 function reverseFacts(plan: ReversePlan): string[] {
   return [`target: ${tail(plan.target, 200)} · read-only: neither the agent nor REA can change it`, `REA: ${tail(plan.rea, 160)} · your install; AI Term never installs it · only this agent uses it`,
-    "REA runs in a sandbox: no network · it can't write the target or AI Term's folder", "● y confirms this target is yours, or that you're allowed to analyze it"];
+    "REA runs in a sandbox: no network · no key folders · it writes only its own state and temp files", "● y confirms this target is yours, or that you're allowed to analyze it"];
 }
 const exists = async (path: string): Promise<boolean> => { try { await lstat(path); return true; } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return false; throw error; } };
 export class AddonService {

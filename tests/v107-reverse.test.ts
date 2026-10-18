@@ -43,7 +43,7 @@ it('the target is a real path that exists; credential files and AI Term\'s own f
   await expect(reverseTarget(folder, join(root, 'state.json'), root)).rejects.toThrow("AI Term's own folder");
 });
 
-it('Claude Code gets REA through --mcp-config with --strict-mcp-config; Codex through one -c table; AI Term\'s agent a session list', () => {
+it('Claude Code gets REA through --mcp-config with --strict-mcp-config; Codex never does', () => {
   const mcp = { command: '/usr/bin/env', args: ['-i', 'PATH=/usr/bin:/bin', '/usr/bin/sandbox-exec', '-f', '/x/p.sb', '--', '/opt/rea', 'mcp'] };
   const addon = { bundle: '/home/u/.ai-term/addons/' + 'a'.repeat(64), readOnly: true, mcp };
   const claude = buildArgs({ engine: 'claude-code', model: null, permission: 'ask', addon });
@@ -51,13 +51,8 @@ it('Claude Code gets REA through --mcp-config with --strict-mcp-config; Codex th
   expect(JSON.parse(config?.slice('--mcp-config='.length) ?? '')).toEqual({ mcpServers: { rea: { type: 'stdio', command: mcp.command, args: mcp.args } } });
   expect(claude.filter(arg => arg === '--strict-mcp-config')).toHaveLength(1);
   expect(claude).toContain('--permission-mode=default');
-  const codex = buildArgs({ engine: 'codex', model: null, permission: 'ask', addon });
-  const at = codex.findIndex(arg => arg.startsWith('mcp_servers='));
-  expect(codex[at - 1]).toBe('-c');
-  expect(codex[at]).toBe(`mcp_servers={rea={command=${JSON.stringify(mcp.command)},args=[${mcp.args.map(a => JSON.stringify(a)).join(',')}]}}`);
-  expect(codex).toContain('--sandbox=read-only');
-  // A value TOML can't hold as written is refused, never passed on.
-  expect(() => buildArgs({ engine: 'codex', model: null, permission: 'ask', addon: { ...addon, mcp: { ...mcp, args: ['a\u007fb'] } } })).toThrow();
+  // Codex merges -c mcp_servers into your own config, so it never gets a server (security review).
+  expect(() => buildArgs({ engine: 'codex', model: null, permission: 'ask', addon })).toThrow('Invalid add-on MCP server');
 });
 
 let listener: Server | undefined;

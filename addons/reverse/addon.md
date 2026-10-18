@@ -3,7 +3,7 @@ name: reverse
 summary: "Reverse-engineer an app or binary that is yours with REA's MCP tools, read-only"
 args: "<target>"
 defaultEngine: claude-code
-engines: ["claude-code", "codex", "ai-term"]
+engines: ["claude-code", "ai-term"]
 skills: []
 agents: []
 brain: none

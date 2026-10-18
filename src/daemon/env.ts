@@ -93,8 +93,7 @@ export function buildArgs(request:{engine:CliEngine;model:string|null;permission
     args.push(...(request.engine === 'codex' && request.addon?.readOnly ? ['--ask-for-approval=on-request','--sandbox=read-only'] : PERMISSION_ARGS[request.engine][request.permission]??[]));
     if(request.engine === 'claude-code' && request.addon) args.push(`--plugin-dir=${request.addon.bundle}`, ...(request.addon.readOnly ? ['--tools=Read,Grep,Glob'] : []), ...(request.addon.readOnly || request.addon.mcp ? ['--strict-mcp-config'] : []));
     // v1.0.7 /reverse: the one MCP server for this agent, as argv elements. Claude Code reads it from --mcp-config's JSON
-    // (one argv element; --strict-mcp-config above keeps every other MCP configuration out). Codex takes the whole
-    // mcp_servers table as one -c override.
+    // (one argv element; --strict-mcp-config above keeps every other MCP configuration out).
     if(request.addon?.mcp)args.push(...addonMcpArgs(request.engine,request.addon.mcp));
     // v1.1 /research: Codex has live web search only with --search; Claude Code has its web tools unless --tools narrows.
     if(request.engine === 'codex' && request.addon?.web === true) args.push('--search');
@@ -106,13 +105,12 @@ export function buildArgs(request:{engine:CliEngine;model:string|null;permission
     return args;
 }
 
-// TOML basic strings take JSON's escapes, but no raw control character (DEL included): such a value is refused.
-// eslint-disable-next-line no-control-regex -- refusing controls is the point.
-const tomlString=(value:string):string=>{if(/[\u0000-\u001f\u007f]/.test(value))throw new Error('Invalid add-on MCP server');return JSON.stringify(value);};
 function addonMcpArgs(engine:CliEngine,mcp:AddonMcp):string[]{
     if(!isAbsolute(mcp.command)||!Array.isArray(mcp.args)||mcp.args.length>64||mcp.args.some(arg=>typeof arg!=='string'||Buffer.byteLength(arg)>2048))throw new Error('Invalid add-on MCP server');
-    if(engine==='claude-code')return [`--mcp-config=${JSON.stringify({mcpServers:{rea:{type:'stdio',command:mcp.command,args:mcp.args}}})}`];
-    return ['-c',`mcp_servers={rea={command=${tomlString(mcp.command)},args=[${mcp.args.map(tomlString).join(',')}]}}`];
+    // Codex merges -c mcp_servers into your own config (security review), so it has no per-session list that keeps your
+    // other servers out: it never gets one.
+    if(engine!=='claude-code')throw new Error('Invalid add-on MCP server');
+    return [`--mcp-config=${JSON.stringify({mcpServers:{rea:{type:'stdio',command:mcp.command,args:mcp.args}}})}`];
 }
 
 export interface UsageTelemetry {port:number;credential:string}

@@ -45,7 +45,7 @@ it('a /reverse result names each finding with its evidence and the limits; anyth
   for (const bad of [{ ...RESULT, findings: [{ title: 't', detail: 'd' }] }, { ...RESULT, limits: 'none' }, { ...RESULT, summary: 'a\u001b[2Jb' }, { ...RESULT, extra: 1 }]) expect(() => parseAddonResult(JSON.stringify(bad), 'reverse')).toThrow();
 });
 
-async function service(plan: ReversePlan | Error = { target: '/apps/Notes.app', rea: '/opt/rea/bin/rea', mcp: MCP }) {
+async function service(plan: ReversePlan | Error = { target: '/apps/Notes.app', rea: '/opt/rea/bin/rea', identity: '1:2:3:4:5', mcp: MCP }) {
   const home = await temp('ai-rev-home-'), cwd = await temp('ai-rev-cwd-'), runs: Record<string, unknown>[] = [], asked: unknown[][] = [];
   const runner = {
     async create(request: Record<string, unknown>, _c?: undefined, _f?: undefined, addon?: unknown) { runs.push({ ...request, addon }); return { id: randomUUID(), title: String(request.title), status: 'running', cwd: String(request.cwd) } as SessionInfo; },
@@ -77,12 +77,12 @@ it('missing REA or an engine without a per-session MCP option stops at the popup
   await expect(s.plan('reverse', 'Notes.app', cwd, { engine: 'codex', model: null, auth: { kind: 'account' } })).rejects.toThrow('Engine unavailable');
 });
 
-it('the installed CLI decides: Claude Code needs --mcp-config and --strict-mcp-config, Codex needs -c', async () => {
+it('the installed CLI decides: Claude Code needs --mcp-config and --strict-mcp-config; Codex is never offered', async () => {
   const bin = await temp('ai-rev-cli-');
   const cli = async (name: string, help: string) => { const path = join(bin, name); await writeFile(path, `#!/bin/sh\ncat <<'EOF'\n${help}\nEOF\n`); await chmod(path, 0o755); return path; };
   await expect(checkReverseCli('claude-code', await cli('claude-new', '  --mcp-config <configs...>  Load MCP servers\n  --strict-mcp-config  Only use MCP servers from --mcp-config'))).resolves.toBeUndefined();
   await expect(checkReverseCli('claude-code', await cli('claude-old', '  --plugin-dir <path>'))).rejects.toThrow('per-session MCP');
-  await expect(checkReverseCli('codex', await cli('codex-new', '  -c, --config <key=value>\n          Override a configuration value'))).resolves.toBeUndefined();
+  await expect(checkReverseCli('codex', await cli('codex-new', '  -c, --config <key=value>\n          Override a configuration value'))).rejects.toThrow('leaves out your own MCP servers');
   await expect(checkReverseCli('codex', await cli('codex-old', '  --model <MODEL>'))).rejects.toThrow('per-session MCP');
 }, 30_000);
 

@@ -1,8 +1,8 @@
 import { access, open, realpath, stat, lstat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { homedir } from 'node:os';
-import { isAbsolute, join, normalize, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { findServer } from '../agent/lsp.js';
 import { sandboxedArgv } from '../agent/bash.js';
 import { ToolError } from '../agent/tools.js';
@@ -15,7 +15,7 @@ import { buildBashEnv } from './env.js';
 // v1.0.7 /reverse <target>: one agent gets the REA reverse-engineering MCP server (github.com/morluto/rea, MIT) for that
 // agent only. REA is yours to install; AI Term only finds it (PATH, or the path /reverse path set) and never installs,
 // updates or registers it anywhere. Its server runs as `rea mcp` (stdio, per REA's README and server.json) under the agent
-// sandbox (D57), with no network and no writes to the target.
+// sandbox (D57) with the tighter rules below.
 export class ReverseError extends Error {}
 export const REA_MISSING = "REA isn't installed · install it yourself with npm install --global rea-agents, or point to it with /reverse path <path>";
 export const REA_BAD_PATH = "The REA path you set isn't an executable file · /reverse path <path> sets it again";
@@ -61,14 +61,37 @@ export async function reverseTarget(cwd: string, args: string, root: string, hom
   return real;
 }
 
-// Added after the agent sandbox's own rules (last match wins): no IP traffic in or out (127.0.0.1 included: AI Term's
-// endpoints and your local services), no name lookups (a lookup alone can carry data out), no system service that
-// fetches for a process, and no write anywhere in the target.
-export function reverseRules(target: string): string[] {
-  return ['(deny network-outbound (remote ip "*:*"))', '(deny network-inbound (local ip "*:*"))', '(deny network-bind (local ip "*:*"))',
-    '(deny network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))',
-    '(deny mach-lookup (global-name "com.apple.dnssd.service") (global-name "com.apple.mDNSResponder") (global-name "com.apple.nsurlsessiond") (global-name "com.apple.nsurlsessiond.NSURLSessionProxyService") (global-name "com.apple.networkd"))',
-    `(deny file-write* (subpath "${sandboxPath(target)}"))`, ''];
+// Added after the agent sandbox's own rules (last match wins). Reviews: REA reads attacker-written binaries and may run
+// them, so its sandbox is tighter than bash's: no key folder or secret-named file is readable; it writes only its own
+// state (~/.rea, per REA's README) and a private temp folder, so the target, your repository (its .git hooks included)
+// and every persistence spot stay unwritten, and no hard link reaches the target; no IP traffic in or out (127.0.0.1
+// included: AI Term's endpoints and your local services), no name lookups (a lookup alone carries data out), no unix
+// socket but the system log, and no app or script that would fetch or act for it (open, osascript, LaunchServices,
+// Apple Events, URL sessions).
+const SECRET_NAMES = String.raw`/(\.env(\.[^/]*)?|\.envrc|id_(rsa|dsa|ecdsa|ed25519)|\.netrc|\.npmrc|\.pypirc|\.git-credentials|\.pgpass|credentials(\.[a-z]+)?|[^/]*\.(pem|key|p12|pfx|ppk|kdbx))$`;
+export function reverseRules(spec: { secrets: readonly string[]; writable: readonly string[] }): string[] {
+  const q = (path: string) => `"${sandboxPath(path)}"`;
+  return [`(deny file-read-data file-read-xattr ${spec.secrets.map(path => `(subpath ${q(path)})`).join(' ')})`, `(deny file-read-data (regex #"${SECRET_NAMES}"))`,
+    '(deny file-write* (subpath "/"))',
+    `(allow file-write* ${spec.writable.map(path => `(subpath ${q(path)})`).join(' ')} (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))`,
+    '(deny file-link)',
+    '(deny network-outbound (remote unix-socket))', '(allow network-outbound (remote unix-socket (path-literal "/private/var/run/syslog")))',
+    '(deny network-outbound (remote ip "*:*"))', '(deny network-inbound (local ip "*:*"))', '(deny network-bind (local ip "*:*"))',
+    '(deny process-exec (literal "/usr/bin/open") (literal "/usr/bin/osascript") (literal "/usr/bin/osacompile"))',
+    '(deny mach-lookup (global-name "com.apple.dnssd.service") (global-name "com.apple.mDNSResponder") (global-name "com.apple.nsurlsessiond") (global-name "com.apple.nsurlsessiond.NSURLSessionProxyService") (global-name "com.apple.networkd") (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.coreservices.appleevents"))', ''];
+}
+// The file REA really is (its link followed), so the popup's approval covers that file and not just its path.
+export async function reaIdentity(path: string): Promise<string> {
+  const info = await stat(await realpath(path));
+  return [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(':');
+}
+// PATH may be longer than one MCP argument (2048 bytes): REA's folder, node's and the system's go first, then yours in
+// order while they fit (review: a dropped PATH left a node-script REA unable to start).
+function shortPath(path: string, rea: string): string {
+  const wanted = [dirname(rea), dirname(process.execPath), '/usr/bin', '/bin', '/usr/sbin', '/sbin', ...path.split(':').filter(entry => isAbsolute(entry))];
+  const kept: string[] = [];
+  for (const entry of new Set(wanted)) if (Buffer.byteLength(`PATH=${[...kept, entry].join(':')}`) <= 2048) kept.push(entry);
+  return kept.join(':');
 }
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,79}$/;
 export interface ReverseServer { command: string; args: string[] }
@@ -82,17 +105,26 @@ export async function reverseServer(options: { rea: string; target: string; cwd:
   const argv = await sandboxedArgv([options.rea, 'mcp'], { cwd: options.cwd, env, sandbox: { home: options.root, require: true, platform: 'darwin', ...options.home ? { user: options.home } : {} } }).catch((error: unknown) => { if (error instanceof ToolError) throw new ReverseError(NO_PROFILE); throw error; });
   const base = argv.program === SANDBOX_EXEC && argv.args[0] === '-p' ? argv.args[1] : undefined;
   if (!base) throw new ReverseError(REVERSE_NO_SANDBOX);
+  const home = options.home ?? homedir(), realHome = await realpath(home).catch(() => home);
+  const secrets = [...new Set((await Promise.all(SECRET_PATHS.flatMap(name => [join(home, name), join(realHome, name)]).map(async path => [path, await realpath(path).catch(() => path)]))).flat())];
+  // REA's own temp folder: one per user, private, never a link (so its path, and the profile, stay the same per user).
+  const temp = join(await realpath(tmpdir()), `ai-term-rea-${process.getuid?.() ?? 0}`); await privateDirectory(temp);
+  const info = await lstat(temp);
+  if (!info.isDirectory() || info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0) throw new ReverseError(NO_PROFILE);
   let profile: string;
-  try { profile = base + reverseRules(options.target).join('\n'); } catch (error) { if (error instanceof SandboxPathError) throw new ReverseError(ODD_TARGET); throw error; }
+  try { profile = base + reverseRules({ secrets, writable: [join(home, '.rea'), join(realHome, '.rea'), temp] }).join('\n'); } catch (error) { if (error instanceof SandboxPathError) throw new ReverseError(ODD_TARGET); throw error; }
   const folder = join(options.root, 'reverse'); await privateDirectory(folder);
   const name = `${createHash('sha256').update(profile).digest('hex')}.sb`, file = join(folder, name);
   try { const handle = await open(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); try { await handle.writeFile(profile); } finally { await handle.close(); } }
   catch (error) {
     if (!isFsError(error, 'EEXIST')) throw error;
     // Content-addressed: an existing file must hold exactly this profile, private and not a link, or nothing starts.
-    const info = await lstat(file);
-    if (!info.isFile() || (info.mode & 0o077) !== 0 || info.nlink !== 1 || await addonFile(folder, name, 256 * 1024) !== profile) throw new ReverseError(CHANGED_PROFILE);
+    const existing = await lstat(file);
+    if (!existing.isFile() || (existing.mode & 0o077) !== 0 || existing.nlink !== 1 || await addonFile(folder, name, 256 * 1024) !== profile) throw new ReverseError(CHANGED_PROFILE);
   }
-  const pairs = Object.entries(env).filter(([key, value]) => ENV_NAME.test(key) && !/[\p{C}]/u.test(value) && Buffer.byteLength(value) <= 2048).map(([key, value]) => `${key}=${value}`);
+  const values = { ...env, PATH: shortPath(env.PATH ?? '', options.rea), TMPDIR: temp };
+  // Any other value that can't be one plain argument refuses the start rather than starting REA without it.
+  if (Object.entries(values).some(([key, value]) => !ENV_NAME.test(key) || /[\p{C}]/u.test(value) || Buffer.byteLength(`${key}=${value}`) > 2048)) throw new ReverseError(NO_PROFILE);
+  const pairs = Object.entries(values).map(([key, value]) => `${key}=${value}`);
   return { command: '/usr/bin/env', args: ['-i', ...pairs, SANDBOX_EXEC, '-f', file, '--', options.rea, 'mcp'] };
 }
