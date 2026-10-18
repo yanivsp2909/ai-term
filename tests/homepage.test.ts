@@ -68,9 +68,11 @@ describe('homepage layout and cards', () => {
     const { createTheme } = await import('../src/client/tui/theme.js');
     const { plainText } = await import('../src/client/tui/grid.js');
     const grid = renderHomepage({ cols, rows, sessions: [session], selectedId: session.id, input: '', note: '', previewVisible: true, cwd: '/tmp', now: Date.parse('2026-10-11T10:04:00Z') }, createTheme('graphite'));
-    // The version changes every release: masked to its own width, so the approved breakpoints stay about the layout.
+    // The version changes every release: it and the blanks after it become one fixed token of the same width, so the
+    // approved breakpoints stay about the layout whatever the version's length (review: 1.10.0 broke a width-sized mask).
     const { version } = (await import('../package.json', { with: { type: 'json' } })).default;
-    expect(plainText(grid).replace(`v${version}`, `v${'#'.repeat(version.length)}`)).toMatchSnapshot();
+    const masked = plainText(grid).replace(new RegExp(`v${version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} *`), run => 'v<version>'.padEnd(run.length));
+    expect(masked).toMatchSnapshot();
     expect(grid).toHaveLength(rows); expect(grid.every(row => row.length === cols)).toBe(true);
     const text = plainText(grid);
     if (cols < 60) expect(text.trim()).toBe('make the window bigger');

@@ -223,6 +223,8 @@ export const TIER1: readonly Check<Tier1>[] = [
       t.ai.write(`\x1b[<0;${x};12M\x1b[<0;${x};12m`); await until(t, async () => (await focus()).includes(title), `a click in ${title}'s pane focusing it`, 5000);
     };
     await clickOn((await focus()).includes('builder') ? 'sandboxed' : 'builder'); await clickOn((await focus()).includes('builder') ? 'sandboxed' : 'builder');
+    // Whichever pane the reopened split focused first, /exit goes to sandboxed (review: the two clicks end where they began).
+    if (!(await focus()).includes('sandboxed')) await clickOn('sandboxed');
     if (!(await focus()).includes('sandboxed')) await fail(t, 'couldn\'t focus the sandboxed pane');
     await sleep(300); await t.ai.type('/exit'); await t.ai.waitFor(/exited · exit 0\s+sandboxed/, 15_000, 'the sandboxed pane saying exited · exit 0');
     await t.ai.waitFor('^\\ closes');
@@ -279,6 +281,15 @@ export const TIER1: readonly Check<Tier1>[] = [
     if (existsSync(join(t.world.aiHome, 'opened'))) await fail(t, 'o made a copy to open of an executable file');
     await t.home.close('Add-on');
   }),
+  step('study', '/study pages with Space: one idea at a time, then the recap (a real Space key, which the panel once ignored)', '"Space next · 1/2", "Space next · 2/2", then the recap', async t => {
+    t.stub.addon({ result: { kind: 'study', why: 'LIVE: worktrees let agents work apart.', chunks: [['LIVE idea one: a worktree is a second folder.', 'Check: where does it live?'], ['LIVE idea two: each has its own branch.', 'Check: which branch?']], recap: ['LIVE recap one', 'LIVE recap two', 'LIVE recap three'] } });
+    await t.home.command('/study git worktrees'); await stubTarget(t);
+    // The result comes into the open popup (closed, it can't be opened again: /study alone lists what's due today).
+    t.ai.write('y'); await t.ai.waitFor('Running in Ask mode'); await t.ai.waitFor('LIVE idea one', 30_000); await t.ai.waitFor('Space next · 1/2');
+    t.ai.write(' '); await t.ai.waitFor('LIVE idea two'); await t.ai.waitFor('Space next · 2/2');
+    t.ai.write(' '); await t.ai.waitFor('LIVE recap three');
+    await t.home.close('Add-on');
+  }),
   step('dev', '/dev on a tiny local server: /dev-cmd, y starts it on its own 127.0.0.1 port, x stops it', '"▶ dev server for builder · http://127.0.0.1:<port>", the page answering LIVE-DEV-OK, then "stopped"', async t => {
     await t.home.command('/dev-cmd node server.js'); await t.ai.waitFor('✓ dev command for');
     await t.home.select('builder'); await t.home.command('/dev');
@@ -292,7 +303,7 @@ export const TIER1: readonly Check<Tier1>[] = [
     await t.home.close('Dev server');
   }),
   step('devport', 'two agents\' /dev at once on one free port: the second y is refused', '"▶ dev server for builder", then in a second ai "Another agent\'s dev server just took that port" or "The dev server setup changed since it was shown"; no second server', async t => {
-    const other = startAi(t.world, t.repo), second = new Home(other), t2 = { ...t, ai: other, home: second };
+    const other = startAi(t.world, t.repo), second = new Home(other);
     try {
       await second.home();
       // Both plans show the same free port: nothing holds a port until its server runs.
@@ -307,7 +318,7 @@ export const TIER1: readonly Check<Tier1>[] = [
       await second.close('Dev server'); await second.command('/exit'); await Promise.race([other.exited, sleep(10_000)]);
       await t.home.command('/dev'); await t.ai.waitFor('▶ running'); t.ai.write('x'); await t.ai.waitFor('dev server for builder stopped'); await t.home.close('Dev server');
     } catch (error) { if (error instanceof LiveFailure && !error.screen.includes(await other.text())) throw new LiveFailure(error.message, `${error.screen}\n--- the second ai:\n${await other.text()}`); throw error; }
-    finally { await other.close(); void t2; }
+    finally { await other.close(); }
   }),
   step('brain', '/brain: the free local map of the repository (no model asked)', '"local map only · free", then "✓ brain for"; the stub got no request', async t => {
     const requests = t.stub.requests;

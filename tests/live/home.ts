@@ -51,8 +51,9 @@ export class Home {
   async selected(): Promise<string | null> { return previewTitle(await this.screen.text()); }
   // Moves the selection with ↓ (then ↑) until the preview names this title; each key waits for the selected card to move,
   // so a slow redraw is never read as the next card.
-  // The selected card is the one drawn with ▎ (its row is what changes: two agents may share a title).
-  private async selectedRow(): Promise<number> { return (await this.cards()).split('\n').findIndex(row => row.startsWith('│▎')); }
+  // The selected card: its rows (drawn with ▎) and where they are. Both are compared, since two agents may share a title
+  // and a scrolled list keeps the selection on the same row (review).
+  private async selectedRow(): Promise<string> { const rows = (await this.cards()).split('\n'), at = rows.findIndex(row => row.startsWith('│▎')); return `${at}:${rows.slice(Math.max(0, at), at + 3).join('|')}`; }
   async select(title: string): Promise<void> {
     for (const key of [KEY.down, KEY.up]) for (let i = 0; i < 12; i++) {
       if (await this.selected() === title) return;
