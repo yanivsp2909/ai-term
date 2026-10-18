@@ -738,8 +738,8 @@ export class SessionManager extends EventEmitter {
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         if(this.working(live))throw new Error('The agent is still working; commit when it has finished');
-        const {path,base,repo}=await this.diffTarget(live);if(!repo)throw new Error("This agent's worktree has no recorded repository");
-        return {live,work:{path,base,repo}};
+        const {path,base,repo}=await this.diffTarget(live);if(!repo||!live.info.branch)throw new Error("This agent's worktree has no recorded repository or branch");
+        return {live,work:{path,base,repo,branch:live.info.branch}};
     }
     async addonCommit(id:string,message:string,state?:string):Promise<string>{
         if(typeof message!=='string'||!message.trim()||Buffer.byteLength(message)>8000||/[\p{C}]/u.test(message.replace(/[\n\t]/g,'')))throw new Error('Invalid commit message');

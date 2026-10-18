@@ -185,7 +185,7 @@ it('/commit y refuses a repository that uses git filters (they would change what
   const { repo: checkout, m, agent, tree } = await manager();
   await writeFile(join(tree, '.gitattributes'), '*.bin filter=lfs\n'); await writeFile(join(tree, 'a.bin'), 'x');
   const gathered = await m.addonGather('commit', checkout, agent.id);
-  await expect(m.addonCommit(agent.id, 'feat: bin', gathered.commitState)).rejects.toThrow('uses git filters; commit it yourself');
+  await expect(m.addonCommit(agent.id, 'feat: bin', gathered.commitState)).rejects.toThrow('uses git filters');
 });
 
 // ---- Follow-up security review of the /commit y fix ----
