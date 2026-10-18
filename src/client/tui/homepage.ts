@@ -398,7 +398,7 @@ export class Homepage {
         const id = this.renameId, title = this.field.text;
         this.renameId = null; this.field.text = ''; this.enqueue(() => this.operation({ kind: 'sessions.rename', sessionId: id, title })); return;
       }
-      this.field.key(event.key); this.showNote('rename: type a name · ⏎ saves · Esc cancels'); return;
+      this.showNote(this.field.typeKey(event.key) ?? 'rename: type a name · ⏎ saves · Esc cancels'); return;
     }
     if(!this.field.hasPastes&&this.field.text.startsWith('/')){
       const choices=filteredCommands(this.field.text);

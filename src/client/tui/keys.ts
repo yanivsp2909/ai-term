@@ -27,6 +27,13 @@ export class CommandField extends MessageField {
     if (graphemes(key).length === 1 && !/[\p{C}]/u.test(key)) { const error = this.type(key); if (error) return { kind: 'note', text: error }; }
     return { kind: 'draw' };
   }
+  // For a field that takes only text (an agent's new name): one printable key is always typed, even a letter that is a
+  // homepage key on an empty bar (live suite: "sandboxed" became "andboxed"); other keys edit as usual.
+  typeKey(key: string): string | undefined {
+    if (graphemes(key).length === 1 && !/[\p{C}]/u.test(key)) return this.type(key);
+    const action = this.key(key);
+    return action.kind === 'note' ? action.text : undefined;
+  }
 }
 export type InputEvent = { kind: 'key'; key: string } | { kind: 'paste'; text: string; tooLong?: true } | { kind: 'mouse'; button: number; x: number; y: number; release: boolean };
 export class InputParser {
