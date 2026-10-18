@@ -1,6 +1,62 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: d1cdb34 fix: registry-only npm specs, quoted cargo keys, any filter section, renamed credentials
+Last commit: Part A handover (this commit)
+Roadmap step: 2026-10-18 long run · Part A (add-on batch 2, repository and GitHub) done · Part B (batch 3, making things) next
+Branch: main. Part A is pushed with this handover.
+
+## What works
+- Eleven commands on the D58 core, each with addons/<name>/addon.md, a source-attributed copy in addons/_shared/ and the D49 popup (y starts; Enter does nothing):
+  - /issue <#|url>: gh issue view --json through your own gh login (gh's env carries no token), the issue quoted as data with secrets removed, an agent in a worktree, tests in the sandbox; the popup says /pr publishes. No gh or logged out: one line. The popup names owner/repo#N before y.
+  - /pr-review <#|url>: gh pr view and gh pr diff only, quoted; read-only findings; c copies; nothing posted.
+  - /deps [path]: AI Term's read-only queries (npm outdated/audit, go list -m -u, python3 -I -m pip list --outdated, cargo outdated with cargo-outdated) in a temp folder holding only manifest and lockfile copies, with code-running settings pinned off; a failed query is said as such. The agent upgrades in a worktree; tests run sandboxed.
+  - /commit [agent]: your checkout → only the staged diff (credential files left out and said), c copies. An agent → its uncommitted work; y commits it in its worktree after binding the worktree to the recorded repository and re-checking the exact state; your global git identity; filters and credential files refused. Never commits in your checkout.
+  - /changelog [from..to]: git log (default since the latest tag; a tagged HEAD uses the previous tag); c copies; w writes CHANGELOG.md in a worktree.
+  - /docs, /handover, /adr <decision>: worktree agents; brain recommended.
+  - /standup: local, no model, no y: today's agents with their own commits, tokens and cost; c copies; m polishes after its own estimate.
+  - /context: AGENTS.md, CLAUDE.md, their in-repo imports (credential files never read) and the loaded skills, measured by AI Term; contradictions, stale lines, bloat.
+  - /opensource: masked secret scan over every added line in history (falls back to the last 2000 commits on a huge one), license, README, personal paths, emails; f fixes what files can fix in a worktree; never changes visibility, history or remotes.
+- Every model command ran once on a stub engine (tests/addons-batch2.test.ts); gh, npm, go and python3 are stubs and git uses real temporary repositories (tests/addons-batch2-daemon.test.ts, tests/addons-batch2-review.test.ts). Nothing reaches GitHub or a registry.
+- README command and key lists, /help and docs/user-guide.md cover every command.
+
+## What's next
+- Part B: add-on batch 3 (/deck, /slides, /diagram, /design, /polish, /a11y, /e2e, /animate, /video, /research, /study).
+
+## Manual checks
+- Stub engines, stub gh and package tools, temporary repositories, popup keys and homepage routing: ran (tests above).
+- Full suite, default workers, twice: ran · Test Files 272 passed (272), Tests 1824 passed | 7 skipped (1831), 37.42 s and 41.20 s.
+- Hidden Electron smoke: ran · 9 passed (36.7s), AI_TERM_BACKGROUND=1.
+- Live /issue with your gh: needs Yaniv · cd ~/ai-term && npm run dev  # in a repo with GitHub issues: /issue 1, y
+- Live /pr-review: needs Yaniv · cd ~/ai-term && npm run dev  # /pr-review <a PR number>, y, then c
+- Live /deps with network: needs Yaniv · cd ~/ai-term && npm run dev  # /deps in this repo, check the facts line, y
+- Live /commit y in an agent's worktree: needs Yaniv · cd ~/ai-term && npm run dev  # /commit <agent with changes>, y, then y again in the result
+- Live /standup: needs Yaniv · cd ~/ai-term && npm run dev  # /standup, then m
+
+## Gotchas
+- Where the code disagreed with the prompt: "/deps runs npm outdated in the repo" would run the repository's own code (reproduced by the security reviewer with pip); the queries run on copies of the manifests instead. /context and /opensource read the whole repository, so they take no argument (the prompt didn't give one; an earlier [path] hint was misleading). /commit's y commits the agent's uncommitted work, so its message is written for that, not for a "staged" diff in the worktree.
+- Reviews (fresh context), each real finding a RED test commit then a fix commit:
+  - TypeScript: 0 CRITICAL, 1 HIGH (/context read @.env imports), 4 MEDIUM (staged .env sent; /deps ran repo code; npm audit error read as all-clear; /commit y committed unseen work), 7 LOW.
+  - Security: 3 HIGH (/deps pip ran repo code, reproduced; npm/cargo/go config; /commit y not bound to the recorded repo), 2 MEDIUM, 4 LOW.
+  - Security follow-up of the fixes: 3 MEDIUM (manifest-named hosts; failure detection; a filter in repo config ran on status/diff), 2 MEDIUM-LOW (TOCTOU on .git; HEAD on another branch), LOWs. Final narrow check: 1 MEDIUM (npm git shorthands), 1 MEDIUM-LOW (quoted Cargo keys), 2 LOW; the commit path was found closed.
+  - Pairs: 9475cf9 RED → 48ba5c5 (feature); /deps fixes b42f4b8, b5d6288, d1cdb34; context 6b437f1 → 9ce516c; staged cb0e629; commit y afb7d79, 240551b; opensource 3041f3a → 462f860; misc 389c7dd; gather 971b88c.
+  - Not changed, with reasons: long agent titles in facts (titles are capped at 60 characters); /opensource and /deps run their read-only scans at the estimate and again at start (the receipt re-check needs it); a read-only rev-parse before the binding check; a quoted file name can misattribute a history hit; a symlink's target isn't in /commit's fingerprint (only the link is committed); SECRET_FILE stays a heuristic list (the model-side redaction is the backstop).
+- A load-dependent split test (v03-exit-check) relied on vitest's 1 s default wait; its process waits now carry explicit budgets.
+- No CI or npm dependencies were added. No real ~/.ai-term, credentials, keychain or Yaniv's daemon were touched; network only for git pull/push.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Gathered data: src/daemon/addon-gather.ts, github.ts, deps-query.ts and opensource-scan.ts read what an add-on needs before its model runs, read-only, and hand back three things: the data (quoted, secrets redacted, cut to fit the first message), the subject the popup names, and AI Term's own facts shown before you press y.
+- Quoted data: text written by someone else (an issue, a PR, a commit subject) is prefixed with "> " on every line and introduced as data, so the model reads it as a quotation, not as part of its instructions.
+- Bound worktree: src/daemon/agent-commit.ts checks that an agent's worktree still leads back to the repository AI Term recorded before git reads anything there, because the agent can rewrite its own .git file; then it commits only the exact state the message was written for.
+
+---
+
+# Previous long run: 2026-10-17 (B31 and add-on batch 1)
+
+## Checkpoint
 Last code commit: 337d255 test: explicit wait budgets only where a test needs one (B31) (last production code: 0f76b33)
 Last commit: Part B handover (this commit)
 Roadmap step: 2026-10-17 long run · Part A (B31) done · Part B (add-on batch 1) done
