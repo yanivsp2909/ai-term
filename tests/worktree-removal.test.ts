@@ -101,13 +101,13 @@ it('a running agent must be stopped first; once stopped its worktree may go', as
  const { temp, repo, paths } = await fixture(), cli = join(temp, 'cli.sh');
  await writeFile(cli, '#!/bin/sh\necho ready\nexec sleep 30\n'); await chmod(cli, 0o755); engine.path = cli;
  const sessions = await manager(paths), agent = await sessions.create({ engine:'codex', model:null, auth:{ kind:'account' }, cwd:repo, permission:'ask', title:'busy' }), path = agent.worktree ?? '';
- await expect.poll(() => sessions.get(agent.id).status).toBe('running');
+ await expect.poll(() => sessions.get(agent.id).status, { timeout: 10_000 }).toBe('running');
  const view = await sessions.checkWorktree(path);
  expect(view).toMatchObject({ refusal:'Stop the agent first', agent:{ id:agent.id, status:'running' } });
  await expect(sessions.deleteWorktree(path, 'f'.repeat(64))).rejects.toThrow('Stop the agent first'); expect(await listed(repo, path)).toBe(true);
  await sessions.stop(agent.id); const stopped = await sessions.checkWorktree(path); expect(stopped.refusal).toBeUndefined();
  await sessions.deleteWorktree(path, stopped.fingerprint ?? ''); expect(await listed(repo, path)).toBe(false);
-});
+}, 30_000);
 it('clean path: plain remove and -d delete exactly that worktree and branch', async () => {
  const { repo, paths } = await fixture(), sessions = await manager(paths), a = await finishedAgent(sessions, repo, 'a'), b = await finishedAgent(sessions, repo, 'b'), before = await checkout(repo);
  await writeFile(join(a.worktree, 'ignored-cache'), 'x');

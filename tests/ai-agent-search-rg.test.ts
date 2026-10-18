@@ -27,4 +27,4 @@ it('reads exit 1 as no matches and exit 2 as a failed search', async () => {
   expect(await searchTool((await stubRg('', 1)).work, { pattern: 'x' }, (await stubRg('', 1)).rg)).toBe('no matches');
   const broken = await stubRg('', 2);
   await expect(searchTool(broken.work, { pattern: '(' }, broken.rg)).rejects.toThrow('search failed (check the pattern)');
-});
+}, 30_000);

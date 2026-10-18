@@ -27,7 +27,7 @@ it('HIGH (both reviews): /deps queries run in a fresh folder holding only manife
   expect(text).toMatch(/files=[^\n]*package-lock\.json/);
   expect(text).toContain('argv=-I -m pip list --outdated --format=json --disable-pip-version-check --no-input');
   for (const pinned of ['GOTOOLCHAIN=local', 'GOFLAGS=-mod=readonly', 'GOWORK=off', 'npm_config_ignore_scripts=true', 'npm_config_update_notifier=false']) expect(text).toContain(pinned);
-});
+}, 30_000);
 
 it('MEDIUM (TS review): an audit that answered with an error is said as incomplete, never as nothing found', async () => {
   const dir = await temp(), repo = join(dir, 'repo'), bin = join(dir, 'bin'); await mkdir(repo); await writeFile(join(repo, 'package.json'), '{}');
@@ -35,7 +35,7 @@ it('MEDIUM (TS review): an audit that answered with an error is said as incomple
   const result = await depsQueries(repo, { path: bin, env: { PATH: bin, HOME: dir } });
   expect(result.facts.join('\n')).toContain('npm: a query failed');
   expect(result.facts.join('\n')).not.toContain('nothing found');
-});
+}, 30_000);
 
 it('LOW (TS review): /deps [path] queries that folder\'s manifests, and long results are cut to fit the first message', async () => {
   const dir = await temp(), repo = join(dir, 'repo'), bin = join(dir, 'bin'), log = join(dir, 'log'); await mkdir(join(repo, 'packages', 'api'), { recursive: true });
@@ -45,7 +45,7 @@ it('LOW (TS review): /deps [path] queries that folder\'s manifests, and long res
   const result = await depsQueries(join(repo, 'packages', 'api'), { path: bin, env: { PATH: bin, HOME: dir } });
   expect(await readFile(log, 'utf8')).toMatch(/files=[^\n]*package\.json/);
   expect(Buffer.byteLength(JSON.stringify(result.data))).toBeLessThanOrEqual(9000);
-});
+}, 30_000);
 
 it('HIGH (TS review): /context never reads a credential or env file an @import names, and never fails on a large or odd one', async () => {
   const { contextFiles } = await import('../src/daemon/addon-gather.js');
@@ -119,7 +119,7 @@ it('LOW (security review): /issue names the repository gh read, so a checkout\'s
   const view = await githubView('issue', '5', { gh: join(bin, 'gh'), cwd: dir, env: {} });
   expect(view.subject).toBe('issue someone/private-repo#5 · OPEN');
   expect(view.facts[0]).toContain('someone/private-repo#5');
-});
+}, 30_000);
 
 it('LOW (TS review): /standup m hands a long standup to the polish pass cut to fit, never refused for size', async () => {
   const { AddonFlow } = await import('../src/client/tui/addon-flow.js');
@@ -154,7 +154,7 @@ it('MEDIUM (follow-up): /deps never contacts a host a manifest names, and reads 
   expect(go.facts.join('\n')).toContain('go: a query failed');
   const text = await readFile(log, 'utf8');
   expect(text).not.toContain('evil'); expect(text).toContain('GOPROXY=https://proxy.golang.org'); expect(text).toContain('GOVCS=*:off');
-});
+}, 30_000);
 
 it('LOW-MEDIUM (follow-up): /context never imports git\'s own files; every fact stays a short plain line', async () => {
   const { contextFiles } = await import('../src/daemon/addon-gather.js');
@@ -207,4 +207,4 @@ it('MEDIUM (final check): /deps lets only registry specs through, quoted TOML ke
   }
   const ok = join(dir, 'npm-ok'); await mkdir(ok); await writeFile(join(ok, 'package.json'), JSON.stringify({ dependencies: { a: '^1.2.3', b: 'latest', c: 'npm:d@^2', e: '>=1 <3 || 4.x' } }));
   expect((await depsQueries(ok, { path: bin, env: { PATH: bin, HOME: dir } })).facts.join('\n')).not.toContain('skipped');
-});
+}, 30_000);

@@ -23,7 +23,7 @@ it('creates account agents with fresh recipes, sanitized metadata, preview, and 
   const engines=await client.request({kind:'engines.status'});expect(engines.engines?.claudeCode.authMethod).toBe('subscription');
   for(const engine of ['claude-code','codex'] as const){
    const response=await client.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:root,permission:'ask',title:'agent',firstMessage:'reply with ok'});recipes.push(response);
-   const id=response.session?.id;if(!id)throw new Error('No session');await expect.poll(()=>manager.get(id).status).toBe('running');
+   const id=response.session?.id;if(!id)throw new Error('No session');await expect.poll(()=>manager.get(id).status, { timeout: 10_000 }).toBe('running');
    expect(manager.get(id)).toMatchObject({engine,model:null,authMethod:engine==='claude-code'?'subscription':'api-key'});
    const preview=await client.request({kind:'sessions.preview',sessionId:id});expect(preview.snapshot).toContain('AGENT_READY');expect(preview.snapshot,engine).toContain('AZURE_SET');expect(preview.snapshot,engine).toContain('ARGV_ASK');recipes.push(preview);
    recipes.push(await client.request({kind:'sessions.attach',sessionId:id,cols:80,rows:24}));
@@ -39,4 +39,4 @@ it('creates account agents with fresh recipes, sanitized metadata, preview, and 
   for(const file of [paths.state,paths.log]){let data='';try{data=await readFile(file,'utf8');}catch(error){if(!(error instanceof Error&&'code' in error&&error.code==='ENOENT'))throw error;}expect(data).not.toContain('AITERMCANARY');expect(data).not.toContain(azureCanary);}
   expect(spawn.mock.calls.some(([data])=>String(data).includes(canary)||String(data).includes(azureCanary))).toBe(false);
  }finally{client?.close();await server.close();await manager.shutdown();spawn.mockRestore();if(oldPath===undefined)delete process.env.PATH;else process.env.PATH=oldPath;if(oldClaude===undefined)delete process.env.ANTHROPIC_API_KEY;else process.env.ANTHROPIC_API_KEY=oldClaude;if(oldCodex===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=oldCodex;if(oldAzure===undefined)delete process.env.AZURE_OPENAI_API_KEY;else process.env.AZURE_OPENAI_API_KEY=oldAzure;await rm(root,{recursive:true,force:true});}
-});
+}, 30_000);

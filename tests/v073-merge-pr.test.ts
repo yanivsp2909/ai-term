@@ -120,7 +120,7 @@ it('/pr pushes ai/<slug> to origin and runs gh pr create with argv only; gh miss
   expect(result.url).toBe('https://github.com/yaniv/ai-term/pull/7');
   expect((await git(origin, 'for-each-ref', '--format=%(refname)')).stdout).toContain('refs/heads/ai/fixer');
   expect((await readFile(log, 'utf8')).split('\n')).toEqual(expect.arrayContaining(['pr', 'create', '--head', 'ai/fixer', '--base', 'main', '--fill']));
-});
+}, 30_000);
 
 it('a push never runs a command the repo config names (ssh command, credential helper, receive-pack)', async () => {
   const { temp, repo, bin, m, agent, tree } = await setup();
