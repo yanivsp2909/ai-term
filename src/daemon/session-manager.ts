@@ -786,9 +786,15 @@ export class SessionManager extends EventEmitter {
         if(!viewable(file))throw new AddonError("That's not a file type AI Term opens or saves");
         // A running agent could still swap its folder for a link between the checks below and the open (gate LOW).
         if(['starting','running'].includes(live.info.status))throw new AddonError('Wait until the agent finishes, then press o or s');
-        const root=await realpath(tree),full=await resolveInside(root,file);
+        // A link out of the worktree, a file the result names but the agent never wrote, or a link at the file itself:
+        // fixed words, never the system's text (Part C review: its ENOENT carried the worktree's path).
+        const root=await realpath(tree);
+        let full:string;
+        try{full=await resolveInside(root,file);}catch(error){if(error instanceof JailError)throw new AddonError('A made file is never opened through a link');throw error;}
         if(full!==join(root,file))throw new AddonError('A made file is never opened through a link');
-        const handle=await open(full,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+        let handle:Awaited<ReturnType<typeof open>>;
+        try{handle=await open(full,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);}
+        catch(error){if(isFsError(error,'ENOENT'))throw new AddonError("That file isn't in the agent's folder any more");if(isFsError(error,'ELOOP'))throw new AddonError('A made file is never opened through a link');throw error;}
         let data:Buffer;
         try{
             const info=await handle.stat();
@@ -1904,7 +1910,7 @@ import { opensourceScan } from './opensource-scan.js';
 import { changelogRange, contextFiles, stagedChanges, type Gathered } from './addon-gather.js';
 import { agentWork, commitWork } from './agent-commit.js';
 import { ExtensionReader } from '../agent/extensions/reader.js';
-import { resolveInside } from '../agent/jail.js';
+import { JailError, resolveInside } from '../agent/jail.js';
 import { privateDirectory } from '../shared/paths.js';
 import { resolveExecutable } from './engines.js';
 import { buildBisectEnv, buildGhEnv } from './env.js';
