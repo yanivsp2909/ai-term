@@ -221,6 +221,17 @@ it('stop asks y/n, rename saves inline and remove targets only exited/error reco
     await expect.poll(() => client.requests.some(r => r.kind === 'sessions.remove')).toBe(true);
   } finally { await home.stop(); }
 });
+it('live suite: a new name may start with any letter, the homepage keys too ("sandboxed" became "andboxed")', async () => {
+  const { home, tty, client } = await fixture();
+  try {
+    for (const name of ['sandboxed', 'xray', 'docs', 'copy', 'preview', 'v2', 'rename me']) {
+      tty.emit('data', Buffer.from('r')); tty.emit('data', Buffer.from('\x15'));
+      for (const char of name) tty.emit('data', Buffer.from(char));
+      tty.emit('data', Buffer.from('\r'));
+      await expect.poll(() => client.requests.filter(r => r.kind === 'sessions.rename').at(-1)).toMatchObject({ title: name });
+    }
+  } finally { await home.stop(); }
+});
 it('Ctrl+C quits during stop confirmation and inline rename', async () => {
   for (const key of ['s', 'r']) {
     const { home, tty } = await fixture();
