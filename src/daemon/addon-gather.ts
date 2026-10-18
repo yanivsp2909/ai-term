@@ -24,11 +24,17 @@ export async function changelogRange(repo: string, args: string): Promise<Gather
     // describe exits non-zero when there's no tag: then the last 50 commits.
     const tag = await runGit(repo, ['describe', '--tags', '--abbrev=0', '--end-of-options', 'HEAD']).then(out => out.trim(), (error: unknown) => { if (error instanceof GitError) return ''; throw error; });
     range = tag ? `${tag}..HEAD` : 'HEAD'; if (!tag) limit = 50;
+    // HEAD exactly on the latest tag: that release, since the tag before it (review).
+    if (tag && !(await read(repo, range, limit)).length) {
+      const previous = await runGit(repo, ['describe', '--tags', '--abbrev=0', '--end-of-options', `${tag}^`]).then(out => out.trim(), (error: unknown) => { if (error instanceof GitError) return ''; throw error; });
+      if (previous) range = `${previous}..HEAD`;
+    }
   }
-  const log = (await runGit(repo, ['log', '--no-merges', `--max-count=${limit}`, '--no-color', '--format=%h%x09%an%x09%s', '--end-of-options', range, '--'], 'Git check failed', { maxBuffer: 4 * 1024 * 1024 })).split('\n').filter(Boolean);
+  const log = await read(repo, range, limit);
   const label = range === 'HEAD' ? `the last ${log.length} commits` : `range ${range}`;
-  return { data: fitEscaped([`Commits (${label}; hash, author, subject):`, ...log].join('\n'), GATHER_DATA_BYTES), subject: label, facts: [`${label} · ${plural(log.length, 'commit')}`] };
+  return { data: fitEscaped(quoted([`Commits (${label}; hash, author, subject):`, ...log].join('\n')), GATHER_DATA_BYTES), subject: label, facts: [`${label} · ${plural(log.length, 'commit')}`] };
 }
+const read = async (repo: string, range: string, limit: number) => (await runGit(repo, ['log', '--no-merges', `--max-count=${limit}`, '--no-color', '--format=%h%x09%an%x09%s', '--end-of-options', range, '--'], 'Git check failed', { maxBuffer: 4 * 1024 * 1024 })).split('\n').filter(Boolean);
 
 // /context: AGENTS.md and CLAUDE.md at the repository's top, with their @imports (one level, inside the repository
 // only), numbered so findings can name a line. Sizes are AI Term's estimate (bytes / 4). Review: an import never reads

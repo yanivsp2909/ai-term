@@ -7,6 +7,9 @@ import { parseAddonResult, validateAbView } from '../../shared/addon-results.js'
 import { validateBrainPlan } from '../../shared/brain.js';
 import { AddonPanel } from './addon-panel.js';
 import { copyText } from './clipboard.js';
+// A standup handed to the polish pass is cut at a line to fit the add-on argument limit (review: 60 agents overflowed it).
+const POLISH_BYTES = 9000;
+const fitLines = (text: string, bytes: number) => { const kept: string[] = []; let used = 0; for (const line of text.split('\n')) { used += Buffer.byteLength(line) + 1; if (used > bytes) break; kept.push(line); } return kept.join('\n'); };
 interface FlowOptions { request(body: RequestBody): Promise<SuccessResponse>; changed(): void; close(): void; started(response: SuccessResponse): Promise<void>; copy?(text: string): Promise<void> }
 // One popup owns approval, the running state and the result. Closing it pauses polling, never stops the session.
 // targets: empty for an add-on that runs no model (/bisect); its estimate is asked for with no target.
@@ -24,7 +27,7 @@ export class AddonFlow {
       apply: items => { void this.action(async () => { if (!this.session) return; const response = await options.request({ kind: 'addons.apply', sessionId: this.session, items }); const title = validateSession(response.session).title; await options.started(response); this.panel.setApplied(`✓ started ${title} in a worktree (Ask) · it is selected on the homepage · Esc closes`); }); },
       commit: () => { void this.action(async () => { if (!this.session) return; const sha = (await options.request({ kind: 'addons.commit', sessionId: this.session })).addonCommit; if (typeof sha !== 'string' || !/^[0-9a-f]{4,64}$/.test(sha)) throw new Error('The commit was not confirmed'); this.panel.setApplied(`✓ committed ${sha} in the agent's worktree · /pr publishes it when you're ready · Esc closes`); }); },
       // /standup m: the same popup becomes the standup-polish add-on, with its own estimate and y.
-      polish: text => { void this.action(async () => { this.dispose(); this.ended = false; this.name = 'standup-polish'; this.args = text; this.local = false; this.session = undefined; this.resultReady = false; await this.estimate(); }); },
+      polish: text => { void this.action(async () => { this.dispose(); this.ended = false; this.name = 'standup-polish'; this.args = fitLines(text, POLISH_BYTES); this.local = false; this.session = undefined; this.resultReady = false; await this.estimate(); }); },
       ab: unsandboxed => { void this.action(async () => { if (!this.session) return; this.panel.setAb(validateAbView((await options.request({ kind: 'addons.ab', sessionId: this.session, unsandboxed })).addonAb)); this.abRunning = true; await this.poll(); }); },
     });
   }
