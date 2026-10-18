@@ -1,6 +1,51 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 30a1ce8 fix: the live suite removes your key only on the daemon's word, cleans up on Ctrl+C, approves only the exact file, waits for the attach (Part B reviews)
+Last commit: Part B handover (this commit)
+Roadmap step: 2026-10-18 live-suite run · Part A (B33) done · Part B (live smoke suite) done · Part C (run it, shrink the manual list) next
+Branch: main, pushed.
+
+## What works
+- `npm run live` (package.json: `npm run build && tsx tests/live/main.ts`; never part of `npm test`): drives the real built `ai` (dist/cli/index.js) in node-pty with a headless xterm mirror, types keys and asserts on the screen. tests/live/:
+  - screen.ts: the PTY plus mirror (text, underlined runs, raw output, waits). home.ts: the homepage (command bar, agents panel, preview title, select, attach, per-card waits, popups). runner.ts: checks in order, one line each, the first failure stops with a plain line, what to look at and the redacted screen; strict --only/--from. cleanup.ts: every resource undone newest first on pass, fail or Ctrl+C. world.ts: the throwaway world. stub-ollama.ts: Ollama on 127.0.0.1 (`/api/tags`, streamed chat completions with scripted bash calls and add-on results). tier1.ts + tier1-helpers.ts: 27 checks. tier2.ts + tier2-rules.ts: 6 checks on your logins.
+  - Tier 1 world: a temp folder with a fake home (fake ~/.ssh/known_hosts, its own Downloads, a .gitconfig), AI_TERM_HOME = <home>/.ai-term, TMPDIR inside, PATH = node, npm, npx + system folders (no claude, codex, gh, tailscale), settings seeded with notifications off before the daemon starts, fake LIVESECRET-* values in the daemon env, a stand-in `claude` (trust prompt that never reports) and `code` where checks need them. The daemon starts by itself as it does for you and is stopped with `ai daemon stop` (then by pid, only if that pid is this world's daemon).
+  - Tier 1 covers: start + login popup, the version, Ollama added through /login, /settings (n, b, y), a shell (⏎ in, resize while attached, Ctrl+E, ⏎ back in), resize, multiline paste, /model, AI Term's agent in Ask (worktree ai/ai-term, permission prompt, /send refused while it asks, y, $0.0000 cost line), /send (idle, two pasted lines, a paste inside the agent, trust prompt, exited, unknown name), D57 (a Don't ask agent: AI Term's settings.json blocked, no planted secret in env, a second branch ai/ai-term-2), r rename, splits (Space, v, Ctrl+\ focus, Ctrl+E then v, /exit in a pane, Ctrl+\ closes it), D56 (~/.ssh/known_hosts blocked; l off → "blocked by sandbox: network", l on → "✓ tests pass" for a test calling the stub), /commit y (commit only in the worktree, your main unchanged), /deck s (into the world's Downloads, with the no-script policy) and o (refused on an executable), /dev (LIVE-DEV-OK on its 127.0.0.1 port, x stops it), /brain (local, no model request), /queue at HH:MM, /find, /open code, /retry, /bisect (Part A, a runner writing into node_modules, node_modules unchanged, no copy left), x (d on a clean one, the typed branch name on one with work, k keeps), ai doctor, /exit (a new ai still sees the agents).
+  - Tier 2 (`--with-logins`, refused without a terminal): Claude Code and Codex in Ask on your logins (one tiny prompt each, a permission prompt approved with the phone remote's keys only when it is exactly the file asked for, at most twice; the card must say it asks), a keyed AI Term agent turn with its cost line (you type the key into the login popup; the suite hands you the terminal and removes the key at the end, saying "removed" only when the daemon lists none), /issue <n> (popup only) and /pr-review <n> (y, read-only, on Claude Code), in a temp clone of your checkout with the same GitHub origin.
+- tests/live-suite.test.ts (in `npm test`): the suite's own rules without starting anything: flags, redaction, the agents panel and preview title, which prompts tier 2 may approve, key removal reporting, the cleanup, the queue time.
+- README: "Live smoke suite (`npm run live`)" with both tiers, flags, what each covers and its limits.
+
+## What's next
+- Part C: run tier 1 twice; fix the three real failures it already shows (below), each a failing test commit then a fix commit; rewrite the manual-check list.
+
+## Manual checks
+- typecheck: ran · exit 0. lint: ran · "ESLint: No issues found". build: ran · "ESM ⚡️ Build success in 46ms". app:build: ran · "✓ built in 57ms".
+- Full suite, default workers, twice in a row: ran · Test Files 288 passed | 1 skipped (289), Tests 1922 passed | 8 skipped (1930), 46.82 s and 47.08 s.
+- Hidden Electron smoke: ran · 9 passed (36.8s).
+- Tier 1: ran (pieces; the full run stops at the first real bug, by design). With a temporary local patch for the rename bug (reverted; src/ has no diff), every check but `version` and `deck` passed: "Tier 1 passed: 23 checks in 104 s". Ctrl+C mid-run: "stopped (SIGINT): cleaning up the temporary world", no world folder or throwaway daemon left.
+- Tier 2: needs Yaniv · cd ~/ai-term && npm run live -- --with-logins (never run here).
+
+## Gotchas
+- Real product bugs the suite found (Part C fixes them, each with a failing test first): the This Mac panel shows a hard-coded "v0.1.8" (src/client/tui/layout.ts:100) in 1.0.0; `o` on an executable made file shows "✗ Session operation failed" instead of "That file is executable; AI Term doesn't open or save it" (SessionManager.addonFile throws plain Errors, which the server masks); renaming an agent to a name starting with a homepage key letter (c p s r x v d) drops that letter ("sandboxed" became "andboxed": the rename branch calls the command field's key handler, which treats a letter on an empty field as a shortcut).
+- Where the code disagreed with the prompt: /dev has no "loopback switch": its sandbox always opens 127.0.0.1 on the server's own port (the project's l switch is for tests, and the suite runs that one for real). `o` on a file AI Term accepts and `/open` both run /usr/bin/open (a fixed path no stand-in can replace) and would open your browser or Finder, so the suite presses `o` only on a file AI Term must refuse (after checking its exec bit) and runs `/open code` with a stand-in `code`. "Two agents get two branches" uses AI Term's agent (ai/ai-term, ai/ai-term-2): Codex and Claude Code need real CLIs, so tier 1 has only a stand-in Claude Code (for the trust prompt; its worktree is the one k keeps). `ai doctor` makes the daemon look up AI Term's own `doctor-probe` Keychain entry; in the fake home there is no login keychain, so it says "Credential store: unavailable" (the suite asserts that as a tripwire). The daemon's socket path must fit macOS's 104 bytes, so the world uses short names (ail-XXXXXX/h/.ai-term).
+- Reviews (fresh context): TypeScript 1 HIGH, 5 MEDIUM, 12 LOW; security 1 HIGH, 1 MEDIUM, 9 LOW/INFO; e2e-runner 1 HIGH (observed: a y sent before the attach landed in the command bar, about 1 in 20), 2 MEDIUM, several LOW and coverage gaps. No CRITICAL.
+  - HIGH (TS + security): tier 2 could report your key removed when the daemon was gone, miss a key saved before a failure, and leave it on Ctrl+C. HIGH (e2e): the attach race. MEDIUM: no signal cleanup (reproduced: the daemon, an agent and the world survived SIGINT); setup errors leaked the world; a key typed after ai exited crashed the hand-off; tier 2 approved any plain yes (then a substring check let "echo hi > live.txt && git push" through, shown by the security reviewer); `o` assumed the exec bit; duplicate titles picked by scan order. LOW: typo'd --only passed green; vacuous waits (stale "✓ done", the /find title, the command bar read as a card, the deleted-note prefix); fixed sleeps; queue margin; pid reuse in the fallback kill (reproduced); unredacted lines and other key shapes; stale ✗ in tier 2 waits; double query answers in the hand-off; type-ahead echo before raw mode; a path in the stand-in's quotes; the trust prompt answered without checking its folder; --with-logins unattended.
+  - Pairs: 1a1e987 RED, 978bbbe RED → 30a1ce8 (all of the above; timing and process findings have no unit test, they were rerun live: attach, signals, cleanup).
+  - Not changed, with reasons: `o` still depends on the product's own refusal (a regression there would open an inert copy in your browser; Part C's unit test covers the refusal); the stub's add-on reply queue is shared (checks are sequential); a queue entry "after <agent>" isn't covered (the clock one is).
+- Running tier 1 while the full vitest suite runs works (both use their own temp folders), but each is slower.
+
+## New dependencies
+- None (node-pty and @xterm/headless were already here).
+
+## Concepts introduced
+- A test world: tests/live/world.ts. Instead of mocking the app, the suite gives the real app a fake home, its own AI Term folder, its own PATH and its own temp folder, so everything the app does lands in one throwaway folder. HOME decides where os.homedir() points (the sandboxes, Downloads, the Keychain search), which is why tier 1 can't reach your real files or your login keychain.
+- Hand-off: tests/live/tier2.ts handOff. For one step the suite pipes your real keyboard into the program's PTY and the program's output to your terminal, so you type your key into the real AI Term popup yourself; the suite watches the mirror and takes over again when the key is saved. The key never passes through the suite's own logic or output.
+
+---
+
+# Part A of this run: B33
+
+## Checkpoint
 Last code commit: 1802d90 test: split the /bisect dependency tests into three files so they run in parallel (one file took 43 s)
 Last commit: Part A handover (this commit)
 Roadmap step: 2026-10-18 live-suite run · Part A (B33) done · Part B (live smoke suite) next · Part C (run it, shrink the manual list) after
