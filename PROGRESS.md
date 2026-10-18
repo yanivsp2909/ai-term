@@ -1,6 +1,50 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 13bf1c8 fix: REA's sandbox hides keys, writes only its state and temp, no links, apps or sockets; Codex not offered; PATH shortened (v1.0.7 review)
+Last commit: Part B handover (this commit)
+Roadmap step: 2026-10-18 final long run (1.0) · Part A (B32) done · Part B (v1.0.7 /reverse) done · Part C (v1.0.8 /remote) next
+Branch: main. Parts A and B are pushed.
+
+## What works
+- `/reverse <target>`: a read-only add-on (addons/reverse/addon.md) on the D58 core. The popup names the target (its real path), the REA it found, REA's sandbox, and "● y confirms this target is yours, or that you're allowed to analyze it"; y starts one agent in Ask mode. The receipt binds the target, REA's path and file identity, and the server argv.
+- REA is never installed. AI Term finds `rea` on PATH (never inside the folder, never node_modules/.bin), or at the path `/reverse path <path>` saved (`/reverse path none` clears it, `/reverse path` alone shows it). Missing: one line with `npm install --global rea-agents` and `/reverse path <path>`.
+- REA's interface came from its README and server.json only (a `git clone --depth 1` into a temp folder, never run, removed): `rea mcp` over stdio.
+- REA's server for that agent only: `/usr/bin/env -i <bash env allowlist> /usr/bin/sandbox-exec -f ~/.ai-term/reverse/<sha256>.sb -- rea mcp`. The profile is D57's agent bash profile plus: no key folders or secret-named files, writes only in ~/.rea and a private per-user temp folder, no hard links, no unix sockets but syslog, no IP traffic (127.0.0.1 included), no name lookups, no open/osascript/LaunchServices/Apple Events.
+- Engines: Claude Code (`--mcp-config=<json>` + `--strict-mcp-config` + `--tools=Read,Grep,Glob`, checked in the installed 2.1.302 help) and AI Term's agent (`--read-only --session-mcp`; the daemon's McpService makes REA that agent's whole catalog until it exits). Codex 0.160.1 has `-c`, but its `mcp_servers` override merges into your own config, so it isn't offered.
+- Tests: tests/v107-reverse.test.ts (real sandbox-exec runs of a stub `rea`: refused target write, AI Term folder read, key read, secret-file read, write elsewhere, move, hard link, osascript, unix socket, 127.0.0.1 TCP, mDNSResponder; allowed: target read, ~/.rea, temp) and tests/v107-reverse-addon.test.ts (definition, result shape, popup facts, start passes the server, Codex refused, CLI help checks, session MCP list, agent flags, /reverse path).
+- README command list, /help and docs/user-guide.md; docs/architecture.md §12.27 has the /reverse paragraph.
+
+## What's next
+- Part C: v1.0.8 /remote.
+
+## Manual checks
+- typecheck: ran · exit 0. lint: ran · "ESLint: No issues found". build: ran · "ESM ⚡️ Build success in 44ms". app:build: ran · "✓ built in 59ms".
+- Full suite, default workers, twice in a row: ran · Test Files 278 passed (278), Tests 1863 passed | 7 skipped (1870), 41.47 s and 48.78 s.
+- Hidden Electron smoke: ran · 9 passed (36.7s).
+- Live /reverse with REA on Claude Code: needs Yaniv · cd ~/ai-term && npm install --global rea-agents && npm run dev  # /reverse /Applications/Calculator.app, y, approve one REA tool call
+- Live /reverse on AI Term's agent: needs Yaniv · cd ~/ai-term && npm run dev  # /reverse <an app of yours>, e to AI Term's agent, y, then /mcp inside shows only rea
+- REA isn't installed on this Mac, so no real REA ran.
+
+## Gotchas
+- Where the code disagreed with the prompt: Codex has a per-session option (-c) that takes argv elements, but it adds to your own MCP servers instead of replacing them (reproduced by the security reviewer with a scratch CODEX_HOME), so Codex isn't offered rather than giving a "REA only" agent your other servers. "The MCP server runs under the agent sandbox with no network": the D57 bash profile allows most of your home, so REA's is tightened further (see above). Linux and Windows are refused: only macOS's sandbox-exec is wired for REA (bwrap's argv is longer than one MCP argument allows).
+- REA may need the Hopper app for native analysis; Hopper can't be opened from inside the sandbox (no LaunchServices). Ghidra headless and static JavaScript/.NET analysis run as plain processes.
+- Daemon refusals reach the popup only as fixed texts (server.ts list): REVERSE_ERRORS and REVERSE_CLI_ERRORS are in it. Found while doing this: dynamic add-on texts (for example /bisect's "passes at HEAD") are masked as "Session operation failed"; handled in the Part D gate.
+- Reviews (fresh context): TypeScript 1 HIGH (REA could read key folders and write most of home), 3 MEDIUM (target rename/hard link; Codex keeps other servers; long PATH dropped), 3 LOW (session entry left after a failed start; REA replaced after the popup; secret files inside a folder target). Security 3 MEDIUM (Codex merge, verified; open/osascript/unix sockets reachable; .git hooks writable in your folder), all real.
+  - Pairs: 2f88415 RED → 8380f4a; 9d14341 RED → 1812092 (feature); ae7daa6 RED → 13bf1c8 (all review findings). The failed-start LOW is fixed in 13bf1c8 without its own test (it needs a PTY spawn that fails after the entry is registered).
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Strict per-session MCP: src/daemon/mcp/service.ts `session(owner, server)` gives one agent a catalog of exactly one server, which no other agent and no settings file sees, and which ends with the agent. Claude Code gets the same with `--mcp-config` plus `--strict-mcp-config`.
+- Allow-default sandbox, deny-listed: src/daemon/reverse.ts adds rules after D57's profile. Seatbelt applies the last matching rule, so a broad `(deny file-write* (subpath "/"))` followed by a narrow allow for ~/.rea and temp means "write only there", whatever came before.
+
+---
+
+# Part A of this run: B32
+
+## Checkpoint
 Last code commit: 50590dc fix: /bisect links dependencies only into a sandbox that opened them for reading (B32 review)
 Last commit: Part A handover (this commit)
 Roadmap step: 2026-10-18 final long run (1.0) · Part A (B32) done · Part B (v1.0.7 /reverse) next
