@@ -62,7 +62,10 @@ export class AddonPanel {
     else this.show([...problem, ...r.kind === 'standup' ? [] : [actual], ...this.ask?.facts ?? [], ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz, commits: this.ask?.commits === true })]);
   }
   private move(key: 'up' | 'down', count: number): void { this.selected = Math.max(0, Math.min(count - 1, this.selected + (key === 'up' ? -1 : 1))); this.panel.resetScroll(); this.refresh(); }
-  key(key: string): void {
+  // A Space press arrives as ' ' (the homepage's parser), the word 'space' from older callers: both page and pick (Part C
+  // review: from a real keyboard Space did nothing in /study, /explain, /teach and /refactor).
+  key(input: string): void {
+    const key = input === ' ' ? 'space' : input;
     if (key === 'escape') { this.close(); return; } if (this.busy || key === 'enter') return;
     if (!this.result && this.ask) {
       // Without a sandbox /bisect takes a capital Y, like /dev: one easy key shouldn't run code with your rights.
