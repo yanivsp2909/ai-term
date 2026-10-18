@@ -1,6 +1,49 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: f878a14 test: the queue's close waits for a save in flight, so the after-trigger test can't remove its folder mid-write
+Last commit: Part C handover (this commit)
+Roadmap step: 2026-10-18 final long run (1.0) · Parts A (B32) and B (v1.0.7 /reverse) done · Part C (v1.0.8 /remote) done · Part D (release gate) next
+Branch: main. Parts A, B and C are pushed.
+
+## What works
+- `/remote` (D54; D55 switch "Phone remote" in /settings, R, off by default): `/remote on` starts the phone server on 127.0.0.1 and runs `tailscale serve --bg --https=8443 http://127.0.0.1:<port>` (only if port 8443 has no entry; then checked in `serve status --json`), and shows a QR code with `https://<Mac's tailnet name>:8443/pair#<one-time code>` (2 minutes, once). `/remote off`, 30 idle minutes, daemon shutdown and the next daemon start remove only AI Term's own entry. `/remote` shows the state and phones; `/remote revoke <name|id>`.
+- Every request: per-identity refusal window; Host = the Mac's tailnet name with :8443; `Tailscale-User-Login` = your login (constant time); Origin, when sent, = the page's own; POSTs need it, JSON and ≤16 KiB; then the `__Host-aiterm` cookie (Secure, HttpOnly, SameSite=Strict) whose token's SHA-256 matches the Keychain's (keys.ts, constant time), a per-phone window, and an HMAC CSRF header on every change.
+- The phone page (static HTML, CSS from tokens.json, a script that only uses textContent; strict CSP): agents with status, ctx % and usage; an agent's screen from its mirror (bottom first); approve/deny only a plain yes/no prompt whose screen is unchanged; send under /send rules (never to a Don't ask agent); stop; start Ask-only on Claude Code or Codex in a folder your agents use. No keys, env, logins or settings anywhere in its API.
+- While on and on AC power, `caffeinate -i -w <daemon pid>`; a failure is logged. remote.log (0600, rotated at 5 MiB): time, phone, action, agent, message length.
+- Tests: tests/v108-remote-http.test.ts (real HTTP to 127.0.0.1: wrong Host, wrong user, missing/wrong token, foreign Origin, missing CSRF, expired/reused code, revoked phone, hostile screen escaping, body limits, rate limits, idle counting, lockout, revoke race), v108-remote-service.test.ts (stub tailscale CLI and power: on/off, refusals, idle off, restart off, someone else's entry untouched, unconfirmed entry removed, caffeinate failure), v108-remote-backend.test.ts (agents only, keys per engine, approval spoofing, plain prompts only, Don't ask watch-only, Ask starts), v108-remote-client.test.ts (panel and commands).
+- README command list, /help, docs/user-guide.md ("Phone remote"), docs/architecture.md §12.28, D54 marked Pinned with Yaniv's text, S12 names the exception.
+
+## What's next
+- Part D: the v0.9 + v1.0 release gate, then Part E.
+
+## Manual checks
+- typecheck: ran · exit 0. lint: ran · "ESLint: No issues found". build: ran · "ESM ⚡️ Build success in 46ms". app:build: ran · "✓ built in 55ms".
+- Full suite, default workers, twice in a row: ran · Test Files 282 passed (282), Tests 1889 passed | 7 skipped (1896), 43.57 s and 42.26 s.
+- Hidden Electron smoke: ran · 9 passed (36.5s).
+- Real Tailscale: needs Yaniv (the Tailscale app isn't installed on this Mac: /usr/local/bin/tailscale is a wrapper whose app is missing, so no serve flag could be read from the installed CLI; the code probes `serve --help` for --bg and --https at run time).
+
+## Gotchas
+- Where the code disagreed with the prompt: the pairing URL is `https://<mac name>:8443/pair#code`, not `https://<mac name>/pair`: AI Term serves on a port of its own so `/remote off` can never touch your other serve settings (a `/` mount on 443 would share them). Host is checked as `<name>:8443` for the same reason. Shell and login sessions never appear on the phone (a shell would run whatever the phone sends). An agent you started in Don't ask can be watched and stopped from the phone, but takes no message there.
+- Unverified until a live run: whether `tailscale serve` passes the original Host through (if it rewrote Host to 127.0.0.1, every request would be refused with 421), the exact Tailscale-User-Login header for your devices, and the approval keys and prompt lines per engine (Claude Code `1`, Codex `y`, AI Term's agent `y`; anything else is refused, never guessed).
+- Known residuals (accepted, with reasons): a local process on the Mac can forge the Host and identity headers on 127.0.0.1, but it has no code or cookie; it can fill the refusal window for your identity (your paired phone, with its cookie, is never held back). Browsers share cookies across ports, so another HTTPS service of yours on the same tailnet name would receive the phone's cookie.
+- Reviews (fresh context): TypeScript 4 MEDIUM (idle defeated by polling; stray serve entry after a failed on; one shared lockout window; unserialized phone writes), 4 LOW (option 1 that isn't plain yes; cookie across ports; caffeinate error swallowed; Keychain orphan on a failed pair). Security 2 MEDIUM (screen shown from the top could hide the real prompt; Don't ask agents steerable), 2 LOW-MEDIUM/LOW (forged local requests keep it on or fill windows; dangling entry), 2 LOW (revoke race; log without rotation). No CRITICAL or HIGH.
+  - Pairs: ae4c698 RED → 5e54356 (feature); da6b8cb RED → 410daca (all review findings; the cookie-across-ports LOW is documented, not changed).
+- Two load-only flakes seen in full runs while an outside pytest suite was also loading this Mac: v091-queue (ENOTEMPTY in cleanup: the queue's last save was still running; fixed in f878a14 by `close()` returning that save) and gate-v06-release's reserve test once (not reproduced in 8 runs under 16 busy loops; watch it).
+
+## New dependencies
+- uqr 0.1.3: draws the pairing QR in the terminal (zero dependencies, MIT). Node has no QR encoder, and none of the existing dependencies has one.
+
+## Concepts introduced
+- Tailscale serve as the only door: src/daemon/remote/http.ts never listens beyond 127.0.0.1; `tailscale serve` (src/daemon/remote/tailscale.ts) terminates HTTPS on your tailnet and forwards to it, adding the requester's identity header. AI Term owns exactly one serve entry, recognizes it by its port and backend, and removes only that.
+- Token kept as a hash: src/daemon/remote/phones.ts gives the phone 32 random bytes and stores only their SHA-256 in the Keychain. A request's token is hashed and compared in constant time, so neither the Keychain nor a log ever holds anything that logs in.
+- Approve what you saw: src/daemon/remote/backend.ts fingerprints the screen lines and the status time the phone was shown; the daemon recomputes it before sending the engine's yes key, so a prompt that changed in between gets no answer.
+
+---
+
+# Part B of this run: v1.0.7 /reverse
+
+## Checkpoint
 Last code commit: 13bf1c8 fix: REA's sandbox hides keys, writes only its state and temp, no links, apps or sockets; Codex not offered; PATH shortened (v1.0.7 review)
 Last commit: Part B handover (this commit)
 Roadmap step: 2026-10-18 final long run (1.0) · Part A (B32) done · Part B (v1.0.7 /reverse) done · Part C (v1.0.8 /remote) next
