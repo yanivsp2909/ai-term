@@ -1,6 +1,7 @@
 import { appendFile, lstat, mkdir, realpath, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { COMMIT_ID, GitError, runGit } from './git.js';
+import { AddonError } from './addon-error.js';
 import { isFsError } from '../shared/paths.js';
 import { BISECT_DEPS } from '../shared/addons.js';
 import { addonFile } from '../agent/addon-bundle.js';
@@ -14,7 +15,7 @@ import type { AddonResult } from '../shared/addon-results.js';
 // v1.1 /bisect <test command> [good ref]: no model, no tokens. Your checkout is only read (rev-parse, rev-list); the
 // bisect itself runs in a temporary clone (temp-clone.ts) under the test sandbox (D56), and always ends with
 // `git bisect reset` and the clone removed.
-export class BisectError extends Error {}
+export class BisectError extends AddonError {}
 export const BISECT_DEFAULT_BACK = 32, BISECT_STEP_TIMEOUT_MS = 10 * 60_000, BISECT_TIMEOUT_MS = 60 * 60_000, BISECT_DIFF_LINES = 400;
 export interface BisectPlan { command: string[]; good: string; bad: string; goodLabel: string; commits: number; deps: string[] }
 // A leading --no-deps (B32) keeps the copy to committed files only. Only first: a test command may take a --no-deps of its own.

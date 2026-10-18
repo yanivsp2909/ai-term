@@ -11,12 +11,13 @@ import { SANDBOX_EXEC, SECRET_PATHS, sandboxPath, SandboxPathError } from './tes
 import { SECRET_FILE } from '../shared/review.js';
 import { isFsError, privateDirectory } from '../shared/paths.js';
 import { buildBashEnv } from './env.js';
+import { AddonError } from './addon-error.js';
 
 // v1.0.7 /reverse <target>: one agent gets the REA reverse-engineering MCP server (github.com/morluto/rea, MIT) for that
 // agent only. REA is yours to install; AI Term only finds it (PATH, or the path /reverse path set) and never installs,
 // updates or registers it anywhere. Its server runs as `rea mcp` (stdio, per REA's README and server.json) under the agent
 // sandbox (D57) with the tighter rules below.
-export class ReverseError extends Error {}
+export class ReverseError extends AddonError {}
 export const REA_MISSING = "REA isn't installed · install it yourself with npm install --global rea-agents, or point to it with /reverse path <path>";
 export const REA_BAD_PATH = "The REA path you set isn't an executable file · /reverse path <path> sets it again";
 export const REVERSE_NO_SANDBOX = "/reverse runs REA only inside macOS's sandbox, and this system has none AI Term can use for it";

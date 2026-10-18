@@ -32,6 +32,7 @@ import { currentAgentSandbox, dontAskNote, AGENT_SANDBOX_ERRORS } from './agent-
 import { CLI_LAUNCH_ERRORS } from './win-launch.js';
 import { QUEUE_ERRORS, type QueueService } from './queue.js';
 import { REVERSE_ERRORS } from './reverse.js';
+import { AddonError, shownAddonError } from './addon-error.js';
 import { REMOTE_SERVICE_ERRORS, type RemoteService } from './remote/service.js';
 import { REVERSE_CLI_ERRORS } from './addon-cli.js';
 import packageInfo from '../../package.json' with { type: 'json' };
@@ -501,7 +502,7 @@ export class DaemonServer {
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
                 ...PRICE_ERRORS,'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS,...REVERSE_ERRORS,...REVERSE_CLI_ERRORS,'This add-on is unavailable',...REMOTE_SERVICE_ERRORS,'/remote is unavailable'
             ]);
-            const message = error instanceof Error && (fixed.has(error.message) || error instanceof MergeError && CHECKOUT_NOT_ON_BASE.test(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
+            const message = error instanceof AddonError ? shownAddonError(error.message) : error instanceof Error && (fixed.has(error.message) || error instanceof MergeError && CHECKOUT_NOT_ON_BASE.test(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.
             this.log.error(`Operation failed: ${request.kind} (${message === 'Session operation failed' ? 'unexpected error' : message})`);
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });
