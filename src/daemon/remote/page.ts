@@ -29,7 +29,8 @@ export const PAGE_JS = `'use strict';
   // poll: the page's own refresh, which doesn't count as you using it (only what you do keeps /remote on).
   function api(method, path, body, poll) {
     var init = { method: method, credentials: 'same-origin', headers: poll ? { 'x-ai-term-poll': '1' } : {} };
-    if (body !== undefined) { init.headers = { 'content-type': 'application/json', 'x-ai-term-csrf': csrf }; init.body = JSON.stringify(body); }
+    if (csrf) init.headers['x-ai-term-csrf'] = csrf;
+    if (body !== undefined) { init.headers['content-type'] = 'application/json'; init.body = JSON.stringify(body); }
     return fetch(path, init).then(function (r) {
       return r.json().catch(function () { return null; }).then(function (data) { if (!r.ok) throw new Error(data && data.error ? data.error : 'Request failed (' + r.status + ')'); return data; });
     });

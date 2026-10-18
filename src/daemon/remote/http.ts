@@ -35,6 +35,8 @@ class Window {
   add(key: string, now: number): void {
     // Bounded: names that only ever failed are forgotten once their minute is over.
     if (this.hits.size > 256) for (const [name, hits] of this.hits) if (hits.every(at => now - at >= WINDOW_MS)) this.hits.delete(name);
+    // Many names at once (forged identities): start over rather than grow without bound.
+    if (this.hits.size > 1024) this.hits.clear();
     const kept = (this.hits.get(key) ?? []).filter(at => now - at < WINDOW_MS); kept.push(now); this.hits.set(key, kept);
   }
 }
@@ -108,11 +110,13 @@ export class RemoteHttp {
     if (!phone) throw new Refused(401, "This phone isn't paired, or it was revoked · run /remote on on your Mac to pair it");
     if (this.phones.full(phone.id, now)) throw new Refused(429, 'Too many requests · wait a minute');
     this.phones.add(phone.id, now);
-    // Only what you do on a paired phone keeps /remote on: the page's own polling says so in a header, and a request that
-    // names no paired phone never counts (review: an open tab, or a forged request, kept it on for ever).
-    if (req.headers['x-ai-term-poll'] !== '1') this.options.activity();
+    // Only what you do on a paired phone keeps /remote on: the page sends its CSRF header with every call it makes (a page
+    // elsewhere on the tailnet can make the browser send the cookie, never that header), and its own polling says so
+    // (reviews: an open tab, a forged request or an <img> elsewhere kept it on for ever).
     await this.options.phones.seen(phone.id, now).catch(() => this.options.fail?.('Remote: the phone record could not be updated'));
-    if (body) { const header = req.headers['x-ai-term-csrf']; if (typeof header !== 'string' || !same(header, this.csrf(phone.id))) throw new Refused(403, 'Missing or wrong CSRF header'); }
+    const header = req.headers['x-ai-term-csrf'], csrfOk = typeof header === 'string' && same(header, this.csrf(phone.id));
+    if (body && !csrfOk) throw new Refused(403, 'Missing or wrong CSRF header');
+    if (csrfOk && req.headers['x-ai-term-poll'] !== '1') this.options.activity();
     const log = (entry: Omit<RemoteLogEntry, 'phone' | 'phoneId'>) => this.options.log({ ...entry, phone: phone.name, phoneId: phone.id });
     const agentPath = path.match(/^\/api\/agents\/([0-9a-f-]{36})\/(screen|approve|send|stop)$/), backend = this.options.backend;
     if (method === 'GET' && path === '/api/me') { this.reply(res, 200, { name: phone.name, csrf: this.csrf(phone.id) }); return; }

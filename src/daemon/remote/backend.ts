@@ -20,12 +20,14 @@ export function answerKeys(engine: SessionInfo['engine'], yes: boolean): string 
 }
 // The only prompts the phone may answer: a plain yes-or-no permission prompt whose yes is exactly the key it sends
 // (review: Claude Code's plan exit, its folder trust and other prompts also have an option 1 that means more than yes,
-// such as auto-accepting every edit). Claude Code: a "1. Yes" line on its own; Codex: a Yes option marked (y); AI Term's
-// agent: its last page, which says y allows.
+// such as auto-accepting every edit). Only the live prompt counts, the last one on the screen (gate: an earlier line
+// could vouch for a later prompt): Claude Code's last option 1 must be "1. Yes" alone; Codex's a Yes marked (y); AI
+// Term's agent must end on its last page, which says y allows.
 export function approvable(engine: SessionInfo['engine'], lines: readonly string[]): boolean {
-  if (engine === 'claude-code') return lines.some(line => /^\s*(?:[❯>›]\s*)?1\.\s*Yes\s*$/.test(line));
-  if (engine === 'codex') return lines.some(line => /\bYes\b[^()]*\(y\)/.test(line));
-  if (engine === 'ai-term') return lines.some(line => /\by allows · n denies\b/.test(line));
+  const lastOne = [...lines].reverse().find(line => /^\s*(?:[❯>›]\s*)?1\.\s/.test(line));
+  if (engine === 'claude-code') return !!lastOne && /^\s*(?:[❯>›]\s*)?1\.\s*Yes\s*$/.test(lastOne);
+  if (engine === 'codex') return !!lastOne && /^\s*(?:[❯>›]\s*)?1\.\s*Yes\b[^()]*\(y\)\s*$/.test(lastOne);
+  if (engine === 'ai-term') return /\by allows · n denies\b/.test([...lines].reverse().find(line => line.trim()) ?? '');
   return false;
 }
 // What the phone saw, and when the agent's status last changed: an answer counts only for exactly that screen.

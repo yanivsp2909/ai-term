@@ -161,9 +161,10 @@ it('MEDIUM (reviews): idle time counts only what you do on a paired phone, never
   expect(s.activity()).toBe(0);
   const { cookie } = await s.pair();
   const paired = s.activity();
-  await s.send('GET', '/api/agents', { cookie, 'x-ai-term-poll': '1' });
+  const { csrf } = await s.me(cookie);
+  await s.send('GET', '/api/agents', { cookie, 'x-ai-term-csrf': csrf, 'x-ai-term-poll': '1' });
   expect(s.activity()).toBe(paired);
-  await s.send('GET', '/api/agents', { cookie });
+  await s.send('GET', '/api/agents', { cookie, 'x-ai-term-csrf': csrf });
   expect(s.activity()).toBe(paired + 1);
   // The page polls with that header, and only while it is visible.
   expect(PAGE_JS).toContain("'x-ai-term-poll': '1'");
