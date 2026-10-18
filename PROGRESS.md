@@ -1,6 +1,67 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 9742357 fix: batch-3 add-ons name their result shape
+Last commit: Part B handover (this commit)
+Roadmap step: 2026-10-18 long run · Part A (add-on batch 2) done · Part B (add-on batch 3, making things) done
+Branch: main. Both parts are pushed; the run is complete.
+
+## What works
+- Eleven more commands on the D58 core (one popup, D49 estimate, y starts, Ask mode, a worktree unless read-only):
+  - /deck <topic>: a pitch deck from the repository's own facts as HTML under out/deck/. A missing fact is a TODO line listed in the popup; numbers are never invented.
+  - /slides <topic>: any other presentation (a talk, lesson or walkthrough), HTML under out/slides/.
+  - /diagram <what>: Mermaid or D2 under docs/diagrams/. "rendered" counts only when an .svg or .png made by an already-installed renderer is among the files.
+  - /design <screen>: 1-3 HTML mockups under out/design/; ↑↓ picks one.
+  - /polish <path>: refines an existing UI in a worktree.
+  - /a11y <path>: read-only WCAG 2.2 AA findings; f fixes the selected one in a worktree.
+  - /e2e <flow>: browser tests written in a worktree, run by AI Term in the D56 sandbox (the project's 127.0.0.1 setting decides loopback).
+  - /animate <motion>: the verdict comes first ("■ no animation: …" or "✓ animate: …"); a skip writes no files.
+  - /video <topic>: VHS or Remotion source under out/video/, rendered only by already-installed tools, otherwise "not rendered · missing: …".
+  - /research <question>: Claude Code or Codex only (Codex gets --search; AI Term's agent is refused with one line, and the homepage offers web-capable engines first). The report goes to docs/research/<slug>.md, with sources listed in the popup (http(s), no userinfo).
+  - /study <topic>: one idea per chunk with a Check: line, Space for the next, a 3-line recap. A finished session goes on a review schedule in ~/.ai-term/study/schedule.json (1, 3, 7, 16, 35 days; only a due review moves a topic on). /study alone is local and free: it lists what is due today.
+- Made files: o opens the selected file and s copies it to ~/Downloads (never overwriting: name (2).ext …), only when pressed. Both accept only the command's viewable types (HTML, SVG, PNG, PDF, Markdown; diagram and video sources and renderings). A file with an exec bit, a second link, or a link anywhere on its path is refused. The bytes are read once through a no-follow descriptor, and o opens AI Term's private 0600 copy of them, never the agent's path.
+- Every batch-3 model command ran once on a stub engine (tests/addons-batch3.test.ts), and /study alone ran as a local run. Batch 2's eleven ran in Part A (tests/addons-batch2.test.ts, stub gh for /issue and /pr-review): 22 in all. Each tells a real engine its exact result shape.
+- README command and key lists (Made files o / s, /a11y f · /study Space), /help and docs/user-guide.md ("Making things with add-ons") cover every command.
+
+## What's next
+- No roadmap step is pending from this run. Suggestions only (not done): pin the directory chain for o/s with an fstat-vs-lstat check after opening (security LOW, see Gotchas); decide whether o should open .html at all or reveal it in Finder instead.
+
+## Manual checks
+- Stub engines, stub runner, temp repositories, popup keys, homepage routing: ran (tests above).
+- typecheck: ran · exit 0. lint: ran · exit 0. build: ran · "ESM ⚡️ Build success in 42ms". app:build: ran · "✓ built in 56ms".
+- Full suite, default workers, twice in a row: ran · Test Files 275 passed (275), Tests 1843 passed | 7 skipped (1850), 37.74 s and 38.40 s.
+- Hidden Electron smoke (AI_TERM_BACKGROUND=1 via npm run app:test): ran · 9 passed (36.7s).
+- Live /deck with o and s: needs Yaniv · cd ~/ai-term && npm run dev  # /deck AI Term, y, then o and s on the result
+- Live /research on Codex: needs Yaniv · cd ~/ai-term && npm run dev  # /research how PTYs size windows, pick Codex, y
+- Live /study and its due list: needs Yaniv · cd ~/ai-term && npm run dev  # /study git worktrees, y, Space to the recap; tomorrow /study
+- Live /e2e in a web project: needs Yaniv · cd ~/ai-term && npm run dev  # in a web app repo: /e2e sign in, y
+- Live /diagram with a renderer: needs Yaniv · cd ~/ai-term && npm run dev  # /diagram the daemon processes, y, then o
+
+## Gotchas
+- Where the code disagreed with the prompt: "o opens one" would have handed any agent-written file to /usr/bin/open, which runs .command, .terminal and +x files. o and s now take only viewable types, and o opens a private copy. "/study alone shows what is due" is its own local add-on (study-due) with no model and no y, because a model run can't read AI Term's own schedule. /research keeps AI Term's agent selectable only when no web-capable engine exists, so the refusal line can still say why.
+- Reviews (fresh context), each real finding a RED test commit then a fix commit:
+  - TypeScript: 1 MEDIUM-HIGH (o opened any file type), 1 LOW-MEDIUM (/study recorded twice on overlapping polls; a broken schedule hid the result), 4 LOW (same-day repeat jumped ahead; unverified "rendered"; animate notes; missing Downloads folder).
+  - Security: 1 HIGH (o ran executable types), 2 MEDIUM (HTML only from a private copy; check-then-open race and hard links), 1 MEDIUM (an empty or control-character topic bricked the schedule), 2 LOW (userinfo sources; /e2e runs tests with auto-test off: by design, still sandboxed).
+  - Follow-up check of the fix: no CRITICAL or HIGH. 2 LOW left as suggestions: a directory swap between the path check and the open (needs a live agent racing; the effect is a stray copy of a viewable file of yours), and HTML being active content in the browser (by design: a private copy, no neighbours).
+  - Found in the verification loop: batch-3 add-ons had no result-format entry, so a real engine would have answered as text (stub engines hid it).
+  - Pairs: 2d02958 RED → 6631ba2 (feature); 516362d RED → 938d20b, 58b83e2 (o/s types, private copy, links, study); 72275fb RED → 9742357 (result shapes).
+- Test-only fixes for full-suite load, one test at a time (no global vitest defaults changed): macOS checks each new executable on its first run (550 ms measured), so the tests that write and run stub programs got their own 30 s budgets (76bebec); one stale-review wait got 10 s (3e1f65f); the bisect leak check got its own TMPDIR, because other files' workers make ai-term-clone-* folders in the shared temp folder (9cf2d11).
+- The consistency test now matches command names with digits (/a11y).
+- No CI or npm dependencies were added. No real ~/.ai-term, credentials, keychain or Yaniv's daemon were touched; network only for git pull/push.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- Viewable outputs: src/shared/addon-results.ts OUTPUT_FOLDERS and OUTPUT_TYPES say where each command may write and which file types o and s accept. A result that names anything else is refused before the popup shows it, and session-manager.ts addonFile checks again before touching the file.
+- Private copy: o never hands the agent's path to the system. It reads the checked bytes once and writes them to a fresh 0600 file under ~/.ai-term/opened/, then opens that, so swapping the file after the check changes nothing.
+- Spaced review: src/daemon/study.ts schedules a studied topic for 1, 3, 7, 16 and 35 days later. Each review that was due pushes it to the next interval, and an early repeat keeps its place.
+
+---
+
+# Part A of this run: add-on batch 2 (repository and GitHub)
+
+## Checkpoint
 Last code commit: d1cdb34 fix: registry-only npm specs, quoted cargo keys, any filter section, renamed credentials
 Last commit: Part A handover (this commit)
 Roadmap step: 2026-10-18 long run · Part A (add-on batch 2, repository and GitHub) done · Part B (batch 3, making things) next
