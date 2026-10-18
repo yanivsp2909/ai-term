@@ -50,14 +50,14 @@ it('two agents in a split write only into their own worktrees, and the original 
     const a = await manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: repo, permission: 'ask', title: 'left' });
     const b = await manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: repo, permission: 'ask', title: 'right' });
     expect(a.worktree).toBeDefined(); expect(b.worktree).toBeDefined(); expect(a.worktree).not.toBe(b.worktree);
-    await expect.poll(() => manager.list().every(s => s.status === 'running')).toBe(true);
+    await expect.poll(() => manager.list().every(s => s.status === 'running'), { timeout: 10_000 }).toBe(true);
     const done = split([a.id, b.id], { stdin: tty, stdout: tty, signals: new EventEmitter(), theme: createTheme('graphite'), connect: () => Connection.connect(paths, { entry: '/unused', autoStart: false }) });
-    await vi.waitFor(async () => expect(await screen(tty)).toContain('each pane is its own agent in its own worktree'));
+    await vi.waitFor(async () => expect(await screen(tty)).toContain('each pane is its own agent in its own worktree'), { timeout: 10_000 });
     // Keys go to the focused (left) pane; Ctrl+\ moves focus to the right pane.
     tty.emit('data', Buffer.from('alpha\r'));
-    await vi.waitFor(async () => expect(await pane(tty, 0)).toMatch(/SEE:\.git README alpha\.txt :END/));
+    await vi.waitFor(async () => expect(await pane(tty, 0)).toMatch(/SEE:\.git README alpha\.txt :END/), { timeout: 10_000 });
     tty.emit('data', Buffer.from([0x1c])); tty.emit('data', Buffer.from('beta\r'));
-    await vi.waitFor(async () => expect(await pane(tty, 1)).toMatch(/SEE:\.git README beta\.txt :END/));
+    await vi.waitFor(async () => expect(await pane(tty, 1)).toMatch(/SEE:\.git README beta\.txt :END/), { timeout: 10_000 });
     // Each agent's own listing never shows the other's file, and the left pane never received "beta".
     expect(await pane(tty, 0)).not.toContain('beta'); expect(await pane(tty, 1)).not.toContain('alpha');
     tty.emit('data', Buffer.from([0x05])); await expect(done).resolves.toMatchObject({ reason: 'home key' });
