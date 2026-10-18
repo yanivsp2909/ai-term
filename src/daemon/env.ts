@@ -18,8 +18,8 @@ export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNod
 }
 
 import { isAddonBundle } from '../agent/addon-bundle.js';
-import type { AddonRunOptions } from './addons.js';
-import { dirname, resolve } from 'node:path';
+import type { AddonMcp, AddonRunOptions } from './addons.js';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import type { AgentEngine, CliEngine, Permission, Effort, ThemeName, KeyProvider } from '../shared/protocol.js';
 import { isSafeAbsolutePath, isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath, isValidModelId, isThemeName, isEndpoint, isSecret, isKeyProvider } from '../shared/validate.js';
 import { isLocalEndpoint } from '../shared/providers.js';
@@ -91,7 +91,11 @@ export function buildArgs(request:{engine:CliEngine;model:string|null;permission
     if(request.conversationId)args.push(`${request.resume?'--resume':'--session-id'}=${request.conversationId}`);
     if(request.addon && (!isAddonBundle(request.addon.bundle) || request.permission !== 'ask')) throw new Error('Invalid add-on arguments');
     args.push(...(request.engine === 'codex' && request.addon?.readOnly ? ['--ask-for-approval=on-request','--sandbox=read-only'] : PERMISSION_ARGS[request.engine][request.permission]??[]));
-    if(request.engine === 'claude-code' && request.addon) args.push(`--plugin-dir=${request.addon.bundle}`, ...(request.addon.readOnly ? ['--tools=Read,Grep,Glob','--strict-mcp-config'] : []));
+    if(request.engine === 'claude-code' && request.addon) args.push(`--plugin-dir=${request.addon.bundle}`, ...(request.addon.readOnly ? ['--tools=Read,Grep,Glob'] : []), ...(request.addon.readOnly || request.addon.mcp ? ['--strict-mcp-config'] : []));
+    // v1.0.7 /reverse: the one MCP server for this agent, as argv elements. Claude Code reads it from --mcp-config's JSON
+    // (one argv element; --strict-mcp-config above keeps every other MCP configuration out). Codex takes the whole
+    // mcp_servers table as one -c override.
+    if(request.addon?.mcp)args.push(...addonMcpArgs(request.engine,request.addon.mcp));
     // v1.1 /research: Codex has live web search only with --search; Claude Code has its web tools unless --tools narrows.
     if(request.engine === 'codex' && request.addon?.web === true) args.push('--search');
     // v1.0.2: the repository map as extra system-prompt text, the path one argv element. Claude Code only: Codex has no
@@ -100,6 +104,15 @@ export function buildArgs(request:{engine:CliEngine;model:string|null;permission
     if(request.brainFile!==undefined&&request.engine==='claude-code'){if(!isBrainFile(request.brainFile))throw new Error('Invalid brain file');args.push(`--append-system-prompt-file=${request.brainFile}`);}
     if(request.firstMessage!==undefined)args.push('--',request.firstMessage);
     return args;
+}
+
+// TOML basic strings take JSON's escapes, but no raw control character (DEL included): such a value is refused.
+// eslint-disable-next-line no-control-regex -- refusing controls is the point.
+const tomlString=(value:string):string=>{if(/[\u0000-\u001f\u007f]/.test(value))throw new Error('Invalid add-on MCP server');return JSON.stringify(value);};
+function addonMcpArgs(engine:CliEngine,mcp:AddonMcp):string[]{
+    if(!isAbsolute(mcp.command)||!Array.isArray(mcp.args)||mcp.args.length>64||mcp.args.some(arg=>typeof arg!=='string'||Buffer.byteLength(arg)>2048))throw new Error('Invalid add-on MCP server');
+    if(engine==='claude-code')return [`--mcp-config=${JSON.stringify({mcpServers:{rea:{type:'stdio',command:mcp.command,args:mcp.args}}})}`];
+    return ['-c',`mcp_servers={rea={command=${tomlString(mcp.command)},args=[${mcp.args.map(tomlString).join(',')}]}}`];
 }
 
 export interface UsageTelemetry {port:number;credential:string}

@@ -72,7 +72,8 @@ it.skipIf(!MAC)('macOS: REA runs in the agent sandbox with no network: it can\'t
     `echo changed > '${join(target, 'main.bin')}' 2>/dev/null && echo write-target-ok || echo write-target-refused`,
     `cat '${join(root, 'secret.txt')}' >/dev/null 2>&1 && echo read-home-ok || echo read-home-refused`,
     `/usr/bin/nc -z -G 2 127.0.0.1 ${port} >/dev/null 2>&1 && echo tcp-ok || echo tcp-refused`,
-    `${process.execPath} -e "require('dns').lookup('localhost',e=>console.log(e?'dns-refused':'dns-ok'))"`,
+    // Name lookups go through mDNSResponder's socket (localhost is answered locally either way, so it proves nothing).
+    `${process.execPath} -e "const s=require('net').connect('/var/run/mDNSResponder');s.on('connect',()=>{console.log('dns-ok');s.destroy()});s.on('error',()=>console.log('dns-refused'))"`,
     `cat '${join(target, 'main.bin')}' >/dev/null && echo read-target-ok`,
     `echo "args:$*"`,
   ].join('\n'));

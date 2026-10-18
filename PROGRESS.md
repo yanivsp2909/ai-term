@@ -26,7 +26,7 @@ Branch: main. Part A is pushed with this handover.
 - Reviews (fresh context): TypeScript 1 HIGH (Y linked writable folders while the popup said read-only), 2 MEDIUM (a readable path the profile dropped still got a link; a commit that tracks a linked folder), 1 LOW (workspace links and venv base interpreters). Security: 0 CRITICAL/HIGH/MEDIUM; 1 LOW (a race between the plan's check and the sandbox's realpath), and the same Y note. Seatbelt write, rename, delete and hard-link routes through the link were all denied in its experiment.
   - Pair: e94b791 RED → 50590dc fix (HIGH and the dropped-path MEDIUM). Feature pair: 78d91ca RED → 128e502.
   - Not changed, with reasons: a commit that tracks node_modules/vendor makes git replace the link in the copy for the rest of the run (checked by hand: checkout succeeds, your folder untouched; this is the popup's "can misreport"). Workspace links inside node_modules pointing back into the checkout stay unreadable in the sandbox (documented). The LOW race needs an unsandboxed writer in your checkout, which already has your rights; the key folders stay closed either way.
-- Vitest writes a cache under node_modules/.vite: in the sandbox that write is refused, which vitest tolerates for results caching; a tool that requires writing into node_modules will fail there by design.
+- A tool that writes into node_modules while testing (a cache under node_modules/.vite, for example) gets that write refused in the sandbox, by design; whether a given tool tolerates it wasn't checked.
 
 ## New dependencies
 - None.

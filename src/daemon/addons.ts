@@ -19,7 +19,9 @@ import { resolveInside } from '../agent/jail.js';
 import { repoDirectory } from './worktrees.js';
 import { atomicWrite } from './store.js';
 
-export interface AddonRunOptions { bundle: string; readOnly: boolean; web?: boolean }
+// mcp (v1.0.7 /reverse): one MCP server for this agent only, as the argv the engine starts (reverse.ts builds it).
+export interface AddonMcp { command: string; args: string[] }
+export interface AddonRunOptions { bundle: string; readOnly: boolean; web?: boolean; mcp?: AddonMcp }
 export type BisectResult = Extract<AddonResult, { kind: 'bisect' }>;
 interface Runner {
   create(request: Exclude<CreateSession, { engine: 'shell' }>, continuation?: undefined, fork?: undefined, addon?: AddonRunOptions, strictIsolation?: boolean): Promise<SessionInfo>;
