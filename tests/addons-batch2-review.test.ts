@@ -88,7 +88,7 @@ it('LOW (TS review): /opensource scans added lines that start with ++, names the
   const git = (cwd: string, ...args: string[]) => run('/usr/bin/git', ['-c', 'user.name=T', '-c', 'user.email=t@e.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd });
   const dir = await temp(), repo = join(dir, 'repo'); await mkdir(repo); await git(dir, 'init', '-q', '--', repo);
   const key = 'sk-ant-api03-' + 'Z'.repeat(90);
-  await writeFile(join(repo, 'notes.md'), `+ key ${key}\n`); await writeFile(join(repo, 'filler.txt'), 'x'.repeat(4000));
+  await writeFile(join(repo, 'notes.md'), `++ key ${key}\n`); await writeFile(join(repo, 'filler.txt'), 'x'.repeat(4000));
   await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-qm', 'one', '--');
   for (let i = 0; i < 3; i++) { await writeFile(join(repo, `more${i}.txt`), 'y'.repeat(4000)); await git(repo, 'add', '--', '.'); await git(repo, 'commit', '-qm', `more ${i}`, '--'); }
   const full = await opensourceScan(repo);
