@@ -716,8 +716,9 @@ export class SessionManager extends EventEmitter {
             }
             case 'commit':{
                 if(!args.trim())return stagedChanges(top);
-                const agent=await this.addonAgent(args.trim());
-                return {data:agent.diff,subject:`agent: ${agent.title} (y commits there)`,facts:[`changes in ${agent.title}'s worktree`],cwd:agent.cwd,commitAgent:args.trim()};
+                // The message is written for the agent's uncommitted work, exactly what y commits (review).
+                const id=args.trim(),{live,work}=await this.agentCommitTarget(id),found=await agentWork(work);
+                return {data:found.data,subject:`agent: ${live.info.title} (y commits there)`,facts:found.facts,cwd:work.path,commitAgent:id,commitState:found.state};
             }
             case 'git-range': return changelogRange(top,args);
             case 'context':{
@@ -730,21 +731,25 @@ export class SessionManager extends EventEmitter {
             default: throw new Error('Nothing to gather for this add-on');
         }
     }
-    // v1.1 /commit y: the agent's own work, committed in its own worktree with your name (from your git config), hooks
-    // off. Never in your checkout: the worktree is the one AI Term recorded for this agent, checked again here.
-    async addonCommit(id:string,message:string):Promise<string>{
+    // v1.1 /commit y: the agent's own work, committed in its own worktree with your global git name; never in your
+    // checkout. The worktree must still lead back to the recorded repository, and the work must be what the message
+    // was written for (agent-commit.ts).
+    private async agentCommitTarget(id:string):Promise<{live:Live;work:import('./agent-commit.js').AgentWork}>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
-        if(typeof message!=='string'||!message.trim()||Buffer.byteLength(message)>8000||/[\p{C}]/u.test(message.replace(/[\n\t]/g,'')))throw new Error('Invalid commit message');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         if(this.working(live))throw new Error('The agent is still working; commit when it has finished');
-        const {path}=await this.diffTarget(live);
-        if(!(await runGit(path,['status','--porcelain','-z','--'])).trim())throw new Error("Nothing to commit in this agent's worktree");
-        const identity=async(key:string)=>(await runGit(path,['config','--get',key],'Git check failed',{env:{GIT_CONFIG_GLOBAL:this.userGit.globalConfig}}).catch((error:unknown)=>{if(error instanceof GitError)return '';throw error;})).trim();
+        const {path,base,repo}=await this.diffTarget(live);if(!repo)throw new Error("This agent's worktree has no recorded repository");
+        return {live,work:{path,base,repo}};
+    }
+    async addonCommit(id:string,message:string,state?:string):Promise<string>{
+        if(typeof message!=='string'||!message.trim()||Buffer.byteLength(message)>8000||/[\p{C}]/u.test(message.replace(/[\n\t]/g,'')))throw new Error('Invalid commit message');
+        if(!state)throw new Error('Run /commit again: the message must be written for the current work');
+        const {work}=await this.agentCommitTarget(id);
+        // Your identity from your own global config file only: the repository's config is the agent's to influence.
+        const identity=async(key:string)=>(await runGit('/',['config','--file',this.userGit.globalConfig,'--get',key]).catch((error:unknown)=>{if(error instanceof GitError)return '';throw error;})).trim();
         const name=await identity('user.name'),email=await identity('user.email');
-        if(!name||!email)throw new Error('Set your git user.name and user.email first');
-        await runGit(path,['add','-A','--','.'],'Git check failed',{timeout:60_000});
-        await runGit(path,['commit','--quiet','--no-verify','--no-gpg-sign','-F','-','--'],'Git check failed',{input:message,timeout:60_000,env:{GIT_AUTHOR_NAME:name,GIT_AUTHOR_EMAIL:email,GIT_COMMITTER_NAME:name,GIT_COMMITTER_EMAIL:email}});
-        return (await runGit(path,['rev-parse','--short','--verify','--end-of-options','HEAD'])).trim();
+        if(!name||!email)throw new Error('Set your git user.name and user.email first (git config --global)');
+        return commitWork(work,message,state,{name,email});
     }
     // v1.1 /standup: today's agents from AI Term's own records; no model, no tokens.
     async addonStandup():Promise<string[]>{
@@ -1796,6 +1801,7 @@ import { githubView } from './github.js';
 import { depsQueries } from './deps-query.js';
 import { opensourceScan } from './opensource-scan.js';
 import { changelogRange, contextFiles, stagedChanges, type Gathered } from './addon-gather.js';
+import { agentWork, commitWork } from './agent-commit.js';
 import { ExtensionReader } from '../agent/extensions/reader.js';
 import { resolveInside } from '../agent/jail.js';
 import { resolveExecutable } from './engines.js';

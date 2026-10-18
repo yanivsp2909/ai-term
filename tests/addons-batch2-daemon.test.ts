@@ -131,11 +131,12 @@ it('/commit y commits the agent\'s work in its worktree with your name, and neve
   const { repo: checkout, m, agent, tree } = await manager();
   await writeFile(join(tree, 'new.txt'), 'hello\n');
   const before = [await git(checkout, 'rev-parse', 'HEAD'), await git(checkout, 'status', '--porcelain')];
-  const sha = await m.addonCommit(agent.id, 'feat: add new.txt\n\nWhy it matters.');
+  const sha = await m.addonCommit(agent.id, 'feat: add new.txt\n\nWhy it matters.', (await m.addonGather('commit', checkout, agent.id)).commitState);
   expect(await git(tree, 'log', '-1', '--format=%h %an <%ae> %s')).toBe(`${sha} Yaniv Test <yaniv@example.invalid> feat: add new.txt`);
   expect(await git(tree, 'status', '--porcelain')).toBe('');
   expect([await git(checkout, 'rev-parse', 'HEAD'), await git(checkout, 'status', '--porcelain')]).toEqual(before);
-  await expect(m.addonCommit(agent.id, 'nothing')).rejects.toThrow('Nothing to commit');
+  await expect(m.addonGather('commit', checkout, agent.id)).rejects.toThrow('Nothing to commit');
+  await expect(m.addonCommit(agent.id, 'nothing')).rejects.toThrow('Run /commit again');
 });
 
 it('/standup lists today\'s agents from AI Term\'s own records', async () => {

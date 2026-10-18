@@ -9,7 +9,7 @@ import { SECRET_FILE } from '../shared/review.js';
 
 // v1.1 batch 2: what AI Term reads itself, read-only, before an add-on's model runs. Each returns the data the model gets
 // (cut to fit its first message), the subject the popup names, and AI Term's own facts shown before you start.
-export interface Gathered { data: string; subject: string; facts: string[]; cwd?: string; commitAgent?: string }
+export interface Gathered { data: string; subject: string; facts: string[]; cwd?: string; commitAgent?: string; commitState?: string }
 export const GATHER_DATA_BYTES = 9000, CHANGELOG_COMMITS = 300;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 

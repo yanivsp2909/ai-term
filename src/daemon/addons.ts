@@ -32,10 +32,10 @@ interface Runner {
   addonPerfAb?(id: string, benchmark: string[], files: string[], unsandboxed: boolean): Promise<AbView>;
   // v1.1 batch 2: read-only data an add-on gets, /commit's y in an agent's worktree, and /standup's own record.
   addonGather?(kind: AddonInput, cwd: string, args: string): Promise<Gathered>;
-  addonCommit?(id: string, message: string): Promise<string>;
+  addonCommit?(id: string, message: string, state?: string): Promise<string>;
   addonStandup?(): Promise<string[]>;
 }
-type Input = { addon: Addon; cwd: string; target: AddonTarget | null; args: string; rawArgs: string; subject: string; facts: string[]; commitAgent?: string; brain: BrainPlan | null; files: { path: string; text: string }[]; bisect?: BisectAsk; hash: string };
+type Input = { addon: Addon; cwd: string; target: AddonTarget | null; args: string; rawArgs: string; subject: string; facts: string[]; commitAgent?: string; commitState?: string; brain: BrainPlan | null; files: { path: string; text: string }[]; bisect?: BisectAsk; hash: string };
 type Run = { input: Input; nonce: string; result?: AddonResult; error?: string; saved?: string; ab?: AbView };
 const FORMATS: Record<string, string> = {
   plan: 'JSON object: kind="plan", title:string, steps:array of {title:string,prompt:string}. Maximum 24 steps.',
@@ -81,7 +81,7 @@ export class AddonService {
     if (SECRET_FILE.test(safe.replaceAll('\\', '/'))) throw new Error('A credential or env file cannot be a scope');
     return relative(cwd, safe) || '.';
   }
-  private async resolveInput(addon: Addon, args: string, cwd: string): Promise<{ args: string; cwd: string; subject: string; facts?: string[]; commitAgent?: string }> {
+  private async resolveInput(addon: Addon, args: string, cwd: string): Promise<{ args: string; cwd: string; subject: string; facts?: string[]; commitAgent?: string; commitState?: string }> {
     switch (addon.input) {
       case 'text': if (!args.trim()) throw new Error(`/${addon.name} ${addon.args}`); return { args, cwd, subject: '' };
       case 'file-or-text': {
@@ -113,7 +113,7 @@ export class AddonService {
         if ((addon.input === 'context' || addon.input === 'opensource') && args.trim()) throw new Error(`/${addon.name} takes no argument: it reads the whole repository`);
         if (!GATHERED_INPUTS.includes(addon.input) || !this.runner.addonGather) throw new Error('This add-on is unavailable');
         const got = await this.runner.addonGather(addon.input, cwd, args);
-        return { args: got.data, cwd: got.cwd ? await realpath(got.cwd) : cwd, subject: got.subject, facts: got.facts, ...got.commitAgent ? { commitAgent: got.commitAgent } : {} };
+        return { args: got.data, cwd: got.cwd ? await realpath(got.cwd) : cwd, subject: got.subject, facts: got.facts, ...got.commitAgent ? { commitAgent: got.commitAgent, ...got.commitState ? { commitState: got.commitState } : {} } : {} };
       }
     }
   }
@@ -134,7 +134,7 @@ export class AddonService {
     let bisect: BisectAsk | undefined;
     if (addon.local === 'bisect') { if (!this.runner.addonBisectPlan) throw new Error('Bisect is unavailable'); bisect = await this.runner.addonBisectPlan(cwd, rawArgs); }
     const hash = createHash('sha256').update(JSON.stringify([addon, args, cwd, target, files, brain?.fingerprint ?? null, bisect ?? null, resolved.commitAgent ?? null])).digest('hex');
-    return { addon, cwd, target, args, rawArgs, subject: resolved.subject, facts: resolved.facts ?? [], ...resolved.commitAgent ? { commitAgent: resolved.commitAgent } : {}, files, brain, ...bisect ? { bisect } : {}, hash };
+    return { addon, cwd, target, args, rawArgs, subject: resolved.subject, facts: resolved.facts ?? [], ...resolved.commitAgent ? { commitAgent: resolved.commitAgent, ...resolved.commitState ? { commitState: resolved.commitState } : {} } : {}, files, brain, ...bisect ? { bisect } : {}, hash };
   }
   async plan(name: string, args: string, cwd: string, target: AddonTarget | null): Promise<AddonAsk> {
     const input = await this.input(name, args, cwd, target), state = !input.brain?.builtAt ? 'none' : input.brain.changed || input.brain.removed ? 'stale' : 'fresh';
@@ -272,7 +272,7 @@ export class AddonService {
     if (!run || run.input.addon.name !== 'commit') throw new Error('Add-on run not found');
     if (result?.kind !== 'commit') throw new Error('Wait for the message, then press y');
     if (!run.input.commitAgent || !commit) throw new Error('This message is only copied: AI Term never commits in your checkout');
-    return commit.call(this.runner, run.input.commitAgent, result.body.trim() ? `${result.subject}\n\n${result.body.trim()}` : result.subject);
+    return commit.call(this.runner, run.input.commitAgent, result.body.trim() ? `${result.subject}\n\n${result.body.trim()}` : result.subject, run.input.commitState);
   }
   // /perf a (or Y once AI Term said there is no sandbox): the A/B runs in the background; result() polling shows it.
   startAb(id: string, unsandboxed: boolean): AbView {
