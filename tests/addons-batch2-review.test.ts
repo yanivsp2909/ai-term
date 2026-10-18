@@ -11,7 +11,7 @@ async function temp(): Promise<string> { const dir = await realpath(await mkdtem
 // A stand-in tool that records where it ran, what it saw there, its argv and the env names it got.
 async function tool(bin: string, log: string, name: string, answer: string) {
   await mkdir(bin, { recursive: true });
-  await writeFile(join(bin, name), `#!/bin/sh\n{ echo "cwd=$(pwd)"; echo "files=$(/bin/ls -A | /usr/bin/tr '\\n' ' ')"; echo "argv=$*"; /usr/bin/env | /usr/bin/grep -E '^(GOTOOLCHAIN|GOFLAGS|GOWORK|npm_config_ignore_scripts|npm_config_update_notifier|CARGO_BUILD_RUSTC_WRAPPER)='; } >> ${log}\n${answer}\n`);
+  await writeFile(join(bin, name), `#!/bin/sh\n{ echo "cwd=$(pwd)"; echo "files=$(/bin/ls -A | /usr/bin/tr '\\n' ' ')"; echo "argv=$*"; /usr/bin/env | /usr/bin/grep -E '^(GOTOOLCHAIN|GOFLAGS|GOWORK|GOPROXY|GOVCS|npm_config_ignore_scripts|npm_config_update_notifier|CARGO_BUILD_RUSTC_WRAPPER)='; } >> ${log}\n${answer}\n`);
   await chmod(join(bin, name), 0o755);
 }
 
@@ -133,4 +133,25 @@ it('LOW (TS review): /standup m hands a long standup to the polish pass cut to f
   const args = sent.find(s => s.kind === 'addons.plan')?.args ?? '';
   expect(Buffer.byteLength(args)).toBeLessThanOrEqual(9000); expect(args.startsWith('agent-0')).toBe(true);
   flow.dispose();
+});
+
+// ---- Follow-up security review of the fixes ----
+it('MEDIUM (follow-up): /deps never contacts a host a manifest names, and reads failures right', async () => {
+  const dir = await temp(), bin = join(dir, 'bin'), log = join(dir, 'log');
+  const project = async (name: string, files: Record<string, string>) => { const path = join(dir, name); await mkdir(path); for (const [file, text] of Object.entries(files)) await writeFile(join(path, file), text); return path; };
+  await tool(bin, log, 'npm', `case "$1" in outdated) echo '{"error":{"current":"1.0.0","wanted":"1.0.1","latest":"1.0.1"}}'; exit 1;; audit) echo '{}';; esac`);
+  await tool(bin, log, 'cargo', 'echo "{}"'); await tool(bin, log, 'cargo-outdated', 'true');
+  await tool(bin, log, 'go', `echo '{"Path":"golang.org/x/text","Version":"v0.3.0","Error":{"Err":"proxy unreachable"}}'; exit 1`);
+  const remote = await depsQueries(await project('npm-git', { 'package.json': '{"dependencies":{"x":"git+https://evil.example/x.git"}}' }), { path: bin, env: { PATH: bin, HOME: dir } });
+  expect(remote.facts.join('\n')).toContain("npm: skipped: package.json names a source outside the registry");
+  const cargo = await depsQueries(await project('cargo-git', { 'Cargo.toml': '[dependencies]\nx = { git = "https://evil.example/x" }\n' }), { path: bin, env: { PATH: bin, HOME: dir } });
+  expect(cargo.facts.join('\n')).toContain("cargo: skipped: Cargo.toml names a source outside the registry");
+  const workspaces = await depsQueries(await project('npm-ws', { 'package.json': '{"workspaces":["../../*"]}' }), { path: bin, env: { PATH: bin, HOME: dir } });
+  expect(workspaces.facts.join('\n')).toContain('npm: skipped: workspaces; run /deps <package folder>');
+  const named = await depsQueries(await project('npm-named', { 'package.json': '{"dependencies":{"error":"1.0.0"}}' }), { path: bin, env: { PATH: bin, HOME: dir } });
+  expect(named.facts.join('\n')).toContain('npm: 1 outdated');
+  const go = await depsQueries(await project('go', { 'go.mod': 'module x\n' }), { path: bin, env: { PATH: bin, HOME: dir } });
+  expect(go.facts.join('\n')).toContain('go: a query failed');
+  const text = await readFile(log, 'utf8');
+  expect(text).not.toContain('evil'); expect(text).toContain('GOPROXY=https://proxy.golang.org'); expect(text).toContain('GOVCS=*:off');
 });
