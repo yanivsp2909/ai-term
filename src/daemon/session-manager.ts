@@ -798,7 +798,8 @@ export class SessionManager extends EventEmitter {
             await(SessionManager.fileOpener??openWithDefaultApp)(copy);return null;
         }
         const folder=SessionManager.downloads??join(homedir(),'Downloads');
-        try{if(!(await stat(folder)).isDirectory())throw new Error('No Downloads folder to save into');}catch(error){if(isFsError(error,'ENOENT'))throw new Error('No Downloads folder to save into');throw error;}
+        let isFolder=false;try{isFolder=(await stat(folder)).isDirectory();}catch(error){if(!isFsError(error,'ENOENT'))throw error;}
+        if(!isFolder)throw new Error('No Downloads folder to save into');
         const dot=name.lastIndexOf('.'),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):'';
         for(let n=1;n<=99;n++){
             const target=join(folder,n===1?name:`${stem} (${n})${ext}`);
