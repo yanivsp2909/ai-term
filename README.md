@@ -482,6 +482,24 @@ Everything above works on Windows too, with these differences:
   - PowerShell's Constrained Language Mode (AppLocker, WDAC) blocks the ACL check, so the daemon won't start there.
 - **Desktop app:** an NSIS installer from `npm run app:dist` on Windows. It is unsigned, so SmartScreen warns "Windows protected your PC" on first run (More info → Run anyway). The desktop keys are Ctrl+Shift, as on Linux.
 
+## Live smoke suite (`npm run live`)
+`npm test` checks the pieces. `npm run live` builds `ai` and drives the real built `ai` in a real terminal (node-pty), typing keys and reading the screen through a headless mirror, the way you'd use it. It is never part of `npm test`.
+
+| Command | What it does |
+|---|---|
+| `npm run live` | **Tier 1**, needs nothing of yours: 26 checks, about 3 minutes (one of them waits for a `/queue` minute) |
+| `npm run live -- --with-logins` | Tier 1, then **tier 2** on your own logins (only with this flag) |
+| `npm run live -- --only <id,id>` · `--from <id>` · `--keep` | Part of tier 1 while you work on the suite (the start check always runs first); `--keep` keeps a failed run's temp world for a look |
+| `npm run live -- --with-logins --github <folder> --issue <n> --pr <n> --key-model <model id>` | Tier 2's defaults changed: the checkout whose GitHub origin `/issue` and `/pr-review` read (default `~/ai-term`, cloned to a temp folder first), the issue and PR numbers (default 1), the keyed model (default `claude-haiku-4-5` or `gpt-5-mini`) |
+
+**Tier 1** runs in a throwaway world: a temp folder with a fake home (a planted fake `~/.ssh/known_hosts`, its own `Downloads`), `AI_TERM_HOME` inside it, temp git repos, a throwaway daemon, and a stub Ollama on 127.0.0.1 for AI Term's agent. PATH offers only node, npm and npx, so no Claude Code, Codex, gh or Tailscale is found; Claude Code is played by a small stand-in script where a check needs one. Notifications are off before the daemon starts. It never reaches the internet, never opens a window (`o` is pressed only on a file AI Term refuses, `/open` only as `/open code` with a stand-in `code`), and never touches `~/.ai-term`, `~/Downloads`, your Keychain or your daemon. The world, its daemon and every agent in it are removed at the end.
+
+It checks: start and the login popup, the version on the homepage, adding Ollama, `/settings`, a shell (⏎, Ctrl+E), resize, multiline paste, `/model`, AI Term's agent in Ask (its worktree, a permission prompt, the cost line), `/send` (idle, two pasted lines, refused while asking permission and at a trust prompt), the Don't ask bash sandbox (D57: `~/.ai-term/settings.json` blocked, no secrets in env), splits (Space, v, Ctrl+\, `/exit` in a pane), the test sandbox (D56: `/test-cmd`, `l`, the planted `~/.ssh` file blocked), `/commit y`, `/deck` with `s` and `o`, `/dev`, `/brain`, `/queue` at a time, `/find`, `/open code`, `/retry`, `/bisect` on a Node repository whose runner writes into `node_modules`, `x` on worktrees (k, d, the typed branch name), `ai doctor` and `/exit`.
+
+**Tier 2** (`--with-logins`) keeps a temp AI Term folder but runs with your real home and PATH, so Claude Code, Codex and gh find their own logins (AI Term never reads them). Claude Code and Codex each get one tiny prompt in Ask and must show a permission prompt, which the suite approves with the phone remote's own keys (1 for Claude Code, y for Codex) after checking the card says it asks. Then a keyed AI Term agent turn with its cost line, `/issue <n>` (the popup only) and `/pr-review <n>` (y: a read-only review on Claude Code). Your API key is typed by you: the suite hands the terminal to you for the login popup (and for any CLI prompt it doesn't know), then takes over again by itself, or when you press Ctrl+]. The key goes to your Keychain only and is removed when the run ends. Claude Code and Codex keep their own history and folder trust for the temp folder, as they always do.
+
+Each check prints one line. The first failure stops the run with a plain line, what to look at, and the screen at that moment (anything shaped like a key cut out).
+
 ## Docs
 - `docs/user-guide.md`: one section per area, in plain words
 - `CHANGELOG.md`: what changed in each version
