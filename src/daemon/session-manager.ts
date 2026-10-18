@@ -52,7 +52,8 @@ import { allocateFreePort, devEnv, DevServers, scriptOf } from './dev-servers.js
 import type { DevPlan, DevState } from '../shared/dev.js';
 const DEV_OFF = 'Dev servers are off; turn them on in /settings (y)', DEV_NO_TREE = 'A dev server runs in an agent\'s worktree; this agent has none', DEV_NO_CMD = "Set the project's dev command with /dev-cmd first";
 const DEV_NO_PORT = 'No free dev port left (4100–4199); stop a dev server first', DEV_SETUP = "The dev server setup couldn't be read", DEV_CHANGED = 'The dev server setup changed since it was shown; run /dev again', DEV_RUNNING = 'A dev server already runs for this agent; /dev shows it';
-export const DEV_ERRORS: readonly string[] = [DEV_OFF, DEV_NO_TREE, DEV_NO_CMD, DEV_NO_PORT, DEV_CHANGED, DEV_RUNNING, DEV_SETUP, "The dev server couldn't start", 'AI Term is stopping; start it again after'];
+const DEV_PORT_TAKEN = "Another agent's dev server just took that port; run /dev again";
+export const DEV_ERRORS: readonly string[] = [DEV_OFF, DEV_NO_TREE, DEV_NO_CMD, DEV_NO_PORT, DEV_CHANGED, DEV_RUNNING, DEV_SETUP, DEV_PORT_TAKEN, "The dev server couldn't start", 'AI Term is stopping; start it again after'];
 import { prepareSandbox, sandboxReady, SandboxPathError, type PreparedSandbox } from './test-sandbox.js';
 import { MAX_TEST_CHANGED, type ProjectTestCommand, type TestPlan } from '../shared/test-run.js';
 import { FORK_PREVIEW_CHARS, forkTitle, type ForkPlan, type ForkTarget } from '../shared/fork.js';
@@ -1853,6 +1854,9 @@ export class SessionManager extends EventEmitter {
             if(plan.running)return await drop(DEV_RUNNING);
             if(this.closing||this.sessions.get(id)!==live)return await drop('Session not found');
             const worktree=plan.cwd;
+            // Two plans can show the same free port (nothing is held until a server runs): the port is checked and taken
+            // with no await in between, so the second y is refused rather than starting a server that dies at once (gate).
+            if([...this.devPorts].some(([tree,port])=>tree!==worktree&&port===plan.port))return await drop(DEV_PORT_TAKEN);
             const setDev=(dev:DevState|undefined)=>{if(dev)live.info.dev=dev;else delete live.info.dev;if(this.sessions.get(id)===live)this.event({kind:'session.updated',session:{...live.info}});};
             this.devPorts.set(worktree,plan.port);
             try{await this.dev.start(id,{command:plan.command,cwd:worktree,port:plan.port,sandbox:box,env},code=>{this.devPorts.delete(worktree);setDev({state:'exited',port:plan.port,code});});}
