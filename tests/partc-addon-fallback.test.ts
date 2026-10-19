@@ -54,3 +54,10 @@ it('security LOW (Part C review): a guides folder that is a dangling link is ref
   await rm(guides, { recursive: true, force: true }); await symlink(join(d.definitions, 'nowhere'), guides);
   await expect(d.service.plan('security', 'src', d.repo, CODEX)).rejects.toThrow();
 });
+
+it('code LOW (v1.2 review): a build with no guides folder at all still runs the add-on on its own steps', async () => {
+  const d = await setup();
+  await rm(join(d.definitions, 'guides'), { recursive: true });
+  const ask = await d.service.plan('security', 'src', d.repo, CODEX);
+  expect(ask.files).toEqual([]);
+});

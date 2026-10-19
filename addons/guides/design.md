@@ -25,15 +25,17 @@ that built the rest of the product: same colors, type, spacing, words.
 5. Build each mockup as one HTML file under out/design/:
    - inline CSS that reuses the product's token values; no external requests, fonts or images;
    - real content from the product (real command names, real field names, plausible data shaped like the real data);
-   - the states that matter for this screen: empty, loading, error, full, long text;
-   - readable at phone and desktop widths;
+   - every condition the screen can be in: no data yet, data arriving, something failed, a crowded list, a name
+     too long for its column;
+   - a layout that still works from a 360 px wide window up to a 1440 px one;
    - both themes when the product has both (a media query or a toggle).
-6. Put a short note at the top of each file (in a comment or a small caption) naming its idea in one line.
+6. Label each file with a one-sentence caption at the top that says what makes this direction different from the
+   others.
 
 ## Done when
 
 - Each mockup opens offline in a browser and looks like part of the product.
-- The states that matter are shown, not just the happy path.
+- Empty, failing and crowded versions are drawn, not only the ideal one.
 - The product's code is untouched.
 
 ## Never

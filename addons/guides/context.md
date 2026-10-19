@@ -19,13 +19,15 @@ change nothing.
 3. Check each rule against the repository with your read tools:
    - **Stale:** a command, script, path, file or flag that doesn't exist (look in package.json scripts, the file
      tree, the CLI's help in the code).
-   - **Contradictions:** two rules that can't both be followed ("always ask before X" and "never stop to ask").
+   - **Contradictions:** rules that pull against each other, where obeying one breaks the other ("always ask
+     before X" next to "never stop to ask").
    - **Duplicates:** the same rule in two places, perhaps with different details.
    - **Ambiguity:** a rule an agent can't act on ("be careful with the database") with no test for "careful".
    - **Bloat:** long background, history or pasted output that costs tokens on every run and changes no behavior.
    - **Risky rules:** anything that tells an agent to skip permission prompts, print secrets or push without review.
 4. Use AI Term's measured sizes to point at the files that cost the most.
-5. For each problem give the file, the line, a severity and the smallest edit that fixes it:
+5. Record every problem with where it sits (file and line), how bad it is, and one minimal edit that removes it.
+   Severity levels:
    - critical: a rule that makes agents unsafe or a contradiction that blocks work;
    - high: a stale command or path agents will run and fail on;
    - medium: duplicates and ambiguity;
