@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Connection } from '../../src/client/connection.js';
 import { getPaths } from '../../src/shared/paths.js';
-import { tokenColors } from '../../src/shared/theme-tokens.js';
+import { themeColors, tokenColors } from '../../src/shared/theme-tokens.js';
 import { createTheme } from '../../src/client/tui/theme.js';
 import {electronLaunch} from '../../scripts/electron-launch.js';
 
@@ -82,6 +82,31 @@ test('/setup opens the first-run setup inside the app; Esc closes it', async () 
   await page.keyboard.press('Escape');
   await expect(screen).not.toContainText("What's installed");
   await expect(screen).toContainText('What do you want to build?');
+});
+
+// v1.2.6: the window, its chrome and ai's own screen follow the saved theme and the app fonts as soon as they're saved;
+// a system variant follows macOS light/dark.
+test('the app follows the saved theme and fonts, live; system follows macOS', async () => {
+  const page = await application.firstWindow();
+  await homepageReady(page);
+  const rgb = (hex: string, sep = ', ') => hex.slice(1).match(/../g)?.map(part => Number.parseInt(part, 16)).join(sep);
+  const body = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  await page.evaluate(() => { Reflect.set(window, 'lookOutput', ''); window.terminal.onOutput(data => { Reflect.set(window, 'lookOutput', String(Reflect.get(window, 'lookOutput')) + data); }); });
+  const client = await Connection.connect(getPaths(join(home, '.ai-term')), { entry: resolve('dist/cli/index.js'), autoStart: false });
+  try {
+    await client.request({ kind: 'settings.set', patch: { theme: 'slate', themeVariant: 'light', appFonts: { chrome: 'Helvetica Neue', chromeSize: 12, terminalSize: 15 } } });
+    await expect.poll(body).toBe(`rgb(${rgb(themeColors('slate', 'light').bg)})`);
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.chrome') as Element).fontSize)).toBe('12px');
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.chrome') as Element).fontFamily)).toContain('Helvetica Neue');
+    await expect.poll(() => page.evaluate(() => (document.querySelector('.xterm-char-measure-element') as HTMLElement | null)?.style.fontSize)).toBe('15px');
+    // ai inside repaints its own ground in the same theme.
+    await expect.poll(() => page.evaluate(() => String(Reflect.get(window, 'lookOutput')))).toContain(`48;2;${rgb(themeColors('slate', 'light').bg, ';')}`);
+    await client.request({ kind: 'settings.set', patch: { theme: 'dune', themeVariant: 'system' } });
+    for (const mode of ['light', 'dark'] as const) {
+      await application.evaluate(({ nativeTheme }, source) => { nativeTheme.themeSource = source; }, mode);
+      await expect.poll(body).toBe(`rgb(${rgb(themeColors('dune', mode).bg)})`);
+    }
+  } finally { client.close(); }
 });
 
 test('opens ai homepage, types immediately, preserves paste, searches and resizes', async () => {
