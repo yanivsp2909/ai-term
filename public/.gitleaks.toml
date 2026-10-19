@@ -1,0 +1,6 @@
+title = "AI Term public snapshot"
+
+# Gitleaks' default rules, nothing allowlisted. Fake keys in tests that match a provider's key format (AWS, GitHub,
+# Google, Slack, private-key headers) are joined from parts at run time, so they never sit in the tree whole.
+[extend]
+useDefault = true
