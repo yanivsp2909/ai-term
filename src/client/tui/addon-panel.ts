@@ -7,7 +7,7 @@ import type { TaskUsage } from '../../shared/protocol.js';
 import type { TestResult } from '../../shared/test-run.js';
 import { batchLines, copyText, hasOutputs, teachEnd, type ResultView } from './addon-views.js';
 import { testCommandText } from '../../shared/test-run.js';
-interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; file?(index: number, action: 'open' | 'save'): void; reopen?(): void; cancel?(): boolean }
+interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; followUp?(name: 'fix' | 'issue', args: string): void; file?(index: number, action: 'open' | 'save'): void; reopen?(): void; cancel?(): boolean }
 export class AddonPanel {
   private panel: TextPanel; private ask?: AddonAsk; private result?: AddonResult;
   private chunk = 0; private selected = 0; private approved = false; private busy = false;
@@ -115,6 +115,10 @@ export class AddonPanel {
     else if (r?.kind === 'changelog' && key === 'w' && !this.applied) { this.busy = true; this.actions.apply?.([0]); }
     else if (r?.kind === 'standup' && key === 'm') this.actions.polish?.(r.lines.join('\n'));
     else if (r?.kind === 'study-due' && key === 'r' && this.reopenLabel) this.actions.reopen?.();
+    // v1.2 /triage s: the selected group becomes a /issue or /fix popup with its own estimate and y.
+    else if (r?.kind === 'triage' && (key === 'up' || key === 'down')) this.move(key, r.groups.length);
+    else if (r?.kind === 'triage' && key === 's') { const g = r.groups[this.selected]; if (g?.next === 'issue' && g.issues[0]) this.actions.followUp?.('issue', `#${g.issues[0]}`); else if (g?.next === 'fix') this.actions.followUp?.('fix', [g.title, ...g.items].join('\n')); }
+    else if (r?.kind === 'migrate' && key === 'a' && !this.applied) { this.busy = true; this.actions.apply?.(r.steps.map((_, n) => n)); }
     else if (r?.kind === 'perf' && key === 'a' && this.ab?.state !== 'running' && this.ab?.state !== 'done' && !(this.ab?.state === 'failed' && this.ab.reason === AB_NO_SANDBOX)) { this.busy = true; this.actions.ab?.(false); }
     // Y only once AI Term said there is no sandbox for this A/B.
     else if (r?.kind === 'perf' && key === 'Y' && this.ab?.state === 'failed' && this.ab.reason === AB_NO_SANDBOX) { this.busy = true; this.actions.ab?.(true); }

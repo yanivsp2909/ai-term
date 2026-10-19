@@ -33,6 +33,8 @@ export class AddonFlow {
       commit: () => { void this.action(async () => { if (!this.session) return; const sha = (await options.request({ kind: 'addons.commit', sessionId: this.session })).addonCommit; if (typeof sha !== 'string' || !/^[0-9a-f]{4,64}$/.test(sha)) throw new Error('The commit was not confirmed'); this.panel.setApplied(`✓ committed ${sha} in the agent's worktree · /pr publishes it when you're ready · Esc closes`); }); },
       // /standup m: the same popup becomes the standup-polish add-on, with its own estimate and y.
       polish: text => { void this.action(async () => { this.dispose(); this.ended = false; this.name = 'standup-polish'; this.args = fitLines(text, POLISH_BYTES); this.local = false; this.session = undefined; this.resultReady = false; await this.estimate(); }); },
+      // v1.2 /triage s: the same popup becomes /issue or /fix for one group, with its own estimate and y.
+      followUp: (name, text) => { void this.action(async () => { this.dispose(); this.ended = false; this.name = name; this.args = fitLines(text, POLISH_BYTES); this.local = false; this.session = undefined; this.resultReady = false; await this.estimate(); }); },
       // o and s on a made file: the daemon opens it or copies it to Downloads; nothing happens until the key is pressed.
       file: (index, action) => { void this.action(async () => { if (!this.session) return; const saved = (await options.request({ kind: 'addons.file', sessionId: this.session, index, action })).addonSaved; this.panel.setApplied(action === 'open' ? '✓ opened with your default app · Esc closes' : typeof saved === 'string' ? `✓ saved a copy to ${saved} · Esc closes` : '✓ saved · Esc closes'); }); },
       reopen: () => { options.reopen?.(); },

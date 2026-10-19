@@ -8,8 +8,10 @@ export interface AddonTarget { engine: AgentEngine; model: string | null; auth: 
 // Batch 2: data AI Term gathers read-only before the model runs (a GitHub issue or PR through gh, package queries, the
 // staged changes, a git range, the instruction files, the open-source scan), or none at all (a local add-on).
 // v1.0.7: target is /reverse's app, binary or folder, checked by the daemon, which also finds REA for it.
-export const ADDON_INPUTS = ['text', 'file-or-text', 'agent', 'path', 'path-or-command', 'command-ref', 'github-issue', 'github-pr', 'deps', 'commit', 'git-range', 'context', 'opensource', 'target', 'none'] as const;
-export const GATHERED_INPUTS: readonly AddonInput[] = ['github-issue', 'github-pr', 'deps', 'commit', 'git-range', 'context', 'opensource'];
+// v1.2: triage is /triage's pile (open GitHub issues, the newest .log, or a named log or test output file), gathered
+// read-only; migration is /migrate's two words, from and to.
+export const ADDON_INPUTS = ['text', 'file-or-text', 'agent', 'path', 'path-or-command', 'command-ref', 'github-issue', 'github-pr', 'deps', 'commit', 'git-range', 'context', 'opensource', 'target', 'triage', 'migration', 'none'] as const;
+export const GATHERED_INPUTS: readonly AddonInput[] = ['github-issue', 'github-pr', 'deps', 'commit', 'git-range', 'context', 'opensource', 'triage'];
 // Local add-ons run no model: /bisect runs your test command (it asks), /standup and /study's due list only read
 // AI Term's own records (free: they start without a y).
 export const LOCAL_ADDONS = ['bisect', 'standup', 'study-due'] as const;

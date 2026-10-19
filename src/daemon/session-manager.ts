@@ -754,6 +754,8 @@ export class SessionManager extends EventEmitter {
                 return {data:found.data,subject:`agent: ${live.info.title} (y commits there)`,facts:found.facts,cwd:work.path,commitAgent:id,commitState:found.state};
             }
             case 'git-range': return changelogRange(top,args);
+            // v1.2 /triage: open issues through your gh login (never its token), the newest .log, or a named log file.
+            case 'triage': return triageGather(top,cwd,args,{gh:await resolveExecutable('gh',process.env.PATH??''),cwd:top,env:buildGhEnv(process.env)});
             case 'context':{
                 // The skills and agents an agent here would load (D48, read-only): names, sizes and descriptions.
                 const catalog=new ExtensionReader(homedir(),top).scan((await new SettingsStore(this.paths.root).get()).extensions),loaded=catalog.items.filter(item=>item.enabled&&item.kind!=='command');
@@ -1941,6 +1943,7 @@ export class SessionManager extends EventEmitter {
 import { AddonService, type AddonRunOptions, type ReversePlan } from './addons.js';
 import { bisectPlan, BisectError, runBisect } from './bisect.js';
 import { AddonError } from './addon-error.js';
+import { triageGather } from './triage.js';
 import { AB_RUN_TIMEOUT_MS, AB_STOPPED, copyBenchFile, runAb } from './perf-ab.js';
 import { tempClone } from './temp-clone.js';
 import { githubView } from './github.js';

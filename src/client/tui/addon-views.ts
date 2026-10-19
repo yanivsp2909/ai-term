@@ -41,6 +41,8 @@ export function copyText(r: AddonResult): string | null {
     case 'standup': return r.lines.join('\n');
     case 'standup-polish': return r.text;
     case 'pr-review': return [r.summary, ...r.findings.map(f => `${f.severity.toUpperCase()} ${f.file}:${f.line} ${f.title}\n  ${f.detail.replace(/\n/g, '\n  ')}`)].join('\n');
+    case 'triage': return [r.summary, ...r.groups.flatMap(g => [`${g.priority} · ${g.title}`, ...g.items.map(i => `  ${i}`)])].join('\n');
+    case 'migrate': return [`Migrate ${r.from} → ${r.to}`, r.summary, ...r.steps.flatMap((s, n) => [`${n + 1}. ${s.title}`, `   ${s.prompt.replace(/\n/g, '\n   ')}`]), ...r.risks.length ? ['Risks:', ...r.risks.map(x => `  ${x}`)] : []].join('\n');
     default: return null;
   }
 }
@@ -91,6 +93,16 @@ export function batchLines(r: Batch, view: ResultView): string[] {
     case 'e2e': return made(r.summary, r.files, [], view.tests, '');
     case 'animate': return r.verdict === 'skip' ? [`■ no animation: ${r.why}`, r.summary, 'Nothing was changed · Esc closes'] : [`✓ animate: ${r.why}`, ...made(r.summary, r.files, [], undefined, '')];
     case 'study': return [];
+    // v1.2 /triage: the groups, most urgent first; s starts /issue or /fix for the selected one through its own popup.
+    case 'triage': {
+      const chosen = r.groups[view.selected];
+      const next = !chosen || chosen.next === 'none' ? 'nothing to start for this group' : chosen.next === 'issue' ? `s starts /issue #${chosen.issues[0] ?? ''} for it (asks first)` : 's starts /fix for it (asks first)';
+      return [r.summary, '', ...windowed(r.groups, view.selected, (g, i) => `${i === view.selected ? '›' : ' '} ${g.priority} · ${g.title} (${g.items.length})`),
+        ...chosen ? ['', ...chosen.items] : [], '', `↑↓ group · ${next} · c copies · Esc closes`];
+    }
+    // v1.2 /migrate: the short plan; a starts all of it in one worktree agent.
+    case 'migrate': return [`${r.from} → ${r.to}`, r.summary, '', ...r.steps.map((s, n) => `${n + 1}. ${s.title}`), ...r.risks.length ? ['', 'Risks:', ...r.risks.map(x => `  ${x}`)] : [], '',
+      view.applied ?? 'a starts the whole plan in a worktree (Ask), step by step with the tests kept green · c copies the plan · Esc closes'];
     // Backlog F3: your last /study session in this folder, still open in this homepage, is one key away (no new session).
     case 'study-due': return ['no model · no tokens · from your study schedule', ...r.topics.length ? r.topics.map(t => `${t.topic} · review ${t.step + 1} · due ${t.due}`) : ['Nothing is due today'], '', ...view.reopen ? [`r reopens your last session: ${view.reopen}`] : [], '/study <topic> starts a session · Esc closes'];
     case 'bisect': return [`First bad commit: ${r.commit.slice(0, 12)} ${r.subject}`, `${r.author} · ${r.date} · ${r.steps} step${r.steps === 1 ? '' : 's'} tested`, 'git bisect reset ran and the temporary copy was removed; your checkout was never touched.', '', ...r.diff];
