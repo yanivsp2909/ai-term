@@ -66,13 +66,25 @@ it('TS LOW and security LOW 6: the temporary copy itself stops with the run (git
   expect((await readdir(base)).filter(name => name.startsWith('ai-term-clone-') && !before.has(name))).toEqual([]);
 });
 
-it('TS LOW and security LOW 1: the sweep skips an impossible pid quietly, and removes a dead run\'s folder it was locked out of', async () => {
+it('TS LOW and security LOW 1: the sweep skips an impossible pid quietly, and never changes a folder it is locked out of', async () => {
   const dir = await temp(), logs: string[] = [];
   const huge = join(dir, 'ai-term-test-aaaaaa'); await mkdir(huge); await writeFile(join(huge, OWNER_FILE), 'ai-term 9999999999\n');
+  // Follow-up review: a locked folder's mark can't be read, so it may not be AI Term's at all: it is left exactly as it is.
   const locked = join(dir, 'ai-term-test-bbbbbb'); await mkdir(locked); await writeFile(join(locked, OWNER_FILE), 'ai-term 999999\n'); await chmod(locked, 0o000);
-  expect(await sweepTemp({ dir, log: text => logs.push(text) })).toBe(1);
-  expect(await present(huge)).toBe(true); expect(await present(locked)).toBe(false);
-  expect(logs).toEqual(['Temp sweep: removed 1 temporary folder a stopped AI Term left behind']);
+  expect(await sweepTemp({ dir, log: text => logs.push(text) })).toBe(0);
+  expect(await present(huge)).toBe(true); expect(await present(locked)).toBe(true);
+  expect((await lstat(locked)).mode & 0o777).toBe(0);
+  expect(logs).toEqual([]);
+});
+
+it('follow-up LOW: the daemon runs one /bisect per folder, whatever the client shows', async () => {
+  const root = await temp(), runner = { addonBisect: vi.fn(() => new Promise(() => {})) };
+  const service = new AddonService(root, root, runner as never);
+  const start = (service as unknown as { startBisect(input: unknown, plan: unknown, unsandboxed: boolean): string }).startBisect.bind(service);
+  start({ addon: { name: 'bisect', local: 'bisect' }, cwd: '/tmp/a' }, { sandbox: true }, false);
+  expect(() => start({ addon: { name: 'bisect', local: 'bisect' }, cwd: '/tmp/a' }, { sandbox: true }, false)).toThrow('A /bisect is already running in this folder');
+  start({ addon: { name: 'bisect', local: 'bisect' }, cwd: '/tmp/b' }, { sandbox: true }, false);
+  expect(runner.addonBisect).toHaveBeenCalledTimes(2);
 });
 
 it('security LOW 4: an A/B that fails on a system error says so in fixed words, never with its path', async () => {
