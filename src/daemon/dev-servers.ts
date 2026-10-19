@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { buildTestEnv } from './env.js';
 import type { PreparedSandbox } from './test-sandbox.js';
 import { killGroup } from '../shared/kill-tree.js';
+import { errorKind } from './log.js';
 
 // v0.9.2 dev servers per worktree (D55, off by default; /settings y). The prompt's text for this part never arrived (it
 // was cut off inside the queue part); the spec chosen: you start one with /dev after seeing exactly what runs, where, on
@@ -87,13 +88,13 @@ export class DevServers {
   // Resolves once the server is running; a program that can't start rejects, and its sandbox folder goes either way.
   // onExit: the server ended by itself (its exit code), not by stop().
   async start(id: string, plan: DevStart, onExit: (code: number | null) => void): Promise<void> {
-    const refuse = async (message: string): Promise<never> => { await plan.sandbox?.dispose().catch(() => this.log.error('Dev server: its temp folder could not be removed')); throw new Error(message); };
+    const refuse = async (message: string): Promise<never> => { await plan.sandbox?.dispose().catch((error: unknown) => this.log.error(`Dev server: its temp folder could not be removed (${errorKind(error)})`)); throw new Error(message); };
     if (this.closed) return refuse('AI Term is stopping; start it again after');
     if (this.running.has(id)) return refuse('A dev server already runs for this agent; /dev shows it');
     const [program, ...args] = [...plan.sandbox?.prefix ?? [], ...plan.command];
     let child: ChildProcessByStdio<null, Readable, Readable>;
     try { child = spawn(program ?? '', args, { cwd: plan.cwd, env: { ...plan.env, ...plan.sandbox?.env ?? {}, PORT: String(plan.port), HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true, windowsHide: true }); }
-    catch { return refuse("The dev server couldn't start"); }
+    catch (error) { this.log.error(`Dev server couldn't start (${errorKind(error)})`); return refuse("The dev server couldn't start"); }
     let finished: () => void = () => {};
     const entry: Running = { child, out: emptyTail(), err: emptyTail(), stopping: false, done: new Promise<void>(resolve => { finished = resolve; }), box: plan.sandbox };
     this.running.set(id, entry);
@@ -103,11 +104,12 @@ export class DevServers {
     child.once('close', code => {
       entry.out = appendTail(entry.out, Buffer.alloc(0), true); entry.err = appendTail(entry.err, Buffer.alloc(0), true);
       this.running.delete(id); finished();
-      void entry.box?.dispose().catch(() => this.log.error('Dev server: its temp folder could not be removed'));
+      void entry.box?.dispose().catch((error: unknown) => this.log.error(`Dev server: its temp folder could not be removed (${errorKind(error)})`));
       if (!entry.stopping && started) onExit(code);
     });
-    started = await new Promise<boolean>(resolve => { child.once('spawn', () => resolve(true)); child.once('error', () => resolve(false)); });
-    if (!started) { entry.stopping = true; this.log.error("Dev server couldn't start"); throw new Error("The dev server couldn't start"); }
+    let failure: unknown;
+    started = await new Promise<boolean>(resolve => { child.once('spawn', () => resolve(true)); child.once('error', error => { failure = error; resolve(false); }); });
+    if (!started) { entry.stopping = true; this.log.error(`Dev server couldn't start (${errorKind(failure)})`); throw new Error("The dev server couldn't start"); }
   }
   // Its whole process group: SIGTERM, then SIGKILL after 2 s (Windows: taskkill /T /F at once). At most 5 s: a child that
   // left the group and keeps the pipes open doesn't hold up removal or shutdown.
@@ -115,7 +117,7 @@ export class DevServers {
     const entry = this.running.get(id); if (!entry) return;
     entry.stopping = true;
     const pid = entry.child.pid;
-    const signal = (name: NodeJS.Signals) => { if (pid === undefined) return; try { killGroup(pid, name, () => this.log.error('Dev server could not be stopped')); } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) this.log.error('Dev server could not be stopped'); } };
+    const signal = (name: NodeJS.Signals) => { if (pid === undefined) return; try { killGroup(pid, name, () => this.log.error('Dev server could not be stopped')); } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) this.log.error(`Dev server could not be stopped (${errorKind(error)})`); } };
     signal('SIGTERM');
     const kill = setTimeout(() => signal('SIGKILL'), KILL_GRACE_MS); kill.unref();
     let late: ReturnType<typeof setTimeout> | undefined;

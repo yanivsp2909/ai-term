@@ -4,6 +4,7 @@ import { rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { atomicWrite, readState } from './store.js';
 import { SettingsStore } from './settings.js';
+import { errorKind } from './log.js';
 import { MAX_QUEUE_ITEMS, MAX_RUN_MS, nextLocalTime, stopDelayMs, untilWithin, validateQueueItem, type QueueItem, type QueueLimit, type QueueRequest, type QueueTrigger } from '../shared/queue.js';
 import type { SessionInfo } from '../shared/protocol.js';
 import type { StatusState } from './status-reducer.js';
@@ -37,7 +38,7 @@ export class QueueService extends EventEmitter {
   constructor(root: string, private readonly manager: QueueManager, private readonly log: { error(text: string): void; info(text: string): void }, private readonly now: () => Date = () => new Date(),
     private readonly enabled: () => Promise<boolean> = async () => (await new SettingsStore(root).get()).queue === true) {
     super(); this.path = join(root, 'queue.json');
-    manager.on('statusChanged', (session, previous, next) => { this.onStatus(session.title, previous.status, next.status).catch(() => this.log.error('Queue trigger failed')); });
+    manager.on('statusChanged', (session, previous, next) => { this.onStatus(session.title, previous.status, next.status).catch((error: unknown) => this.log.error(`Queue trigger failed (${errorKind(error)})`)); });
   }
   list(): QueueItem[] { return this.items.map(item => ({ ...item })); }
   // Each item on its own: one that no longer validates is left out, and the file as it was is kept beside it.
@@ -61,7 +62,7 @@ export class QueueService extends EventEmitter {
     }
     if (changed) await this.save();
   }
-  start(): void { this.timer ??= setInterval(() => { this.tick().catch(() => this.log.error('Queue check failed')); }, TICK_MS); this.timer.unref(); }
+  start(): void { this.timer ??= setInterval(() => { this.tick().catch((error: unknown) => this.log.error(`Queue check failed (${errorKind(error)})`)); }, TICK_MS); this.timer.unref(); }
   // While the daemon stops nothing starts or fails (review: shutdown's exits would otherwise fire `after` items).
   // Resolves once a save already in flight has finished, so shutdown (and a test's cleanup) never races queue.json.
   close(): Promise<void> { this.closed = true; if (this.timer) clearInterval(this.timer); this.timer = undefined; return this.saving; }
@@ -90,12 +91,12 @@ export class QueueService extends EventEmitter {
       if (now - Date.parse(item.trigger.due) > LATE_MS) { item.state = 'missed'; item.note = `AI Term wasn't free at ${item.trigger.time} (the Mac may have slept), so it didn't start late`; changed = true; continue; }
       await this.launch(item);
     }
-    if (changed) await this.save().catch(() => this.log.error(UNSAVED));
+    if (changed) await this.save().catch((error: unknown) => this.log.error(`${UNSAVED} (${errorKind(error)})`));
   }
   // Settings that can't be read count as the queue being off (logged once): nothing starts, nothing crashes.
   private async isOn(): Promise<boolean> {
     try { const on = await this.enabled(); this.settingsFailed = false; return on; }
-    catch { if (!this.settingsFailed) this.log.error('Queue settings unreadable; nothing starts'); this.settingsFailed = true; return false; }
+    catch (error) { if (!this.settingsFailed) this.log.error(`Queue settings unreadable; nothing starts (${errorKind(error)})`); this.settingsFailed = true; return false; }
   }
   // Still queued, still waiting, and the daemon not stopping: re-checked right before each start (review: an item removed
   // meanwhile must not start).
@@ -110,40 +111,40 @@ export class QueueService extends EventEmitter {
       if (next === 'error') { item.state = 'failed'; item.note = `${title} ended with an error, so this one didn't start`; continue; }
       await this.launch(item);
     }
-    await this.save().catch(() => this.log.error(UNSAVED));
+    await this.save().catch((error: unknown) => this.log.error(`${UNSAVED} (${errorKind(error)})`));
   }
   private async launch(item: QueueItem): Promise<void> {
     if (!this.live(item)) return;
     // Its stop time must still be within 12 hours: an `after` item may start long after it was queued.
     if (item.limit.until && stopDelayMs(item.limit.until, this.now()) > MAX_RUN_MS) {
       item.state = 'failed'; item.note = `its stop time (${item.limit.until}) is more than 12 hours away, so it didn't start`;
-      await this.save().catch(() => this.log.error(UNSAVED)); return;
+      await this.save().catch((error: unknown) => this.log.error(`${UNSAVED} (${errorKind(error)})`)); return;
     }
     // Saved as started before the start, so a crash in between can't start it twice later.
     item.state = 'started'; delete item.note;
-    await this.save().catch(() => this.log.error(UNSAVED));
+    await this.save().catch((error: unknown) => this.log.error(`${UNSAVED} (${errorKind(error)})`));
     let session: { id: string };
     try { session = await this.manager.create(item.request); }
     catch (error) {
       item.state = 'failed'; item.note = shown(error);
-      this.log.error('Queued agent could not start');
-      await this.save().catch(() => this.log.error(UNSAVED)); return;
+      this.log.error(`Queued agent could not start (${errorKind(error)})`);
+      await this.save().catch((error: unknown) => this.log.error(`${UNSAVED} (${errorKind(error)})`)); return;
     }
     item.sessionId = session.id;
     // Every queued agent runs with its limit or not at all (gate: one that started and lost its limit ran on unlimited
     // while the panel said failed).
-    try { this.manager.setQueueLimit(session.id, item.limit, note => { item.note = note; this.save().catch(() => this.log.error(UNSAVED)); }); }
-    catch {
-      try { await this.manager.stop(session.id); item.note = "its limit couldn't be set, so AI Term stopped it"; this.log.error('Queued agent started, but its limit could not be set; it was stopped'); }
-      catch { item.note = "its limit couldn't be set and AI Term couldn't stop it: stop it on the homepage"; this.log.error('Queued agent without its limit could not be stopped; stop it on the homepage'); }
+    try { this.manager.setQueueLimit(session.id, item.limit, note => { item.note = note; this.save().catch((error: unknown) => this.log.error(`${UNSAVED} (${errorKind(error)})`)); }); }
+    catch (limitError) {
+      try { await this.manager.stop(session.id); item.note = "its limit couldn't be set, so AI Term stopped it"; this.log.error(`Queued agent started, but its limit could not be set (${errorKind(limitError)}); it was stopped`); }
+      catch (stopError) { item.note = "its limit couldn't be set and AI Term couldn't stop it: stop it on the homepage"; this.log.error(`Queued agent without its limit could not be stopped (${errorKind(stopError)}); stop it on the homepage`); }
     }
-    await this.save().catch(() => this.log.error(UNSAVED));
+    await this.save().catch((error: unknown) => this.log.error(`${UNSAVED} (${errorKind(error)})`));
   }
   // Writes one after another; a failed write rejects for its caller (add and remove say so) and the next one still runs.
   private async save(): Promise<void> {
     const write = this.saving.then(() => atomicWrite(this.path, this.items));
     this.saving = write.then(() => undefined, () => undefined);
-    try { await write; } catch { throw new Error(UNSAVED); }
+    try { await write; } catch (error) { throw new Error(UNSAVED, { cause: error }); }
     this.emit('changed', this.list());
   }
 }

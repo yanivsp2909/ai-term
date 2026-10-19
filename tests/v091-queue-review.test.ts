@@ -20,7 +20,7 @@ it('HIGH (both): settings that can\'t be read count as the queue being off and a
   const queue = new QueueService(root, manager() as never, logger, () => new Date(), async () => { throw new Error('Unsafe settings file'); });
   await queue.load();
   await expect(queue.tick()).resolves.toBeUndefined();
-  expect(logger.error).toHaveBeenCalledWith('Queue settings unreadable; nothing starts');
+  expect(logger.error).toHaveBeenCalledWith('Queue settings unreadable; nothing starts (Error)');
 });
 
 it('HIGH (TS review): while the daemon shuts down nothing is started or marked failed', async () => {

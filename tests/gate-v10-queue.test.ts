@@ -20,6 +20,6 @@ it('an agent whose limit can\'t be set is stopped, and the note says it started 
   listeners.forEach(listener => listener({ title: 'fixer' }, { status: 'running' }, { status: 'done' }));
   await vi.waitFor(() => expect(manager.stop).toHaveBeenCalledWith(id), { timeout: 10_000 });
   expect(queue.list()[0]).toMatchObject({ state: 'started', sessionId: id, note: "its limit couldn't be set, so AI Term stopped it" });
-  expect(errors).toContain('Queued agent started, but its limit could not be set; it was stopped');
+  expect(errors).toContain('Queued agent started, but its limit could not be set (Error); it was stopped');
   await queue.close();
 }, 20_000);

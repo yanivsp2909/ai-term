@@ -9,6 +9,13 @@ export function redact(text: string): string {
         // eslint-disable-next-line no-control-regex -- Logs discard terminal controls.
         .replace(/[\x00-\x1f\x7f-\x9f]/g, ' ');
 }
+// Backlog F5: what kind of error it was, for a log line: its class and code (a wrapped error's cause first), never its
+// message, which may name a path or carry a secret.
+export function errorKind(error: unknown): string {
+    const inner = error instanceof Error && error.cause !== undefined ? error.cause : error;
+    const code = inner instanceof Error && 'code' in inner && typeof inner.code === 'string' && /^[A-Z][A-Z0-9_]{1,40}$/.test(inner.code) ? ` ${inner.code}` : '';
+    return `${inner instanceof Error ? inner.constructor.name : typeof inner}${code}`;
+}
 export class Logger extends EventEmitter {
     private failed = false;
     constructor(private readonly path: string, private readonly maxBytes = 5 * 1024 * 1024) { super(); }
