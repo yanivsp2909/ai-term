@@ -18,6 +18,7 @@ import { parseAddonResult } from '../src/shared/addon-results.js';
 import type { AddonAsk } from '../src/shared/addons.js';
 import type { RequestBody } from '../src/client/connection.js';
 import type { SessionInfo, SuccessResponse } from '../src/shared/protocol.js';
+import { processRuns } from './platform.js';
 
 // Backlog F1 (batch 1 suggestion, B33 LOW-3): x stops a running /bisect or /perf A/B: its processes are stopped, its
 // temporary copy is removed, and the popup says "stopped". Esc still only closes (D58: closing never stops), and
@@ -26,7 +27,7 @@ const exec = promisify(execFile), roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 async function temp(): Promise<string> { const dir = await realpath(await mkdtemp(join(tmpdir(), 'ai-f1-'))); roots.push(dir); return dir; }
 const ID = ['-c', 'user.name=T', '-c', 'user.email=t@e.invalid', '-c', 'commit.gpgsign=false'];
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false; throw error; } };
+const alive = processRuns;
 const gone = async (path: string) => { try { await lstat(path); return false; } catch (error) { if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return true; throw error; } };
 
 it('a stopped /bisect ends its test processes, removes its temporary copy and says stopped', async () => {

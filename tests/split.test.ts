@@ -104,6 +104,8 @@ it('mouse events go to the pane under the pointer in its own coordinates and enc
 it('a drag stays with the pane it started in, clamped to its edge', async () => {
  const { tty, run, conn } = setup(2, { modes:[{ mouseTracking:'drag', mouseEncoding:'sgr' }, { mouseTracking:'drag', mouseEncoding:'sgr' }] });
  await ready(tty);
+ // B34: the pane forwards a drag only once its attach reply (modes and snapshot) is in, which can lag the help line under load.
+ await shows(tty, 'hello from agent1');
  press(tty, '\x1b[<0;60;10M\x1b[<32;90;10M\x1b[<0;90;10m');
  expect(conn(0).typed()).toBe('\x1b[<0;60;9M\x1b[<32;65;9M\x1b[<0;65;9m'); expect(conn(1).typed()).toBe('');
  press(tty, [5]); await run;

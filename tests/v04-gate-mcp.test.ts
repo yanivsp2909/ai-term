@@ -15,6 +15,7 @@ import { Transcript } from '../src/agent/transcript.js';
 import { createTheme } from '../src/client/tui/theme.js';
 import type { McpAccess } from '../src/shared/mcp.js';
 import { stubFacts } from './fixtures/agent-facts.js';
+import { processRuns } from './platform.js';
 
 // v0.4 gate, MCP lifecycle: a cancelled call doesn't leave the next one failing, /cd and a daemon shutdown stop the
 // servers they leave behind, and a failed rollback still tries to remove every Keychain value it wrote.
@@ -33,7 +34,7 @@ const SERVER = (pidFile: string) => `import {createInterface} from 'node:readlin
 const tools=[{name:'echo',description:'Echo',inputSchema:{type:'object',properties:{message:{type:'string'}}}}];
 createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id===undefined)return;const result=m.method==='initialize'?{protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'s',version:'1'}}:m.method==='tools/list'?{tools}:{content:[{type:'text',text:'echo '+m.params.arguments.message}]};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');});
 process.stdin.on('end',()=>{});setInterval(()=>{},1000);`;
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const alive = processRuns;
 async function server(f: Awaited<ReturnType<typeof fixture>>) {
   const pidFile = join(f.home, 'server.pid'), path = join(f.home, 'server.mjs'); await writeFile(path, SERVER(pidFile));
   await f.service.query('agent', { kind: 'mcp.add', config: { name: 'local', type: 'stdio', command: process.execPath, args: [path], env: [] }, values: {} });

@@ -8,8 +8,9 @@ import headless from '@xterm/headless';
 import { Connection } from '../src/client/connection.js';
 import { getPaths,isFsError } from '../src/shared/paths.js';
 import { RESET_MODES } from '../src/client/terminal-modes.js';
+import { NO_VIM } from './platform.js';
 
-it.each(['off','on'] as const)('bar %s: real terminal query replies and startup noise stay attached; Ctrl+E detaches from live vim and reattach preserves text',async(bar)=>{
+it.skipIf(NO_VIM).each(['off','on'] as const)('bar %s: real terminal query replies and startup noise stay attached; Ctrl+E detaches from live vim and reattach preserves text (skipped without /usr/bin/vim)',async(bar)=>{
  const root=await mkdtemp(join(tmpdir(),'ai-term-terminal-')),paths=getPaths(root),entry=resolve('src/cli/index.ts');
  const env={PATH:'/usr/bin:/bin',HOME:root,SHELL:'/bin/sh',AI_TERM_HOME:root,TERM:'xterm-256color',TERM_PROGRAM:'Apple_Terminal',COLORTERM:'truecolor'};
  // B34: the shell starts as a login shell, whose /etc/profile picks `# ` for root and `$ ` for anyone else; the home's

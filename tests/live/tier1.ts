@@ -8,6 +8,7 @@ import type { Check } from './runner.js';
 import { KEY, LiveFailure, sleep } from './screen.js';
 import { STUB_MODEL, startStubOllama } from './stub-ollama.js';
 import { aiCommand, endWorld, FAKE_KNOWN_HOSTS, git, makeRepo, makeWorld, startAi } from './world.js';
+import { NO_LINUX_SANDBOX } from '../platform.js';
 import { bisectRepo, FAKE_CLAUDE, waitAsk, fail, localPage, nextMinute, plain, rename, stop, stubTarget, textOf, treeDigest, until, waitBottom, worktreeOf, type Tier1 } from './tier1-helpers.js';
 
 // Tier 1: no login, no key, no phone. Everything runs in the throwaway world, against the stub Ollama on 127.0.0.1.
@@ -36,6 +37,10 @@ export async function setUpTier1(cleanup: Cleanup, keep: () => boolean = () => f
   return { world, stub, repo, ai, home: new Home(ai) };
 }
 
+// What ai doctor says about the sandbox here (B34: Linux has bwrap, or none and why).
+const SANDBOX_LINE = process.platform === 'darwin' ? /^Sandbox: sandbox-exec/m : NO_LINUX_SANDBOX ? /^Sandbox: none · don't ask needs/m : /^Sandbox: bwrap/m;
+// The key that starts a dev server: y in its sandbox, a capital Y on Linux, where it runs without one.
+const DEV_YES = process.platform === 'linux' ? 'Y' : 'y';
 const step = (id: string, name: string, look: string, run: (t: Tier1) => Promise<void>): Check<Tier1> => ({ id, name, look, run });
 // A test card line, with the preview hidden (p) so the card has the full width for the whole line.
 async function testCard(t: Tier1, title: string, what: string): Promise<void> {
@@ -185,6 +190,18 @@ export const TIER1: readonly Check<Tier1>[] = [
   step('dontask', 'the agent bash sandbox (D57): a Don\'t ask agent (a second branch) can\'t read AI Term\'s settings, and its commands see no secrets', '"new worktree · ai/ai-term-2", "! don\'t ask"; the command\'s report says "blocked by sandbox: ~/.ai-term/settings.json"; env shows none of the planted secrets', async t => {
     await t.home.command('/model'); await t.ai.waitFor('OLLAMA'); await t.ai.type(STUB_MODEL, false); await sleep(200); t.ai.write(KEY.enter);
     await waitBottom(t, new RegExp(`${STUB_MODEL} · ai term`), `${STUB_MODEL} · ai term`);
+    // B34: Linux without a working bubblewrap has no Don't ask; the homepage says why. The second agent still starts (in
+    // Ask, a reply with no command), so the checks after this one find the same agents and branches.
+    if (NO_LINUX_SANDBOX) {
+      await t.home.command("/mode don't ask"); await t.ai.waitFor(/don't ask needs (bubblewrap|a sandbox)/, 5000, "the note saying don't ask needs a sandbox");
+      await t.home.command('LIVE hello from a second agent');
+      await t.ai.waitFor('Start a new agent'); await t.ai.waitFor('new worktree · ai/ai-term-2');
+      t.ai.write(KEY.enter); await t.ai.waitGone('Start a new agent');
+      await t.home.waitStatus('AI Term', /✓ done/, 20_000, 'done');
+      const made = await git(t.repo, 'branch', '--format=%(refname:short)');
+      if (!/^ai\/ai-term$/m.test(made) || !/^ai\/ai-term-2$/m.test(made)) await fail(t, `two AI Term agents should have two branches; git has: ${made.replace(/\n/g, ' ')}`);
+      return;
+    }
     await t.home.command("/mode don't ask"); await waitBottom(t, /don't ask/, "don't ask");
     const before = t.stub.toolResults.length;
     // By its absolute path in the world (security review: ~ is only as safe as HOME).
@@ -236,6 +253,14 @@ export const TIER1: readonly Check<Tier1>[] = [
   }),
   step('testbox', 'the test sandbox (D56): a test reading the planted ~/.ssh file is blocked; l switches 127.0.0.1 for a test that calls a local server', '"no reads of ~/.ssh", "✗ blocked by sandbox: ~/.ssh/known_hosts", "✗ blocked by sandbox: network" with 127.0.0.1 off, "✓ tests pass" with it on', async t => {
     await t.home.command(`/test-cmd cat ${t.world.home}/.ssh/known_hosts`); await t.ai.waitFor('✓ test command for');
+    // B34: off macOS the plan says what that machine gives (no sandbox here, or 127.0.0.1 always the tests' own on Linux,
+    // where l switches nothing); the runs below are sandbox-exec's.
+    if (process.platform !== 'darwin') {
+      await t.home.select('builder'); await t.home.command('/test'); await t.ai.waitFor('Run tests for builder');
+      await t.ai.waitFor(NO_LINUX_SANDBOX ? "no sandbox: it runs with your user's rights" : "127.0.0.1: only the tests' own on Linux"); await t.home.close('Tests');
+      await t.home.command('/test-cmd none'); await t.ai.waitFor(/test command .*cleared|no test command/i, 5000, 'the test command cleared');
+      return;
+    }
     await t.home.select('builder'); await t.home.command('/test'); await t.ai.waitFor('Run tests for builder'); await t.ai.waitFor('no reads of ~/.ssh'); await t.home.close('Tests');
     await runTest(t, 'builder', 'off'); await testCard(t, 'builder', '✗ blocked by sandbox: ~/.ssh/known_hosts');
     if ((await t.ai.text()).includes(KNOWN_HOSTS_TOKEN) || plain(t.ai.raw()).includes(KNOWN_HOSTS_TOKEN)) await fail(t, 'the planted known_hosts reached the screen');
@@ -293,8 +318,12 @@ export const TIER1: readonly Check<Tier1>[] = [
   step('dev', '/dev on a tiny local server: /dev-cmd, y starts it on its own 127.0.0.1 port, x stops it', '"▶ dev server for builder · http://127.0.0.1:<port>", the page answering LIVE-DEV-OK, then "stopped"', async t => {
     await t.home.command('/dev-cmd node server.js'); await t.ai.waitFor('✓ dev command for');
     await t.home.select('builder'); await t.home.command('/dev');
-    await t.ai.waitFor('Dev server for builder'); await t.ai.waitFor('listens on 127.0.0.1 only'); await t.ai.waitFor('y starts it');
-    t.ai.write('y');
+    // B34: on Linux a dev server runs without a sandbox (one there can't be reached from your browser): the plan says so
+    // and only a capital Y runs it.
+    await t.ai.waitFor('Dev server for builder');
+    if (process.platform === 'linux') { await t.ai.waitFor('no sandbox: on Linux'); await t.ai.waitFor('Y (capital) runs it'); }
+    else { await t.ai.waitFor('listens on 127.0.0.1 only'); await t.ai.waitFor('y starts it'); }
+    t.ai.write(DEV_YES);
     const shown = await t.ai.waitFor(/▶ dev server for builder · http:\/\/127\.0\.0\.1:(\d+)/, 20_000, '▶ dev server for builder · http://127.0.0.1:<port>');
     const port = Number(shown.match(/▶ dev server for builder · http:\/\/127\.0\.0\.1:(\d+)/)?.[1]);
     await until(t, async () => (await localPage(port)) === 'LIVE-DEV-OK', `http://127.0.0.1:${port} answering LIVE-DEV-OK`, 20_000);
@@ -311,9 +340,9 @@ export const TIER1: readonly Check<Tier1>[] = [
       await t.home.select('builder'); await t.home.command('/dev'); const mine = await t.ai.waitFor(/Dev server for builder[\s\S]*http:\/\/127\.0\.0\.1:(\d+)/, 15_000, 'the builder dev plan');
       const port = (text: string) => text.match(/in .* · http:\/\/127\.0\.0\.1:(\d+)/)?.[1];
       if (port(plan) !== port(mine)) await fail(t, `the two plans show different ports (${port(mine) ?? '?'} and ${port(plan) ?? '?'}), so nothing races`);
-      t.ai.write('y'); await t.ai.waitFor(/▶ dev server for builder · http:\/\/127\.0\.0\.1:\d+/, 20_000);
+      t.ai.write(DEV_YES); await t.ai.waitFor(/▶ dev server for builder · http:\/\/127\.0\.0\.1:\d+/, 20_000);
       // Refused either way: the port is part of the plan you approved, so a plan whose port was just taken has changed.
-      other.write('y'); await other.waitFor(/Another agent's dev server just took that port; run \/dev again|The dev server setup changed since it was shown; run \/dev again/, 15_000, 'the second y refused (port taken, or the plan changed)');
+      other.write(DEV_YES); await other.waitFor(/Another agent's dev server just took that port; run \/dev again|The dev server setup changed since it was shown; run \/dev again/, 15_000, 'the second y refused (port taken, or the plan changed)');
       if (/▶ dev/.test(await second.card('/deck'))) await fail(t, 'a second dev server started on the same port');
       await second.close('Dev server'); await second.command('/exit'); await Promise.race([other.exited, sleep(10_000)]);
       await t.home.command('/dev'); await t.ai.waitFor('▶ running'); t.ai.write('x'); await t.ai.waitFor('dev server for builder stopped'); await t.home.close('Dev server');
@@ -371,7 +400,18 @@ export const TIER1: readonly Check<Tier1>[] = [
   step('bisect', '/bisect from Part A on a Node repository whose test runner writes a cache inside node_modules', '"dependencies: node_modules cloned from your checkout", the planted commit as the first bad one; your node_modules unchanged; no copy left', async t => {
     const { repo, bad, digest: before } = await bisectRepo(t.world), requests = t.stub.requests;
     await cd(t, repo);
-    await t.home.command('/bisect npm test'); await t.ai.waitFor('test: npm test'); await t.ai.waitFor('dependencies: node_modules cloned from your checkout'); await t.ai.waitFor('✓ test sandbox');
+    await t.home.command('/bisect npm test'); await t.ai.waitFor('test: npm test');
+    // B34: without a sandbox nothing is cloned or linked into the copy, so this repository's tests can't run there: the
+    // plan says so, asks for a capital Y, and Esc leaves everything as it was.
+    if (NO_LINUX_SANDBOX) {
+      await t.ai.waitFor('● no sandbox here'); await t.ai.waitFor('Y (capital) starts without a sandbox'); await t.ai.waitFor('the copy has only committed files');
+      t.ai.write(KEY.esc); await t.ai.waitGone('Y (capital) starts without a sandbox');
+      if (await treeDigest(join(repo, 'node_modules')) !== before) await fail(t, 'your node_modules changed');
+      if ((await readdir(t.world.tmp)).some(name => name.startsWith('ai-term-clone-'))) await fail(t, 'a temporary copy was made though nothing ran');
+      await cd(t, t.repo);
+      return;
+    }
+    await t.ai.waitFor('dependencies: node_modules cloned from your checkout'); await t.ai.waitFor('✓ test sandbox');
     t.ai.write('y'); await t.ai.waitFor('planted: break the state', 120_000); await t.ai.waitFor(bad.slice(0, 7));
     await t.home.close('Add-on');
     if (await treeDigest(join(repo, 'node_modules')) !== before) await fail(t, 'your node_modules changed during the bisect');
@@ -418,7 +458,7 @@ export const TIER1: readonly Check<Tier1>[] = [
   step('doctor', 'ai doctor checks this world: the daemon, the folder modes, the CLIs it finds (only the stand-in Claude Code), the sandbox', '"Daemon: running", "mode 0700", the stand-in claude, "codex: not found", "Sandbox: sandbox-exec", "Credential store: unavailable", and the same lines in the /doctor popup', async t => {
     const { code, stdout } = await aiCommand(t.world, ['doctor'], t.repo);
     // The world's home has no login keychain: "unavailable" here also shows the run never reaches yours.
-    for (const line of [/^Daemon: running/m, /: mode 0700$/m, existsSync(join(t.world.bin, 'claude')) ? new RegExp(`^claude: ${t.world.bin}/claude; version 2\\.1\\.302$`, 'm') : /^claude: not found/m, /^codex: not found/m, /^gh: not found/m, /^Sandbox: sandbox-exec/m, /^Credential store: unavailable/m])
+    for (const line of [/^Daemon: running/m, /: mode 0700$/m, existsSync(join(t.world.bin, 'claude')) ? new RegExp(`^claude: ${t.world.bin}/claude; version 2\\.1\\.302$`, 'm') : /^claude: not found/m, /^codex: not found/m, /^gh: not found/m, SANDBOX_LINE, /^Credential store: unavailable/m])
       if (!line.test(stdout)) throw new LiveFailure(`ai doctor (exit ${code}) printed no line matching ${String(line)}`, stdout);
     // /doctor on the homepage says the same.
     await t.home.command('/doctor'); await t.ai.waitFor('Daemon: running', 15_000);

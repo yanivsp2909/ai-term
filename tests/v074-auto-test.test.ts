@@ -14,7 +14,7 @@ import { buildTestEnv } from '../src/daemon/env.js';
 import { runTests } from '../src/daemon/test-run.js';
 import { failingCount, isTestConfig, parseTestCommand, testCommandText, validateTestPlan, validateTestResult } from '../src/shared/test-run.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
-import { NO_LINUX_SANDBOX } from './platform.js';
+import { NO_LINUX_SANDBOX, processRuns } from './platform.js';
 
 // v0.7.4 auto-test (D55, on): a per-project test command, set once with /test-cmd. When an agent finishes a turn, it runs
 // in the agent's worktree with a timeout, an output cap and an env without keys; the card says `✓ tests pass` or
@@ -94,7 +94,7 @@ it('runs a command with argv only: pass, fail with a count, timeout kills its wh
   fire();
   expect(await slow).toEqual({ state: 'timeout' });
   const child = Number((await readFile(pidFile, 'utf8')).trim());
-  await vi.waitFor(() => expect(() => process.kill(child, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' })), { timeout: 10_000 });
+  await vi.waitFor(() => expect(processRuns(child)).toBe(false), { timeout: 10_000 });
   expect(await runTests([await write('loud.sh', 'yes "line of output" | head -c 6000000\necho "Tests  1 failed"\nexit 1\n')], dir, env, { timeoutMs: 20_000 })).toEqual({ state: 'fail', failing: 1 });
   expect(await runTests([join(dir, 'missing-program')], dir, env, { timeoutMs: 5_000 })).toEqual({ state: 'error' });
   const aborted = new AbortController(); setTimeout(() => aborted.abort(), 200);

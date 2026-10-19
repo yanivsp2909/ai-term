@@ -9,6 +9,7 @@ import { McpService } from '../src/daemon/mcp/service.js';
 import { mcpConnector, mcpEnv } from '../src/daemon/mcp/runtime.js';
 import { validateMcpConfig, validateMcpRequest } from '../src/shared/validate.js';
 import type { McpView } from '../src/shared/mcp.js';
+import { processRuns } from './platform.js';
 
 const roots:string[]=[],services:McpService[]=[];
 afterEach(async()=>{for(const s of services.splice(0))await s.stop('agent');for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});vi.unstubAllEnvs();});
@@ -66,12 +67,12 @@ it('cancels a slow stdio call and kills the process group; exiting also stops an
  await f.service.query('agent',{kind:'mcp.add',config:{name:'slow',type:'stdio',command:process.execPath,args:[path],env:[]},values:{}});const s=await first(f.service,f.cwd);
  await f.service.query('agent',{kind:'mcp.schema',cwd:f.cwd,serverId:s.id,hash:s.hash,tool:'echo'});const pids=JSON.parse(await readFile(pidPath,'utf8')) as number[];
  const pending=f.service.query('agent',{kind:'mcp.call',cwd:f.cwd,serverId:s.id,hash:s.hash,tool:'echo',arguments:{message:'wait'}}).catch(()=>null);
- await vi.waitFor(()=>readFile(callPath),{timeout:10_000});await f.service.query('agent',{kind:'mcp.cancel'});expect(await pending).toBeNull();for(const pid of pids)await vi.waitFor(()=>expect(()=>process.kill(pid,0)).toThrow(),{timeout:10_000});
- await f.service.query('agent',{kind:'mcp.schema',cwd:f.cwd,serverId:s.id,hash:s.hash,tool:'echo'});const next=JSON.parse(await readFile(pidPath,'utf8')) as number[];await f.service.stop('agent');for(const pid of next)await vi.waitFor(()=>expect(()=>process.kill(pid,0)).toThrow(),{timeout:10_000});
+ await vi.waitFor(()=>readFile(callPath),{timeout:10_000});await f.service.query('agent',{kind:'mcp.cancel'});expect(await pending).toBeNull();for(const pid of pids)await vi.waitFor(()=>expect(processRuns(pid)).toBe(false),{timeout:10_000});
+ await f.service.query('agent',{kind:'mcp.schema',cwd:f.cwd,serverId:s.id,hash:s.hash,tool:'echo'});const next=JSON.parse(await readFile(pidPath,'utf8')) as number[];await f.service.stop('agent');for(const pid of next)await vi.waitFor(()=>expect(processRuns(pid)).toBe(false),{timeout:10_000});
 });
 it('a server that exits cannot leave its grandchild behind',async()=>{
  const f=await fixture(),path=join(f.cwd,'exit.mjs'),pidPath=join(f.cwd,'child.json');await writeFile(path,`import {spawn} from 'node:child_process';import {writeFileSync} from 'node:fs';const p=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});writeFileSync(${JSON.stringify(pidPath)},String(p.pid));setTimeout(()=>process.exit(0),50);`);
- await f.service.query('agent',{kind:'mcp.add',config:{name:'exit',type:'stdio',command:process.execPath,args:[path],env:[]},values:{}});const s=await first(f.service,f.cwd);await expect(f.service.query('agent',{kind:'mcp.discover',cwd:f.cwd,serverId:s.id,hash:s.hash})).rejects.toThrow();const pid=Number(await readFile(pidPath,'utf8'));await vi.waitFor(()=>expect(()=>process.kill(pid,0)).toThrow(),{timeout:10_000});
+ await f.service.query('agent',{kind:'mcp.add',config:{name:'exit',type:'stdio',command:process.execPath,args:[path],env:[]},values:{}});const s=await first(f.service,f.cwd);await expect(f.service.query('agent',{kind:'mcp.discover',cwd:f.cwd,serverId:s.id,hash:s.hash})).rejects.toThrow();const pid=Number(await readFile(pidPath,'utf8'));await vi.waitFor(()=>expect(processRuns(pid)).toBe(false),{timeout:10_000});
 });
 it('project aliases outside the folder, hard links, malformed entries and secrets in argv are skipped',async()=>{
  const f=await fixture(),outside=join(f.home,'outside.json'),path=join(f.cwd,'.mcp.json');const {symlink,link}=await import('node:fs/promises');await writeFile(outside,JSON.stringify({mcpServers:{x:{command:'node'}}}));await symlink(outside,path);expect((await f.service.list(f.cwd)).servers).toEqual([]);await rm(path);await link(outside,path);expect((await f.service.list(f.cwd)).servers).toEqual([]);await rm(path);

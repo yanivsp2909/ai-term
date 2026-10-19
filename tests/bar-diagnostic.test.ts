@@ -2,8 +2,9 @@ import { expect, it } from 'vitest';
 import * as pty from 'node-pty';
 import headless from '@xterm/headless';
 import { resolve } from 'node:path';
+import { NO_VIM } from './platform.js';
 
-it('the diagnostic records DA1-only startup and the actual vim exit without changing the spike', async () => {
+it.skipIf(NO_VIM)('the diagnostic records DA1-only startup and the actual vim exit without changing the spike (skipped without /usr/bin/vim)', async () => {
   const child = pty.spawn(process.execPath, ['scripts/diagnose-bar.mjs'], {
     cwd: resolve('.'), cols: 120, rows: 40, name: 'xterm-256color',
     env: { PATH: '/usr/bin:/bin', TERM: 'xterm-256color', TERM_PROGRAM: 'Apple_Terminal' },
@@ -41,7 +42,7 @@ it('the diagnostic records DA1-only startup and the actual vim exit without chan
   }
 }, 10000);
 
-it('the hands-off trace records post-probe reports, PTY size and vim exit state before its timed quit', async () => {
+it.skipIf(NO_VIM)('the hands-off trace records post-probe reports, PTY size and vim exit state before its timed quit (skipped without /usr/bin/vim)', async () => {
   const child = pty.spawn(process.execPath, ['scripts/diagnose-bar.mjs', 'redraw', '--trace'], {
     cwd: resolve('.'), cols: 100, rows: 30, name: 'xterm-256color',
     env: { PATH: '/usr/bin:/bin', TERM: 'xterm-256color', TERM_PROGRAM: 'Apple_Terminal' },

@@ -7,7 +7,7 @@ AI Term is the `ai` command: one terminal homepage for running AI coding agents 
 ## Install
 
 ### From source (macOS, Linux, Windows)
-You need Node 22 or newer and git. For Claude Code or Codex on your own login, install and log in to those CLIs first.
+You need Node 22 or newer and git 2.41 or newer (Debian 12 and Ubuntu 22.04 ship older ones). For Claude Code or Codex on your own login, install and log in to those CLIs first.
 ```sh
 git clone <this repository> ai-term && cd ai-term
 npm install

@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -43,7 +44,8 @@ export async function makeWorld(options: { realHome?: boolean } = {}): Promise<W
   const env: Record<string, string> = {
     HOME: home, AI_TERM_HOME: aiHome, TMPDIR: tmp, USER: userInfo().username, LOGNAME: userInfo().username,
     PATH: realHome ? process.env.PATH ?? '/usr/bin:/bin' : `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
-    SHELL: '/bin/zsh', TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: 'en_US.UTF-8',
+    // B34: macOS's zsh where it exists, else the first shell this machine has (Linux has no /bin/zsh by default).
+    SHELL: ['/bin/zsh', '/bin/bash', '/bin/sh'].find(path => existsSync(path)) ?? '/bin/sh', TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: 'en_US.UTF-8',
   };
   const world = { root, home, aiHome, tmp, bin, downloads, env, realHome };
   guard(world);

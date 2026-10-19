@@ -18,6 +18,7 @@ import { cardText } from '../src/client/tui/agent-card.js';
 import { TestAsk, testLines } from '../src/client/tui/test-ask.js';
 import { validateRequest } from '../src/shared/validate.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
+import { processRuns } from './platform.js';
 
 // B26 (HIGH): auto-test ran the agent's own test and source files with your full rights, and a Codex agent writes files in
 // its worktree without asking, so a "test" could read ~/.ssh or reach the network. Now the whole test process tree runs
@@ -108,7 +109,7 @@ it('a process the tests started and detached (setsid) is stopped when the run en
   expect(await runTests(['/usr/bin/perl', '-e', script], dir, buildTestEnv(process.env), { timeoutMs: 15_000 })).toEqual({ state: 'pass' });
   const pid = Number(await readFile(pidFile, 'utf8'));
   expect(pid).toBeGreaterThan(1);
-  await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 3_000 });
+  await vi.waitFor(() => expect(processRuns(pid)).toBe(false), { timeout: 3_000 });
 }, 20_000);
 
 const ID = ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false'];

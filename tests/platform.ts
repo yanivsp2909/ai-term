@@ -19,19 +19,29 @@ function bwrapRuns(): boolean {
 }
 export const NO_LINUX_SANDBOX = process.platform === 'linux' && !bwrapRuns();
 
-// Whether any process of a group still runs. A killed process stays a zombie until its parent reaps it, and an orphan's
-// new parent is the init process: in a container whose init isn't a real one that can take seconds, while the process
-// is already dead. Linux tells the states apart through /proc; elsewhere a signal 0 to the group decides.
+// Whether a process, or any process of a group, still runs. A killed process stays a zombie until its parent reaps it,
+// and an orphan's new parent is the init process: in a container whose init isn't a real one (Docker's default runs
+// your command as PID 1) that can take seconds or never happen, while the process is already dead. Linux tells the
+// states apart through /proc; elsewhere a signal 0 decides.
+function procState(pid: string): { state: string; group: number } | null {
+  let stat: string;
+  try { stat = readFileSync(`/proc/${pid}/stat`, 'utf8'); } catch { return null; }
+  // pid (comm) state ppid pgrp …; comm may hold spaces and parentheses, so read after its last ')'.
+  const [state = '', , group] = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+  return { state, group: Number(group) };
+}
+export function processRuns(pid: number): boolean {
+  try { process.kill(pid, 0); } catch { return false; }
+  return process.platform !== 'linux' || (procState(String(pid))?.state ?? 'Z') !== 'Z';
+}
 export function groupRuns(pgid: number): boolean {
   try { process.kill(-pgid, 0); } catch { return false; }
   if (process.platform !== 'linux') return true;
-  for (const entry of readdirSync('/proc')) {
-    if (!/^\d+$/.test(entry)) continue;
-    let stat: string;
-    try { stat = readFileSync(`/proc/${entry}/stat`, 'utf8'); } catch { continue; }
-    // pid (comm) state ppid pgrp …; comm may hold spaces and parentheses, so read after its last ')'.
-    const [state, , group] = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
-    if (Number(group) === pgid && state !== 'Z') return true;
-  }
-  return false;
+  return readdirSync('/proc').some(entry => { if (!/^\d+$/.test(entry)) return false; const found = procState(entry); return found !== null && found.group === pgid && found.state !== 'Z'; });
 }
+
+// The terminal tests drive a real vim, at its usual path.
+export const NO_VIM = !existsSync('/usr/bin/vim');
+
+// PID 1 is root's on a normal machine, but yours when you are root or in a container started as you.
+export const PID1_MINE = (() => { try { process.kill(1, 0); return true; } catch { return false; } })();
