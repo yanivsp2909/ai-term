@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error -- a plain .mjs build script with no type declarations
@@ -85,8 +85,10 @@ describe('the packaging review', () => {
     expect(readme).toContain('git clone https://github.com/yanivsp2909/ai-term-public.git ai-term'); expect(readme).not.toContain('<this repository>');
     expect(await readFile(join(out, 'docs', 'design.md'), 'utf8')).not.toContain('claude.ai/artifact');
     expect(snapshot).not.toContain('`.codex`'); expect(snapshot).toContain('`docs/addons/inventory.md`');
-    expect((await readFile(join(out, 'addons', '_shared', 'LEFT_OUT.txt'), 'utf8')).split('\n')).toContain('skills/ui-mockup/SKILL.md');
+    // v1.2: the add-on guides are AI Term's own (MIT), so the snapshot ships every one of them.
+    expect((await readdir(join(out, 'addons', 'guides'))).filter(f => f.endsWith('.md'))).toHaveLength(35);
+    await expect(readdir(join(out, 'addons', '_shared'))).rejects.toThrow();
     await expect(readFile(join(out, 'licenses', 'Apache-2.0.txt'))).rejects.toThrow();
-    expect(snapshot).toContain('/design');
+    expect(snapshot).toContain('addons/guides/');
   }, 60_000);
 });
