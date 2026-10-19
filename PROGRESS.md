@@ -1,6 +1,119 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: 32d4fd2 fix: the sweep leaves a folder whose mark it can't read exactly as it is, and the daemon runs one /bisect per folder (follow-up review)
+Last commit: backlog handover (this commit)
+Roadmap step: 2026-10-19 backlog sweep · done (no version bump: 1.0.1 waits for Yaniv's live checks)
+Branch: main, pushed.
+
+## Final report (this run)
+- **The list:** docs/backlog.md (12b4662), built from all of PROGRESS.md (three readers, one per third; every item checked against the code) and architecture.md's "not fixed" and "explained" lines.
+  - **Fix now: 6, all fixed.**
+  - **Later: 32**, plus 3 that need you (not code) and 9 left from this run's own reviews, each with its reason.
+  - **Drop: 16 groups**, each with its reason. Most groups hold several findings: D35 same-user races, already fixed since, display-only spoofs and the like.
+- **Fixes (failing test commit → fix commit):**
+  - **F1 · stop a running /bisect or /perf A/B: 842b78b → 606653e.**
+    - `x` stops it: the test process tree is stopped, the copy is removed, and the popup says "■ stopped". The signal reaches `runTests`, `cp` and every bisect step, and after the review also the copy's own git clone and checkout.
+    - A stopping daemon stops running bisects and A/Bs first (`stopAll`, at most 15 s) and starts no new ones.
+    - `/bisect` alone reopens the folder's last one.
+    - One /bisect runs per folder, kept by the daemon.
+  - **F2 · start-up sweep: 087beff → 7067fbe.**
+    - Every AI Term temp folder (`ai-term-clone-`, `-test-`, `-deps-`, `-diff-`) gets a 0600 `.ai-term-owner` file naming the daemon's pid.
+    - At start the daemon removes only folders with that name form that are real folders owned by you, whose mark (a regular file of yours, read without following links) names a process that is gone. Never a link, an unmarked folder or a folder it can't read.
+  - **F3 · /study reopen: e431b78 → 54e972a.** In `/study`'s due list, `r` reopens this folder's last session with its result and no new session.
+  - **F4 · o/s refusals: 2affe32 → 0c033c0.** A gone worktree, a `..` path and a folder that became a file are refused in AI Term's own words, not "Session operation failed".
+  - **F5 · log codes: 9c181c3 → 4e54707,** plus cfeb7e4 for test types. Queue and dev-server log lines name the error's class and code (`errorKind`, src/daemon/log.ts).
+  - **F6 · /queue's unreadable items: 2ac6ddf → bc868bc.** `/queue` says how many items it couldn't read and which file kept them.
+  - **Docs:** eef5eb4 (README, /help, user guide, architecture) and 12b4662 (the list).
+- **Reviews (fresh context):**
+  - **TypeScript reviewer:** 0 CRITICAL, 0 HIGH, 1 MEDIUM, 5 LOW.
+    - MEDIUM: a second /bisect left the first running with no popup to stop it.
+  - **Security reviewer:** 0 CRITICAL, 0 HIGH, 0 MEDIUM, 7 LOW.
+  - **Fixes from those reviews: 5a49f67 → 4b7db3f.**
+    - one /bisect per folder;
+    - x does nothing until the run has started;
+    - the copy's clone stops with the run;
+    - the sweep skips impossible pids;
+    - the A/B fails in fixed words;
+    - nothing starts while the daemon stops.
+  - **Follow-up review of those fixes:** 0 above LOW, 3 LOW.
+    - Fixed in 5acc85f → 32d4fd2: the sweep no longer changes a folder it can't read, and the daemon itself keeps one /bisect per folder.
+    - The third is documented.
+  - **Left, with reasons** (docs/backlog.md, "From the reviews of these fixes"):
+    - an orphaned dev server's temp folder is swept;
+    - a crash between mkdtemp and the mark leaves an unmarked folder;
+    - PID namespaces;
+    - "copy removed" is said even if the removal failed (logged; swept next start);
+    - the /queue note is in memory only;
+    - a locked dead-run folder is left;
+    - a git filter outliving an aborted checkout.
+  - One reported case wasn't reproducible: a test sandbox's own locked temp folder. Node's `rm` removed it, so nothing was changed.
+- **Last check lines:**
+
+  | Check | Result |
+  |---|---|
+  | typecheck | exit 0 (`tsc --noEmit && tsc --noEmit -p app/tsconfig.json`) |
+  | lint | exit 0 (eslint prints nothing on success) |
+  | build | "ESM ⚡️ Build success in 48ms" |
+  | app:build | "✓ built in 58ms" |
+  | npm test, twice in a row (default workers, dot reporter, --silent) | "Test Files 296 passed \| 1 skipped (297) · Tests 1950 passed \| 8 skipped (1958)", 47.39 s and 47.69 s |
+  | hidden Electron smoke | "9 passed (36.8s)" |
+  | `npm run live` tier 1 | "Tier 1 passed: 32 checks in 154 s" (an earlier run mid-way: 123 s) |
+
+  No ai-term-clone/test/deps/diff folder was left in $TMPDIR after all of them.
+- **Where the code disagreed with the prompt:**
+  - **"Esc or x cancels."** Only `x` stops. Esc still only closes the popup, because D58 pins "closing never stops" and a long bisect shouldn't die on a stray Esc; that was the safer choice. To keep a closed run stoppable, `/bisect` alone now reopens it; before, a closed /bisect could never be reopened.
+  - **"/perf run."** /perf itself is an agent, stopped like any agent; the new key stops its A/B.
+  - **The A/B's raw error.** Its failure text used to carry raw error messages (possibly paths) to the popup. It now shows fixed words, as a review found.
+  - **"Five gate LOWs."** Checked one by one:
+    - queue/dev log codes and unreadable queue items: fixed (F5, F6);
+    - `s` saving an SVG as written and a meta refresh in inert HTML: later, because they need your call on what o/s should do with active content;
+    - /commit's glob pathspec (not reproducible), bash background jobs (by design) and the /remote residuals (accepted at the gate): dropped.
+  - **AGENTS.md's "Until then, none exist"** and package.json's 0.1.1, listed as stale in an old run, are already fixed.
+
+## What works
+- Everything below, plus the six fixes above. The keys are in README's lists and /help:
+  - `x` in a running /bisect or A/B;
+  - `/bisect` alone;
+  - `r` in `/study`'s due list;
+  - /queue's note.
+- docs/backlog.md is the one list of what is still open, with a verdict and a reason for each.
+
+## What's next
+- Your live checks below, then 1.0.1.
+- The backlog's "later" items need your decisions. The most useful first:
+  - what o/s should do with active HTML and SVG;
+  - a deny-by-default bash sandbox;
+  - a process sweep for dev and MCP servers a dead daemon left.
+
+## Manual checks
+- typecheck, lint, build, app:build, the full suite twice, the hidden Electron smoke, tier 1: ran (lines above).
+- New this run (the rest is the list below, unchanged):
+  1. cd ~/ai-term && npm run dev  # /bisect with a slow test command (e.g. /bisect sh -c 'sleep 600' HEAD~3), y, then x: the popup says "■ stopped · the test processes ended and the temporary copy was removed", and `ls -d "$TMPDIR"/ai-term-clone-*` finds nothing
+  2. cd ~/ai-term && npm run dev  # /bisect …, y, Esc, then /bisect alone: the same run is back with "x stops it"; another /bisect <cmd> in that folder says one is running
+  3. cd ~/ai-term && npm run dev  # /perf on a project with a benchmark, a, then x while "◐ A/B running": "■ A/B stopped", and a runs it again
+  4. cd ~/ai-term && npm run dev  # /study git worktrees, y, Esc before the recap; /study: "r reopens your last session: git worktrees", r shows it with no new session
+  5. cd ~/ai-term && npm run dev  # during a /bisect, kill -9 "$(cat ~/.ai-term/run/daemon.pid)" (stops your running agents), start ai again: tail ~/.ai-term/logs/daemon.log shows "Temp sweep: removed 1 temporary folder a stopped AI Term left behind"
+  6. cd ~/ai-term && kill 83116  # only if it's the old smoke-test AI Term.app from build/desktop/dist (ps -p 83116 -o command=); see docs/backlog.md "Needs Yaniv"
+
+## Gotchas
+- Every AI Term temp folder must be made with `ownTempFolder` (src/daemon/own-temp.ts); tests/backlog-f2-temp-sweep.test.ts fails on a new `mkdtemp(… 'ai-term-…-')`. An unmarked folder is never swept.
+- The add-on panel's `cancel` action returns whether it sent the stop; a stand-in in a test must return true.
+- Exact-argument tests of `addonBisect` and `addonPerfAb` now see a trailing AbortSignal.
+
+## New dependencies
+- None.
+
+## Concepts introduced
+- **Cancellation with AbortSignal** (src/daemon/addons.ts, bisect.ts, perf-ab.ts, test-run.ts). One `AbortController` per run. Its `signal` is passed down to everything the run starts (`execFile` and `runTests` take it), and each step checks it before and after. Stopping is then one `abort()`, and each `finally` still cleans up, so "stopped" is only reported once the cleanup has happened.
+- **Marked temp folders and a liveness check** (src/daemon/own-temp.ts, temp-sweep.ts). A folder can't say who made it, so AI Term writes a small owner file with its pid. At start, `kill(pid, 0)` asks the OS whether that process still exists: ESRCH means gone, EPERM means it exists but isn't yours. The rule is "only remove what is provably ours and provably abandoned"; every doubt keeps the folder.
+
+---
+
+# 2026-10-18/19 live-suite run (previous handover)
+
+
+## Checkpoint
 Last code commit: a37ed44 test: version mask of any length, the split's /exit always on sandboxed, selection that survives a scrolled list, /study paged live (Part C review)
 Last commit: final handover (this commit)
 Roadmap step: 2026-10-18/19 live-suite run · A (B33) done · B (npm run live) done · C (run it, shrink the manual list) done
