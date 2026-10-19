@@ -163,7 +163,7 @@ function createWindow(): Promise<void> {
     callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [CSP] } });
   });
   window.webContents.on('before-input-event', (event, input) => {
-    // macOS: Command+key. Linux and Windows: Ctrl+Shift+key (plain Ctrl keys go to the agent).
+    // macOS: Command with a letter. Linux and Windows: Ctrl and Shift with a letter (plain Ctrl keys go to the agent).
     if (process.platform === 'darwin' ? input.type !== 'keyDown' || !input.meta || input.alt || input.control || input.shift && !['+', '='].includes(input.key) : input.type !== 'keyDown' || !input.control || !input.shift || input.alt || input.meta) return;
     const shortcut = menuShortcut(shortcutKey(input));
     if (!shortcut) return;
