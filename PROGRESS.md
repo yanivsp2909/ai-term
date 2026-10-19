@@ -1,10 +1,10 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: 7f15ff0 fix: Part B review findings (Gemini sandbox variables and runner, Cursor one-word messages, Copilot profile gh folder, labels, add-ons, handoff)
-Last commit: Part B handover (this commit)
-Roadmap step: 2026-10-19 long run (B34 → Part A providers → Part B engines → Part C public snapshot) · B34, Part A and Part B done, Part C not started
-Branch: main, pushed.
+Last code commit: 8c43a67 docs: architecture 12.33 matches the reviewed snapshot script (upstream rule, commit checks and isolation)
+Last commit: Part C handover (this commit)
+Roadmap step: 2026-10-19 long run (B34 → Part A providers → Part B engines → Part C public snapshot) · done: B34, Part A, Part B, Part C
+Branch: main, pushed. Public snapshot: /home/user/ai-term-public, one commit 559f33b (from 8c43a67), not pushed and not published.
 
 ## Run 2026-10-19 (cloud container, Linux, root): B34 first
 - **Order changed, on purpose.** The prompt says A, B, then C (whose first step is B34). In this container (Ubuntu 24.04, git 2.43, root, no bubblewrap, no xdg-open) 33 tests failed before any change, so no part could end "npm test green". B34 went first; A and B follow on a hermetic suite.
@@ -53,17 +53,63 @@ Branch: main, pushed.
 - **Checks (after the fixes):** typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 301ms" · app:build "✓ built in 621ms" · npm test twice "Test Files 299 passed | 2 skipped (301) · Tests 1967 passed | 70 skipped (2037)" (134 s, 142 s) · `npm run live` tier 1 "Tier 1 passed: 32 checks in 104 s" · Electron smoke: not here (no Electron binary; needs Yaniv).
 - **Not built:** the Ask caveat for Cursor and Copilot is in the docs, not the mode row (the row already carries their Don't ask note; a second line there felt noisier).
 
-### Manual checks of this run (new only)
-- Part A key: `cd ~/ai-term && npm run dev` then `/login` → DeepSeek (or any new provider) → add a key → `t` → its models appear in `/model` · ai term
-- Part A region: `cd ~/ai-term && npm run dev` then `/login` → Moonshot · China → the line under the title names Beijing and real-name verification
+### Part C · B34, then the public source snapshot: done
+- **B34** went first (see above), so this part is the snapshot.
+- **Commits (ai-term):** 5123b2d → 1bcf546 (add-on fallback, RED → fix), 2cb035a (example names for a real Foundry resource `narvis-…`, its key label, a real key tail and the `Asia/…` time zone in tests and docs), 34f7f8a (fake keys joined from parts), eb20ed7 (script and overlay), bf7a265 (add-on tests on stand-in guides), ca6ad2e, aab3333 → 92c0b83 (security review, RED → fix), f76bdf3 → 765d279 (packaging review, RED → fix), d6026ab (last fixtures, a test report's wording), 8c43a67 (architecture §12.33).
+- **How to make it:** `node scripts/public-snapshot.mjs <new folder> <commit>` builds the tree; check it; record the checks in its PUBLIC_SNAPSHOT.md Verification section; `node scripts/public-snapshot.mjs --commit <folder>` makes the one commit (noreply author, empty git env, UTC). The script stays private.
+- **The snapshot** (/home/user/ai-term-public, commit 559f33b, 773 files): `git archive` of 8c43a67 plus the overlay in `public/`. Author and committer `Yaniv <77485644+yanivsp2909@users.noreply.github.com>`, no trailers, no remote.
+- **Left out:** PROGRESS.md, docs/reviews/, docs/spikes/v0.1-cli-facts.md, v0.1-codex-setup.md and v0.1-daemon-core.md (personal paths, a home-folder inventory, the real Azure resource), docs/testing/v093-perf-ab.json (personal paths), docs/addons/inventory.md and its test, .claude/, the overlay, the script and its test. spikes/ and the other docs/spikes files are clean and kept. docs/design.md's two private Claude Design links are replaced by a sentence.
+- **License audit of addons/_shared (35 copies):** 33 state no license, 1 is mixed (ui-polish: one source states none), 1 is Apache 2.0 (ui-mockup, from the `impeccable` skill) but names only a local path, so its copyright line can't be credited. All 35 are left out (`addons/_shared/LEFT_OUT.txt`). 34 add-ons fall back to their own prompt: /a11y, /adr, /animate, /changelog, /commit, /context, /cover, /deck, /deps, /design, /diagram, /docs, /e2e, /explain, /failures, /fix, /handover, /issue, /opensource, /perf, /plan, /polish, /pr-review, /prompt, /refactor, /research, /review-deep, /security, /slides, /standup-polish, /study, /teach, /types, /video. npm licenses: 551 MIT, 50 Apache-2.0, 43 ISC, 13 BSD-3-Clause, 12 BSD-2-Clause, 12 MPL-2.0 (lightningcss, build tooling), 8 BlueOak-1.0.0, and a few others (THIRD_PARTY_NOTICES.md lists every package; none is in the tree).
+- **Added:** LICENSE (MIT, AI Term contributors), THIRD_PARTY_NOTICES.md, SECURITY.md, PUBLIC_SNAPSHOT.md, .gitleaks.toml (default rules, nothing allowlisted), a public README intro (what it is, honest status, security in short, no affiliation) in front of the private README from Install on.
+- **Reviews (fresh context):**
+  - code (25d1d1c..bf7a265): 0 above LOW. LOWs taken: a stricter license line, the last unsplit canaries.
+  - security: 0 CRITICAL/HIGH. 2 MEDIUM, both fixed: `--commit` took the machine's git setup (a global ignore of `*.md` dropped every .md file, GIT_DIR moved the commit, hooks ran), and it never re-checked the tree or the unfilled verification. LOWs fixed: case-sensitive markers, /home and C:\Users paths, file names, NUL files skipped, links followed, license read from anywhere in the file, a dangling guide-folder link taken as missing. Not fixed: none.
+  - sanitizer (on the tree): 0 HIGH/MEDIUM. 4 LOW: private design links (fixed), the Apache copy's local source path (left out), a test report describing a personal Codex setup (reworded), tests using a `yaniv/ai-term` fake GitHub owner (kept: it leaks nothing).
+  - packaging: 3 HIGH, all fixed: publish commands that failed as written and pushed before private reporting was on, and two README claims the code contradicts (Claude Code's Don't ask has no sandbox; "nothing runs outside a sandbox without asking"). 4 MEDIUM, fixed: the agent's key goes through a one-time 0600 file, Foundry and Bedrock keys go to the address you entered, the Apache attribution (copy left out), the unfilled verification. LOWs: Models.dev's license isn't named (kept as "under that catalog's own license": I couldn't check it, and the network list doesn't include models.dev), dangling mentions (listed in PUBLIC_SNAPSHOT.md), two security sections (the intro now links the detailed one), the clone URL (fixed).
+- **Checks.**
+  - ai-term: typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 307ms" · app:build "✓ built in 657ms" · npm test twice "Test Files 301 passed | 2 skipped (303) · Tests 1976 passed | 70 skipped (2046)" (130 s, 132 s) · `npm run live` tier 1 "Tier 1 passed: 32 checks in 133 s".
+  - Snapshot, after `npm ci` ("added 588 packages"): typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 265ms" · npm test twice "Test Files 299 passed | 2 skipped (301) · Tests 1968 passed | 70 skipped (2038)" (124 s, 126 s).
+  - Secret scan: gitleaks isn't installed here. gitleaks' format patterns found 0 hits, and its generic pattern with the entropy limit found 0. AI Term's own scanner flags 888 lines, all synthetic fixtures. The marker check passed.
+  - Electron smoke: not run (no Electron binary here).
+- **One failure I couldn't explain:** `tests/gate-v06-release.test.ts` "a refused reserve logs why" failed once in a 4-file run right after the fixture edits. It passed in 21 reruns and in every full run since, and nothing in its code path reads time or load. Watch for it.
+
+## What works
+- Everything the earlier blocks list, plus: about 30 more key providers and regions on AI Term's agent, LM Studio and local OpenAI-compatible servers, a custom https endpoint (Part A); Cursor, Gemini CLI and Copilot CLI as engines on your own logins (Part B); a hermetic suite that runs on Linux, as root and as a normal user, and in Docker node:22-trixie (B34); a reproducible public snapshot with its checks (Part C).
+
+## What's next
+- Publish the snapshot yourself (commands below and in its PUBLIC_SNAPSHOT.md), after gitleaks.
+- The open backlog (docs/backlog.md) and this run's manual checks.
+
+## Manual checks (new in this run, need Yaniv)
+- Part A key: `cd ~/ai-term && npm run dev`, then `/login` → DeepSeek (or any new provider) → add a key → `t` → its models appear in `/model` · ai term
+- Part A region: `cd ~/ai-term && npm run dev`, then `/login` → Moonshot · China → the line under the title names Beijing and real-name verification
 - Part A local: `cd ~/ai-term && npm run dev` with LM Studio's server on 1234, then `/login` → LM Studio → `t` lists its loaded models
-- Part A custom: `cd ~/ai-term && npm run dev` then `/login` → Custom OpenAI-compatible endpoint → an https endpoint → type `add` → the card shows its host
-- Part B Gemini: `cd ~/ai-term && npm run dev` then `/login` → Gemini CLI · CLI login → sign in on its first screen, then `/model` → Gemini CLI tab → start in Ask; it asks before a write
-- Part B Gemini Don't ask: `cd ~/ai-term && npm run dev` then a Gemini CLI agent with `/mode don't ask` → its header says sandbox (Seatbelt)
-- Part B Copilot: `cd ~/ai-term && npm run dev` then `/login` → Copilot CLI · CLI login → `copilot login` finishes, then start a Copilot CLI agent
-- Part B Copilot account: `cd ~/ai-term && npm run dev` then `/account add copilot work` → its login row → a new device login, not your gh account
-- Part B Cursor: `cd ~/ai-term && npm run dev` then `/login` → Cursor · CLI login → `agent login`, then start a Cursor agent with a two-word message
+- Part A custom: `cd ~/ai-term && npm run dev`, then `/login` → Custom OpenAI-compatible endpoint → an https endpoint → type `add` → the card shows its host
+- Part B Gemini: `cd ~/ai-term && npm run dev`, then `/login` → Gemini CLI · CLI login → sign in on its first screen, then `/model` → Gemini CLI tab → start in Ask; it asks before a write
+- Part B Gemini Don't ask: `cd ~/ai-term && npm run dev`, then a Gemini CLI agent with `/mode don't ask` → it starts in its Seatbelt sandbox
+- Part B Copilot: `cd ~/ai-term && npm run dev`, then `/login` → Copilot CLI · CLI login → `copilot login` finishes, then start a Copilot CLI agent
+- Part B Copilot account: `cd ~/ai-term && npm run dev`, then `/account add copilot work` → its login row → a new device login, not your gh account
+- Part B Cursor: `cd ~/ai-term && npm run dev`, then `/login` → Cursor · CLI login → `agent login`, then start a Cursor agent with a two-word message
 - Electron smoke (hidden): `cd ~/ai-term && npm run build && npm run app:build && npm run app:test`
+- Snapshot on your Mac (this container's copy goes away): `cd ~/ai-term && node scripts/public-snapshot.mjs ~/ai-term-public main`, then in ~/ai-term-public run `npm ci && npm run typecheck && npm run lint && npm run build && npm test`, record the results in its PUBLIC_SNAPSHOT.md Verification section, then `cd ~/ai-term && node scripts/public-snapshot.mjs --commit ~/ai-term-public`
+- Publish (from ~/ai-term-public): `gitleaks git --redact --config .gitleaks.toml .` → `gh repo create yanivsp2909/ai-term-public --public --description "AI Term: one terminal homepage for AI coding agents (source snapshot)"` → `gh api --method PUT repos/yanivsp2909/ai-term-public/private-vulnerability-reporting` → `gh api repos/yanivsp2909/ai-term-public/private-vulnerability-reporting` (shows `"enabled": true`) → `git remote add origin https://github.com/yanivsp2909/ai-term-public.git` → `git push -u origin main`
+- Optional, ui-mockup: if you want the /design guide in public, put its upstream https URL and copyright line in its `Source:` line; the script then keeps it with the Apache text.
+
+## Gotchas
+- The snapshot's `addons/_shared/LEFT_OUT.txt` switches tests to stand-in guides (`tests/shared-copies.ts`). In ai-term there is no such file, so tests use the real guides.
+- `scripts/public-snapshot.mjs` reads `public/` and the template from the working tree, not from the commit it exports: commit overlay changes first.
+- `--commit` refuses while PUBLIC_SNAPSHOT.md still says "Not verified yet".
+- A new fake key in a test: join it from parts (`'AKIA' + '…'`, `'AITERM' + 'CANARY…'`), or gitleaks on the snapshot will flag it.
+- node:22 (Debian 12) has git 2.39; the suite needs 2.41+ (use node:22-trixie).
+
+## New dependencies
+- None in this run.
+
+## Concepts introduced
+- **Hermetic tests** (`tests/setup-git.ts`, `tests/platform.ts`): each test's git reads one temp config, and tests that need a missing tool skip with the reason in the title. The suite gives the same answer on any machine, whatever its git config or user.
+- **Public-address check** (`src/shared/public-host.ts`): a custom endpoint's name is resolved at connect time and every address is checked against private, loopback and link-local ranges before a socket opens. A check at save time alone could be beaten by a name that changes its answer (DNS rebinding).
+- **Mirror-based status** (Part B, `src/client/tui/agent-card.ts`): for CLIs that report nothing to AI Term, the card's state comes from their screen output. It can say "running" or "quiet", but never "asking", which is why `/send` is refused for them.
+- **Curated snapshot** (`scripts/public-snapshot.mjs`): publish a cleaned copy with a fresh one-commit history, never the private repository. Git history keeps every old value, so cleaning only the latest tree wouldn't be enough.
 
 ## Checkpoint (backlog sweep)
 Last code commit: 32d4fd2 fix: the sweep leaves a folder whose mark it can't read exactly as it is, and the daemon runs one /bisect per folder (follow-up review)
