@@ -1,10 +1,31 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: 54abf76 docs: architecture 12.36, the first-run setup
-Last commit: v1.2 Part C handover and run report (this commit)
-Roadmap step: 2026-10-19 v1.2 run (A guides → B /triage and /migrate → C first-run setup) · done: A, B, C
-Branch: main, pushed. No version bump or tag: v1.1.0 (and anything after) waits for Yaniv's Mac.
+Last code commit: abb7e59 test: the app's /setup smoke expects the platform's own sandbox line (TS review LOW)
+Last commit: v1.2.0 run Part A handover (this commit)
+Roadmap step: 2026-10-19 v1.2.0 release run on Yaniv's Mac (A Mac release check → B themes and fonts → C public snapshot and the tag) · A done, B and C next
+Branch: main, pushed.
+
+## Run 2026-10-19 v1.2.0 (Yaniv's Mac: `uname -s` Darwin 25.5.0, Node 26.3.0, npm 11.16.0)
+
+### Part A · the Mac release check: done
+- **Start:** main was at 0f6463e locally with two uncommitted /bisect sentences in README.md and docs/user-guide.md (not this run's). To fast-forward to e56951d they were taken out with `git apply -R` of their own patch and put back after the pull; they stay uncommitted and this run's commits never include them.
+- **Commits:** 8e10579 (setup and homepage-terminal tests on a Mac), cef148b (the Electron smoke closes the login popup first; /setup in the app), abb7e59 (TS review LOW).
+- **What failed only on macOS (all in the tests; no product bug found):**
+  - tests/first-run-setup.test.ts, 2 tests, every run: **macOS assesses a brand-new executable on its first run, one at a time, ~250 ms each** (measured: six fresh stubs took 442 to 1593 ms, the same stubs again 10 ms). Nine fresh stub CLIs could never answer inside the test's 400 ms timeout. Each stub now runs once with `STUB_WARM=1` (it exits before logging) before the timed check. The product's own CLIs aren't new files, so setup itself is fine.
+  - tests/homepage-terminal.test.ts: on a Mac the setup popup covers the "Agents" title before the poll sees it; the test now closes the setup first.
+  - The Electron smoke, 8 of 9: since v1.1's 25 providers the "Connect a provider" popup (nothing is logged in in the smoke's home) is taller than the command bar's row in the window and covers its placeholder and the agent list. The tests waited for text that never showed. They now wait for the popup and press Esc first.
+  - Load flakes seen once each in the first full run and not again (the 2 later full runs green, 3 targeted reruns of both files green): gate-v06-release "starting vs running" and keys-handlers "Daemon request timed out". Not changed.
+- **Driven by hand (the real built `ai`, the tier 1 way: tests/live/world.ts, a throwaway home):** a brand-new AI Term folder (it didn't exist before the start) opens the setup with every tool ✗ not found plus its install command, `? Tailscale · couldn't check` (this Mac has a leftover /usr/local/bin/tailscale shim pointing at a removed app: honest), `Sandbox: sandbox-exec`; Esc saves `setup: skipped`, the next start opens no setup, `ai setup` opens it again, ⏎ saves `done`, `/setup` opens it inside ai. /setup in the Mac app: a new smoke test. Cursor's CLI on this Mac (`checkExtraEngine`): found, version 2026.08.04-aaa8809, 364 ms.
+- **Review (typescript-reviewer, fresh context, e56951d..HEAD):** 0 CRITICAL/HIGH/MEDIUM. 3 LOW: the /setup smoke's sandbox line was macOS-only (fixed, abb7e59); the "closed" check reads the accessibility tree (followed by a positive check: kept); the first smoke test no longer types with the popup never shown (kept: it always shows here). No security review: no sandbox, spawn or env change landed.
+- **Checks:** typecheck 0 · lint "ESLint: No issues found" · build "ESM ⚡️ Build success in 51ms" · app:build "✓ built in 58ms" · npm test twice "Test Files 305 passed | 1 skipped (306) · Tests 2065 passed | 8 skipped (2073)" (52 s, 55 s) · Electron smoke "10 passed (46.0s)" · `npm run live` tier 1 twice "Tier 1 passed: 32 checks in 126 s" and "in 94 s" (D57 agent bash sandbox, D56 test sandbox and /bisect with a node_modules cache all on macOS) · verification-loop: ready.
+- **README, /help, user guide:** no command or key changed in Part A.
+- **Where the code disagreed with the prompt:** the prompt's checkpoint e56951d was right for origin, but this checkout was 57 commits behind (0f6463e) with the two uncommitted edits above.
+
+### Gotchas (v1.2.0 run)
+- **`npm ci` (npm 11.16) left Electron without its binary** (no node_modules/electron/dist): its install script didn't run although package.json allows it. `node node_modules/electron/install.js` downloads it. The smoke fails at launch without it.
+- A test that times a brand-new executable on a Mac: run it once first (macOS assesses each new file on its first run, serialized).
+- The login popup now fills most of a 1100×720 app window; smoke tests close it before reading the homepage.
 
 ## Run 2026-10-19 v1.2 (cloud container: `uname -s` Linux, running as root)
 
