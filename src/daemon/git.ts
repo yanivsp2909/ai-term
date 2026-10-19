@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, open, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { isPlainBranch, isSafeAbsolutePath, isWorktreeBranch } from '../shared/validate.js';
 import { GIT, GIT_PATH, GIT_SYSTEM } from './git-path.js';
+import { ownTempFolder } from './own-temp.js';
 
 export class GitError extends Error {
     constructor(message: 'Git check failed' | 'Repo has no commits' | 'Worktree creation failed' | 'Worktree remove failed' | 'Branch delete failed' | 'Not a git repo' | 'Diff too large') { super(message); }
@@ -274,7 +275,7 @@ export async function isolatedGitDir(path: string, base?: string, options: { wri
         const expected = await realpath(join(options.repo, '.git')), real = await realpath(common);
         if (real !== expected || gitDir !== dotGit && dirname(await realpath(gitDir)) !== join(expected, 'worktrees')) throw new GitError('Git check failed');
     }
-    const temp = await mkdtemp(join(tmpdir(), 'ai-term-diff-'));
+    const temp = await ownTempFolder('diff', tmpdir());
     try {
         await mkdir(join(temp, 'objects', 'info'), { recursive: true }); await mkdir(join(temp, 'refs'));
         // The hash format: from the base, else from the repository's config, read as text (git never reads it here).

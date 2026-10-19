@@ -1,9 +1,8 @@
 import { execFile } from 'node:child_process';
 import { constants, type Stats } from 'node:fs';
-import { access, lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { access, lstat, realpath, rm } from 'node:fs/promises';
 import { isFsError } from '../shared/paths.js';
 import { bwrapPath, bwrapTestArgs, findBwrap } from './bwrap.js';
-import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path';
 import { MAX_BLOCKED_WHAT } from '../shared/test-run.js';
 
@@ -16,6 +15,7 @@ export const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 export { SandboxPathError } from './sandbox-error.js';
 export { PERSISTENCE_DIRS, PERSISTENCE_FILES } from './sandbox-places.js';
 import { SandboxPathError } from './sandbox-error.js';
+import { ownTempFolder } from './own-temp.js';
 // Under your home folder. Read-data is denied (contents and listings); names and sizes stay visible, because path
 // resolution (realpath, getcwd) needs them and would otherwise fail inside the worktree, which lives in ~/.ai-term.
 export const SECRET_PATHS: readonly string[] = ['.ssh', '.aws', '.gnupg', '.netrc', '.npmrc', '.docker', '.kube', '.config/gh', 'Library/Keychains', '.ai-term', '.claude', '.claude.json', '.codex',
@@ -131,7 +131,7 @@ export async function sandboxReady(profile: string, exec = SANDBOX_EXEC, prefix?
 // when a path can't go into a profile; the caller then treats the run as having no sandbox.
 // env: the test's env, for the toolchains on its PATH; readable: more folders to keep open (the repository's git folder).
 export async function prepareSandbox(worktree: string, options: { home: string; private: readonly string[]; loopback: boolean; ports?: readonly number[]; program?: string; env?: Readonly<Record<string, string | undefined>>; readable?: readonly string[]; log?: (text: string) => void; platform?: NodeJS.Platform }): Promise<PreparedSandbox> {
-  const temp = await mkdtemp(join(await realpath(tmpdir()), 'ai-term-test-'));
+  const temp = await ownTempFolder('test');
   if ((options.platform ?? process.platform) === 'linux') return prepareLinux(worktree, temp, options);
   try {
     const realHome = await realpath(options.home).catch(() => options.home);

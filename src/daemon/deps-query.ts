@@ -1,11 +1,11 @@
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { lstat, mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
 import { resolveExecutable } from './engines.js';
 import { fitEscaped, quoted } from './addon-text.js';
+import { ownTempFolder } from './own-temp.js';
 
 // v1.1 /deps: AI Term itself runs only read-only queries, argv only, for the package tools the project uses and that
 // are installed. Upgrading is the agent's job in its worktree, under its own permission prompts. The queries' text is
@@ -83,7 +83,7 @@ function summarize(tool: string, outputs: string[]): { lines: string[]; fact: st
 }
 // folder: the folder whose manifests are queried (the repository's top, or the scope /deps [path] names).
 export async function depsQueries(folder: string, options: { path: string; env: Record<string, string> }): Promise<{ data: string; facts: string[] }> {
-  const work = await mkdtemp(join(await realpath(tmpdir()), 'ai-term-deps-'));
+  const work = await ownTempFolder('deps');
   try {
     // Only regular files are copied: a link would be followed out of the repository.
     for (const name of MANIFESTS) await copyManifest(join(folder, name), join(work, name));

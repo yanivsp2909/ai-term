@@ -1,6 +1,7 @@
 import { getPaths, preparePaths } from '../shared/paths.js';
 import { acquireLock } from './lock.js';
-import { Logger } from './log.js';
+import { errorKind, Logger } from './log.js';
+import { sweepTemp } from './temp-sweep.js';
 import { SessionManager } from './session-manager.js';
 import { UsageService } from './usage-service.js';
 import { migratePrices } from './price-migration.js';
@@ -37,6 +38,8 @@ export async function runDaemon(entry?:string): Promise<void> {
     const mac = process.platform === 'darwin';
     const notifier = mac ? new Notifier(entry ? notifierAppPath(entry) : null, log, notificationsSetting(paths.root))
         : new Notifier(null, log, notificationsSetting(paths.root), launchNotifySend, undefined, undefined, undefined, { platform: process.platform, notifySend: process.platform === 'linux' ? await systemTool('notify-send') : null });
+    // Backlog F2: temporary copies and clones a stopped daemon left behind (only AI Term's own, from a dead run).
+    void sweepTemp({ log: text => log.error(text) }).catch((error: unknown) => log.error(`Temp sweep failed (${errorKind(error)})`));
     const manager = new SessionManager(paths, log, undefined, userUmask,undefined,undefined,usage,entry), server = new DaemonServer(paths, manager, log,undefined,undefined,usage,notifier);
     manager.on('statusChanged', (session: SessionInfo, previous: StatusState, next: StatusState, attached: boolean) => notifier.transition(session, previous, next, attached));
     // v0.9.1 queue (D55, off by default): starts through the same create() as a manual start.
