@@ -105,6 +105,8 @@ export class Homepage {
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
   private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel|RemotePanel;
   private addonFlows = new Map<string, AddonFlow>();
+  // Backlog F3: each folder's last /study popup, for the due list's r (its own map: a topic can be any text).
+  private lastStudy = new Map<string, AddonFlow>();
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -803,7 +805,7 @@ export class Homepage {
     // /commit <agent>: that agent's work (y commits in its worktree); /commit alone: what is staged in this folder.
     if(name==='commit'&&args){const session=this.namedOrSelected(args,'/commit');if(!session)return;subject=session.id;}
     const key=`${this.folder}:${name}:${hint.startsWith('<')?'':subject}`,previous=this.addonFlows.get(key);
-    if(!args&&previous){this.popup=previous.panel;await previous.open();this.draw(true);return;}
+    if(!args&&previous){this.popup=previous.panel;this.studyReopen(previous,name);await previous.open();this.draw(true);return;}
     try{
       // A local add-on sends no target; /standup still gets the choices, for its m (a model pass that asks first).
       const local=LOCAL_ADDON_COMMANDS.includes(name),keys=(await this.connection.request({kind:'keys.list'})).keys??[];
@@ -812,9 +814,18 @@ export class Homepage {
       // daemon's one-line reason can say why.
       if(WEB_ADDON_COMMANDS.includes(name)){const web=targets.filter(t=>t.engine!=='ai-term');if(web.length)targets=web;}
       previous?.dispose();
-      const flow=new AddonFlow(name,subject,this.folder,targets,{request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{if(this.popup===flow.panel)this.popup=undefined;this.draw(true);},started:response=>this.selectNew(response),copy:this.options.copy},local);
-      this.addonFlows.set(key,flow);if(hint.startsWith('<'))this.addonFlows.set(`${this.folder}:${name}:`,flow);this.popup=flow.panel;await flow.open();this.draw(true);
+      const flow=new AddonFlow(name,subject,this.folder,targets,{request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{if(this.popup===flow.panel)this.popup=undefined;this.draw(true);},started:response=>this.selectNew(response),copy:this.options.copy,reopen:()=>{void this.reopenStudy(flow);}},local);
+      this.addonFlows.set(key,flow);if(hint.startsWith('<'))this.addonFlows.set(`${this.folder}:${name}:`,flow);
+      // Backlog F3: the last /study session in this folder, for the due list's r.
+      if(name==='study')this.lastStudy.set(this.folder,flow);
+      this.popup=flow.panel;this.studyReopen(flow,name);await flow.open();this.draw(true);
     }catch(error){this.showNote(error instanceof Error?error.message:'Add-on unavailable');}
+  }
+  // Backlog F3: the /study due list offers r for this folder's last /study popup (its topic), when there is one.
+  private studyReopen(flow:AddonFlow,name:string):void{if(name==='study-due')flow.panel.setReopen(this.lastStudy.get(this.folder)?.subject??null);}
+  private async reopenStudy(due:AddonFlow):Promise<void>{
+    const last=this.lastStudy.get(this.folder);if(!last||this.popup!==due.panel)return;
+    due.dispose();this.popup=last.panel;await last.open();this.draw(true);
   }
   private async brainCommand(argument:string):Promise<void>{
     const cwd=this.folder;

@@ -5,7 +5,7 @@ import { testsText } from './agent-card.js';
 
 // The lines of a batch-1 and batch-2 add-on result (v1.1). Pure: the panel owns the keys and passes what is selected or revealed.
 // Every status keeps its glyph and a word (never color alone).
-export interface ResultView { selected: number; picked: ReadonlySet<number>; tests: TestResult | null; ab: AbView | null; applied: string | null; quiz: 'hidden' | 'offered' | 'declined' | { question: number; answer: boolean }; commits?: boolean }
+export interface ResultView { selected: number; picked: ReadonlySet<number>; tests: TestResult | null; ab: AbView | null; applied: string | null; quiz: 'hidden' | 'offered' | 'declined' | { question: number; answer: boolean }; commits?: boolean; reopen?: string | null }
 type Batch = Exclude<AddonResult, { kind: 'plan' | 'prompt' | 'explain' }>;
 const SEVERITY: Record<Finding['severity'], string> = { critical: '✗ CRITICAL', high: '✗ HIGH', medium: '● MEDIUM', low: '· LOW' };
 const testsLine = (tests: TestResult | null): string => `tests (AI Term's sandbox): ${tests ? testsText(tests).text : 'not run yet · they run when the agent finishes, if the project has a /test-cmd'}`;
@@ -91,7 +91,8 @@ export function batchLines(r: Batch, view: ResultView): string[] {
     case 'e2e': return made(r.summary, r.files, [], view.tests, '');
     case 'animate': return r.verdict === 'skip' ? [`■ no animation: ${r.why}`, r.summary, 'Nothing was changed · Esc closes'] : [`✓ animate: ${r.why}`, ...made(r.summary, r.files, [], undefined, '')];
     case 'study': return [];
-    case 'study-due': return ['no model · no tokens · from your study schedule', ...r.topics.length ? r.topics.map(t => `${t.topic} · review ${t.step + 1} · due ${t.due}`) : ['Nothing is due today'], '', '/study <topic> starts a session · Esc closes'];
+    // Backlog F3: your last /study session in this folder, still open in this homepage, is one key away (no new session).
+    case 'study-due': return ['no model · no tokens · from your study schedule', ...r.topics.length ? r.topics.map(t => `${t.topic} · review ${t.step + 1} · due ${t.due}`) : ['Nothing is due today'], '', ...view.reopen ? [`r reopens your last session: ${view.reopen}`] : [], '/study <topic> starts a session · Esc closes'];
     case 'bisect': return [`First bad commit: ${r.commit.slice(0, 12)} ${r.subject}`, `${r.author} · ${r.date} · ${r.steps} step${r.steps === 1 ? '' : 's'} tested`, 'git bisect reset ran and the temporary copy was removed; your checkout was never touched.', '', ...r.diff];
   }
 }

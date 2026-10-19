@@ -15,7 +15,7 @@ const fitLines = (text: string, bytes: number) => {
   // A first line too long by itself is cut, not dropped (follow-up review).
   return kept.length ? kept.join('\n') : Buffer.from(text).subarray(0, bytes).toString('utf8').replace(/\uFFFD+$/, '');
 };
-interface FlowOptions { request(body: RequestBody): Promise<SuccessResponse>; changed(): void; close(): void; started(response: SuccessResponse): Promise<void>; copy?(text: string): Promise<void> }
+interface FlowOptions { request(body: RequestBody): Promise<SuccessResponse>; changed(): void; close(): void; started(response: SuccessResponse): Promise<void>; copy?(text: string): Promise<void>; reopen?(): void }
 // One popup owns approval, the running state and the result. Closing it pauses polling, never stops the session.
 // targets: empty for an add-on that runs no model (/bisect); its estimate is asked for with no target.
 export class AddonFlow {
@@ -35,9 +35,12 @@ export class AddonFlow {
       polish: text => { void this.action(async () => { this.dispose(); this.ended = false; this.name = 'standup-polish'; this.args = fitLines(text, POLISH_BYTES); this.local = false; this.session = undefined; this.resultReady = false; await this.estimate(); }); },
       // o and s on a made file: the daemon opens it or copies it to Downloads; nothing happens until the key is pressed.
       file: (index, action) => { void this.action(async () => { if (!this.session) return; const saved = (await options.request({ kind: 'addons.file', sessionId: this.session, index, action })).addonSaved; this.panel.setApplied(action === 'open' ? '✓ opened with your default app · Esc closes' : typeof saved === 'string' ? `✓ saved a copy to ${saved} · Esc closes` : '✓ saved · Esc closes'); }); },
+      reopen: () => { options.reopen?.(); },
       ab: unsandboxed => { void this.action(async () => { if (!this.session) return; this.panel.setAb(validateAbView((await options.request({ kind: 'addons.ab', sessionId: this.session, unsandboxed })).addonAb)); this.abRunning = true; await this.poll(); }); },
     });
   }
+  // What this popup was opened with: a /study session's topic (backlog F3: the due list names it).
+  get subject(): string { return this.args; }
   private async action(work: () => Promise<void>): Promise<void> { try { await work(); } catch (error) { this.panel.fail(error instanceof Error ? error.message : 'Add-on operation failed'); } this.options.changed(); }
   async open(): Promise<void> { this.ended = false; if (this.session) { if (!this.resultReady || this.abRunning) await this.poll(); } else await this.action(() => this.estimate()); }
   dispose(): void { this.ended = true; if (this.timer) clearTimeout(this.timer); this.timer = undefined; }

@@ -7,12 +7,13 @@ import type { TaskUsage } from '../../shared/protocol.js';
 import type { TestResult } from '../../shared/test-run.js';
 import { batchLines, copyText, hasOutputs, teachEnd, type ResultView } from './addon-views.js';
 import { testCommandText } from '../../shared/test-run.js';
-interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; file?(index: number, action: 'open' | 'save'): void }
+interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; file?(index: number, action: 'open' | 'save'): void; reopen?(): void }
 export class AddonPanel {
   private panel: TextPanel; private ask?: AddonAsk; private result?: AddonResult;
   private chunk = 0; private selected = 0; private approved = false; private busy = false;
   private usage: TaskUsage | null = null; private tests: TestResult | null = null; private ab: AbView | null = null;
   private picked = new Set<number>(); private applied: string | null = null; private problem: string | null = null; private quiz: ResultView['quiz'] = 'hidden';
+  private reopenLabel: string | null = null;
   lines: string[] = [];
   constructor(changed: () => void, private close: () => void, private actions: Actions) { this.panel = new TextPanel('Add-on', changed, close); this.wait('Preparing the estimate…'); }
   private show(lines: string[]): void { this.lines = lines; this.panel.set(lines.map(text => ({ text, tone: 'ink-2' as const }))); }
@@ -42,6 +43,8 @@ export class AddonPanel {
   setApplied(note: string): void { this.problem = null; this.applied = note; this.busy = false; this.refresh(); }
   setUsage(usage: TaskUsage | null): void { this.usage = usage; this.refresh(); }
   setTests(tests: TestResult | null): void { this.tests = tests; this.refresh(); }
+  // The /study due list: the topic of your last /study session in this folder, which r reopens (null: none to reopen).
+  setReopen(label: string | null): void { this.reopenLabel = label; this.refresh(); }
   setAb(ab: AbView | null): void { this.problem = null; this.ab = ab; this.busy = false; this.refresh(); }
   private refresh(): void {
     const r = this.result; if (!r) return;
@@ -56,10 +59,10 @@ export class AddonPanel {
     else if (r.kind === 'prompt') this.show([...problem, actual, ...r.issues.map(s => `• ${s}`), ...r.diff.split('\n'), 'c copies the improved diff · Esc closes']);
     else if (r.kind === 'explain' || r.kind === 'teach' || r.kind === 'study') {
       if (this.chunk < r.chunks.length) this.show([...problem, actual, ...(this.chunk === 0 ? [r.why, ...'diagram' in r ? r.diagram : [], ''] : []), ...r.chunks[this.chunk] ?? [], `Space next · ${this.chunk + 1}/${r.chunks.length} · Esc closes`]);
-      else this.show(r.kind === 'teach' ? [actual, ...teachEnd(r, this.quiz)] : [actual, r.kind === 'study' ? 'Recap · on your review schedule; /study lists what is due · Esc closes' : 'Recap · Esc closes', ...r.recap]);
+      else this.show(r.kind === 'teach' ? [actual, ...teachEnd(r, this.quiz)] : [actual, r.kind === 'study' ? 'Recap · on your review schedule; /study lists what is due, and r there reopens this · Esc closes' : 'Recap · Esc closes', ...r.recap]);
     }
     // AI Term's own facts (what it read before the model ran) stay above the result.
-    else this.show([...problem, ...r.kind === 'standup' ? [] : [actual], ...this.ask?.facts ?? [], ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz, commits: this.ask?.commits === true })]);
+    else this.show([...problem, ...r.kind === 'standup' ? [] : [actual], ...this.ask?.facts ?? [], ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz, commits: this.ask?.commits === true, reopen: this.reopenLabel })]);
   }
   private move(key: 'up' | 'down', count: number): void { this.selected = Math.max(0, Math.min(count - 1, this.selected + (key === 'up' ? -1 : 1))); this.panel.resetScroll(); this.refresh(); }
   // A Space press arrives as ' ' (the homepage's parser), the word 'space' from older callers: both page and pick (Part C
@@ -102,6 +105,7 @@ export class AddonPanel {
     else if (r?.kind === 'commit' && key === 'y' && this.ask?.commits && !this.applied) { this.busy = true; this.actions.commit?.(); }
     else if (r?.kind === 'changelog' && key === 'w' && !this.applied) { this.busy = true; this.actions.apply?.([0]); }
     else if (r?.kind === 'standup' && key === 'm') this.actions.polish?.(r.lines.join('\n'));
+    else if (r?.kind === 'study-due' && key === 'r' && this.reopenLabel) this.actions.reopen?.();
     else if (r?.kind === 'perf' && key === 'a' && this.ab?.state !== 'running' && this.ab?.state !== 'done' && !(this.ab?.state === 'failed' && this.ab.reason === AB_NO_SANDBOX)) { this.busy = true; this.actions.ab?.(false); }
     // Y only once AI Term said there is no sandbox for this A/B.
     else if (r?.kind === 'perf' && key === 'Y' && this.ab?.state === 'failed' && this.ab.reason === AB_NO_SANDBOX) { this.busy = true; this.actions.ab?.(true); }
