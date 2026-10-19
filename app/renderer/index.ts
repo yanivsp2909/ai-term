@@ -10,6 +10,7 @@ import { tokenColors } from '../../src/shared/theme-tokens.js';
 import { fontStacks } from '../../src/shared/app-fonts.js';
 import { pasteErrors, type AppLook, type MenuAction } from '../shared/api.js';
 import { ligatureRanges } from './ligatures.js';
+import { canvasInstalled, fontNote } from './font-check.js';
 import { fitToWindow } from './resize.js';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
@@ -22,6 +23,7 @@ function App(): unknown {
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
   const [closeNote, setCloseNote] = useState(false);
+  const [fontWarning, setFontWarning] = useState<string | null>(null);
   useEffect(() => {
     if (!host.current) return;
     const api = window.terminal;
@@ -55,6 +57,7 @@ function App(): unknown {
       if (fonts.ligatures && joiner === undefined) joiner = terminal.registerCharacterJoiner(ligatureRanges);
       if (!fonts.ligatures && joiner !== undefined) { terminal.deregisterCharacterJoiner(joiner); joiner = undefined; }
       if (changedFont) resize();
+      setFontWarning(fontNote(fonts, canvasInstalled));
     };
     apply(first);
     // Input/output go straight between xterm and preload; React only owns search/errors.
@@ -89,7 +92,7 @@ function App(): unknown {
   }, []);
   useEffect(() => { if (searching) searchInput.current?.focus(); }, [searching]);
   return h('div', null,
-    h('div', {className:'chrome'}, closeNote ? 'Closing or quitting keeps your agents running.' : 'AI Term'),
+    h('div', {className:'chrome'}, fontWarning ?? (closeNote ? 'Closing or quitting keeps your agents running.' : 'AI Term')),
     h('div', { className: 'terminal', ref: host, 'aria-label': 'AI Term terminal' }),
     searching ? h('div', { className: 'search', role: 'search' },
       h('input', { ref: searchInput, 'aria-label': 'Search scrollback', placeholder: 'Search scrollback',
