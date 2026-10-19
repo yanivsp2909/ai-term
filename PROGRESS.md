@@ -1,9 +1,9 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: abb7e59 test: the app's /setup smoke expects the platform's own sandbox line (TS review LOW)
-Last commit: v1.2.0 run Part A handover (this commit)
-Roadmap step: 2026-10-19 v1.2.0 release run on Yaniv's Mac (A Mac release check → B themes and fonts → C public snapshot and the tag) · A done, B and C next
+Last code commit: bbd6a28 chore: the A/B harnesses for v1.2 (perf-ab marks the first-run setup done; the app latency capture runs hidden)
+Last commit: v1.2.0 run Part B handover (this commit)
+Roadmap step: 2026-10-19 v1.2.0 release run on Yaniv's Mac (A Mac release check → B themes and fonts → C public snapshot and the tag) · A and B done, C next
 Branch: main, pushed.
 
 ## Run 2026-10-19 v1.2.0 (Yaniv's Mac: `uname -s` Darwin 25.5.0, Node 26.3.0, npm 11.16.0)
@@ -22,9 +22,31 @@ Branch: main, pushed.
 - **README, /help, user guide:** no command or key changed in Part A.
 - **Where the code disagreed with the prompt:** the prompt's checkpoint e56951d was right for origin, but this checkout was 57 commits behind (0f6463e) with the two uncommitted edits above.
 
+### Part B · themes and fonts (v1.2.6): done
+- **Commits:** d86e283 (RED), 3ea10fe (a Mac flake: partb-engines' fresh stubs), 899a9cc (GREEN), a935c33 → 20ca2c2 (the ligature note, your heads-up), c8d0e4d → 1d39b14 (security LOWs, copy, accessibility, impeccable), df983de → 2e8d78f (TypeScript review), 0555d04 (architecture §12.37), f5878c9 → 85d7c14 (tokens.json shape for the spike renderer), bbd6a28 (A/B harnesses).
+- **Themes:** graphite (the old dark and light), slate and ink (their approved darks, new lights), dune (warm sand) and high contrast, each dark and light, all from docs/design/tokens.json through src/shared/theme-tokens.ts. Every text token holds 4.5:1 on bg, surface and surface-2 in every theme and variant, high contrast 6:1 (tests/v126-themes.test.ts). Graphite stays at `value.dark`/`value.light`; the others are `value.<theme>.<variant>`.
+- **Variants:** dark, light, system (the terminal's background by OSC 11; in the app, macOS through a new `appearance dark|light` app command). Unset: dark in a terminal, system in the app (as each was). `light` is still graphite light.
+- **Theme files:** `~/.ai-term/themes/<name>.json`, `{name?, dark, light}` with every base token; refused whole in one printable line (`✗ ocean.json refused · missing light.bg`); the daemon lists them (`themes.list`) and won't save one that can't be used.
+- **/theme:** a box at the top right; the homepage behind redraws in the highlighted theme; ←→ variant; ⏎ saves theme and variant, Esc restores and saves nothing; `/theme <name> [variant]` still works. /settings Tab cycles the built-ins and auto.
+- **The app:** follows the saved theme and fonts live (main reads settings.json and the themes folder, watches both, sends a look checked in preload, only when it changed); ai inside wears the saved theme (it no longer forces auto). Fonts: /settings `F` (terminal and chrome family and size, ligatures by a character joiner, no addon); the title strip says when ligatures are on and the terminal font isn't installed (your heads-up during the run). The TUI in a terminal keeps the terminal's font.
+- **Reviews (fresh context):**
+  - TypeScript: 0 CRITICAL/HIGH. 5 MEDIUM: ⏎ then Esc undoing a pick; a stale theme to go back to after macOS flips; system in the app reading the window instead of macOS; every settings.json write repainting the app; one odd file name hiding every theme of yours (= security LOW-1). 8 LOW: fixed OSC 11 asked at every preview, the unread-folder note, the renderer's resize declared after use. Not changed: the font note shows over the first-use "Closing or quitting…" note (it is the actionable one; both can only meet if fonts were set before the first app launch); a watcher stopped by an fs.watch error stays stopped (it logs "restart the app"); a stale settings.get racing a save self-heals at the next ack; the app's 64 KB settings cap vs the daemon's 16 KB (harmless); the agent and `ai attach` treat system as dark (documented).
+  - Security: 0 CRITICAL/HIGH/MEDIUM. 2 LOW, both fixed: a file name with controls hid every theme; a FIFO as settings.json could hold app threads. INFO kept: no contrast check for your own theme files (your call).
+  - design:ux-copy: "unknown color", "comes from accent", "uses your terminal's background", "can only use".
+  - design:accessibility-review: 1 Minor, fixed: the chrome font now reaches 26 px (200%, WCAG 1.4.4).
+  - impeccable (critique): the picker sat one column inside the edge (a double border) and was wider than its footer; now flush right at 66 columns.
+- **Typing latency A/B** (scripts/perf-ab.py, old 50dbd0a vs new 85d7c14, each a `git archive` export with the same node_modules, 5 rounds alternating, this Mac; gate: new p95 at most max(0.3 ms, 10%) above old):
+  - TUI (typing through attach): p95 0.69 → 0.67 ms (−2.4%), p50 0.46 → 0.48 ms; reversed order p95 0.68 (new) vs 0.69 (old). Pass. Cold start 121.8 ms both. Homepage CPU with 10 noisy agents read +15.5% in the first order and −4.6% reversed (7.47 new first vs 7.83 old second): the second slot runs warmer, not the code.
+  - The app (scripts/measure-app-latency.ts capture, command-bar echo, hidden window, WebGL): p50 1.6 → 1.6 ms, p95 2.1 → 2.1 ms. Pass.
+- **Where the code disagreed with the prompt:** design.md said "Ligatures stay off; … the optional toggle is omitted" and the app's TUI always used auto; both changed on purpose for this part, design.md updated. There were 3 dark palettes and 1 light before, not "dark and light themes": graphite's two columns became one theme, slate and ink got lights.
+- **Choices made (non-blocking):** the theme box sits top right so the homepage shows (design.md was silent); your own theme files must give both variants; no contrast check for them; the chrome strip text is now the 13 px chrome-body token (was 12 px).
+- **Checks:** typecheck 0 · lint 0 (eslint exit 0) · build "ESM ⚡️ Build success in 50ms" · app:build "✓ built in 55ms" · npm test twice "Test Files 312 passed | 1 skipped (313) · Tests 2114 passed | 8 skipped (2122)" (55 s, 54 s) · Electron smoke "12 passed (50.3s)" · `npm run live` tier 1 "Tier 1 passed: 32 checks in 94 s" · verification-loop: ready (no secrets or console.log in the diff).
+
 ### Gotchas (v1.2.0 run)
 - **`npm ci` (npm 11.16) left Electron without its binary** (no node_modules/electron/dist): its install script didn't run although package.json allows it. `node node_modules/electron/install.js` downloads it. The smoke fails at launch without it.
-- A test that times a brand-new executable on a Mac: run it once first (macOS assesses each new file on its first run, serialized).
+- A test that times a brand-new executable on a Mac: run it once first (`tests/first-exec.ts` runOnce; macOS assesses each new file on its first run, serialized).
+- tokens.json: graphite must stay at `value.dark`/`value.light`; `spikes/renderer/theme.js` (and perf-ab's noise agents) read that shape.
+- Theme names: any lowercase name is a valid `theme` now (a file of yours may have it); tests that need a refused theme use one with a capital or a space.
 - The login popup now fills most of a 1100×720 app window; smoke tests close it before reading the homepage.
 
 ## Run 2026-10-19 v1.2 (cloud container: `uname -s` Linux, running as root)
