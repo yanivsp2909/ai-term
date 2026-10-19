@@ -13,7 +13,7 @@ const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) { await chmod(root, 0o700).catch(() => undefined); await rm(root, { recursive: true, force: true }); } });
 async function temp(): Promise<string> { const dir = await realpath(await mkdtemp(join(tmpdir(), 'ai-f5-'))); roots.push(dir); return dir; }
 const coded = (code: string) => Object.assign(new Error(`failed at /Users/someone/${code}`), { code });
-const request = (): QueueRequest => ({ engine: 'codex', model: null, cwd: tmpdir(), permission: 'ask' });
+const request = (): QueueRequest => ({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: tmpdir(), permission: 'ask', effort: null });
 
 it("the queue logs the kind of error: settings it can't read, an agent that can't start, a save that fails", async () => {
   const root = await temp(), errors: string[] = [], listeners: ((s: { title: string }, p: { status: string }, n: { status: string }) => void)[] = [];
@@ -38,6 +38,6 @@ it("the queue logs the kind of error: settings it can't read, an agent that can'
 
 it("a dev server that can't start is logged with the kind of error", async () => {
   const errors: string[] = [], dev = new DevServers({ error: text => errors.push(text) });
-  await expect(dev.start(randomUUID(), { command: [join(await temp(), 'no-such-program')], cwd: tmpdir(), port: 4199, env: { PATH: '/usr/bin:/bin' } }, () => {})).rejects.toThrow("The dev server couldn't start");
+  await expect(dev.start(randomUUID(), { command: [join(await temp(), 'no-such-program')], cwd: tmpdir(), port: 4199, sandbox: null, env: { PATH: '/usr/bin:/bin' } }, () => {})).rejects.toThrow("The dev server couldn't start");
   expect(errors).toEqual(["Dev server couldn't start (Error ENOENT)"]);
 });
