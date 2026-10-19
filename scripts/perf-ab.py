@@ -88,6 +88,10 @@ def run_build(build, rounds_out):
             path = fake / name
             path.write_text(f"#!/bin/sh\nsleep 0.1\ncase \"$1\" in --version) echo '{name} 9.9.9' ;; *) echo '{answer}' ;; esac\n")
             path.chmod(0o755)
+        # v1.2 opens a first-run setup on a brand-new AI Term folder, over the agent names this waits for: mark it done.
+        settings = pathlib.Path(root, 'settings.json')
+        settings.write_text(json.dumps({'theme': 'graphite', 'notifications': False, 'setup': 'done'}))
+        settings.chmod(0o600)
         env = {'PATH': f'{fake}:/usr/bin:/bin:/opt/homebrew/bin', 'HOME': root, 'AI_TERM_HOME': root, 'SHELL': '/bin/sh',
                'TERM': 'xterm-256color', 'COLORTERM': 'truecolor', 'LANG': 'en_US.UTF-8'}
         daemon = subprocess.Popen([NODE, entry, 'daemon'], cwd=build, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

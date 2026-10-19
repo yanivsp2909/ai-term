@@ -15,7 +15,8 @@ interface Capture { records: RecordItem[]; stop: () => void }
 declare global { interface Window { terminal: TerminalApi; latencyCapture?: Capture } }
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 const keys = 300, warmup = 50;
-function env(home: string): Record<string, string> { return { HOME: home, AI_TERM_HOME: join(home, '.ai-term'), AI_TERM_APP_DATA: join(home, 'electron'), PATH: '/usr/bin:/bin', SHELL: '/bin/sh', LANG: 'en_US.UTF-8', COLORTERM: 'truecolor' }; }
+// AI_TERM_BACKGROUND: the window never shows or takes focus while it measures (as the smoke tests); it still renders.
+function env(home: string): Record<string, string> { return { HOME: home, AI_TERM_HOME: join(home, '.ai-term'), AI_TERM_APP_DATA: join(home, 'electron'), PATH: '/usr/bin:/bin', SHELL: '/bin/sh', LANG: 'en_US.UTF-8', COLORTERM: 'truecolor', AI_TERM_BACKGROUND: '1' }; }
 async function setup(): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), 'ai-app-latency-'));
   await mkdir(join(home, '.ai-term'), { mode: 0o700 });
