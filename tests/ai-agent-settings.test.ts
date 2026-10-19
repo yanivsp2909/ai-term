@@ -9,7 +9,7 @@ import type { KeyView, SessionInfo, Settings } from '../src/shared/protocol.js';
 
 // v0.4.2 client side: caps defaults, the context warning switch (D55), "this deployment is model X" picked from the
 // catalog only, the card's 85% line and context % on the bar.
-const foundry: KeyView = { id: randomUUID(), provider: 'foundry', label: 'narvis', last4: 'ITid', endpoint: 'https://narvis-resource.openai.azure.com/openai/v1', deployments: ['gpt-6.1-sol', 'my-kimi'] };
+const foundry: KeyView = { id: randomUUID(), provider: 'foundry', label: 'work', last4: 'WXYZ', endpoint: 'https://example-resource.openai.azure.com/openai/v1', deployments: ['gpt-6.1-sol', 'my-kimi'] };
 function panel(start: Settings = { theme: 'graphite' }) {
   let settings = start; const caps = vi.fn(), patches: unknown[] = [];
   const instance = new CredentialsPanel('settings', { request: async body => { if (body.kind === 'settings.set') { patches.push(body.patch); settings = { ...settings, ...body.patch }; } return { id: randomUUID(), ok: true, settings, keys: [foundry] }; }, changed() {}, close() {}, login: async () => {}, defaults() {}, theme: async () => {}, caps });

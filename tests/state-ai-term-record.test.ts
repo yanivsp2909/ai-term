@@ -16,7 +16,7 @@ it('a saved AI Term agent record loads after a daemon restart, with the rest of 
   const paths = getPaths(root); await preparePaths(paths);
   const now = new Date().toISOString(), keyId = randomUUID();
   const base = { cwd: root, permission: 'ask', status: 'exited', statusDetail: 'exit 0', statusSince: now, exitCode: 0, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null, pid: null };
-  const agent = { ...base, id: randomUUID(), title: 'ai term', engine: 'ai-term', model: 'gpt-6.1-sol', effort: null, auth: { kind: 'key', keyId, provider: 'foundry', keyLabel: 'narvis', last4: 'abcd' }, authMethod: 'api-key', recipe: { engine: 'ai-term', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId }, cwd: root, permission: 'ask', effort: null } };
+  const agent = { ...base, id: randomUUID(), title: 'ai term', engine: 'ai-term', model: 'gpt-6.1-sol', effort: null, auth: { kind: 'key', keyId, provider: 'foundry', keyLabel: 'work', last4: 'abcd' }, authMethod: 'api-key', recipe: { engine: 'ai-term', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId }, cwd: root, permission: 'ask', effort: null } };
   const claude = { ...base, id: randomUUID(), title: 'claude', engine: 'claude-code', model: null, auth: { kind: 'account' }, recipe: { engine: 'claude-code', model: null, auth: { kind: 'account' }, cwd: root, permission: 'ask' } };
   await writeFile(paths.state, JSON.stringify({ sessions: [agent, claude], worktrees: [] }), { mode: 0o600 });
   const manager = new SessionManager(paths, new Logger(paths.log));

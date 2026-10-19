@@ -24,7 +24,7 @@ it('an ai-term start needs key auth, Ask or Don\'t ask, and no effort level', as
 
 it('ai-term session records validate; an account-auth ai-term record does not', () => {
   const now = new Date().toISOString();
-  const record = { id: randomUUID(), title: 'AI Term', engine: 'ai-term', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId, provider: 'foundry', keyLabel: 'narvis', last4: 'ITid' }, cwd, permission: 'ask', status: 'running', statusDetail: 'running', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null, effort: null };
+  const record = { id: randomUUID(), title: 'AI Term', engine: 'ai-term', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId, provider: 'foundry', keyLabel: 'work', last4: 'WXYZ' }, cwd, permission: 'ask', status: 'running', statusDetail: 'running', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null, effort: null };
   expect(validateSession(record).engine).toBe('ai-term');
   expect(() => validateSession({ ...record, auth: { kind: 'account' } })).toThrow();
 });
@@ -36,7 +36,7 @@ it('keysRunOn is a setting with two values; the saved default engine stays a CLI
   expect(() => validateSettings({ theme: 'graphite', defaultEngine: 'ai-term' })).toThrow();
 });
 
-const foundry: KeyView = { id: keyId, provider: 'foundry', label: 'narvis', last4: 'ITid', endpoint: 'https://narvis-resource.openai.azure.com/openai/v1', deployments: ['gpt-6.1-sol', 'kimi-k3'], lastTest: [{ model: 'gpt-6.1-sol', status: 'ready' }, { model: 'kimi-k3', status: 'not a chat model' }] };
+const foundry: KeyView = { id: keyId, provider: 'foundry', label: 'work', last4: 'WXYZ', endpoint: 'https://example-resource.openai.azure.com/openai/v1', deployments: ['gpt-6.1-sol', 'kimi-k3'], lastTest: [{ model: 'gpt-6.1-sol', status: 'ready' }, { model: 'kimi-k3', status: 'not a chat model' }] };
 const anthropic: KeyView = { id: randomUUID(), provider: 'anthropic', label: 'a', last4: 'abcd' };
 
 it('D47 routing (v0.4.2): every key runs on ai term unless the fallback says the CLI; accounts always run the CLIs', () => {

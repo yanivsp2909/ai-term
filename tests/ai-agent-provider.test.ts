@@ -4,7 +4,7 @@ import { guardedFetch, makeModel, type ModelSpec } from '../src/agent/provider.j
 
 // S16/S19 for AI Term's agent: each provider sends its key only in its own header, only to its own endpoint (fixed, or
 // the Foundry one bound in the Keychain), never follows a redirect, and no provider error text reaches the screen.
-const KEY = 'AITERMCANARY-provider-0123456789abcdef', ENDPOINT = 'https://narvis-resource.openai.azure.com/openai/v1';
+const KEY = 'AITERMCANARY-provider-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
 interface Seen { url: string; headers: Headers; redirect?: RequestRedirect; body: string }
 
 async function oneRequest(spec: ModelSpec): Promise<Seen> {
@@ -48,7 +48,7 @@ it('OpenAI: api.openai.com only, key as its bearer token only, no organization o
 it('the guard refuses any URL outside the endpoint before a request is made', async () => {
   let calls = 0;
   const guarded = guardedFetch(ENDPOINT, async () => { calls++; return new Response('{}'); });
-  for (const url of ['https://evil.example/openai/v1/responses', 'http://narvis-resource.openai.azure.com/openai/v1/responses', 'https://narvis-resource.openai.azure.com/openai/v10/responses', 'https://narvis-resource.openai.azure.com/other'])
+  for (const url of ['https://evil.example/openai/v1/responses', 'http://example-resource.openai.azure.com/openai/v1/responses', 'https://example-resource.openai.azure.com/openai/v10/responses', 'https://example-resource.openai.azure.com/other'])
     await expect(guarded(url)).rejects.toThrow('Request outside the provider endpoint');
   await guarded(`${ENDPOINT}/responses`);
   expect(calls).toBe(1);

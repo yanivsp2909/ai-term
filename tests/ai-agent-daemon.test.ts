@@ -19,7 +19,7 @@ import { NO_LINUX_SANDBOX } from './platform.js';
 
 // The daemon side of AI Term's agent: D47 routing, the spawn (argv and env from env.ts, key bound in the Keychain), and
 // status and usage arriving through the shared receiver exactly as the agent's reporter sends them.
-const SECRET = 'AITERMCANARY-daemon-0123456789abcdef', ENDPOINT = 'https://narvis-resource.openai.azure.com/openai/v1';
+const SECRET = 'AITERMCANARY-daemon-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 
@@ -39,7 +39,7 @@ async function daemon(settings: Record<string, unknown> = {}) {
     return real('/bin/sh', ['-c', 'printf ready; read done'], { ...options, env: { PATH: '/usr/bin:/bin' } });
   });
   vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
-  const foundry = await keys.add({ provider: 'foundry', label: 'narvis', secret: SECRET, endpoint: ENDPOINT, deployments: ['gpt-6.1-sol', 'gpt-6-luna', 'kimi-k3', 'broken'] });
+  const foundry = await keys.add({ provider: 'foundry', label: 'work', secret: SECRET, endpoint: ENDPOINT, deployments: ['gpt-6.1-sol', 'gpt-6-luna', 'kimi-k3', 'broken'] });
   await keys.saveTest(foundry.id, [{ model: 'gpt-6.1-sol', status: 'ready' }, { model: 'gpt-6-luna', status: 'ready' }, { model: 'kimi-k3', status: 'not a chat model' }, { model: 'broken', status: 'error', httpStatus: 404 }]);
   return { root, paths, manager, usage, keys, foundry, spawned };
 }

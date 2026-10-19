@@ -7,7 +7,7 @@ import type { SessionInfo, UsageSummary } from '../src/shared/protocol.js';
 
 // v0.6.1 cost per task (D55, on by default): each agent's own total, on its card and in /usage.
 const now = '2026-10-15T00:00:00.000Z';
-const session = (over: Partial<SessionInfo> = {}): SessionInfo => ({ id: randomUUID(), title: 'fix-login', engine: 'ai-term', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId: randomUUID(), provider: 'foundry', keyLabel: 'narvis', last4: 'abcd' }, cwd: '/tmp', permission: 'ask', status: 'done', statusDetail: 'done', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null, ...over });
+const session = (over: Partial<SessionInfo> = {}): SessionInfo => ({ id: randomUUID(), title: 'fix-login', engine: 'ai-term', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId: randomUUID(), provider: 'foundry', keyLabel: 'work', last4: 'abcd' }, cwd: '/tmp', permission: 'ask', status: 'done', statusDetail: 'done', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null, lastActivity: null, ...over });
 const empty = { costUsd: 0, tokens: 0, cachedTokens: 0, unknownPrice: false, providers: [] };
 const summary: UsageSummary = { today: { ...empty, costUsd: 0.42, tokens: 1500 }, week: empty, month: empty };
 

@@ -331,7 +331,7 @@ On the home key the client sends `sessions.detach`. It then resets every mode th
   - `--no-daemon` (the same single flag every Codex session starts with; also required for invocation-local config overrides)
   - `-c model_provider="aiterm_foundry"`
   - `-c model_providers.aiterm_foundry.name="AI Term Foundry"`
-  - `-c model_providers.aiterm_foundry.base_url="<endpoint>"`, for example `https://narvis-resource.openai.azure.com/openai/v1` (no `api-version` on `/openai/v1`)
+  - `-c model_providers.aiterm_foundry.base_url="<endpoint>"`, for example `https://example-resource.openai.azure.com/openai/v1` (no `api-version` on `/openai/v1`)
   - `-c model_providers.aiterm_foundry.env_key="AITERM_FOUNDRY_KEY"`
   - `-c model_providers.aiterm_foundry.env_http_headers={"api-key"="AITERM_FOUNDRY_KEY"}` (the value is the env var's *name*, never the key)
   - `-c model_providers.aiterm_foundry.wire_api="responses"`

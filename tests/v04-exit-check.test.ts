@@ -27,7 +27,7 @@ import { groupRuns } from './platform.js';
 // key, a temporary HOME. One agent on a temp repo uses a skill, a subagent and an MCP tool with every action approved
 // through Ask; its cost reaches its own screen (which the card's preview mirrors) and Usage; a cap pauses it; Ctrl+K
 // stops a running bash.
-const SECRET = 'AITERMCANARY-exit-0123456789abcdef', ENDPOINT = 'https://narvis-resource.openai.azure.com/openai/v1', MODEL = 'gpt-6.1-sol';
+const SECRET = 'AITERMCANARY-exit-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1', MODEL = 'gpt-6.1-sol';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { killAllBash(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
@@ -68,7 +68,7 @@ async function world(settings: Record<string, unknown> = {}) {
   // The PTY child stands in for `ai agent`; the agent itself runs in this process with the env the daemon built for it.
   const spawned: Record<string, string>[] = [], real = pty.spawn;
   vi.spyOn(pty, 'spawn').mockImplementation((file, args, options) => { spawned.push({ ...(options?.env as Record<string, string>) }); return real('/bin/sh', ['-c', 'printf ready; read done'], { ...options, env: { PATH: '/usr/bin:/bin' } }); });
-  const key = await keys.add({ provider: 'foundry', label: 'narvis', secret: SECRET, endpoint: ENDPOINT, deployments: [MODEL] });
+  const key = await keys.add({ provider: 'foundry', label: 'work', secret: SECRET, endpoint: ENDPOINT, deployments: [MODEL] });
   await keys.saveTest(key.id, [{ model: MODEL, status: 'ready' }]);
   const session = await manager.create({ engine: 'ai-term', model: MODEL, auth: { kind: 'key', keyId: key.id }, cwd: repo, permission: 'ask' });
   await expect.poll(() => manager.get(session.id).status).toBe('running');

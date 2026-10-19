@@ -12,7 +12,7 @@ import * as engines from '../src/daemon/engines.js';
 import { HttpReporter, reporterEnv, readAgentSecrets } from '../src/agent/report.js';
 
 // v0.6.1 through the real daemon: the budget route (B25) and cost per task (D55), as the agent and the CLIs report them.
-const SECRET = 'AITERMCANARY-b25-0123456789abcdef', ENDPOINT = 'https://narvis-resource.openai.azure.com/openai/v1';
+const SECRET = 'AITERMCANARY-b25-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 async function daemon(settings: Record<string, unknown> = {}) {
@@ -31,7 +31,7 @@ async function daemon(settings: Record<string, unknown> = {}) {
     return real('/bin/sh', ['-c', 'printf ready; read done'], { ...options, env: { PATH: '/usr/bin:/bin' } });
   });
   vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
-  const foundry = await keys.add({ provider: 'foundry', label: 'narvis', secret: SECRET, endpoint: ENDPOINT, deployments: ['gpt-6.1-sol'] });
+  const foundry = await keys.add({ provider: 'foundry', label: 'work', secret: SECRET, endpoint: ENDPOINT, deployments: ['gpt-6.1-sol'] });
   await keys.saveTest(foundry.id, [{ model: 'gpt-6.1-sol', status: 'ready' }]);
   return { root, manager, usage, foundry, spawned };
 }

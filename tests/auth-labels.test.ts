@@ -21,8 +21,8 @@ it('long auth labels do not overwrite model text or hide the dontAsk marker',()=
  expect(text.split('\n')[3]).toContain('CLI default · codex');expect(text.split('\n')[4]).toContain('own login · API key');expect(text).toContain("! don't ask");expect(frame[2]?.some(c=>c.char==='!'&&c.fg===createTheme('graphite').colors['status-error'])).toBe(true);
 });
 it('next-agent auth stays visible even when the folder is long',()=>{
- const text=plainText(renderHomepage({cols:100,rows:30,sessions:[],selectedId:null,input:'',note:'',previewVisible:true,cwd:'/tmp/'+ 'folder'.repeat(30),now:0,engine:'codex',model:'gpt-6.1-sol',authLabel:'key ····ITid'},createTheme('graphite')));
- expect(text.split('\n').at(-1)).toContain('key ····ITid');
+ const text=plainText(renderHomepage({cols:100,rows:30,sessions:[],selectedId:null,input:'',note:'',previewVisible:true,cwd:'/tmp/'+ 'folder'.repeat(30),now:0,engine:'codex',model:'gpt-6.1-sol',authLabel:'key ····WXYZ'},createTheme('graphite')));
+ expect(text.split('\n').at(-1)).toContain('key ····WXYZ');
 });
 it('finished own-login cards retain a status word alongside explicit auth',()=>{
  const now=new Date().toISOString();const session:SessionInfo={id:randomUUID(),title:'Codex',engine:'codex',model:'gpt-6.1-sol',auth:{kind:'account'},authMethod:'api-key',cwd:'/tmp',permission:'ask',status:'exited',statusDetail:'exit 0',statusSince:now,createdAt:now,lastOutputAt:null,exitCode:0,ctxPercent:null};

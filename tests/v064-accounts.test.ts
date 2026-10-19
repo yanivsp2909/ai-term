@@ -65,7 +65,7 @@ it('a profile folder is private and shares only your skills, agents and commands
 });
 
 it('a limit on screen is read with its reset time when it says one', () => {
-  expect(parseLimit('working…\n5-hour limit reached ∙ resets 3pm (Asia/Jerusalem)\n> ')).toEqual({ resets: '15:00' });
+  expect(parseLimit('working…\n5-hour limit reached ∙ resets 3pm (Europe/Lisbon)\n> ')).toEqual({ resets: '15:00' });
   expect(parseLimit('Claude usage limit reached. Your limit will reset at 7:30 pm.')).toEqual({ resets: '19:30' });
   expect(parseLimit("■ You've hit your usage limit. Upgrade to Pro or try again at 3:45 PM.")).toEqual({ resets: '15:45' });
   expect(parseLimit("You've hit your usage limit. Try again in 2 hours.")).toEqual({ resets: null });
