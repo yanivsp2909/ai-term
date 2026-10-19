@@ -105,8 +105,10 @@ export class Homepage {
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
   private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel|RemotePanel;
   private addonFlows = new Map<string, AddonFlow>();
-  // Backlog F3: each folder's last /study popup, for the due list's r (its own map: a topic can be any text).
-  private lastStudy = new Map<string, AddonFlow>();
+  // Each folder's last /study popup (backlog F3: the due list's r) and last /bisect (F1: /bisect alone reopens it, so a
+  // closed run can still be stopped). Their own map, keyed by command and folder: a topic or test command can be any text.
+  private lastFlows = new Map<string, AddonFlow>();
+  private lastKey(name:string):string{return JSON.stringify([name,this.folder]);}
   // v0.7.3: the base of a branch whose merge last met a conflict, so `/merge <agent> rebase` can start the rebase agent.
   private conflicts=new Map<string,string>();
   // Agents marked with Space for the next split (list order when it opens), and the last split Ctrl+E left.
@@ -800,6 +802,9 @@ export class Homepage {
     if(this.popup){this.showNote('close the open popup first');return;}
     const hint=ADDON_HINTS[name]??'';
     if(!args&&hint.startsWith('<')){const previous=this.addonFlows.get(`${this.folder}:${name}:`);if(previous){this.popup=previous.panel;await previous.open();this.draw(true);return;}this.showNote(`/${name} ${hint}`);return;}
+    // Backlog F1: /bisect alone opens the last /bisect again (its result, or the run x stops).
+    const lastBisect=name==='bisect'&&!args?this.lastFlows.get(this.lastKey('bisect')):undefined;
+    if(lastBisect){this.popup=lastBisect.panel;await lastBisect.open();this.draw(true);return;}
     let subject=args;
     if(name==='teach'||name==='review-deep'){const session=this.namedOrSelected(args,name==='teach'?'/teach':'/review <agent> deep');if(!session)return;subject=session.id;}
     // /commit <agent>: that agent's work (y commits in its worktree); /commit alone: what is staged in this folder.
@@ -816,15 +821,15 @@ export class Homepage {
       previous?.dispose();
       const flow=new AddonFlow(name,subject,this.folder,targets,{request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{if(this.popup===flow.panel)this.popup=undefined;this.draw(true);},started:response=>this.selectNew(response),copy:this.options.copy,reopen:()=>{void this.reopenStudy(flow);}},local);
       this.addonFlows.set(key,flow);if(hint.startsWith('<'))this.addonFlows.set(`${this.folder}:${name}:`,flow);
-      // Backlog F3: the last /study session in this folder, for the due list's r.
-      if(name==='study')this.lastStudy.set(this.folder,flow);
+      // Backlog F1 and F3: the last /study and /bisect in this folder.
+      if(name==='study'||name==='bisect')this.lastFlows.set(this.lastKey(name),flow);
       this.popup=flow.panel;this.studyReopen(flow,name);await flow.open();this.draw(true);
     }catch(error){this.showNote(error instanceof Error?error.message:'Add-on unavailable');}
   }
   // Backlog F3: the /study due list offers r for this folder's last /study popup (its topic), when there is one.
-  private studyReopen(flow:AddonFlow,name:string):void{if(name==='study-due')flow.panel.setReopen(this.lastStudy.get(this.folder)?.subject??null);}
+  private studyReopen(flow:AddonFlow,name:string):void{if(name==='study-due')flow.panel.setReopen(this.lastFlows.get(this.lastKey('study'))?.subject??null);}
   private async reopenStudy(due:AddonFlow):Promise<void>{
-    const last=this.lastStudy.get(this.folder);if(!last||this.popup!==due.panel)return;
+    const last=this.lastFlows.get(this.lastKey('study'));if(!last||this.popup!==due.panel)return;
     due.dispose();this.popup=last.panel;await last.open();this.draw(true);
   }
   private async brainCommand(argument:string):Promise<void>{

@@ -52,6 +52,8 @@ export type AddonResult = { kind: 'plan'; title: string; steps: { title: string;
 // /perf's A/B, run by AI Term on the code before and after the change, back to back on this machine.
 // AI Term's answer when /perf's A/B has no sandbox: the popup then accepts a capital Y, like /dev.
 export const AB_NO_SANDBOX = 'No sandbox here · Y runs the A/B with your rights';
+// Backlog F1: what the popup says after x stopped the A/B.
+export const AB_STOPPED = 'you stopped it; its processes ended and its temporary copy was removed';
 export type AbView = { state: 'running' } | { state: 'failed'; reason: string } | { state: 'done'; rounds: number; beforeMs: number; afterMs: number; sandbox: boolean };
 
 const object = (v: unknown): Record<string, unknown> | null => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;

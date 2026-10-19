@@ -149,7 +149,8 @@ it('the daemon itself refuses an unsandboxed /bisect without Y, and runs it only
   const again = await service.plan('bisect', './check.sh', root, null), started = await service.start(again.receipt, true);
   if (!('run' in started)) throw new Error('expected a run');
   await vi.waitFor(async () => expect(await service.result(started.run)).toEqual(result));
-  expect(calls).toEqual([[await realpath(root), plan, true]]);
+  // Backlog F1: each run also gets the signal x stops it with.
+  expect(calls).toEqual([[await realpath(root), plan, true, expect.any(AbortSignal)]]);
 });
 
 it('/perf a starts one A/B at a time and its result arrives through result polling', async () => {
@@ -163,7 +164,7 @@ it('/perf a starts one A/B at a time and its result arrives through result polli
   expect(() => service.startAb(id, false)).toThrow('No benchmark to compare yet');
   await service.result(id);
   expect(service.startAb(id, false)).toEqual({ state: 'running' }); expect(service.startAb(id, true)).toEqual({ state: 'running' });
-  expect(perfAb).toHaveBeenCalledOnce(); expect(perfAb).toHaveBeenCalledWith(id, ['node', 'bench/a.js'], ['bench/a.js'], false);
+  expect(perfAb).toHaveBeenCalledOnce(); expect(perfAb).toHaveBeenCalledWith(id, ['node', 'bench/a.js'], ['bench/a.js'], false, expect.any(AbortSignal));
   finish({ state: 'done', rounds: 5, beforeMs: 120, afterMs: 40, sandbox: true });
   await vi.waitFor(() => expect(service.ab(id)).toMatchObject({ state: 'done', afterMs: 40 }));
 });

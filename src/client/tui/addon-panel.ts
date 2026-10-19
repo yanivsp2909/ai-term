@@ -7,17 +7,19 @@ import type { TaskUsage } from '../../shared/protocol.js';
 import type { TestResult } from '../../shared/test-run.js';
 import { batchLines, copyText, hasOutputs, teachEnd, type ResultView } from './addon-views.js';
 import { testCommandText } from '../../shared/test-run.js';
-interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; file?(index: number, action: 'open' | 'save'): void; reopen?(): void }
+interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; file?(index: number, action: 'open' | 'save'): void; reopen?(): void; cancel?(): void }
 export class AddonPanel {
   private panel: TextPanel; private ask?: AddonAsk; private result?: AddonResult;
   private chunk = 0; private selected = 0; private approved = false; private busy = false;
   private usage: TaskUsage | null = null; private tests: TestResult | null = null; private ab: AbView | null = null;
   private picked = new Set<number>(); private applied: string | null = null; private problem: string | null = null; private quiz: ResultView['quiz'] = 'hidden';
   private reopenLabel: string | null = null;
+  // Backlog F1: a /bisect run or an A/B is running and x stops it; stopping: x was pressed, the daemon is cleaning up.
+  private stoppable = false; private stopping = false;
   lines: string[] = [];
   constructor(changed: () => void, private close: () => void, private actions: Actions) { this.panel = new TextPanel('Add-on', changed, close); this.wait('Preparing the estimate…'); }
   private show(lines: string[]): void { this.lines = lines; this.panel.set(lines.map(text => ({ text, tone: 'ink-2' as const }))); }
-  wait(message = 'Running in Ask mode · close this popup to inspect or attach the agent.'): void { this.busy = true; this.show([message, 'Esc closes']); }
+  wait(message = 'Running in Ask mode · close this popup to inspect or attach the agent.'): void { this.busy = true; this.stoppable = false; this.show([message, 'Esc closes']); }
   // A refused action on a shown result: say why above the result and keep it usable (review: busy stayed on).
   fail(message: string): void { if (!this.result) { this.wait(message); return; } this.problem = message; this.busy = false; this.refresh(); }
   setAsk(ask: AddonAsk): void { this.ask = ask; this.busy = false; this.result = undefined; this.show(ask.bisect ? this.bisectAsk(ask, ask.bisect) : ask.free ? [`/${ask.name} · ${ask.summary}`, 'no model · no tokens', ...ask.facts ?? []] : [
@@ -38,14 +40,16 @@ export class AddonPanel {
       b.sandbox ? 'y starts · Enter does nothing · Esc cancels' : 'Y (capital) starts without a sandbox · Enter does nothing · Esc cancels'];
   }
   private estimate(ask: AddonAsk): string[] { return [`estimated tokens: ${ask.inputTokens.low}–${ask.inputTokens.high} in · ${ask.outputTokens.low}–${ask.outputTokens.high} out (1–${ask.cost === 'high' ? 16 : 8} inspection rounds; not a cap)`, ask.subscription ? 'price: $0 API charge · uses subscription limits' : ask.priceUsd ? `estimated price: $${ask.priceUsd.low.toFixed(4)}–$${ask.priceUsd.high.toFixed(4)}` : 'price unknown · set this model’s price before starting']; }
-  setResult(result: AddonResult): void { this.result = result; this.busy = false; this.chunk = 0; this.panel.resetScroll(); this.refresh(); }
+  // A /bisect run under way: the popup waits for it, and x stops it (also when the popup is opened again with /bisect).
+  running(): void { this.wait('Bisecting in a temporary copy · no model, no tokens · x stops it'); this.stoppable = true; }
+  setResult(result: AddonResult): void { this.result = result; this.busy = false; this.stoppable = false; this.chunk = 0; this.panel.resetScroll(); this.refresh(); }
   setApproved(): void { this.problem = null; this.approved = true; this.busy = false; this.refresh(); }
   setApplied(note: string): void { this.problem = null; this.applied = note; this.busy = false; this.refresh(); }
   setUsage(usage: TaskUsage | null): void { this.usage = usage; this.refresh(); }
   setTests(tests: TestResult | null): void { this.tests = tests; this.refresh(); }
   // The /study due list: the topic of your last /study session in this folder, which r reopens (null: none to reopen).
   setReopen(label: string | null): void { this.reopenLabel = label; this.refresh(); }
-  setAb(ab: AbView | null): void { this.problem = null; this.ab = ab; this.busy = false; this.refresh(); }
+  setAb(ab: AbView | null): void { this.problem = null; this.ab = ab; this.busy = false; if (ab?.state !== 'running') this.stopping = false; this.refresh(); }
   private refresh(): void {
     const r = this.result; if (!r) return;
     const problem = this.problem ? [`✗ ${this.problem}`] : [];
@@ -62,17 +66,21 @@ export class AddonPanel {
       else this.show(r.kind === 'teach' ? [actual, ...teachEnd(r, this.quiz)] : [actual, r.kind === 'study' ? 'Recap · on your review schedule; /study lists what is due, and r there reopens this · Esc closes' : 'Recap · Esc closes', ...r.recap]);
     }
     // AI Term's own facts (what it read before the model ran) stay above the result.
-    else this.show([...problem, ...r.kind === 'standup' ? [] : [actual], ...this.ask?.facts ?? [], ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz, commits: this.ask?.commits === true, reopen: this.reopenLabel })]);
+    else this.show([...problem, ...r.kind === 'standup' ? [] : [actual], ...this.ask?.facts ?? [], ...batchLines(r, { selected: this.selected, picked: this.picked, tests: this.tests, ab: this.ab, applied: this.applied, quiz: this.quiz, commits: this.ask?.commits === true, reopen: this.reopenLabel, stopping: this.stopping })]);
   }
   private move(key: 'up' | 'down', count: number): void { this.selected = Math.max(0, Math.min(count - 1, this.selected + (key === 'up' ? -1 : 1))); this.panel.resetScroll(); this.refresh(); }
   // A Space press arrives as ' ' (the homepage's parser), the word 'space' from older callers: both page and pick (Part C
   // review: from a real keyboard Space did nothing in /study, /explain, /teach and /refactor).
   key(input: string): void {
     const key = input === ' ' ? 'space' : input;
-    if (key === 'escape') { this.close(); return; } if (this.busy || key === 'enter') return;
+    if (key === 'escape') { this.close(); return; }
+    // x stops a running /bisect (while the popup waits for it) or A/B; Esc above only closes, as for every add-on.
+    if (key === 'x' && this.stoppable && !this.result) { this.stoppable = false; this.actions.cancel?.(); this.busy = true; this.show(['Stopping · the test processes end, then the temporary copy is removed', 'Esc closes']); return; }
+    if (key === 'x' && this.result?.kind === 'perf' && this.ab?.state === 'running' && !this.stopping) { this.stopping = true; this.actions.cancel?.(); this.refresh(); return; }
+    if (this.busy || key === 'enter') return;
     if (!this.result && this.ask) {
       // Without a sandbox /bisect takes a capital Y, like /dev: one easy key shouldn't run code with your rights.
-      if (this.ask.bisect) { if (key === (this.ask.bisect.sandbox ? 'y' : 'Y')) { this.wait('Bisecting in a temporary copy · no model, no tokens'); this.actions.start(!this.ask.bisect.sandbox); } return; }
+      if (this.ask.bisect) { if (key === (this.ask.bisect.sandbox ? 'y' : 'Y')) { this.running(); this.actions.start(!this.ask.bisect.sandbox); } return; }
       if (key === 'y' && (this.ask.subscription || this.ask.priceUsd)) { this.wait(); this.actions.start(); }
       else if (key === 'b' && this.ask.brainNeed !== 'none' && this.ask.brain !== 'fresh') { this.wait('Building the free local brain…'); this.actions.build(); }
       else if (key === 'e' || key === 'm') { this.wait('Updating the estimate…'); this.actions.choose(key === 'e' ? 'engine' : 'model'); }

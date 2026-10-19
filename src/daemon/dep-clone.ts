@@ -25,10 +25,12 @@ export function cloneCommand(platform: NodeJS.Platform, source: string, dest: st
   return null;
 }
 // null when the program exited 0, else why it didn't (its exit code, a timeout, or the error code that kept it from starting).
-const failure = (file: string, args: readonly string[], timeout: number): Promise<string | null> => new Promise(done => {
-  execFile(file, args, { timeout, env: { PATH: '/usr/bin:/bin' }, maxBuffer: 1024 * 1024 }, error => {
+// signal (backlog F1): a stopped /bisect stops cp too.
+const failure = (file: string, args: readonly string[], timeout: number, signal?: AbortSignal): Promise<string | null> => new Promise(done => {
+  execFile(file, args, { timeout, env: { PATH: '/usr/bin:/bin' }, maxBuffer: 1024 * 1024, ...signal ? { signal } : {} }, error => {
     const name = file.split('/').at(-1) ?? 'cp';
     if (!error) done(null);
+    else if (signal?.aborted) done(`${name} was stopped`);
     else if (error.killed) done(`${name} timed out`);
     else if (typeof error.code === 'number') done(`${name} exited ${error.code}`);
     else done(`${name} couldn't start (${typeof error.code === 'string' && /^E[A-Z_]+$/.test(error.code) ? error.code : 'error'})`);
@@ -45,10 +47,10 @@ async function cloneable(source: string, folder: string, platform: NodeJS.Platfo
 }
 // ok when dest is now a real folder cloned from source. Anything else (no clone on this disk, cp failed midway, or the
 // source was swapped for a link after it was checked, which cp copies as a link) leaves nothing at dest.
-export async function cloneFolder(source: string, dest: string, platform: NodeJS.Platform = process.platform): Promise<CloneResult> {
+export async function cloneFolder(source: string, dest: string, platform: NodeJS.Platform = process.platform, signal?: AbortSignal): Promise<CloneResult> {
   const command = cloneCommand(platform, source, dest);
   if (!command || !await cloneable(source, dirname(dest), platform)) return NO_CLONE;
-  const why = await failure(command.file, command.args, CLONE_TIMEOUT_MS);
+  const why = await failure(command.file, command.args, CLONE_TIMEOUT_MS, signal);
   if (!why) {
     try { if ((await lstat(dest)).isDirectory()) return { ok: true }; } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
   }

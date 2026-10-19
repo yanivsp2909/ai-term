@@ -147,6 +147,8 @@ export type Request = {
   | {kind:'addons.apply';sessionId:string;items:number[]}
   | {kind:'addons.ab';sessionId:string;unsandboxed:boolean}
   | {kind:'addons.commit';sessionId:string}
+  // Backlog F1: stops a running /bisect or /perf A/B (its processes, then its temporary copy).
+  | {kind:'addons.cancel';sessionId:string}
   | {kind:'addons.file';sessionId:string;index:number;action:'open'|'save'}
   | {kind:'addons.result'|'addons.approve';sessionId:string}
   | {kind:'addons.step';sessionId:string;step:number}

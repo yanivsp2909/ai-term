@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { TestOutcome } from './test-run.js';
-import type { AbView } from '../shared/addon-results.js';
+import { AB_STOPPED, type AbView } from '../shared/addon-results.js';
 import { isFsError } from '../shared/paths.js';
 import { resolveInside } from '../agent/jail.js';
 import { SECRET_FILE } from '../shared/review.js';
@@ -11,12 +11,15 @@ import { SECRET_FILE } from '../shared/review.js';
 // worktree), back to back on this machine. Rounds alternate the order (ABBA…) so warm caches and drift don't favor a side;
 // the medians are what the popup shows. A run that doesn't pass stops the A/B: a failing benchmark measures nothing.
 export const AB_ROUNDS = 5, AB_RUN_TIMEOUT_MS = 2 * 60_000;
-export interface AbSide { cwd: string; run(): Promise<TestOutcome> }
-export async function runAb(before: AbSide, after: AbSide, options: { rounds?: number; now?: () => number; sandbox: boolean }): Promise<Extract<AbView, { state: 'done' | 'failed' }>> {
+export interface AbSide { cwd: string; run(signal?: AbortSignal): Promise<TestOutcome> }
+export { AB_STOPPED };
+export async function runAb(before: AbSide, after: AbSide, options: { rounds?: number; now?: () => number; sandbox: boolean; signal?: AbortSignal }): Promise<Extract<AbView, { state: 'done' | 'failed' }>> {
   const rounds = options.rounds ?? AB_ROUNDS, now = options.now ?? (() => performance.now()), times = { before: [] as number[], after: [] as number[] };
   for (let round = 0; round < rounds; round++) {
     for (const name of round % 2 === 0 ? ['before', 'after'] as const : ['after', 'before'] as const) {
-      const side = name === 'before' ? before : after, start = now(), outcome = await side.run(), took = now() - start;
+      if (options.signal?.aborted) return { state: 'failed', reason: AB_STOPPED };
+      const side = name === 'before' ? before : after, start = now(), outcome = await side.run(options.signal), took = now() - start;
+      if (options.signal?.aborted) return { state: 'failed', reason: AB_STOPPED };
       if (outcome.state !== 'pass') return { state: 'failed', reason: `The benchmark didn't pass on the ${name} code (${outcome.state === 'fail' ? 'it failed' : outcome.state})` };
       times[name].push(took);
     }

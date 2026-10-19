@@ -36,6 +36,8 @@ export class AddonFlow {
       // o and s on a made file: the daemon opens it or copies it to Downloads; nothing happens until the key is pressed.
       file: (index, action) => { void this.action(async () => { if (!this.session) return; const saved = (await options.request({ kind: 'addons.file', sessionId: this.session, index, action })).addonSaved; this.panel.setApplied(action === 'open' ? '✓ opened with your default app · Esc closes' : typeof saved === 'string' ? `✓ saved a copy to ${saved} · Esc closes` : '✓ saved · Esc closes'); }); },
       reopen: () => { options.reopen?.(); },
+      // Backlog F1: x on a running /bisect or A/B; polling goes on and shows "stopped" once the daemon has cleaned up.
+      cancel: () => { void this.action(async () => { if (!this.session) return; await options.request({ kind: 'addons.cancel', sessionId: this.session }); }); },
       ab: unsandboxed => { void this.action(async () => { if (!this.session) return; this.panel.setAb(validateAbView((await options.request({ kind: 'addons.ab', sessionId: this.session, unsandboxed })).addonAb)); this.abRunning = true; await this.poll(); }); },
     });
   }

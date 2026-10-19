@@ -1,11 +1,11 @@
-import { AB_NO_SANDBOX, OUTPUT_FOLDERS, type AbView, type AddonResult, type Finding, type FindingsKind } from '../../shared/addon-results.js';
+import { AB_NO_SANDBOX, AB_STOPPED, OUTPUT_FOLDERS, type AbView, type AddonResult, type Finding, type FindingsKind } from '../../shared/addon-results.js';
 import type { TestResult } from '../../shared/test-run.js';
 import { testCommandText } from '../../shared/test-run.js';
 import { testsText } from './agent-card.js';
 
 // The lines of a batch-1 and batch-2 add-on result (v1.1). Pure: the panel owns the keys and passes what is selected or revealed.
 // Every status keeps its glyph and a word (never color alone).
-export interface ResultView { selected: number; picked: ReadonlySet<number>; tests: TestResult | null; ab: AbView | null; applied: string | null; quiz: 'hidden' | 'offered' | 'declined' | { question: number; answer: boolean }; commits?: boolean; reopen?: string | null }
+export interface ResultView { selected: number; picked: ReadonlySet<number>; tests: TestResult | null; ab: AbView | null; applied: string | null; quiz: 'hidden' | 'offered' | 'declined' | { question: number; answer: boolean }; commits?: boolean; reopen?: string | null; stopping?: boolean }
 type Batch = Exclude<AddonResult, { kind: 'plan' | 'prompt' | 'explain' }>;
 const SEVERITY: Record<Finding['severity'], string> = { critical: '✗ CRITICAL', high: '✗ HIGH', medium: '● MEDIUM', low: '· LOW' };
 const testsLine = (tests: TestResult | null): string => `tests (AI Term's sandbox): ${tests ? testsText(tests).text : 'not run yet · they run when the agent finishes, if the project has a /test-cmd'}`;
@@ -63,7 +63,7 @@ export function batchLines(r: Batch, view: ResultView): string[] {
     case 'perf': {
       const ab = view.ab, change = ab?.state === 'done' && ab.beforeMs > 0 ? Math.round((ab.afterMs - ab.beforeMs) / ab.beforeMs * 100) : null;
       return [`Measured first: ${r.measured}`, `Changed: ${r.change}`, `Benchmark: ${testCommandText(r.benchmark)}${r.files.length ? ` (new: ${r.files.join(', ')})` : ''}`, '',
-        ...!ab ? ['a runs the A/B: the benchmark on the code before and after, back to back on this Mac, in the test sandbox', 'the before copy has only committed files: no installed dependencies or build output'] : ab.state === 'running' ? ['◐ A/B running · before and after, alternating'] : ab.state === 'failed' ? [`✗ A/B stopped: ${ab.reason}`, ...ab.reason === AB_NO_SANDBOX ? [] : ['a runs it again']]
+        ...!ab ? ['a runs the A/B: the benchmark on the code before and after, back to back on this Mac, in the test sandbox', 'the before copy has only committed files: no installed dependencies or build output'] : ab.state === 'running' ? [view.stopping ? '◐ stopping the A/B · its processes end, then its temporary copy is removed' : '◐ A/B running · before and after, alternating · x stops it'] : ab.state === 'failed' ? [ab.reason === AB_STOPPED ? `■ A/B stopped · ${ab.reason}` : `✗ A/B stopped: ${ab.reason}`, ...ab.reason === AB_NO_SANDBOX ? [] : ['a runs it again']]
           : [`✓ A/B · ${ab.rounds} runs each, alternating, ${ab.sandbox ? 'sandboxed' : 'without a sandbox'}`, `  before: ${ab.beforeMs} ms median`, `  after:  ${ab.afterMs} ms median${change === null ? '' : ` · ${change > 0 ? '+' : ''}${change}%`}`],
         'Esc closes'];
     }

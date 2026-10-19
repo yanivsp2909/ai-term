@@ -164,7 +164,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields=['sessionId','index','action'];if(!isUUID(v.sessionId)||!Number.isSafeInteger(v.index)||Number(v.index)<0||Number(v.index)>=40||v.action!=='open'&&v.action!=='save')throw new ValidationError('Invalid add-on file request');break;
         case 'addons.ab':
             fields=['sessionId','unsandboxed'];if(!isUUID(v.sessionId)||typeof v.unsandboxed!=='boolean')throw new ValidationError('Invalid add-on A/B request');break;
-        case 'addons.result': case 'addons.approve': case 'addons.step': case 'addons.commit':
+        case 'addons.result': case 'addons.approve': case 'addons.step': case 'addons.commit': case 'addons.cancel':
             fields=v.kind==='addons.step'?['sessionId','step']:['sessionId'];if(!isUUID(v.sessionId)||v.kind==='addons.step'&&(!Number.isSafeInteger(v.step)||Number(v.step)<0||Number(v.step)>23))throw new ValidationError('Invalid add-on result request');break;
         case 'sessions.create':
             fields = v.engine === 'shell' ? ['engine','cwd','title'] : ['engine','model','effort','auth','cwd','permission','title','firstMessage','login','useWorktree','brain','brainMention'];

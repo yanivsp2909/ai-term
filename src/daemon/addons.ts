@@ -35,8 +35,8 @@ interface Runner {
   // v1.1 batch 1: an agent's diff (/teach, /review deep), /bisect's plan and run, and /perf's A/B.
   addonAgent?(id: string): Promise<{ title: string; cwd: string; diff: string }>;
   addonBisectPlan?(cwd: string, args: string): Promise<BisectAsk>;
-  addonBisect?(cwd: string, plan: BisectAsk, unsandboxed: boolean): Promise<BisectResult>;
-  addonPerfAb?(id: string, benchmark: string[], files: string[], unsandboxed: boolean): Promise<AbView>;
+  addonBisect?(cwd: string, plan: BisectAsk, unsandboxed: boolean, signal?: AbortSignal): Promise<BisectResult>;
+  addonPerfAb?(id: string, benchmark: string[], files: string[], unsandboxed: boolean, signal?: AbortSignal): Promise<AbView>;
   // v1.1 batch 2: read-only data an add-on gets, /commit's y in an agent's worktree, and /standup's own record.
   addonGather?(kind: AddonInput, cwd: string, args: string): Promise<Gathered>;
   addonCommit?(id: string, message: string, state?: string): Promise<string>;
@@ -47,7 +47,8 @@ interface Runner {
   addonReverse?(cwd: string, args: string, target: AddonTarget): Promise<ReversePlan>;
 }
 type Input = { addon: Addon; cwd: string; target: AddonTarget | null; args: string; rawArgs: string; subject: string; facts: string[]; commitAgent?: string; commitState?: string; brain: BrainPlan | null; files: { path: string; text: string }[]; bisect?: BisectAsk; reverse?: ReversePlan; hash: string };
-type Run = { input: Input; nonce: string; result?: AddonResult; error?: string; saved?: string; ab?: AbView };
+// stop/done (backlog F1): a running /bisect or A/B, stopped by x or the daemon stopping; done settles once it has cleaned up.
+type Run = { input: Input; nonce: string; result?: AddonResult; error?: string; saved?: string; ab?: AbView; stop?: AbortController; done?: Promise<void> };
 const FORMATS: Record<string, string> = {
   plan: 'JSON object: kind="plan", title:string, steps:array of {title:string,prompt:string}. Maximum 24 steps.',
   prompt: 'JSON object: kind="prompt", issues:array of strings, diff:string containing a unified diff starting --- original then +++ improved.',
@@ -257,8 +258,8 @@ export class AddonService {
   private startBisect(input: Input, plan: BisectAsk, unsandboxed: boolean): string {
     const bisect = this.runner.addonBisect; if (!bisect) throw new AddonError('Bisect is unavailable');
     if (!plan.sandbox && !unsandboxed) throw new AddonError('No sandbox here · press Y to run the test command with your rights');
-    const id = randomUUID(), run: Run = { input, nonce: '' }; this.runs.set(id, run);
-    void bisect.call(this.runner, input.cwd, plan, !plan.sandbox && unsandboxed).then(result => { run.result = result; }, (error: unknown) => { run.error = this.runFailure(error); });
+    const id = randomUUID(), stop = new AbortController(), run: Run = { input, nonce: '', stop }; this.runs.set(id, run);
+    run.done = bisect.call(this.runner, input.cwd, plan, !plan.sandbox && unsandboxed, stop.signal).then(result => { run.result = result; }, (error: unknown) => { run.error = this.runFailure(error); }).finally(() => { delete run.stop; });
     return id;
   }
   // /standup (and /study's due list): AI Term's own records, read in the background like a run.
@@ -346,7 +347,23 @@ export class AddonService {
     if (!run || result?.kind !== 'perf' || !perfAb) throw new AddonError('No benchmark to compare yet');
     if (run.ab?.state === 'running') return run.ab;
     run.ab = { state: 'running' };
-    void perfAb.call(this.runner, id, result.benchmark, result.files, unsandboxed).then(view => { run.ab = view; }, (error: unknown) => { run.ab = { state: 'failed', reason: error instanceof Error ? error.message.slice(0, 300) : 'The A/B failed' }; });
+    const stop = new AbortController(); run.stop = stop;
+    run.done = perfAb.call(this.runner, id, result.benchmark, result.files, unsandboxed, stop.signal).then(view => { run.ab = view; }, (error: unknown) => { run.ab = { state: 'failed', reason: error instanceof Error ? error.message.slice(0, 300) : 'The A/B failed' }; }).finally(() => { if (run.stop === stop) delete run.stop; });
     return run.ab;
+  }
+  // Backlog F1: x on a running /bisect or A/B. The run stops its processes and removes its temporary copy itself; the
+  // popup's next poll says stopped.
+  cancel(id: string): void {
+    const run = this.runs.get(id); if (!run) throw new AddonError('Add-on run not found');
+    if (!run.stop) throw new AddonError('Nothing is running here to stop');
+    run.stop.abort();
+  }
+  // The daemon stopping: every running /bisect and A/B is stopped and has cleaned up (its copy removed) within 15 s.
+  async stopAll(): Promise<void> {
+    const running = [...this.runs.values()].filter(run => run.stop);
+    for (const run of running) run.stop?.abort();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.allSettled(running.map(run => run.done)), new Promise<void>(done => { timer = setTimeout(done, 15_000); timer.unref(); })]);
+    clearTimeout(timer);
   }
 }

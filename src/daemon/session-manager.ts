@@ -845,13 +845,13 @@ export class SessionManager extends EventEmitter {
         await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));
         return {...await bisectPlan(repo,args,!!box),sandbox:!!box};
     }
-    async addonBisect(cwd:string,plan:BisectAsk,unsandboxed:boolean):Promise<Extract<AddonResult,{kind:'bisect'}>>{
+    async addonBisect(cwd:string,plan:BisectAsk,unsandboxed:boolean,signal?:AbortSignal):Promise<Extract<AddonResult,{kind:'bisect'}>>{
         const repo=await repoTopLevel(cwd);if(!repo)throw new BisectError("This folder isn't in a git repository; /bisect needs one");
-        return runBisect({repo,plan,sandbox:(path,readable)=>this.sandboxFor(path,repo,undefined,readable),unsandboxed,env:buildBisectEnv(process.env),log:text=>this.log.error(text)});
+        return runBisect({repo,plan,sandbox:(path,readable)=>this.sandboxFor(path,repo,undefined,readable),unsandboxed,env:buildBisectEnv(process.env),log:text=>this.log.error(text),...signal?{signal}:{}});
     }
     // v1.1 /perf's A/B: the benchmark on a temporary copy at the agent's start (before) and in its worktree (after), each in
     // its own test sandbox; without one it runs only after the capital Y the popup asks for.
-    async addonPerfAb(id:string,benchmark:string[],files:string[],unsandboxed:boolean):Promise<AbView>{
+    async addonPerfAb(id:string,benchmark:string[],files:string[],unsandboxed:boolean,signal?:AbortSignal):Promise<AbView>{
         if(!isUUID(id))throw new Error('Invalid session UUID');
         const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
         if(!isTestCommand(benchmark)||files.length>5||files.some(file=>!file.startsWith('bench/')))throw new Error('Only a benchmark command and new files under bench/ can run in the A/B');
@@ -860,8 +860,8 @@ export class SessionManager extends EventEmitter {
             for(const file of files)await copyBenchFile(path,before.path,file);
             const a=await this.sandboxFor(before.path,repo);boxes.push(a);const b=await this.sandboxFor(path,repo);boxes.push(b);
             if((!a||!b)&&!unsandboxed)return {state:'failed',reason:AB_NO_SANDBOX};
-            const env=buildTestEnv(process.env),side=(cwd:string,box:PreparedSandbox|null)=>({cwd,run:()=>runTests(benchmark,cwd,{...env,...box?.env},{timeoutMs:AB_RUN_TIMEOUT_MS,log:text=>this.log.error(text),...(box?{sandbox:box}:{})})});
-            return await runAb(side(before.path,a),side(path,b),{sandbox:!!a&&!!b});
+            const env=buildTestEnv(process.env),side=(cwd:string,box:PreparedSandbox|null)=>({cwd,run:(stop?:AbortSignal)=>runTests(benchmark,cwd,{...env,...box?.env},{timeoutMs:AB_RUN_TIMEOUT_MS,log:text=>this.log.error(text),...(box?{sandbox:box}:{}),...(stop?{signal:stop}:{})})});
+            return await runAb(side(before.path,a),side(path,b),{sandbox:!!a&&!!b,...signal?{signal}:{}});
         }finally{
             for(const box of boxes)await box?.dispose().catch(()=>this.log.error('Test sandbox: its temp folder could not be removed'));
             await before.dispose().catch(()=>this.log.error('A/B: its temporary copy could not be removed'));
@@ -1886,6 +1886,8 @@ export class SessionManager extends EventEmitter {
         this.dev.close();
         await this.dev.stopAll();
         for(const id of [...this.testRuns.keys()])this.cancelTests(id,true);
+        // Backlog F1: a running /bisect or A/B stops too, and removes its temporary copy before the daemon exits.
+        await this.addons.stopAll();
         const ids=[...this.sessions.keys()];
         const stopped=await Promise.allSettled(ids.map(id=>this.stop(id)));
         for(const [index,result]of stopped.entries())if(result.status==='rejected')this.log.error(`Session stop failed: ${ids[index]}`);

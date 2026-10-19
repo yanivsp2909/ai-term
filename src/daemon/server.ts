@@ -317,6 +317,7 @@ export class DaemonServer {
                 case 'addons.ab': this.control(peer,{id:request.id,ok:true,addonAb:this.manager.addons.startAb(request.sessionId,request.unsandboxed)}); break;
                 case 'addons.approve': this.control(peer,{id:request.id,ok:true,savedPlan:await this.manager.addons.approve(request.sessionId)}); break;
                 case 'addons.step': this.control(peer,{id:request.id,ok:true,session:await this.manager.addons.step(request.sessionId,request.step)}); break;
+                case 'addons.cancel': this.manager.addons.cancel(request.sessionId); this.control(peer,{id:request.id,ok:true}); break;
                 case 'sessions.create':
                     this.control(peer, { id: request.id, ok: true, session: await this.manager.create(request) });
                     break;
