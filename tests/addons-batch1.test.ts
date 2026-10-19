@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { parseAddon, validateAddonAsk, type AddonTarget } from '../src/shared/addons.js';
 import { parseAddonResult } from '../src/shared/addon-results.js';
 import { AddonService } from '../src/daemon/addons.js';
+import { checkSharedCopy } from './shared-copies.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 import { finding, fixtures } from './fixtures/addon-results.js';
 
@@ -38,10 +39,7 @@ async function setup(answers?: (name: string) => string | undefined) {
 it('every batch-1 definition parses, and the shared copies name their source, license and changes', async () => {
   for (const name of ['teach', 'fix', 'cover', 'bisect', 'refactor', 'perf', 'types', 'failures', 'review-deep', 'security']) {
     const addon = parseAddon(await readFile(join(DEFINITIONS, name, 'addon.md'), 'utf8'), name);
-    for (const asset of [...addon.skills.map(s => `skills/${s}/SKILL.md`), ...addon.agents.map(a => `agents/${a}.md`)]) {
-      const body = await readFile(join(DEFINITIONS, '_shared', asset), 'utf8');
-      expect(body, asset).toMatch(/\nSource: .+\nLicense: .+\nWhat changed: .+\n/);
-    }
+    for (const asset of [...addon.skills.map(s => `skills/${s}/SKILL.md`), ...addon.agents.map(a => `agents/${a}.md`)]) await checkSharedCopy(DEFINITIONS, asset);
   }
   const read = async (name: string) => parseAddon(await readFile(join(DEFINITIONS, name, 'addon.md'), 'utf8'), name);
   expect(await read('bisect')).toMatchObject({ local: 'bisect', engines: [], input: 'command-ref', readOnly: true, worktree: false });

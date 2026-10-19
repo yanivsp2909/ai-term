@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { parseAddon, validateAddonAsk, type AddonTarget } from '../src/shared/addons.js';
 import { parseAddonResult } from '../src/shared/addon-results.js';
 import { AddonService } from '../src/daemon/addons.js';
+import { checkSharedCopy } from './shared-copies.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 import { batch2 } from './fixtures/addon-results.js';
 
@@ -44,7 +45,7 @@ const started = (value: { session: SessionInfo } | { run: string }) => { if (!('
 it('every batch-2 definition parses and its shared copies name their source, license and changes', async () => {
   for (const name of [...NAMES, 'standup-polish']) {
     const addon = parseAddon(await readFile(join(DEFINITIONS, name, 'addon.md'), 'utf8'), name);
-    for (const asset of [...addon.skills.map(s => `skills/${s}/SKILL.md`), ...addon.agents.map(a => `agents/${a}.md`)]) expect(await readFile(join(DEFINITIONS, '_shared', asset), 'utf8'), asset).toMatch(/\nSource: .+\nLicense: .+\nWhat changed: .+\n/);
+    for (const asset of [...addon.skills.map(s => `skills/${s}/SKILL.md`), ...addon.agents.map(a => `agents/${a}.md`)]) await checkSharedCopy(DEFINITIONS, asset);
   }
   const read = async (name: string) => parseAddon(await readFile(join(DEFINITIONS, name, 'addon.md'), 'utf8'), name);
   expect(await read('issue')).toMatchObject({ worktree: true, tests: true, input: 'github-issue', brain: 'recommended' });

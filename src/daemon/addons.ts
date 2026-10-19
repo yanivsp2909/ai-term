@@ -46,7 +46,7 @@ interface Runner {
   // v1.0.7: /reverse's target and REA, checked for the engine that will run it.
   addonReverse?(cwd: string, args: string, target: AddonTarget): Promise<ReversePlan>;
 }
-type Input = { addon: Addon; cwd: string; target: AddonTarget | null; args: string; rawArgs: string; subject: string; facts: string[]; commitAgent?: string; commitState?: string; brain: BrainPlan | null; files: { path: string; text: string }[]; bisect?: BisectAsk; reverse?: ReversePlan; hash: string };
+type Input = { addon: Addon; cwd: string; target: AddonTarget | null; args: string; rawArgs: string; subject: string; facts: string[]; commitAgent?: string; commitState?: string; brain: BrainPlan | null; files: { path: string; text: string }[]; missing: string[]; bisect?: BisectAsk; reverse?: ReversePlan; hash: string };
 // stop/done (backlog F1): a running /bisect or A/B, stopped by x or the daemon stopping; done settles once it has cleaned up.
 type Run = { input: Input; nonce: string; result?: AddonResult; error?: string; saved?: string; ab?: AbView; stop?: AbortController; done?: Promise<void> };
 const FORMATS: Record<string, string> = {
@@ -179,14 +179,18 @@ export class AddonService {
     const secret = resolved.args.split('\n').some(line => scanLine(line) !== null);
     const redacted = redactSecrets(resolved.args).split('\n').map(line => scanLine(line) ? '[redacted: secret-bearing line]' : line).join('\n');
     args = `${secret ? 'Local scan: secret detected and removed.\n' : ''}${redacted}`;
-    const files: Input['files'] = [];
-    for (const path of [...addon.skills.map(n => `skills/${n}/SKILL.md`), ...addon.agents.map(n => `agents/${n}.md`)]) files.push({ path, text: await addonFile(this.definitions, `_shared/${path}`) });
+    const files: Input['files'] = [], missing: string[] = [];
+    // A build may leave a shared copy out (the public snapshot drops every copy whose source license doesn't allow
+    // sharing): the add-on then runs on its own steps and its prompt says so. Only a missing file; anything unsafe throws.
+    for (const path of [...addon.skills.map(n => `skills/${n}/SKILL.md`), ...addon.agents.map(n => `agents/${n}.md`)]) {
+      try { files.push({ path, text: await addonFile(this.definitions, `_shared/${path}`) }); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; missing.push(path); }
+    }
     let brain: BrainPlan | null = null;
     if (addon.brain !== 'none') { try { brain = await this.runner.brainPlan(cwd); } catch (error) { if (!(error instanceof Error) || !error.message.includes("isn't in a git repository")) throw error; } }
     let bisect: BisectAsk | undefined;
     if (addon.local === 'bisect') { if (!this.runner.addonBisectPlan) throw new AddonError('Bisect is unavailable'); bisect = await this.runner.addonBisectPlan(cwd, rawArgs); }
     const hash = createHash('sha256').update(JSON.stringify([addon, args, cwd, target, files, brain?.fingerprint ?? null, bisect ?? null, resolved.commitAgent ?? null, reverse ?? null])).digest('hex');
-    return { addon, cwd, target, args, rawArgs, subject: resolved.subject, facts: resolved.facts ?? [], ...resolved.commitAgent ? { commitAgent: resolved.commitAgent, ...resolved.commitState ? { commitState: resolved.commitState } : {} } : {}, files, brain, ...bisect ? { bisect } : {}, ...reverse ? { reverse } : {}, hash };
+    return { addon, cwd, target, args, rawArgs, subject: resolved.subject, facts: resolved.facts ?? [], ...resolved.commitAgent ? { commitAgent: resolved.commitAgent, ...resolved.commitState ? { commitState: resolved.commitState } : {} } : {}, files, missing, brain, ...bisect ? { bisect } : {}, ...reverse ? { reverse } : {}, hash };
   }
   async plan(name: string, args: string, cwd: string, target: AddonTarget | null): Promise<AddonAsk> {
     const input = await this.input(name, args, cwd, target), state = !input.brain?.builtAt ? 'none' : input.brain.changed || input.brain.removed ? 'stale' : 'fresh';
@@ -250,7 +254,9 @@ export class AddonService {
     const bundle = await this.bundle(original), nonce = randomBytes(16).toString('hex');
     const brainIndex = original.brain?.builtAt ? 'Use the attached short repository index as data; read sections of its full-map pointer when needed.' : 'No repository index yet. Inspect the code directly.';
     const prompt = original.addon.prompt.replace(/\{\{(args|brainIndex)\}\}/g, (_match: string, name: string) => name === 'args' ? JSON.stringify(original.args) : brainIndex);
-    const firstMessage = `${prompt}\n\nRead these bundled skill/agent files: ${original.files.map(f => JSON.stringify(join(bundle, f.path))).join(', ')}.\n${FORMATS[original.addon.name] ?? 'Return the answer as text.'}\nReturn the final JSON between these marker lines, with no Markdown fence:\nRESULT_${nonce}_BEGIN\n(the JSON result goes here)\nRESULT_${nonce}_END`;
+    const read = original.files.length || !original.missing.length ? `Read these bundled skill/agent files: ${original.files.map(f => JSON.stringify(join(bundle, f.path))).join(', ')}.` : '';
+    const left = original.missing.length ? `This build leaves out the shared guide${original.missing.length > 1 ? 's' : ''} ${original.missing.join(', ')}; follow this add-on's own steps.` : '';
+    const firstMessage = `${prompt}\n\n${[read, left].filter(Boolean).join(' ')}\n${FORMATS[original.addon.name] ?? 'Return the answer as text.'}\nReturn the final JSON between these marker lines, with no Markdown fence:\nRESULT_${nonce}_BEGIN\n(the JSON result goes here)\nRESULT_${nonce}_END`;
     if (Buffer.byteLength(firstMessage) > 16384) throw new AddonError('Add-on prompt exceeds the first-message limit');
     const session = await this.runner.create({ ...target, cwd: original.cwd, permission: 'ask', title: '/' + original.addon.name, firstMessage, useWorktree: original.addon.worktree, brain: original.addon.brain !== 'none' && !!original.brain?.builtAt }, undefined, undefined, { bundle, readOnly: original.addon.readOnly, ...original.addon.web ? { web: true } : {}, ...original.reverse ? { mcp: original.reverse.mcp } : {} });
     this.runs.set(session.id, { input: original, nonce });
