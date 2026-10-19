@@ -6,7 +6,6 @@ import { randomUUID } from 'node:crypto';
 import { parseAddon } from '../src/shared/addons.js';
 import { parseAddonResult } from '../src/shared/addon-results.js';
 import { AddonService } from '../src/daemon/addons.js';
-import { testDefinitions } from './shared-copies.js';
 import { AddonPanel } from '../src/client/tui/addon-panel.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 
@@ -22,7 +21,7 @@ it('D58 metadata is strict and explanation chunks stay small', async () => {
   const text = await readFile(new URL('../addons/plan/addon.md', import.meta.url), 'utf8');
   expect(parseAddon(text, 'plan')).toMatchObject({ name: 'plan', defaultEngine: 'claude-code', brain: 'recommended', readOnly: true, worktree: false });
   expect(() => parseAddon(text.replace('brain: recommended', 'brain: maybe'), 'plan')).toThrow();
-  expect(() => parseAddon(text.replace('skills: []', 'skills: ["../../login"]'), 'plan')).toThrow();
+  expect(() => parseAddon(text.replace('guide: plan', 'guide: ../../login'), 'plan')).toThrow();
   expect(parseAddonResult(JSON.stringify(fixtures.explain), 'explain')).toEqual(fixtures.explain);
   expect(() => parseAddonResult(JSON.stringify({ ...fixtures.explain, chunks: [Array(7).fill('line')] }), 'explain')).toThrow();
 });
@@ -44,8 +43,7 @@ it('all pilots run once on a stub engine; approval saves the plan and only s sta
     async text(id: string) { return { sessionId: id, text: answers.get(id) ?? '', truncated: false }; },
     async brainPlan() { return null; },
   };
-  const definitions = await testDefinitions(new URL('../addons/', import.meta.url).pathname); if (definitions.root) cleanup.push(definitions.root);
-  const service = new AddonService(home, definitions.path, engine);
+  const service = new AddonService(home, new URL('../addons/', import.meta.url).pathname, engine);
   let planRun = '';
   for (const name of ['plan', 'prompt', 'explain']) {
     const ask = await service.plan(name, name === 'prompt' ? 'prompt.md' : 'trace src/a.ts', repo, { engine: 'codex', model: null, auth: { kind: 'account' } });

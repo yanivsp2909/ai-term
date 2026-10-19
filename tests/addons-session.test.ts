@@ -11,7 +11,6 @@ import { Logger } from '../src/daemon/log.js';
 import { KeyStore } from '../src/daemon/keys.js';
 import * as engines from '../src/daemon/engines.js';
 import { withAddon } from '../src/agent/addon-bundle.js';
-import { leftOutCopies } from './shared-copies.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const f of cleanups.splice(0).reverse()) await f(); vi.restoreAllMocks(); });
@@ -33,17 +32,14 @@ it('the three pilots use normal Ask sessions and a real PTY stub; a saves and s 
     return spawn(process.execPath, ['-e', 'process.stdout.write("\\r\\nRESULT_"+process.argv[1]+"_BEGIN\\r\\n"+process.argv[2]+"\\r\\nRESULT_"+process.argv[1]+"_END\\r\\n")', nonce, JSON.stringify(result)], { ...options, env: { PATH: '/usr/bin:/bin', HOME: root } });
   });
   let planId = '';
-  const leftOut = (await leftOutCopies(new URL('../addons/', import.meta.url).pathname)).length > 0;
   for (const name of ['plan', 'prompt', 'explain']) {
     const ask = await manager.addons.plan(name, 'trace a.ts', repo, { engine: 'codex', model: null, auth: { kind: 'account' } });
     const started = await manager.addons.start(ask.receipt); if (!('session' in started)) throw new Error('expected an agent'); const session = started.session; if (name === 'plan') planId = session.id;
     expect(session.permission).toBe('ask'); expect(session.worktree).toBeUndefined(); expect(argv.at(-1)).toContain('--sandbox=read-only');
     await vi.waitFor(async () => expect((await manager.addons.result(session.id))?.kind).toBe(name));
     const path = argv.at(-1)?.at(-1)?.match(/"([^"\n]+\/addons\/[a-f0-9]{64})\/[^"\n]+"/)?.[1];
-    // A build that leaves this add-on's guides out sends no bundle; its prompt says so instead (Part C).
-    if (!path && leftOut) { expect(argv.at(-1)?.at(-1)).toContain('This build leaves out the shared guide'); continue; }
     if (!path) throw new Error('No bundle path');
-    const instructions = await withAddon({ text: '', files: [], notes: [] }, path); expect(instructions.text).toContain('Source:');
+    const instructions = await withAddon({ text: '', files: [], notes: [] }, path); expect(instructions.text).toContain('## Steps');
   }
   const saved = await manager.addons.approve(planId); expect(JSON.parse(await readFile(saved, 'utf8')).kind).toBe('plan'); expect(argv).toHaveLength(3);
   const step = await manager.addons.step(planId, 0); expect(step.worktree).toBeDefined(); expect(step.permission).toBe('ask'); expect(argv).toHaveLength(4);

@@ -35,21 +35,19 @@ const LEFT_OUT = [
   ['scripts/public-snapshot.mjs', 'this script'],
   ['tests/partc-snapshot.test.ts', 'it tests this script, which stays private'],
 ];
-// Shared add-on copies are kept only when their source license allows sharing: the License line of the header (the
-// lines right after the front matter) must name MIT, Apache-2.0 or a BSD license and nothing else.
-const PERMISSIVE = /^License: (?:MIT|Apache[ -]2\.0|BSD(?:-[23]-Clause)?)(?: \([^()]*\))?\.?$/;
-function header(text) {
-  const lines = text.split('\n'), end = lines[0] === '---' ? lines.indexOf('---', 1) : -1, out = [];
-  if (end >= 0) for (const line of lines.slice(end + 1)) { if (!line.trim()) break; out.push(line); }
-  return out;
+// v1.2: the add-on guides are AI Term's own; each starts with this MIT header. A guide without it, or any leftover
+// copy of the old shared guides (sources with no license), stops the export.
+export const GUIDE_HEADER = '<!-- Copyright (c) 2026 AI Term contributors. MIT license: see LICENSE in the repository root. -->';
+export async function guideProblems(out) {
+  const found = [];
+  if (!(await gone(join(out, 'addons', '_shared')))) found.push('addons/_shared: the old shared guides must not ship');
+  const guides = join(out, 'addons', 'guides');
+  for (const file of (await walk(guides)).sort()) {
+    if (!file.endsWith('.md')) { found.push(`addons/guides/${file}: not a guide`); continue; }
+    if ((await readFile(join(guides, file), 'utf8')).split('\n')[0] !== GUIDE_HEADER) found.push(`addons/guides/${file}: no MIT header`);
+  }
+  return found;
 }
-export function permissive(text) {
-  const licenses = header(text).filter(line => line.startsWith('License:'));
-  return licenses.length === 1 && PERMISSIVE.test(licenses[0]);
-}
-// Kept: a permissive license and a public upstream named in the header, so the notices can attribute it fully (a local
-// path can't be checked or credited; Part C packaging review).
-export function keepable(text) { return permissive(text) && header(text).some(line => /^Source: https:\/\/\S+/.test(line)); }
 // A tree with any of these in it is refused: real names this repository's history once held. Fake ones in tests are
 // listed as allowed. Built from parts so this file doesn't trip its own check.
 // (The GitHub handle in SECURITY.md and the noreply author are public on purpose; the macOS user name is not.)
@@ -93,21 +91,9 @@ export async function build(target, ref) {
   for (const [path, why] of LEFT_OUT) { if (!(await gone(join(out, path)))) removed.push([path, why]); await rm(join(out, path), { recursive: true, force: true }); }
 
   await walk(out);
-  const shared = join(out, 'addons', '_shared'), leftCopies = [];
-  for (const file of (await walk(shared)).sort()) {
-    if (!file.endsWith('.md')) throw new Error(`addons/_shared/${file} is not a guide this script knows how to check`);
-    if (!keepable(await readFile(join(shared, file), 'utf8'))) { leftCopies.push(file); await rm(join(shared, file)); }
-  }
-  for (const dir of await readdir(join(shared, 'skills'))) if (!(await readdir(join(shared, 'skills', dir))).length) await rm(join(shared, 'skills', dir), { recursive: true });
-  await writeFile(join(shared, 'LEFT_OUT.txt'), leftCopies.join('\n') + '\n');
-  const fallbacks = [];
-  for (const name of (await readdir(join(out, 'addons'))).sort()) {
-    if (name.startsWith('_')) continue;
-    const text = await readFile(join(out, 'addons', name, 'addon.md'), 'utf8');
-    const list = key => JSON.parse(text.match(new RegExp(`^${key}: (\\[.*\\])$`, 'm'))?.[1] ?? '[]');
-    const used = [...list('skills').map(s => `skills/${s}/SKILL.md`), ...list('agents').map(a => `agents/${a}.md`)], missing = used.filter(p => leftCopies.includes(p));
-    if (missing.length) fallbacks.push(`/${name}${missing.length === used.length ? '' : ' (keeps the rest)'}`);
-  }
+  const problems = await guideProblems(out);
+  if (problems.length) throw new Error(`Add-on guides that can't ship:\n${problems.join('\n')}`);
+  const guides = (await walk(join(out, 'addons', 'guides'))).length;
 
   const readme = await readFile(join(out, 'README.md'), 'utf8'), from = readme.indexOf('\n## Install');
   if (from < 0) throw new Error('README.md has no ## Install section to keep');
@@ -117,53 +103,36 @@ export async function build(target, ref) {
   const design = join(out, 'docs', 'design.md');
   await writeFile(design, (await readFile(design, 'utf8')).replace(/Mockups: canvas "AI Term screens" \(https:\/\/claude\.ai\/artifact\/\w+\); design system: https:\/\/claude\.ai\/artifact\/\w+\. Agents can't open those/, "Its mockups and design system are private. Nobody else can open those"));
   for (const file of ['LICENSE', 'SECURITY.md', '.gitleaks.toml']) await copyFile(join(OVERLAY, file), join(out, file));
-  if (await usesApache(shared)) { await mkdir(join(out, 'licenses'), { recursive: true }); await copyFile(join(OVERLAY, 'licenses', 'Apache-2.0.txt'), join(out, 'licenses', 'Apache-2.0.txt')); }
-  await writeFile(join(out, 'THIRD_PARTY_NOTICES.md'), await notices(out, shared));
+  await writeFile(join(out, 'THIRD_PARTY_NOTICES.md'), await notices(out));
   const template = await readFile(join(OVERLAY, 'PUBLIC_SNAPSHOT.md'), 'utf8');
   await writeFile(join(out, 'PUBLIC_SNAPSHOT.md'), template
     .replaceAll('{{COMMIT}}', commit)
     .replaceAll('{{DATE}}', (await git(['show', '-s', '--format=%cs', '--end-of-options', commit])).trim())
     .replace('{{LEFT_OUT}}', removed.filter(([path]) => !['public', 'scripts/public-snapshot.mjs', 'tests/partc-snapshot.test.ts'].includes(path)).map(([path, why]) => `- \`${path}\`: ${why}.`).join('\n'))
-    .replace('{{COPIES}}', String(leftCopies.length))
-    .replace('{{FALLBACKS}}', fallbacks.join(', '))
+    .replace('{{GUIDES}}', String(guides))
     .replace('{{VERIFICATION}}', 'Not verified yet: run the checks below, then record their last lines here before the commit.'));
 
   const found = await markers(out);
   if (found.length) throw new Error(`Personal markers left in the snapshot:\n${found.join('\n')}`);
-  process.stdout.write(`Snapshot of ${commit} in ${out}: ${leftCopies.length} shared copies left out; add-ons on their own steps: ${fallbacks.join(', ')}\n`);
+  process.stdout.write(`Snapshot of ${commit} in ${out}: ${guides} add-on guides\n`);
 }
 
-async function usesApache(shared) {
-  for (const file of await walk(shared)) if (file.endsWith('.md') && /^License: Apache/m.test(header(await readFile(join(shared, file), 'utf8')).join('\n'))) return true;
-  return false;
-}
-// npm packages and their licenses from package-lock.json (none of them is in this tree; npm installs them), and the
-// shared copies this snapshot keeps with the license their source states.
-async function notices(out, shared) {
+// npm packages and their licenses from package-lock.json (none of them is in this tree; npm installs them).
+async function notices(out) {
   const lock = JSON.parse(await readFile(join(out, 'package-lock.json'), 'utf8')), by = new Map();
   for (const [path, meta] of Object.entries(lock.packages ?? {})) {
     if (!path) continue;
     const name = path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length), license = typeof meta.license === 'string' ? meta.license : 'not stated in package-lock.json';
     const set = by.get(license) ?? new Set(); set.add(`${name}@${meta.version}`); by.set(license, set);
   }
-  const kept = [];
-  for (const file of (await walk(shared)).sort()) {
-    if (!file.endsWith('.md')) continue;
-    const text = await readFile(join(shared, file), 'utf8');
-    const license = text.match(/^License: (.*)$/m)?.[1] ?? 'not stated';
-    kept.push(`- \`addons/_shared/${file}\`: adapted from ${text.match(/^Source: (.*)$/m)?.[1]?.replace(/~\/[^ ]*\/([^/ ]+)\/SKILL\.md/, 'the `$1` skill') ?? 'a source not stated'} License: ${license} Its changes are listed in the file's "What changed" line.${/Apache/.test(license) ? ' The license text is in `licenses/Apache-2.0.txt`.' : ''}`);
-  }
   const sections = [...by.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([license, names]) => `### ${license} (${names.size})\n\n${[...names].sort().join(', ')}`);
   return `# Third-party notices
 
 AI Term's own code is under the MIT license (LICENSE).
 
-## Adapted skill and agent texts
+## Add-on guides
 
-Add-ons bundle short guides adapted from skills and agents. This snapshot keeps only those whose source states a
-license that allows sharing; the others are left out (PUBLIC_SNAPSHOT.md).
-
-${kept.length ? kept.join('\n') : 'None in this snapshot: every guide either states no license or names no public upstream to credit.'}
+The guides in \`addons/guides/\` were written for AI Term and are under its MIT license, like the rest of its code.
 
 ## Price data
 

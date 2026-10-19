@@ -4,8 +4,6 @@ summary: "What your study schedule says is due today; no model"
 args: "(no argument)"
 defaultEngine: none
 engines: []
-skills: []
-agents: []
 brain: none
 worktree: no
 readOnly: true

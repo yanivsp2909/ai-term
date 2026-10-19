@@ -4,8 +4,6 @@ summary: "Find the first commit that broke a test with git bisect, no model"
 args: "[--no-deps] <test command> [good ref]"
 defaultEngine: none
 engines: []
-skills: []
-agents: []
 brain: none
 worktree: no
 readOnly: true

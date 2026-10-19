@@ -18,7 +18,7 @@ For a recommended or required brain, the popup shows none, stale or fresh. When 
 
 Esc closes the popup and keeps the agent running. Attach from its card for any normal CLI startup or permission question. Type the same command with no arguments to reopen its last popup in this folder while the homepage runs. A daemon restart keeps saved plan files; pending approval/results are in memory, so start a fresh command after a restart.
 
-Definitions live in AI Term's `addons/<name>/addon.md`, with source-attributed improved copies in `addons/_shared/`. Runtime copies are immutable private bundles under `~/.ai-term/addons/`; AI Term never installs them into Claude/Codex folders or writes them into the target repository. Claude's installed flags are checked before loading the plugin folder; Codex gets explicit file paths, and AI Term's agent loads the files itself. Read-only pilots disable write/shell/MCP/subagent tools in the native agent; Claude gets only Read/Grep/Glob, and Codex uses its read-only sandbox.
+Definitions live in AI Term's `addons/<name>/addon.md`, and each model add-on's guide in `addons/guides/<name>.md` (written for AI Term, MIT). Runtime copies are immutable private bundles under `~/.ai-term/addons/`; AI Term never installs them into Claude/Codex folders or writes them into the target repository. Claude's installed flags are checked before loading the plugin folder; Codex gets explicit file paths, and AI Term's agent loads the files itself. Read-only pilots disable write/shell/MCP/subagent tools in the native agent; Claude gets only Read/Grep/Glob, and Codex uses its read-only sandbox.
 
 ## Learn, fix, test and review with add-ons
 

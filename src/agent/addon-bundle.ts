@@ -18,10 +18,10 @@ export async function addonFile(root: string, relative: string, cap = 16000): Pr
 export async function withAddon(instructions: Instructions, bundle: string): Promise<Instructions> {
   if (!isAddonBundle(bundle)) throw new Error('Invalid add-on bundle');
   const raw: unknown = JSON.parse(await addonFile(bundle, 'instructions.json'));
-  if (!Array.isArray(raw) || raw.length > 20 || !raw.every(p => typeof p === 'string' && /^(?:skills\/[a-z][a-z0-9-]*\/SKILL|agents\/[a-z][a-z0-9-]*)\.md$/.test(p))) throw new Error('Invalid add-on instructions');
+  if (!Array.isArray(raw) || raw.length > 20 || !raw.every(p => typeof p === 'string' && /^guides\/[a-z][a-z0-9-]*\.md$/.test(p))) throw new Error('Invalid add-on instructions');
   const bodies = await Promise.all(raw.map(p => addonFile(bundle, p)));
   const files=raw.map((path,i)=>({path,text:bodies[i]}));
   if(createHash('sha256').update(JSON.stringify(files)).digest('hex')!==basename(bundle))throw new Error('Add-on bundle changed');
   if (bodies.reduce((n, s) => n + Buffer.byteLength(s), 0) > 64000) throw new Error('Add-on instructions too large');
-  return { ...instructions, text: `${instructions.text}\n\n# Bundled add-on skills and roles\n${bodies.join('\n\n')}`, files: [...instructions.files, ...raw] };
+  return { ...instructions, text: `${instructions.text}\n\n# Bundled add-on guide\n${bodies.join('\n\n')}`, files: [...instructions.files, ...raw] };
 }

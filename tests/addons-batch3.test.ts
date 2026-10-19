@@ -7,7 +7,6 @@ import { vi } from 'vitest';
 import { parseAddon, validateAddonAsk, type AddonTarget } from '../src/shared/addons.js';
 import { parseAddonResult } from '../src/shared/addon-results.js';
 import { AddonService } from '../src/daemon/addons.js';
-import { checkSharedCopy } from './shared-copies.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 import { batch3 } from './fixtures/addon-results.js';
 
@@ -36,10 +35,10 @@ async function setup(answers: (name: string) => string | undefined = name => bat
 }
 const started = (value: { session: SessionInfo } | { run: string }) => { if (!('session' in value)) throw new Error('expected an agent'); return value.session; };
 
-it('every batch-3 definition parses and its shared copies name their source, license and changes', async () => {
+it('every batch-3 definition parses and each names its own guide', async () => {
   for (const name of [...NAMES, 'study-due']) {
     const addon = parseAddon(await readFile(join(DEFINITIONS, name, 'addon.md'), 'utf8'), name);
-    for (const asset of [...addon.skills.map(s => `skills/${s}/SKILL.md`), ...addon.agents.map(a => `agents/${a}.md`)]) await checkSharedCopy(DEFINITIONS, asset);
+    expect(addon.guide, name).toBe(addon.local ? null : name);
   }
   const read = async (name: string) => parseAddon(await readFile(join(DEFINITIONS, name, 'addon.md'), 'utf8'), name);
   for (const name of ['deck', 'slides', 'diagram', 'design', 'research', 'study']) expect((await read(name)).brain, name).toBe('recommended');

@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error -- a plain .mjs build script with no type declarations
-import { build, commit, keepable, markers, permissive } from '../scripts/public-snapshot.mjs';
+import { build, commit, GUIDE_HEADER, guideProblems, markers } from '../scripts/public-snapshot.mjs';
 
 // Part C review: the public snapshot script. A tree with a personal marker, an unfilled verification or a link never
 // becomes a commit, and the commit never takes anything from this machine's git setup.
@@ -21,13 +21,15 @@ async function tree(extra: Record<string, string> = {}) {
 }
 const words = (...parts: string[]) => parts.join('');
 
-describe('the license check', () => {
-  it('security LOW: reads only the header License line, and only a plain permissive one', () => {
-    const copy = (license: string, body = '') => `---\nname: x\ndescription: y\n---\nSource: s.\nLicense: ${license}\nWhat changed: c.\n\n${body}`;
-    for (const license of ['MIT.', 'Apache 2.0 (stated in the source).', 'Apache-2.0', 'BSD-3-Clause.']) expect(permissive(copy(license)), license).toBe(true);
-    for (const license of ['not stated in the source definition; no redistribution grant inferred.', 'MIT for one part, the other source states none.', 'the source states none; a second source is Apache 2.0.'])
-      expect(permissive(copy(license)), license).toBe(false);
-    expect(permissive(copy('not stated.', 'License: MIT\n'))).toBe(false);
+describe('the guides check', () => {
+  it('v1.2: every guide carries the MIT header, and an old shared copy stops the export', async () => {
+    const out = await folder();
+    await mkdir(join(out, 'addons', 'guides'), { recursive: true });
+    await writeFile(join(out, 'addons', 'guides', 'fix.md'), `${GUIDE_HEADER}\n# /fix\n`);
+    expect(await guideProblems(out)).toEqual([]);
+    await writeFile(join(out, 'addons', 'guides', 'plan.md'), '# /plan, copied from somewhere\n');
+    await mkdir(join(out, 'addons', '_shared', 'skills'), { recursive: true });
+    expect(await guideProblems(out)).toEqual(['addons/_shared: the old shared guides must not ship', 'addons/guides/plan.md: no MIT header']);
   });
 });
 
@@ -71,13 +73,6 @@ describe('the commit', () => {
 });
 
 describe('the packaging review', () => {
-  it('MEDIUM: a guide is kept only when its header names a public upstream, so its attribution can be complete', () => {
-    const copy = (source: string) => `---\nname: x\ndescription: y\n---\nSource: ${source}\nLicense: Apache 2.0 (stated in the source).\nWhat changed: c.\n`;
-    expect(keepable(copy('~/.claude/skills/impeccable/SKILL.md (2026-10-18), its modes.'))).toBe(false);
-    expect(keepable(copy('https://github.com/example/skills/blob/0123abc/x/SKILL.md (Copyright 2025 Example).'))).toBe(true);
-    expect(keepable(copy('https://github.com/example/skills').replace('Apache 2.0 (stated in the source).', 'not stated.'))).toBe(false);
-  });
-
   it('MEDIUM/LOW: the built tree has the public clone URL, no private links, and lists only what it left out', async () => {
     const out = join(await folder(), 'snapshot');
     await build(out, 'HEAD');

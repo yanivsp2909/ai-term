@@ -99,7 +99,8 @@ export const RUN_FAILED = 'The add-on run failed; the daemon log says why';
 const STOPPING = 'AI Term is stopping; start it again after';
 // A guide that is really missing: the nearest thing on its path that exists is a real folder. A dangling link (to a file
 // or a folder) also reads as ENOENT, and is refused like any other link (Part C review).
-async function absent(root: string, path: string): Promise<boolean> {
+async function absent(base: string, path: string): Promise<boolean> {
+  const root = resolve(base);
   for (let at = join(root, path); at !== root && at.startsWith(root); at = dirname(at)) {
     try { const stat = await lstat(at); return stat.isDirectory(); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
   }
@@ -188,10 +189,11 @@ export class AddonService {
     const redacted = redactSecrets(resolved.args).split('\n').map(line => scanLine(line) ? '[redacted: secret-bearing line]' : line).join('\n');
     args = `${secret ? 'Local scan: secret detected and removed.\n' : ''}${redacted}`;
     const files: Input['files'] = [], missing: string[] = [];
-    // A build may leave a shared copy out (the public snapshot drops every copy whose source license doesn't allow
-    // sharing): the add-on then runs on its own steps and its prompt says so. Only a missing file; anything unsafe throws.
-    for (const path of [...addon.skills.map(n => `skills/${n}/SKILL.md`), ...addon.agents.map(n => `agents/${n}.md`)]) {
-      try { files.push({ path, text: await addonFile(this.definitions, `_shared/${path}`) }); } catch (error) { if (!isFsError(error, 'ENOENT') || !await absent(join(this.definitions, '_shared'), path)) throw error; missing.push(path); }
+    // v1.2: the add-on's own guide. A build without it (a trimmed copy) still runs the add-on on its own steps, and the
+    // prompt says so. Only a missing file; a link or anything else unsafe throws.
+    if (addon.guide) {
+      const path = `guides/${addon.guide}.md`;
+      try { files.push({ path, text: await addonFile(this.definitions, path) }); } catch (error) { if (!isFsError(error, 'ENOENT') || !await absent(this.definitions, path)) throw error; missing.push(path); }
     }
     let brain: BrainPlan | null = null;
     if (addon.brain !== 'none') { try { brain = await this.runner.brainPlan(cwd); } catch (error) { if (!(error instanceof Error) || !error.message.includes("isn't in a git repository")) throw error; } }
@@ -262,8 +264,8 @@ export class AddonService {
     const bundle = await this.bundle(original), nonce = randomBytes(16).toString('hex');
     const brainIndex = original.brain?.builtAt ? 'Use the attached short repository index as data; read sections of its full-map pointer when needed.' : 'No repository index yet. Inspect the code directly.';
     const prompt = original.addon.prompt.replace(/\{\{(args|brainIndex)\}\}/g, (_match: string, name: string) => name === 'args' ? JSON.stringify(original.args) : brainIndex);
-    const read = original.files.length || !original.missing.length ? `Read these bundled skill/agent files: ${original.files.map(f => JSON.stringify(join(bundle, f.path))).join(', ')}.` : '';
-    const left = original.missing.length ? `This build leaves out the shared guide${original.missing.length > 1 ? 's' : ''} ${original.missing.join(', ')}; follow this add-on's own steps.` : '';
+    const read = original.files.length ? `Read this add-on's bundled guide first: ${original.files.map(f => JSON.stringify(join(bundle, f.path))).join(', ')}.` : '';
+    const left = original.missing.length ? `This build leaves out this add-on's guide (${original.missing.join(', ')}); follow the steps above.` : '';
     const firstMessage = `${prompt}\n\n${[read, left].filter(Boolean).join(' ')}\n${FORMATS[original.addon.name] ?? 'Return the answer as text.'}\nReturn the final JSON between these marker lines, with no Markdown fence:\nRESULT_${nonce}_BEGIN\n(the JSON result goes here)\nRESULT_${nonce}_END`;
     if (Buffer.byteLength(firstMessage) > 16384) throw new AddonError('Add-on prompt exceeds the first-message limit');
     const session = await this.runner.create({ ...target, cwd: original.cwd, permission: 'ask', title: '/' + original.addon.name, firstMessage, useWorktree: original.addon.worktree, brain: original.addon.brain !== 'none' && !!original.brain?.builtAt }, undefined, undefined, { bundle, readOnly: original.addon.readOnly, ...original.addon.web ? { web: true } : {}, ...original.reverse ? { mcp: original.reverse.mcp } : {} });

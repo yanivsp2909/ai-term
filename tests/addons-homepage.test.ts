@@ -14,7 +14,7 @@ it('typed /plan opens one D49 popup; Enter never starts; y runs; a saves; s star
     requests.push(body); const response: SuccessResponse = { id: randomUUID(), ok: true };
     if (body.kind === 'settings.get') response.settings = { theme: 'graphite' }; if (body.kind === 'sessions.list') response.sessions = []; if (body.kind === 'keys.list') response.keys = [];
     if (body.kind === 'sessions.preview') { response.snapshot = ''; response.cols = 85; response.rows = 30; }
-    if (body.kind === 'addons.plan') response.addonAsk = { receipt: randomUUID(), name: 'plan', summary: 'Inspect the code and propose a step plan for approval', cwd: '/tmp', target: body.target, brain: 'none', brainNeed: 'recommended', worktree: false, readOnly: true, files: ['agents/planner.md'], inputTokens: { low: 2000, high: 500000 }, outputTokens: { low: 500, high: 12000 }, priceUsd: { low: 0, high: 0 }, subscription: true };
+    if (body.kind === 'addons.plan') response.addonAsk = { receipt: randomUUID(), name: 'plan', summary: 'Inspect the code and propose a step plan for approval', cwd: '/tmp', target: body.target, brain: 'none', brainNeed: 'recommended', worktree: false, readOnly: true, files: ['guides/plan.md'], inputTokens: { low: 2000, high: 500000 }, outputTokens: { low: 500, high: 12000 }, priceUsd: { low: 0, high: 0 }, subscription: true };
     if (body.kind === 'addons.start' || body.kind === 'addons.step') response.session = session;
     if (body.kind === 'addons.result') response.addonResult = { kind: 'plan', title: 'Build one thing', steps: [{ title: 'Write a test', prompt: 'Inspect src/a.ts; write a test and stop.' }] };
     if (body.kind === 'addons.approve') response.savedPlan = '/tmp/home/plans/repo/plan.json';

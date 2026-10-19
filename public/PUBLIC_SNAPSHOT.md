@@ -8,11 +8,8 @@ is where AI Term is developed. This snapshot has its own one-commit history; non
 
 {{LEFT_OUT}}
 
-**Shared add-on guides.** Add-ons bundle short guides adapted from skills and agents (`addons/_shared/`). A copy is
-kept only when its source states MIT, Apache-2.0 or a BSD license and names a public upstream it can be credited to.
-{{COPIES}} copies don't (most state no license; the one Apache-2.0 copy names only a local path), so they are left out; `addons/_shared/LEFT_OUT.txt` lists them. Those add-ons still work: an add-on whose guide is
-missing runs on its own steps, and its prompt says which guide this build leaves out (`src/daemon/addons.ts`). The
-add-ons that run without their guide here: {{FALLBACKS}}.
+**Add-on guides.** Each model add-on bundles its own guide from `addons/guides/` ({{GUIDES}} guides). They were
+written for AI Term, without the earlier adapted copies whose sources stated no license, and are under its MIT license.
 
 Some documents still mention files that are left out (PROGRESS.md, `docs/reviews/`, `docs/addons/inventory.md`, three
 `docs/spikes/` reports). Their absence is deliberate. AGENTS.md and CLAUDE.md describe the private development rules
@@ -24,7 +21,7 @@ label, a key's last four characters and a time zone in tests and docs with examp
 - `README.md`: a public introduction (what it is, honest status, the security model, no affiliation) followed by the
   private README from its Install section on, which holds the full list of commands and keys.
 - `LICENSE` (MIT), `SECURITY.md` (private vulnerability reporting), `THIRD_PARTY_NOTICES.md`, `.gitleaks.toml`
-  (gitleaks' default rules, nothing allowlisted), `addons/_shared/LEFT_OUT.txt`, and this file.
+  (gitleaks' default rules, nothing allowlisted), and this file.
 - In `docs/design.md`, the links to the private design mockups are replaced by a sentence saying they are private.
 
 ## Verification

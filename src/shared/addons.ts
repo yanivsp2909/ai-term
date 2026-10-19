@@ -17,7 +17,8 @@ export type LocalAddon = typeof LOCAL_ADDONS[number];
 export type AddonInput = typeof ADDON_INPUTS[number];
 export interface Addon {
   name: string; summary: string; args: string; defaultEngine: AgentEngine | 'none'; engines: AgentEngine[];
-  skills: string[]; agents: string[]; brain: 'none' | 'recommended' | 'required'; worktree: boolean; readOnly: boolean; prompt: string;
+  // guide (v1.2): the add-on's own guide, addons/guides/<name>.md, written for AI Term (MIT); null for a local add-on.
+  guide: string | null; brain: 'none' | 'recommended' | 'required'; worktree: boolean; readOnly: boolean; prompt: string;
   // Optional metadata (v1.1). tests: the project's tests run in the sandbox after the run even with auto-test off.
   // cost: high shows the worst-case price first. local: runs no model. web: needs an engine with its own web tools.
   input: AddonInput; tests: boolean; cost: 'normal' | 'high'; local: LocalAddon | null; web: boolean;
@@ -42,7 +43,7 @@ const text = (v: unknown, max = 16000): v is string => typeof v === 'string' && 
 export function isAddonTarget(v: unknown): v is AddonTarget {
   const t = object(v); return !!t && Object.keys(t).every(k => ['engine', 'model', 'auth'].includes(k)) && isAgentEngine(t.engine) && isModel(t.model) && isAuthRef(t.auth) && (t.engine === 'ai-term' ? t.auth.kind === 'key' && t.model !== null : t.auth.kind === 'account');
 }
-const REQUIRED = ['name', 'summary', 'args', 'defaultEngine', 'engines', 'skills', 'agents', 'brain', 'worktree', 'readOnly'], OPTIONAL = ['input', 'tests', 'cost', 'local', 'web'];
+const REQUIRED = ['name', 'summary', 'args', 'defaultEngine', 'engines', 'brain', 'worktree', 'readOnly'], OPTIONAL = ['guide', 'input', 'tests', 'cost', 'local', 'web'];
 // A deliberately small YAML subset: scalars and JSON arrays. No tags, aliases, imports or executable metadata.
 export function parseAddon(source: string, expected: string): Addon {
   const lines = source.replace(/\r\n/g, '\n').split('\n'), end = lines.indexOf('---', 1), v: Record<string, unknown> = {};
@@ -52,14 +53,14 @@ export function parseAddon(source: string, expected: string): Addon {
     const raw = m[2]; v[m[1]] = raw.startsWith('[') || raw.startsWith('"') ? JSON.parse(raw) as unknown : raw === 'true' || raw === 'yes' ? true : raw === 'false' || raw === 'no' ? false : raw;
   }
   const prompt = lines.slice(end + 1).join('\n').trim();
-  const list = (x: unknown): x is string[] => Array.isArray(x) && x.length <= 10 && x.every(addonName) && new Set(x).size === x.length;
-  const addon = { input: 'text', tests: false, cost: 'normal', local: null, web: false, ...v, prompt } as Record<string, unknown>;
+  const addon = { guide: null, input: 'text', tests: false, cost: 'normal', local: null, web: false, ...v, prompt } as Record<string, unknown>;
   const common = REQUIRED.every(k => Object.hasOwn(v, k)) && Object.keys(v).every(k => REQUIRED.includes(k) || OPTIONAL.includes(k)) && v.name === expected && addonName(v.name) && text(v.summary, 200) && text(v.args, 120)
-    && list(v.skills) && list(v.agents) && ['none', 'recommended', 'required'].includes(String(v.brain)) && typeof v.worktree === 'boolean' && typeof v.readOnly === 'boolean' && !(v.readOnly && v.worktree) && text(prompt)
+    && ['none', 'recommended', 'required'].includes(String(v.brain)) && typeof v.worktree === 'boolean' && typeof v.readOnly === 'boolean' && !(v.readOnly && v.worktree) && text(prompt)
     && (ADDON_INPUTS as readonly string[]).includes(String(addon.input)) && typeof addon.tests === 'boolean' && ['normal', 'high'].includes(String(addon.cost)) && (addon.local === null || (LOCAL_ADDONS as readonly unknown[]).includes(addon.local)) && typeof addon.web === 'boolean';
-  // A local add-on runs no model: no engines, skills, agents or brain, nothing it could edit; /bisect takes a command.
-  const local = addon.local !== null && v.defaultEngine === 'none' && Array.isArray(v.engines) && !v.engines.length && !(v.skills as unknown[]).length && !(v.agents as unknown[]).length && v.brain === 'none' && v.readOnly === true && addon.input === (addon.local === 'bisect' ? 'command-ref' : 'none') && !addon.tests && !addon.web;
-  const model = addon.local === null && isAgentEngine(v.defaultEngine) && Array.isArray(v.engines) && v.engines.length > 0 && v.engines.length <= 3 && v.engines.every(isAgentEngine) && v.engines.includes(v.defaultEngine) && prompt.includes('{{args}}') && prompt.includes('{{brainIndex}}') && addon.input !== 'command-ref' && addon.input !== 'none';
+  // A local add-on runs no model: no engines, guide or brain, nothing it could edit; /bisect takes a command. A model
+  // add-on's guide is its own: guides/<name>.md.
+  const local = addon.local !== null && v.defaultEngine === 'none' && Array.isArray(v.engines) && !v.engines.length && addon.guide === null && v.brain === 'none' && v.readOnly === true && addon.input === (addon.local === 'bisect' ? 'command-ref' : 'none') && !addon.tests && !addon.web;
+  const model = addon.local === null && addon.guide === v.name && isAgentEngine(v.defaultEngine) && Array.isArray(v.engines) && v.engines.length > 0 && v.engines.length <= 3 && v.engines.every(isAgentEngine) && v.engines.includes(v.defaultEngine) && prompt.includes('{{args}}') && prompt.includes('{{brainIndex}}') && addon.input !== 'command-ref' && addon.input !== 'none';
   if (!common || !(local || model)) throw new Error('Invalid add-on definition');
   return addon as unknown as Addon;
 }
@@ -75,6 +76,6 @@ export function validateAddonAsk(value: unknown): AddonAsk {
   const facts = (v: unknown) => Array.isArray(v) && v.length <= 24 && v.every(f => text(f, 300) && !String(f).includes('\n'));
   if (!p || Object.keys(p).length !== 14 + optional || p.authLabel !== undefined && !text(p.authLabel, 160) || p.subject !== undefined && !text(p.subject, 300) || p.cost !== undefined && p.cost !== 'high' || p.bisect !== undefined && !isBisectAsk(p.bisect)
     || p.facts !== undefined && !facts(p.facts) || p.free !== undefined && p.free !== true || p.commits !== undefined && p.commits !== true
-    || !isUUID(p.receipt) || !addonName(p.name) || !text(p.summary, 200) || !isSafeAbsolutePath(p.cwd) || !(p.target === null ? p.bisect !== undefined || p.free === true : isAddonTarget(p.target)) || !['none', 'stale', 'fresh'].includes(String(p.brain)) || !['none', 'recommended', 'required'].includes(String(p.brainNeed)) || typeof p.worktree !== 'boolean' || typeof p.readOnly !== 'boolean' || !Array.isArray(p.files) || p.files.length > 20 || !p.files.every(f => typeof f === 'string' && /^(?:skills\/[a-z][a-z0-9-]*\/SKILL|agents\/[a-z][a-z0-9-]*)\.md$/.test(f)) || !range(p.inputTokens) || !range(p.outputTokens) || !(p.priceUsd === null || range(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid add-on estimate');
+    || !isUUID(p.receipt) || !addonName(p.name) || !text(p.summary, 200) || !isSafeAbsolutePath(p.cwd) || !(p.target === null ? p.bisect !== undefined || p.free === true : isAddonTarget(p.target)) || !['none', 'stale', 'fresh'].includes(String(p.brain)) || !['none', 'recommended', 'required'].includes(String(p.brainNeed)) || typeof p.worktree !== 'boolean' || typeof p.readOnly !== 'boolean' || !Array.isArray(p.files) || p.files.length > 20 || !p.files.every(f => typeof f === 'string' && /^guides\/[a-z][a-z0-9-]*\.md$/.test(f)) || !range(p.inputTokens) || !range(p.outputTokens) || !(p.priceUsd === null || range(p.priceUsd)) || typeof p.subscription !== 'boolean') throw new Error('Invalid add-on estimate');
   return p as unknown as AddonAsk;
 }
