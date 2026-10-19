@@ -76,7 +76,8 @@ async function handoffDaemon(options: { usage: boolean; startScript?: string; bu
   vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
   await keys.add({ provider: 'openai', label: 'cheap', secret: 'AITERM' + 'CANARY-gate06-0123456789abcdef' });
   const source = await manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: root, permission: 'ask', title: 'fixer' });
-  await expect.poll(() => manager.get(source.id).status).toBe('running');
+  // A PTY start can take longer than the default 1 s poll under the full suite on a Mac (seen twice in the v1.2.0 run).
+  await expect.poll(() => manager.get(source.id).status, { timeout: 10_000 }).toBe('running');
   return { root, paths, manager, source, calls: () => calls };
 }
 
