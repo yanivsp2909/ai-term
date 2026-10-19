@@ -189,7 +189,8 @@ it('LOW (TS review): a review that ends after the agent went back to work doesn\
   d.live.info.status = 'running'; release();
   await reviewing;
   expect(d.manager.get(d.agent.id).review).toBeUndefined();
-});
+// B34: its wait for the running review allows 10 s, so the test itself must allow more than the default 5.
+}, 20_000);
 
 it('MEDIUM (fix review): placeholder URL passwords are neither redacted nor secret-scan hits; real ones are', async () => {
   const { redactSecrets } = await import('../src/shared/redact.js');
