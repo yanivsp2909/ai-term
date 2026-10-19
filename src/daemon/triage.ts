@@ -71,6 +71,7 @@ async function tail(path: string): Promise<{ text: string; size: number }> {
     await file.read(buffer, 0, length, stat.size - length);
     let text = buffer.toString('utf8').replace(/\0/g, '');
     if (length < stat.size) { const newline = text.indexOf('\n'); text = newline >= 0 ? text.slice(newline + 1) : text; }
+    // eslint-disable-next-line no-control-regex -- removing terminal color codes is the point.
     return { text: text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''), size: stat.size };
   } finally { await file.close(); }
 }
