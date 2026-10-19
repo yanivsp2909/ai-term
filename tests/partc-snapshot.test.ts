@@ -81,7 +81,7 @@ describe('the packaging review', () => {
     expect(await readFile(join(out, 'docs', 'design.md'), 'utf8')).not.toContain('claude.ai/artifact');
     expect(snapshot).not.toContain('`.codex`'); expect(snapshot).toContain('`docs/addons/inventory.md`');
     // v1.2: the add-on guides are AI Term's own (MIT), so the snapshot ships every one of them.
-    expect((await readdir(join(out, 'addons', 'guides'))).filter(f => f.endsWith('.md'))).toHaveLength(35);
+    expect((await readdir(join(out, 'addons', 'guides'))).filter(f => f.endsWith('.md'))).toHaveLength(37);
     await expect(readdir(join(out, 'addons', '_shared'))).rejects.toThrow();
     await expect(readFile(join(out, 'licenses', 'Apache-2.0.txt'))).rejects.toThrow();
     expect(snapshot).toContain('addons/guides/');

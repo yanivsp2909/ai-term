@@ -25,7 +25,7 @@ describe('the guides', () => {
       if ((LOCAL_ADDONS as readonly string[]).includes(name)) { expect(addon.guide, name).toBeNull(); continue; }
       expect(addon.guide, name).toBe(name); models.push(name);
     }
-    expect(models).toHaveLength(35);
+    expect(models).toHaveLength(37);
     expect((await readdir(join(DEFINITIONS, 'guides'))).filter(f => f.endsWith('.md')).sort()).toEqual(models.map(n => `${n}.md`));
     await expect(lstat(join(DEFINITIONS, '_shared'))).rejects.toThrow();
   });
