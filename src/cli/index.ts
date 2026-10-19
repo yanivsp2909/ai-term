@@ -28,6 +28,13 @@ async function main(): Promise<void> {
         finally { client.close(); }
         return;
     }
+    // v1.2: the first-run setup again, any time: what's installed, what's ready, the next steps.
+    if (args.length === 1 && args[0] === 'setup') {
+        const client = await Connection.connect(getPaths(), { entry });
+        try { const { homepage } = await import('../client/tui/homepage.js'), { doctorLines } = await import('./doctor.js'); await homepage(client, () => Connection.connect(getPaths(), { entry, autoStart: false }), undefined, () => doctorLines(entry), appToken, true); }
+        finally { client.close(); }
+        return;
+    }
     // A notification click with no ai open runs this in a new Terminal window (D43).
     if (args[0] === '--attach') {
         if (args.length !== 2 || !isUUID(args[1])) { usage(); return; }

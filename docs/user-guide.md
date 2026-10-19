@@ -2,6 +2,10 @@
 
 Run `ai` in your terminal. The homepage lists your agents. Type what you want built in the command bar at the bottom. Commands start with `/`; `/help` lists them all, and the README has the [full command and key list](../README.md#commands-and-keys) and the [security model](../README.md#security-model-in-plain-words).
 
+
+## First run
+
+The first time you start `ai` with an empty AI Term folder, the homepage shows a short setup instead of an empty list: which agent CLIs and tools are installed, which are logged in, which API keys AI Term already holds, whether a sandbox is available, and what to do next. Press `l` to log in to a CLI, `k` to add an API key, `b` to set a budget or `d` to pick a default engine; ⏎ finishes and Esc skips. It won't show again by itself; `ai setup` brings it back any time. AI Term only runs each tool's `--version` or its own status command to find out, and never installs anything for you: a missing tool shows how to install it.
 ## Plan, check a prompt, or understand code
 
 `/plan <goal>`, `/prompt <file or text>` and `/explain <path or question>` open one add-on popup. It shows what runs, engine/model, folder, whether it can edit, worktree policy, brain status and estimated token/price ranges. Claude Code on your subscription is the default. `e` cycles engines or keys, `m` cycles that choice's models. Key runs always use AI Term's agent, with its normal budgets and Ask prompts. An unpriced key model cannot start; set its price first.

@@ -80,7 +80,7 @@ interface Input extends EventEmitter { isTTY?: boolean; isRaw?: boolean; setRawM
 interface Output extends EventEmitter { isTTY?: boolean; columns?: number; rows?: number; write(data: string | Buffer): boolean }
 // The homepage's connection capability intentionally excludes input(). Attach gets the real connection separately.
 export interface HomepageConnection extends EventEmitter { request(body: RequestBody): Promise<SuccessResponse> }
-interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; controls?: AppInput; attachSession?: (id: string, home?: AbortSignal) => Promise<AttachReason>; splitSessions?: (ids: string[], theme: Theme, home?: AbortSignal) => Promise<SplitResult>; attachOnStart?: string; terminalProgram?:string; doctor?: () => Promise<string[]>; openFolder?: (path: string, app: FolderApp) => Promise<string> }
+interface Options { stdin?: Input; stdout?: Output; signals?: EventEmitter; cwd?: string; truecolor?: boolean; copy?: (text: string) => Promise<void>;copyLog?:Pick<Logger,'error'>; controls?: AppInput; attachSession?: (id: string, home?: AbortSignal) => Promise<AttachReason>; splitSessions?: (ids: string[], theme: Theme, home?: AbortSignal) => Promise<SplitResult>; attachOnStart?: string; terminalProgram?:string; setup?: boolean; doctor?: () => Promise<string[]>; openFolder?: (path: string, app: FolderApp) => Promise<string> }
 const ENTER_HOME = RESET_MODES + '\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1002h\x1b[?1006h\x1b[?2004h';
 export class Homepage {
   readonly done: Promise<void>;
@@ -104,7 +104,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel|RemotePanel;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel|RemotePanel|SetupPanel;
   private addonFlows = new Map<string, AddonFlow>();
   // Each folder's last /study popup (backlog F3: the due list's r) and last /bisect (F1: /bisect alone reopens it, so a
   // closed run can still be stopped). Their own map, keyed by command and folder: a topic or test command can be any text.
@@ -214,7 +214,9 @@ export class Homepage {
       // Nothing logged in: the login popup, unless you already started something in the first frame (review: it replaced
       // what you were typing); then a note says how instead.
       const busy=Boolean(this.field.text||this.box||this.credentials||this.helpOffset!==null);
-      if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length){if(busy)this.showNote('No engine is logged in and no API key is saved · /login connects one');else await this.openCredentials('login');}
+      // v1.2 first-run setup: once on a new AI Term folder (the daemon marked it pending), or on `ai setup`.
+      if(this.options.setup===true||settings.setup==='pending'&&!busy)await this.openSetup();
+      else if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length){if(busy)this.showNote('No engine is logged in and no API key is saved · /login connects one');else await this.openCredentials('login');}
       else this.draw(true);
       await this.subscribeStats(true);await this.subscribeUsage(true);
       // Notification clicks select agents here while this homepage is open. An older daemon refuses the request;
@@ -1131,6 +1133,28 @@ export class Homepage {
     this.compatibleDefaults(this.engine);
   }
   private async openCredentials(kind:'login'|'settings'):Promise<void>{await this.createCredentials(kind).load();}
+  // v1.2 first-run setup. Finishing (⏎ or a next step) or skipping (Esc) is saved, so it never opens by itself again.
+  private async openSetup():Promise<void>{
+    const panel:SetupPanel=new SetupPanel(()=>this.draw(true),{
+      finish:how=>{if(this.popup===panel)this.popup=undefined;this.draw(true);this.enqueue(()=>this.saveSetup(how));},
+      step:step=>{if(this.popup===panel)this.popup=undefined;this.enqueue(async()=>{await this.saveSetup('done');await this.setupStep(step);});},
+    });
+    this.popup=panel;this.draw(true);
+    try{panel.set(validateSetupStatus((await this.connection.request({kind:'setup.status'})).setup));}
+    catch(error){panel.fail(error instanceof DaemonRequestError?error.message.slice(0,160):'the check failed; /doctor shows what AI Term sees');}
+    this.draw(true);
+  }
+  private async saveSetup(how:'done'|'skipped'):Promise<void>{
+    try{await this.connection.request({kind:'settings.set',patch:{setup:how}});}
+    catch(error){this.showNote(`Setup couldn't save that it was ${how==='done'?'finished':'skipped'} · it may show again (${error instanceof Error?error.message.slice(0,80):'no answer'})`);}
+  }
+  private async setupStep(step:SetupStep):Promise<void>{
+    if(step==='login')await this.openCredentials('login');
+    else if(step==='key')await this.openCredentials('settings');
+    else if(step==='budget')await this.submit('/budget');
+    else{this.openBox('model');this.savingDefault=true;}
+    this.draw(true);
+  }
   private createCredentials(kind:'login'|'settings'):CredentialsPanel{
     this.box=undefined;
     const panel=new CredentialsPanel(kind,{
@@ -1508,12 +1532,14 @@ export class Homepage {
   }
 }
 // `connect` opens one more daemon connection: a split gives each pane its own (split.ts).
-export async function homepage(connection: import('../connection.js').Connection, connect: () => Promise<import('../connection.js').Connection>, attachOnStart?: string, doctor?: () => Promise<string[]>, appToken?: string): Promise<void> {
+export async function homepage(connection: import('../connection.js').Connection, connect: () => Promise<import('../connection.js').Connection>, attachOnStart?: string, doctor?: () => Promise<string[]>, appToken?: string, setup = false): Promise<void> {
   const truecolor = process.env.COLORTERM === 'truecolor' || process.env.COLORTERM === '24bit' || process.env.TERM_PROGRAM === 'Apple_Terminal' || process.env.TERM_PROGRAM === 'iTerm.app', log = new Logger(getPaths().log);
   const input = new AppInput(process.stdin, appToken);
-  const home: Homepage = new Homepage(connection, { stdin: input, controls: input, truecolor, attachSession: (id, signal) => configuredAttach(connection, id, { stdin: input, home: signal, appTheme: () => home.currentTheme(), themeEvents: input }), splitSessions: (ids, theme, signal) => split(ids, { stdin: input, home: signal, themeEvents: input, connect, theme, truecolor, log: text => log.error(text) }), ...(attachOnStart ? { attachOnStart } : {}), ...(doctor ? { doctor } : {}) });
+  const home: Homepage = new Homepage(connection, { stdin: input, controls: input, truecolor, ...(setup ? { setup: true } : {}), attachSession: (id, signal) => configuredAttach(connection, id, { stdin: input, home: signal, appTheme: () => home.currentTheme(), themeEvents: input }), splitSessions: (ids, theme, signal) => split(ids, { stdin: input, home: signal, themeEvents: input, connect, theme, truecolor, log: text => log.error(text) }), ...(attachOnStart ? { attachOnStart } : {}), ...(doctor ? { doctor } : {}) });
   try { await Promise.all([home.start(), home.done]); } finally { input.dispose(); }
 }
 import { AddonFlow } from './addon-flow.js';
+import { SetupPanel, type SetupStep } from './setup-panel.js';
+import { validateSetupStatus } from '../../shared/setup.js';
 import { AddonPanel } from './addon-panel.js';
 import type { AddonTarget } from '../../shared/addons.js';

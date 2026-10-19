@@ -13,7 +13,7 @@ import { QueueService } from './queue.js';
 import { RemoteService } from './remote/service.js';
 import { managerBackend } from './remote/backend.js';
 import { KeyStore } from './keys.js';
-import { SettingsStore } from './settings.js';
+import { SettingsStore, markFreshSetup } from './settings.js';
 import { GIT } from './git-path.js';
 import { ClickReceiver, CLICK_SOCKET } from './click-receiver.js';
 import { TerminalLauncher } from './terminal-launch.js';
@@ -33,6 +33,8 @@ export async function runDaemon(entry?:string): Promise<void> {
     const paths = getPaths();
     await preparePaths(paths, { daemon: true });
     const log = new Logger(paths.log), release = await acquireLock(paths.pid);
+    // A new AI Term folder gets the first-run setup once (v1.2); checked before anything here writes settings or state.
+    await markFreshSetup(paths.root, paths.state);
     const usage=new UsageService(paths.root,log);
     // macOS: the signed helper app, with click-through. Linux (v0.8.1): notify-send when installed, no click-through.
     const mac = process.platform === 'darwin';

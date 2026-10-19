@@ -54,7 +54,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
-export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; remote?: boolean; devServers?: boolean; lspDiagnostics?: boolean; brainForAgents?: boolean; brainRepositories?: Record<string, { agents?: boolean; trusted?: boolean }>; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<import('./accounts.js').AccountEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; reversePath?: string | null; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {setup?:'pending'|'done'|'skipped';mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; remote?: boolean; devServers?: boolean; lspDiagnostics?: boolean; brainForAgents?: boolean; brainRepositories?: Record<string, { agents?: boolean; trusted?: boolean }>; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<import('./accounts.js').AccountEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; reversePath?: string | null; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -166,6 +166,8 @@ export type Request = {
 } | {
     kind: 'engines.status';
 } | { kind: 'keys.list' }
+  // v1.2 first-run setup: what is installed and ready on this machine (versions and the CLIs' own status commands only).
+  | { kind: 'setup.status' }
   // v1.0.1 ai doctor: whether the OS keychain answers (a probe entry that never holds a key), asked of the daemon.
   | { kind: 'keys.health' }
   // secret is absent only for Ollama, which has no key; deployments are the model ids for every provider but Anthropic and OpenAI.
@@ -314,6 +316,7 @@ export interface SuccessResponse {
     extension?: import('./extensions.js').ExtensionFile;
     settings?: Settings;
     engines?: EnginesStatus;
+    setup?: import('./setup.js').SetupStatus;
     notifier?: NotifierState;
     agentSandbox?: AgentSandbox;
     keychain?: { reachable: boolean; note?: string };

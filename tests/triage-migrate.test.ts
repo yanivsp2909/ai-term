@@ -159,14 +159,14 @@ describe('the core and the popup', () => {
 describe('Part B review findings', () => {
   it('MEDIUM: errors never follows a logs folder that is a link, and a link to a newer log never wins', async () => {
     const repo = await folder(), outside = await folder('ai-triage-out-'), gh = { gh: null, cwd: repo, env: {} };
-    await writeFile(join(outside, 'secret.log'), 'outside the repository\n');
+    await writeFile(join(outside, 'other.log'), 'outside the repository\n');
     await symlink(outside, join(repo, 'logs'));
     await expect(triageGather(repo, repo, 'errors', gh)).rejects.toThrow('No .log file here or in logs/');
     await writeFile(join(repo, 'real.log'), 'inside\n'); await utimes(join(repo, 'real.log'), new Date('2026-01-01'), new Date('2026-01-01'));
     const future = join(outside, 'future.log'); await writeFile(future, 'future\n'); await utimes(future, new Date('2030-01-01'), new Date('2030-01-01'));
     await symlink(future, join(repo, 'zz.log'));
     expect((await triageGather(repo, repo, 'errors', gh)).subject).toBe('log: real.log');
-    await expect(triageGather(repo, repo, join(outside, 'secret.log'), gh)).rejects.toThrow('/triage reads files inside this repository only');
+    await expect(triageGather(repo, repo, join(outside, 'other.log'), gh)).rejects.toThrow('/triage reads files inside this repository only');
   });
 
   it('LOW: one huge last line is cut to fit, not dropped; the file name sits inside the quoted block', async () => {

@@ -99,7 +99,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/dev-cmd',description:'The project\'s dev server command, like npm run dev (none clears it)',argumentHint:()=>'<command> | none',current:none},
  {name:'/queue',description:'Agents that start after an agent finishes or at a time, each with a limit (D55, off; /settings b)',argumentHint:()=>'[add]',values:()=>['add'],current:none},
 ];
-export const aiSubcommands=['ai','ai --attach <id>','ai --version','ai doctor','ai status-line','ai status-notify <json>','ai agent','ai daemon','ai daemon stop','ai debug stats','ai debug usage','ai debug ls','ai debug shell [cwd]','ai debug attach <id>','ai debug stop <id>','ai debug peek <id>'] as const;
+export const aiSubcommands=['ai','ai --attach <id>','ai --version','ai doctor','ai setup','ai status-line','ai status-notify <json>','ai agent','ai daemon','ai daemon stop','ai debug stats','ai debug usage','ai debug ls','ai debug shell [cwd]','ai debug attach <id>','ai debug stop <id>','ai debug peek <id>'] as const;
 export const debugActions=aiSubcommands.filter(c=>c.startsWith('ai debug ')).map(c=>c.split(' ')[2]??'');
 export const keyTable:readonly [string,string][]=[
  ['Add-on e / m / b / y / Enter / Esc','Engine or key / model / free local brain first / start / no action / close'],

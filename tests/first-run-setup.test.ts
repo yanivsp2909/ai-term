@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import headless from '@xterm/headless';
 import { setupStatus } from '../src/daemon/setup.js';
+import { markFreshSetup } from '../src/daemon/settings.js';
 import { validateSetupStatus, type SetupStatus } from '../src/shared/setup.js';
 import { validateSettingsPatch } from '../src/shared/validate.js';
 import { Homepage } from '../src/client/tui/homepage.js';
@@ -58,7 +59,7 @@ describe('what setup finds', () => {
     // Only versions and the CLIs' own status commands ran; nothing else, and nothing that writes.
     for (const call of await s.calls()) expect(call, call).toMatch(/^(claude (--version|auth status --json)|codex (--version|login status)|cursor-agent --version|copilot --version|gh (--version|auth status)|ollama --version)$/);
     // Nothing printed by a tool reaches the status as raw text.
-    expect(JSON.stringify(status)).not.toMatch(/\\u001b|\u001b/);
+    expect(JSON.stringify(status)).not.toContain('\\u001b'); expect(JSON.stringify(status)).not.toContain(String.fromCharCode(27));
     expect(validateSetupStatus(JSON.parse(JSON.stringify(status)))).toEqual(status);
   }, 20_000);
 
@@ -104,14 +105,14 @@ async function homepage(settings: Record<string, unknown>, options: { setup?: bo
 
 describe('the setup screen', () => {
   it('on a fresh home it shows what is installed, what is ready and the next steps; Esc skips for good', async () => {
-    const h = await homepage({});
+    const h = await homepage({ setup: 'pending' });
     try {
+      await vi.waitFor(async () => expect(await screen(h.tty)).toContain("What's installed"), { timeout: 5000 });
       const text = await screen(h.tty);
       for (const line of ["What's installed", '✓ Claude Code 2.1.300 · logged in', '✗ Codex · not found · install: npm install -g @openai/codex', "? Copilot CLI · couldn't check", '✓ GitHub CLI (gh) 2.81.0 · not logged in',
         "What's ready", 'API keys: none yet', 'Sandbox: none · no bwrap here', 'Next steps', 'l  log in to a CLI', 'k  add an API key', 'b  set a budget', 'd  pick a default engine', '/remote on', 'Esc skips']) expect(text, line).toContain(line);
       h.tty.emit('data', Buffer.from('\x1b'));
-      await new Promise(r => setTimeout(r, 30));
-      expect(h.requests.some(r => r.kind === 'settings.set' && JSON.stringify(r).includes('"setup":"skipped"'))).toBe(true);
+      await vi.waitFor(() => expect(h.requests.some(r => r.kind === 'settings.set' && JSON.stringify(r).includes('"setup":"skipped"'))).toBe(true), { timeout: 5000 });
       expect(await screen(h.tty)).not.toContain("What's installed");
     } finally { await h.home.stop(); }
   });
@@ -121,13 +122,14 @@ describe('the setup screen', () => {
     try { expect(done.requests.some(r => r.kind === 'setup.status')).toBe(false); } finally { await done.home.stop(); }
     const again = await homepage({ setup: 'skipped' }, { setup: true });
     try {
-      expect(await screen(again.tty)).toContain("What's installed");
-      again.tty.emit('data', Buffer.from('\r')); await new Promise(r => setTimeout(r, 30));
-      expect(again.requests.some(r => r.kind === 'settings.set' && JSON.stringify(r).includes('"setup":"done"'))).toBe(true);
+      await vi.waitFor(async () => expect(await screen(again.tty)).toContain("What's installed"), { timeout: 5000 });
+      again.tty.emit('data', Buffer.from('\r'));
+      await vi.waitFor(() => expect(again.requests.some(r => r.kind === 'settings.set' && JSON.stringify(r).includes('"setup":"done"'))).toBe(true), { timeout: 5000 });
     } finally { await again.home.stop(); }
-    const step = await homepage({});
+    const step = await homepage({ setup: 'pending' });
     try {
-      step.tty.emit('data', Buffer.from('b')); await new Promise(r => setTimeout(r, 30));
+      step.tty.emit('data', Buffer.from('b'));
+      await vi.waitFor(async () => expect(await screen(step.tty)).toMatch(/daily/i), { timeout: 5000 });
       const text = await screen(step.tty);
       expect(text).not.toContain("What's installed"); expect(text).toMatch(/daily/i);
       expect(step.requests.some(r => r.kind === 'settings.set' && JSON.stringify(r).includes('"setup":"done"'))).toBe(true);
@@ -139,12 +141,23 @@ describe('the setup screen', () => {
     const client = Object.assign(new EventEmitter(), { async request(body: RequestBody): Promise<SuccessResponse> {
       requests.push(body); if (body.kind === 'setup.status') throw new Error('daemon too old');
       const response: SuccessResponse = { id: randomUUID(), ok: true };
-      if (body.kind === 'settings.get') response.settings = { theme: 'graphite' }; if (body.kind === 'sessions.list') response.sessions = []; if (body.kind === 'keys.list') response.keys = [];
+      if (body.kind === 'settings.get') response.settings = { theme: 'graphite', setup: 'pending' }; if (body.kind === 'sessions.list') response.sessions = []; if (body.kind === 'keys.list') response.keys = [];
       return response;
     } });
     const tty = new TTY(), home = new Homepage(client as never, { stdin: tty, stdout: tty, signals: new EventEmitter(), cwd: '/tmp', terminalProgram: 'unknown' });
     await home.start();
-    try { expect(await screen(tty)).toContain("Setup couldn't check this machine"); } finally { await home.stop(); }
+    try { await vi.waitFor(async () => expect(await screen(tty)).toContain("Setup couldn't check this machine"), { timeout: 5000 }); } finally { await home.stop(); }
+  });
+
+  it('the daemon marks only a new AI Term folder pending; one already in use never shows the setup by itself', async () => {
+    const fresh = await folder();
+    expect(await markFreshSetup(fresh, join(fresh, 'state.json'))).toBe(true);
+    expect(JSON.parse(await readFile(join(fresh, 'settings.json'), 'utf8'))).toMatchObject({ setup: 'pending' });
+    expect(await markFreshSetup(fresh, join(fresh, 'state.json'))).toBe(false);
+    const used = await folder(); await writeFile(join(used, 'state.json'), '{"v":1,"sessions":[]}');
+    expect(await markFreshSetup(used, join(used, 'state.json'))).toBe(false);
+    const plain = await homepage({});
+    try { expect(plain.requests.some(r => r.kind === 'setup.status')).toBe(false); } finally { await plain.home.stop(); }
   });
 
   it('ai setup is a command the README lists', async () => {

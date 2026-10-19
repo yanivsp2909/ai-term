@@ -60,10 +60,11 @@ async function cd(t: Tier1, folder: string): Promise<void> {
 }
 
 export const TIER1: readonly Check<Tier1>[] = [
-  step('start', 'start: ai opens its homepage and, with nothing connected, the login popup', 'the homepage with "Connect a provider" over it; Esc closes it', async t => {
-    await t.ai.waitFor('Connect a provider', 20_000);
-    await t.home.home();
-    t.ai.write(KEY.esc); await t.ai.waitGone('Connect a provider');
+  // v1.2: a new AI Term folder opens the first-run setup (it replaced the login popup there).
+  step('start', 'start: ai opens its homepage and, on a new AI Term folder, the first-run setup', `the setup over the homepage: "What's installed", the stand-in Claude Code found, "What's ready", "Next steps"; Esc skips it`, async t => {
+    await t.ai.waitFor("What's installed", 20_000);
+    for (const part of ["What's ready", 'Next steps', '✓ Claude Code', 'Esc skips']) await t.ai.waitFor(part, 5000);
+    t.ai.write(KEY.esc); await t.ai.waitGone("What's installed");
   }),
   step('version', 'the homepage shows the version you run', `"v${packageInfo.version}" in the This Mac panel`, async t => {
     await t.ai.waitFor(`v${packageInfo.version}`, 5000, `v${packageInfo.version} in the This Mac panel`);

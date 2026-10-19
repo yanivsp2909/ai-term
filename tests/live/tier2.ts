@@ -117,6 +117,8 @@ const fileSays = async (path: string, word: string) => (await textOf(path)).trim
 const TIER2: readonly Check<Tier2>[] = [
   step('start', 'ai finds your Claude Code and Codex logins', 'the homepage without the login popup; the bottom line says claude code · own login', async t => {
     await t.home.home(); await sleep(2500);
+    // v1.2: a new AI Term folder opens the first-run setup first; skip it.
+    if ((await t.ai.text()).includes("What's installed")) { t.ai.write(KEY.esc); await t.ai.waitGone("What's installed"); }
     if ((await t.ai.text()).includes('Connect a provider')) await fail(t, 'AI Term found no Claude Code or Codex login. Log in to them first (claude, then codex login), then run this again');
     await t.ai.waitFor(/claude code · .*own login/, 10_000, 'claude code · own login on the bottom line');
   }),

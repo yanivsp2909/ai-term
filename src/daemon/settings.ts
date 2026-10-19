@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { open } from 'node:fs/promises';
+import { lstat, open } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { isFsError } from '../shared/paths.js';
 import { validateSettings, validateSettingsPatch, validateKeyView } from '../shared/validate.js';
@@ -8,6 +8,15 @@ import { atomicWrite } from './store.js';
 import { ownedByMe } from '../shared/owner.js';
 
 const queues = new Map<string, Promise<unknown>>();
+// v1.2 first-run setup: an AI Term folder with no settings and no agent list is new. The daemon marks it pending at its
+// first start, so the homepage opens the setup once; a folder that was already in use never gets the mark.
+export async function markFreshSetup(root: string, state: string): Promise<boolean> {
+  for (const file of [join(root, 'settings.json'), state]) {
+    try { await lstat(file); return false; } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+  }
+  await new SettingsStore(root).set({ setup: 'pending' });
+  return true;
+}
 export class SettingsStore {
   private readonly path: string;
   constructor(root: string, private readonly onInvalidKey?:()=>void) { this.path = join(root, 'settings.json'); }

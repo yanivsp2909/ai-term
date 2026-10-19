@@ -145,6 +145,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'usage.summary':case 'usage.diagnostics':
         case 'engines.status':
         case 'keys.health':
+        case 'setup.status':
         case 'sessions.list':
             fields = [];
             break;
@@ -380,7 +381,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','brainForAgents','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides','reversePath','remote'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','brainForAgents','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides','reversePath','remote','setup'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -422,6 +423,9 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     // Whole settings (not a patch): each default names an account of that engine.
     if(!patchOnly&&v.defaultAccounts!==undefined&&Object.entries(v.defaultAccounts as Record<string,string>).some(([engine,name])=>!(v.accounts as {name:string;engine:string}[]|undefined)?.some(a=>a.name===name&&a.engine===engine)))throw new ValidationError('Invalid accounts');
     if(v.presetsEnabled!==undefined&&typeof v.presetsEnabled!=='boolean')throw new ValidationError('Invalid presets setting');
+    // v1.2 first-run setup: pending (a new AI Term folder; the daemon marks it), then finished or skipped; either way it
+    // never shows again by itself (ai setup reruns it).
+    if(v.setup!==undefined&&v.setup!=='pending'&&v.setup!=='done'&&v.setup!=='skipped')throw new ValidationError('Invalid setup setting');
     if(v.presets!==undefined)validatePresets(v.presets);
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);

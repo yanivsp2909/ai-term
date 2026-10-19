@@ -16,6 +16,7 @@ import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
 import { enginesStatus, GEMINI_NO_SANDBOX } from './engines.js';
+import { setupStatus } from './setup.js';
 import { CURSOR_ONE_WORD } from './env.js';
 import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS, KEYCHAIN_ERRORS } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
@@ -279,6 +280,10 @@ export class DaemonServer {
                     this.control(peer, { id: request.id, ok: true }); this.onStop?.(); break;
                 case 'engines.status':
                     this.control(peer, { id: request.id, ok: true, engines: await enginesStatus(), notifier: this.notifier?.state() ?? 'not built', agentSandbox: await currentAgentSandbox() });
+                    break;
+                // v1.2 first-run setup: keys only by label, provider and last 4, as keys.list gives them.
+                case 'setup.status':
+                    this.control(peer, { id: request.id, ok: true, setup: await setupStatus({ env: process.env, keys: (await this.keys.list()).map(k => ({ label: k.label, provider: k.provider, last4: k.last4 })), sandbox: await currentAgentSandbox() }) });
                     break;
                 case 'mcp.list': case 'mcp.add': case 'mcp.remove': case 'mcp.toggle': case 'mcp.approve': case 'mcp.discover': case 'mcp.schema': case 'mcp.call': case 'mcp.cancel': case 'mcp.stop':
                     if(['mcp.schema','mcp.call','mcp.cancel','mcp.stop'].includes(request.kind))throw new Error('MCP tool calls require an agent');
