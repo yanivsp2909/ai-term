@@ -1095,6 +1095,11 @@ Fresh-context reviewers on 8722739..638b047: a security reviewer on /remote as a
 - **Status:** no route on the status receiver, no usage telemetry; running on first output, quiet after 10 s, exited at exit; the card adds `status from output`. Hooks would mean writing into their config folders, which AI Term never does. `/send` is refused (`This CLI reports no status; open it (⏎) and type there`: a permission prompt could be up unseen) and `/resume` says `/retry`.
 - **Install hints:** start box, `/settings` ENGINES, `ai doctor`; never installed by AI Term.
 
+### 12.33 Part C public source snapshot (2026-10-19)
+- **Export:** `scripts/public-snapshot.mjs <new folder> [commit]` runs `git archive` of one commit into a new folder (tar, argv only; this checkout is only read), removes the left-out files (a list in the script: the private build log, review transcripts, three spike reports and one measurement file with personal paths, the local skill inventory and its test, agent settings folders), copies the overlay from `public/` (README intro, LICENSE, SECURITY.md, `.gitleaks.toml`, the Apache-2.0 text, the PUBLIC_SNAPSHOT.md template) and writes THIRD_PARTY_NOTICES.md from package-lock.json. It refuses a tree that still holds a personal marker (patterns in the script, fakes allowlisted). `--commit <folder>` makes the one commit as the noreply identity with an empty git config, no template and no signing. Nothing is pushed or created on GitHub.
+- **Shared add-on copies:** kept only when their `License:` line says MIT, Apache-2.0 or BSD; the rest are listed in `addons/_shared/LEFT_OUT.txt`. An add-on whose guide is missing (ENOENT only; links and other unsafe files still throw) runs on its own steps, and its first message names the missing guides (`src/daemon/addons.ts`). Tests read LEFT_OUT.txt (`tests/shared-copies.ts`): a listed copy must be absent, and add-on machinery tests run on stand-in guides there.
+- **Fixtures:** fake keys in a provider's format and the AITERMCANARY secrets are joined from parts at run time, so a secret scanner needs no allowlist.
+
 ## 13. Decisions log
 
 `/init` (D49) is a planned command, not implemented. `/remote` (D54) shipped in v1.0.8 (§12.28).
