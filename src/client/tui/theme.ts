@@ -1,44 +1,48 @@
-import { tokenColors, type ColorName, type Colors } from '../../shared/theme-tokens.js';
+import { isBuiltinTheme, relativeLuminance, themeColors, type ThemeVariant } from '../../shared/theme-tokens.js';
 export type { ColorName, Colors } from '../../shared/theme-tokens.js';
-import { readFileSync } from 'node:fs';
-declare const __AI_TERM_DESIGN__: string | undefined;
-// The build embeds the approved document; tsx reads the same source during development.
-const design = typeof __AI_TERM_DESIGN__ === 'string' ? __AI_TERM_DESIGN__ : readFileSync(new URL('../../../docs/design.md', import.meta.url), 'utf8');
-import type { ThemeName } from '../../shared/protocol.js';
+import type { Colors } from '../../shared/theme-tokens.js';
+import type { ThemeName, ThemeVariantSetting } from '../../shared/protocol.js';
+import type { UserTheme } from '../../shared/user-themes.js';
 import type { Cell } from './grid.js';
 import type { IBufferCell } from '@xterm/headless';
 export interface Theme { name: ThemeName; colors: Colors; defaultBackground: boolean }
-function documentedPalette(name: 'slate' | 'ink'): Partial<Colors> {
-  const line = design.split('\n').find(line => line.startsWith(`- **\`${name}\``));
-  if (!line) throw new Error(`Missing ${name} palette in design.md`);
-  const result: Partial<Colors> = {};
-  for (const match of line.matchAll(/([a-z]+(?:-[23])?) `(#\w{6})`/g)) if (match[1] && match[2]) result[match[1] as ColorName] = match[2].toLowerCase();
-  if (Object.keys(result).length !== 8) throw new Error(`Incomplete ${name} palette in design.md`);
-  return result;
-}
-const dark = tokenColors('dark'), light = tokenColors('light'), slate = documentedPalette('slate'), ink = documentedPalette('ink');
 export function channels(color: string): number[] { const n = Number.parseInt(color.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
 export function mix(color: string, target: string, amount: number): string {
   const end = channels(target);
   return '#' + channels(color).map((n, i) => Math.round(n + ((end[i] ?? n) - n) * amount).toString(16).padStart(2, '0')).join('');
 }
-function luminance(color: string): number { const [r, g, b] = channels(color).map(n => { const v = n / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return (r ?? 0) * 0.2126 + (g ?? 0) * 0.7152 + (b ?? 0) * 0.0722; }
-export function createTheme(name: ThemeName, background?: string): Theme {
-  let colors = { ...dark, ...(name === 'slate' || name === 'auto' ? slate : name === 'ink' ? ink : name === 'light' ? light : {}) };
-  if (name === 'auto' && background) {
-    const isLight = luminance(background) > 0.5, target = isLight ? '#000000' : '#ffffff';
-    if (isLight) colors = { ...light };
+// v1.2.6: system is dark or light by the terminal's own background (OSC 11; in the app that is the window, which follows
+// macOS). No answer is dark, as every theme was before variants.
+export function resolveVariant(variant: ThemeVariantSetting, background?: string): ThemeVariant {
+  if (variant !== 'system') return variant;
+  return background && relativeLuminance(background) > 0.5 ? 'light' : 'dark';
+}
+// A built-in or a theme file of your own (its colors passed in), in a variant; light is the old name of graphite light.
+// A name with no colors (a file that went away) is graphite, so nothing is ever half-applied.
+export function createTheme(name: ThemeName, background?: string, variant: ThemeVariantSetting = 'dark', user?: UserTheme): Theme {
+  if (name === 'auto') return autoTheme(background);
+  const resolved = name === 'light' ? 'light' : resolveVariant(variant, background);
+  const colors = isBuiltinTheme(name) ? themeColors(name, resolved) : user && user.name === name ? { ...user[resolved] } : themeColors('graphite', name === 'light' ? 'light' : resolved);
+  return { name, colors, defaultBackground: false };
+}
+// auto ("match my terminal"): the ground is never painted (SGR 49); panels are mixed from the terminal's background
+// toward white (or black on a light one), and dark ink-3 is raised until it holds 4.5:1 on surface-2 (design.md).
+function autoTheme(background?: string): Theme {
+  let colors = themeColors('slate', 'dark');
+  if (background) {
+    const isLight = relativeLuminance(background) > 0.5, target = isLight ? '#000000' : '#ffffff';
+    if (isLight) colors = themeColors('graphite', 'light');
     colors.bg = background; colors.surface = mix(background, target, 0.05); colors['surface-2'] = mix(background, target, 0.11); colors.line = mix(background, target, 0.24);
     if (!isLight) {
       const original = colors['ink-3'];
       for (let percent = 0; percent <= 100; percent++) {
         colors['ink-3'] = mix(original, target, percent / 100);
-        if ((luminance(colors['ink-3']) + 0.05) / (luminance(colors['surface-2']) + 0.05) >= 4.5) break;
+        if ((relativeLuminance(colors['ink-3']) + 0.05) / (relativeLuminance(colors['surface-2']) + 0.05) >= 4.5) break;
       }
     }
   }
   colors['status-running'] = colors.accent; colors['status-done'] = colors['ink-2']; colors['status-idle'] = colors['ink-3'];
-  return { name, colors, defaultBackground: name === 'auto' };
+  return { name: 'auto', colors, defaultBackground: true };
 }
 const ansi = ['#000000', '#cd0000', '#00cd00', '#cdcd00', '#0000ee', '#cd00cd', '#00cdcd', '#e5e5e5', '#7f7f7f', '#ff0000', '#00ff00', '#ffff00', '#5c5cff', '#ff00ff', '#00ffff', '#ffffff'];
 export function cellColor(cell: IBufferCell, foreground: boolean, theme: Theme): string {

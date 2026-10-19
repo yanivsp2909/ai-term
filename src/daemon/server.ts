@@ -17,6 +17,8 @@ import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
 import { enginesStatus, GEMINI_NO_SANDBOX } from './engines.js';
 import { setupStatus } from './setup.js';
+import { readUserThemes, themeProblem, ThemeError } from '../shared/user-themes.js';
+import { isBuiltinTheme } from '../shared/theme-tokens.js';
 import { CURSOR_ONE_WORD } from './env.js';
 import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS, KEYCHAIN_ERRORS } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
@@ -285,6 +287,9 @@ export class DaemonServer {
                 case 'setup.status':
                     this.control(peer, { id: request.id, ok: true, setup: await setupStatus({ env: process.env, keys: (await this.keys.list()).map(k => ({ label: k.label, provider: k.provider, last4: k.last4 })), sandbox: await currentAgentSandbox() }) });
                     break;
+                case 'themes.list':
+                    this.control(peer, { id: request.id, ok: true, themes: await readUserThemes(this.paths.root) });
+                    break;
                 case 'mcp.list': case 'mcp.add': case 'mcp.remove': case 'mcp.toggle': case 'mcp.approve': case 'mcp.discover': case 'mcp.schema': case 'mcp.call': case 'mcp.cancel': case 'mcp.stop':
                     if(['mcp.schema','mcp.call','mcp.cancel','mcp.stop'].includes(request.kind))throw new Error('MCP tool calls require an agent');
                     this.control(peer,{id:request.id,ok:true,...await this.manager.mcp.query('homepage',request)});break;
@@ -296,6 +301,8 @@ export class DaemonServer {
                 case 'settings.set':
                     // A deployment can only be marked as a model the catalog knows: its prices and limits come from there.
                     if (request.patch.deploymentModels && Object.values(request.patch.deploymentModels).some(model => !catalogIds().includes(model))) throw new Error('Unknown catalog model');
+                    // v1.2.6: a theme file of your own is saved only when it is there and passed every check.
+                    if (request.patch.theme !== undefined) { const problem = themeProblem(isBuiltinTheme(request.patch.theme) ? { themes: [], refused: [] } : await readUserThemes(this.paths.root), request.patch.theme); if (problem) throw new ThemeError(problem); }
                     this.control(peer, { id: request.id, ok: true, settings: await this.settings.set(request.patch) });
                     break;
                 case 'sessions.list':
@@ -515,7 +522,7 @@ export class DaemonServer {
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
                 ...PRICE_ERRORS,'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,...LOCAL_SERVER_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS,...REVERSE_ERRORS,...REVERSE_CLI_ERRORS,'This add-on is unavailable',...REMOTE_SERVICE_ERRORS,'/remote is unavailable',RUN_FAILED
             ]);
-            const message = error instanceof AddonError ? shownAddonError(error.message) : error instanceof Error && (fixed.has(error.message) || error instanceof MergeError && CHECKOUT_NOT_ON_BASE.test(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
+            const message = error instanceof AddonError ? shownAddonError(error.message) : error instanceof Error && (fixed.has(error.message) || error instanceof ThemeError || error instanceof MergeError && CHECKOUT_NOT_ON_BASE.test(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.
             this.log.error(`Operation failed: ${request.kind} (${message === 'Session operation failed' ? 'unexpected error' : message})`);
             this.control(peer, { id: request.id, ok: false, error: { code: 'OPERATION_FAILED', message } });

@@ -21,11 +21,11 @@ import { findRipgrep } from './tools.js';
 import { Transcript } from './transcript.js';
 import { LspPool } from './lsp.js';
 
-export interface AgentArgs { provider: KeyProvider; model: string; models: string[]; theme: ThemeName; transcript: string | null; permission: AgentPermission; lsp: boolean; brain?: string; addon?: string; readOnly?: true; sessionMcp?: true; firstMessage?: string }
+export interface AgentArgs { provider: KeyProvider; model: string; models: string[]; theme: ThemeName; themeVariant: 'dark' | 'light'; transcript: string | null; permission: AgentPermission; lsp: boolean; brain?: string; addon?: string; readOnly?: true; sessionMcp?: true; firstMessage?: string }
 export class AgentUsageError extends Error {}
 // The argv env.ts builds (buildAgentArgs). Anything else is refused: Ask unless the one Don't ask flag is there.
 export function parseAgentArgs(args: readonly string[]): AgentArgs {
-  let provider: KeyProvider | null = null, model: string | null = null, models: string[] = [], theme: ThemeName = 'graphite', transcript: string | null = null, permission: AgentPermission = 'ask', lsp = false, brain: string | undefined, addon: string | undefined, readOnly = false, sessionMcp = false, firstMessage: string | undefined;
+  let provider: KeyProvider | null = null, model: string | null = null, models: string[] = [], theme: ThemeName = 'graphite', themeVariant: 'dark' | 'light' = 'dark', transcript: string | null = null, permission: AgentPermission = 'ask', lsp = false, brain: string | undefined, addon: string | undefined, readOnly = false, sessionMcp = false, firstMessage: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? '';
     if (arg === '--') { if (i !== args.length - 2) throw new AgentUsageError('Expected one message after --'); firstMessage = args[i + 1]; break; }
@@ -34,6 +34,8 @@ export function parseAgentArgs(args: readonly string[]): AgentArgs {
     else if (name === '--model' && value && isValidModelId(value)) model = value;
     else if (name === '--models' && value) { models = value.split(','); if (!models.every(isValidModelId)) throw new AgentUsageError('Invalid --models'); }
     else if (name === '--theme' && isThemeName(value)) theme = value;
+    // v1.2.6: the daemon passes light only; system is dark here (this screen has no terminal of its own to ask).
+    else if (name === '--theme-variant' && (value === 'dark' || value === 'light')) themeVariant = value;
     else if (name === '--transcript' && value && isAbsolute(value) && !value.includes('\0')) transcript = value;
     else if (arg === AGENT_ASK_FLAG) permission = 'ask';
     else if (arg === AGENT_DONT_ASK_FLAG) permission = 'dontAsk';
@@ -50,7 +52,7 @@ export function parseAgentArgs(args: readonly string[]): AgentArgs {
   if (!provider) throw new AgentUsageError('Missing --provider');
   if (!model) throw new AgentUsageError('Missing --model');
   if (!models.includes(model)) models = [model, ...models];
-  return { provider, model, models, theme, transcript, permission, lsp, ...(brain ? { brain } : {}), ...(addon ? { addon } : {}), ...(readOnly ? { readOnly: true } : {}), ...(sessionMcp ? { sessionMcp: true } : {}), ...(firstMessage !== undefined ? { firstMessage } : {}) };
+  return { provider, model, models, theme, themeVariant, transcript, permission, lsp, ...(brain ? { brain } : {}), ...(addon ? { addon } : {}), ...(readOnly ? { readOnly: true } : {}), ...(sessionMcp ? { sessionMcp: true } : {}), ...(firstMessage !== undefined ? { firstMessage } : {}) };
 }
 
 // The key and credentials are copied out of the environment and deleted from it before anything else runs, so nothing
@@ -92,7 +94,7 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   (globalThis as { AI_SDK_LOG_WARNINGS?: boolean }).AI_SDK_LOG_WARNINGS = false;
   const { key, endpoint } = secrets, redact = redactor(key);
   const root = await realpath(process.cwd()), bashEnv = buildBashEnv(env), rg = await findRipgrep(bashEnv.PATH);
-  const screen = new Screen({ write: text => terminal.stdout.write(text), get columns() { return terminal.stdout.columns; }, get rows() { return terminal.stdout.rows; } }, createTheme(parsed.theme === 'auto' ? 'graphite' : parsed.theme));
+  const screen = new Screen({ write: text => terminal.stdout.write(text), get columns() { return terminal.stdout.columns; }, get rows() { return terminal.stdout.rows; } }, createTheme(parsed.theme === 'auto' ? 'graphite' : parsed.theme, undefined, parsed.themeVariant));
   const reporter = new HttpReporter(secrets.reporter, () => screen.note("status updates aren't reaching AI Term; its card may lag", 'error'));
   const transcript = new Transcript(parsed.transcript, redact, () => screen.note("the transcript couldn't be saved; the conversation goes on", 'error'));
   let instructions = parsed.brain ? await withBrain(await loadInstructions(root), parsed.brain) : await loadInstructions(root);

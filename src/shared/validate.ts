@@ -1,3 +1,6 @@
+import { isBuiltinTheme } from './theme-tokens.js';
+import { isUserThemeName, validateThemeList } from './user-themes.js';
+import { validateAppFonts } from './app-fonts.js';
 import { validatePresets } from './presets.js';
 import { isAccountChoice, validateAccounts, validateDefaultAccounts } from './accounts.js';
 import { isHandoffWriter } from './handoff.js';
@@ -146,6 +149,7 @@ export async function validateRequest(value: unknown): Promise<Request> {
         case 'engines.status':
         case 'keys.health':
         case 'setup.status':
+        case 'themes.list':
         case 'sessions.list':
             fields = [];
             break;
@@ -292,6 +296,7 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.exportData!==undefined)validateSessionExport(v.exportData);
     if(v.undoPlan!==undefined)validateUndoPlan(v.undoPlan);
     if(v.queue!==undefined)validateQueue(v.queue);
+    if(v.themes!==undefined){try{validateThemeList(v.themes);}catch{throw new ValidationError('Invalid theme list');}}
     if(v.devPlan!==undefined)validateDevPlan(v.devPlan);
     if(v.brainPlan!==undefined)validateBrainPlan(v.brainPlan);
     if(v.brainResult!==undefined)validateBrainResult(v.brainResult);
@@ -356,8 +361,9 @@ export function validateExitCode(value:unknown):number|undefined {
 }
 
 export function isThemeName(value: unknown): value is import('./protocol.js').ThemeName {
-    return typeof value === 'string' && ['graphite', 'slate', 'ink', 'auto', 'light'].includes(value);
+    return isBuiltinTheme(value) || value === 'auto' || value === 'light' || isUserThemeName(value);
 }
+export function isThemeVariant(value: unknown): value is import('./protocol.js').ThemeVariantSetting { return value === 'dark' || value === 'light' || value === 'system'; }
 export function isAgentEngine(value: unknown): value is import('./protocol.js').AgentEngine { return value === 'claude-code' || value === 'codex' || value === 'ai-term' || isExtraEngine(value); }
 export function isCliEngine(value: unknown): value is import('./protocol.js').CliEngine { return value === 'claude-code' || value === 'codex'; }
 export function isModel(value: unknown): value is string | null { return value === null || typeof value === 'string' && isValidModelId(value); }
@@ -381,7 +387,7 @@ export function sanitizeTitle(value: string): string { return [...stripVTControl
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Expected settings patch');
     const v = value as Record<string,unknown>;
-    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','brainForAgents','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides','reversePath','remote','setup'].includes(k))) throw new ValidationError('Unknown settings patch field');
+    if (patchOnly && Object.keys(v).some(k=>!['theme','queue','devServers','lspDiagnostics','brainForAgents','defaultEngine','defaultModel','defaultEffort','defaultCwd','permission','budgets','priceOverrides','providerPrices','notifications','bar','worktrees','keysRunOn','deploymentModels','agentCaps','contextWarning','taskCost','handoff','checkpoints','secretScan','autoTest','autoReview','autoReviewDailyUsd','accounts','defaultAccounts','presets','presetsEnabled','extensions','mcp','mcpApprovals','mcpOverrides','reversePath','remote','setup','themeVariant','appFonts'].includes(k))) throw new ValidationError('Unknown settings patch field');
     if (!Object.keys(v).length || Object.keys(v).some(k => ['__proto__','prototype','constructor'].includes(k)) ||
         v.theme !== undefined && !isThemeName(v.theme) || v.defaultEngine !== undefined && !isCliEngine(v.defaultEngine) || v.keysRunOn !== undefined && v.keysRunOn !== 'ai-term' && v.keysRunOn !== 'cli' ||
         v.defaultModel !== undefined && !isModel(v.defaultModel) || v.defaultEffort !== undefined && !isEffort(v.defaultEffort) || v.permission !== undefined && v.permission !== 'ask' || v.worktrees !== undefined && !['on','off'].includes(String(v.worktrees)) || v.bar !== undefined && !['on','off'].includes(String(v.bar)) || v.notifications !== undefined && typeof v.notifications !== 'boolean' ||
@@ -426,6 +432,8 @@ export function validateSettingsPatch(value: unknown, patchOnly = false): import
     // v1.2 first-run setup: pending (a new AI Term folder; the daemon marks it), then finished or skipped; either way it
     // never shows again by itself (ai setup reruns it).
     if(v.setup!==undefined&&v.setup!=='pending'&&v.setup!=='done'&&v.setup!=='skipped')throw new ValidationError('Invalid setup setting');
+    if(v.themeVariant!==undefined&&!isThemeVariant(v.themeVariant))throw new ValidationError('Invalid theme variant');
+    if(v.appFonts!==undefined){try{validateAppFonts(v.appFonts);}catch{throw new ValidationError('Invalid app fonts');}}
     if(v.presets!==undefined)validatePresets(v.presets);
     if(v.budgets!==undefined)validateBudgets(v.budgets);
     if(v.priceOverrides!==undefined)validatePriceOverrides(v.priceOverrides);

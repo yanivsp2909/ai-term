@@ -505,7 +505,7 @@ export class SessionManager extends EventEmitter {
                 const endpoint=bound&&binding?binding.endpoint:provider!==undefined&&isLocalProvider(provider)&&isLocalEndpoint(agentKey.view.endpoint)?agentKey.view.endpoint:null;
                 live.agentModels=models;
                 const command={node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})};
-                const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,lsp:settings?.lspDiagnostics===true,...(brain?{brainFile:brain.file}:{}),...(addon?{addon}:{}),...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
+                const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',themeVariant:settings?.themeVariant==='light'?'light':'dark',transcript,lsp:settings?.lspDiagnostics===true,...(brain?{brainFile:brain.file}:{}),...(addon?{addon}:{}),...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
                 const file=join(dirname(transcript),'agent-secrets.json'),split=splitAgentSecrets(buildAgentEnv(process.env,{secret,endpoint,...(statusTelemetry?{status:statusTelemetry}:{}),...(telemetry?{usage:telemetry}:{}),entry:this.cliEntry}),file,this.paths.root);
                 writeAgentSecrets(file,split.secrets);
                 // An agent that never started leaves no secret behind for long; a restart's newer file keeps its own timer.

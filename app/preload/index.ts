@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { channels, menuActions, type AppTheme, type MenuAction, type TerminalApi } from '../shared/api.js';
+import { channels, menuActions, type MenuAction, type TerminalApi } from '../shared/api.js';
+import { validateLook } from '../shared/validation.js';
 // Each wrapper has a fixed channel. IPC events never cross the context bridge.
 const api: TerminalApi = {
   write: data => { ipcRenderer.send(channels.write, data); },
@@ -13,7 +14,12 @@ const api: TerminalApi = {
   copy: text => ipcRenderer.invoke(channels.copy, text) as Promise<void>,
   paste: () => ipcRenderer.invoke(channels.paste) as Promise<string>,
   onTheme: callback => {
-    const listener = (_event: unknown, theme: unknown): void => { if (theme === 'dark' || theme === 'light') callback(theme satisfies AppTheme); };
+    // Main's look is checked here before the renderer applies it (validation.ts); a refused one changes nothing.
+    const listener = (_event: unknown, look: unknown): void => {
+      let checked;
+      try { checked = validateLook(look); } catch { console.error('AI Term: a window look was refused'); return; }
+      callback(checked);
+    };
     ipcRenderer.on(channels.theme, listener);
     ipcRenderer.send(channels.theme);
     return () => { ipcRenderer.removeListener(channels.theme, listener); };

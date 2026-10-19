@@ -1,4 +1,6 @@
 export type AppTheme = 'dark' | 'light';
+// v1.2.6: the saved theme in the variant the window shows, and the app fonts as CSS font stacks (app/shared/look.ts).
+export interface AppLook { mode: AppTheme; colors: import('../../src/shared/theme-tokens.js').Colors; fonts: import('../../src/shared/app-fonts.js').FontStacks }
 export const menuActions = ['copy', 'paste', 'select-all', 'find', 'font-increase', 'font-decrease', 'font-reset', 'close-note', 'focus-terminal'] as const;
 export type MenuAction = typeof menuActions[number];
 export const pasteErrors = {
@@ -14,7 +16,7 @@ export interface TerminalApi {
   openUrl(url: string): Promise<void>;
   copy(text: string): Promise<void>;
   paste(): Promise<string>;
-  onTheme(callback: (theme: AppTheme) => void): () => void;
+  onTheme(callback: (look: AppLook) => void): () => void;
   themeApplied(theme: AppTheme): void;
   onMenuAction(callback: (action: MenuAction) => void): () => void;
 }

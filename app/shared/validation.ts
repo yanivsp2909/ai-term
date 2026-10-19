@@ -1,7 +1,23 @@
-import { pasteErrors, type TerminalSize, type AppTheme } from './api.js';
+import { pasteErrors, type TerminalSize, type AppTheme, type AppLook } from './api.js';
+import { BASE_COLOR_NAMES, DERIVED_COLORS, monoFont, sansFont, type Colors } from '../../src/shared/theme-tokens.js';
+import { CHROME_SIZES, TERMINAL_SIZES, isFontStack } from '../../src/shared/app-fonts.js';
 export function validateAppTheme(value: unknown): AppTheme {
   if (value !== 'light' && value !== 'dark') throw new Error('Invalid theme acknowledgement');
   return value;
+}
+// v1.2.6: the look main sends is checked in preload before the renderer sees it: hex colors for exactly the token names,
+// and only the font stacks fontStacks() can make (a family put first in the token chain), so nothing else reaches CSS.
+const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
+function isColors(value: unknown): value is Colors {
+  const names = [...BASE_COLOR_NAMES, ...DERIVED_COLORS.keys()];
+  return object(value) && Object.keys(value).length === names.length && names.every(name => typeof value[name] === 'string' && /^#[0-9a-fA-F]{6}$/.test(value[name]));
+}
+const size = (value: unknown, range: { min: number; max: number }): boolean => typeof value === 'number' && Number.isInteger(value) && value >= range.min && value <= range.max;
+export function validateLook(value: unknown): AppLook {
+  if (!object(value) || Object.keys(value).length !== 3 || (value.mode !== 'dark' && value.mode !== 'light') || !isColors(value.colors)) throw new Error('Invalid app look');
+  const f = value.fonts;
+  if (!object(f) || Object.keys(f).length !== 5 || !isFontStack(f.terminal, monoFont) || !isFontStack(f.chrome, sansFont) || !size(f.terminalSize, TERMINAL_SIZES) || !size(f.chromeSize, CHROME_SIZES) || typeof f.ligatures !== 'boolean') throw new Error('Invalid app look');
+  return { mode: value.mode, colors: { ...value.colors }, fonts: { terminal: f.terminal, terminalSize: f.terminalSize as number, chrome: f.chrome, chromeSize: f.chromeSize as number, ligatures: f.ligatures } };
 }
 export const MAX_WRITE_BYTES = 64 * 1024;
 export const MAX_COPY_BYTES = 5 * 1024 * 1024;

@@ -150,7 +150,7 @@ describe('field validators', () => {
     expect(() => validateSettingsPatch({ future: 1 }, true)).toThrow('Unknown settings patch field');
     // Stored settings may carry future keys; only a client patch is held to the known ones.
     expect(validateSettingsPatch({ future: 1 })).toEqual({ future: 1 });
-    for (const value of [{}, JSON.parse('{"__proto__":{"theme":"ink"}}') as unknown, { constructor: 1 }, { prototype: 1 }, { theme: 'neon' }, { defaultEngine: 'shell' }, { defaultModel: '-x' },
+    for (const value of [{}, JSON.parse('{"__proto__":{"theme":"ink"}}') as unknown, { constructor: 1 }, { prototype: 1 }, { theme: 'Neon!' }, { defaultEngine: 'shell' }, { defaultModel: '-x' },
       { permission: 'dontAsk' }, { defaultCwd: 7 }, { defaultCwd: 'relative' }, { defaultCwd: '/tmp/\0' }, { theme: 'ink', note: 'x'.repeat(16384) }])
       expect(() => validateSettingsPatch(value), JSON.stringify(value).slice(0, 40)).toThrow('Invalid settings patch');
   });

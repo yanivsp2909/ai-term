@@ -12,8 +12,8 @@ import { split, type SplitResult } from '../split.js';
 import { configuredAttach } from '../configured-attach.js';
 import { RESET_MODES } from '../terminal-modes.js';
 import { MAX_FIND_CHARS, type FindMatch, type SessionInfo, type SuccessResponse, type AgentEngine, type EnginesStatus, type AuthRef, type KeyView, type SystemStats, type UsageSummary, type Budgets, type Effort, type Permission, type KeysRunOn, type AgentSandbox } from '../../shared/protocol.js';
-import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeName, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText, validateWorktreePreview, isCliEngine } from '../../shared/validate.js';
-import type { CliEngine } from '../../shared/protocol.js';
+import { isSize, isUUID, validateSession, validateSettings, validateSuccess, isThemeVariant, warningText, validCwd, isValidModelId, validateSystemStats, validateUsageSummary, validateBudgets, isEffortForEngine, isPermissionForEngine, validateSessionText, validateWorktreePreview, isCliEngine } from '../../shared/validate.js';
+import type { CliEngine, Settings, ThemeName, ThemeVariantSetting } from '../../shared/protocol.js';
 import { getPaths } from '../../shared/paths.js';
 import { Logger, redact } from '../../daemon/log.js';
 import { ClientSignal } from '../signals.js';
@@ -104,7 +104,7 @@ export class Homepage {
   // The keep/delete question after x, or the /worktrees popup; its keys never reach the command field.
   private worktreeUi?:WorktreeQuestion|WorktreesPanel;
   // /find results, or the read-only /doctor and /usage popups; their keys never reach the command field.
-  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel|RemotePanel|SetupPanel;
+  private popup?:FindPanel|TextPanel|ExtensionsPanel|HandoffAsk|DiffView|UndoAsk|MergeAsk|TestAsk|ReviewAsk|ForkAsk|QueuePanel|QueueForm|DevAsk|BrainAsk|AddonPanel|RemotePanel|SetupPanel|ThemePicker;
   private addonFlows = new Map<string, AddonFlow>();
   // Each folder's last /study popup (backlog F3: the due list's r) and last /bisect (F1: /bisect alone reopens it, so a
   // closed run can still be stopped). Their own map, keyed by command and folder: a topic or test command can be any text.
@@ -117,6 +117,11 @@ export class Homepage {
   private lastSplit:string[]=[];
   private theme: Theme = createTheme('graphite');
   private background?: string;
+  // v1.2.6: the saved theme, its variant and the theme files of your own (themes.list), so a preview and theme-changed can
+  // rebuild this.theme from them.
+  private themeName: ThemeName = 'graphite';
+  private themeVariant: ThemeVariantSetting = 'dark';
+  private userThemes: ThemeList = { themes: [], refused: [] };
   private backgroundResolve?: () => void;
   private backgroundTimer?: ReturnType<typeof setTimeout>;
   private inputTimer?: ReturnType<typeof setTimeout>;
@@ -199,9 +204,8 @@ export class Homepage {
       if (settings.defaultModel !== undefined) this.model = settings.defaultModel;
       if(settings.defaultEffort!==undefined&&isEffortForEngine(this.engine,settings.defaultEffort))this.effort=settings.defaultEffort;
       if(settings.defaultCwd && await validCwd(settings.defaultCwd))this.folder=settings.defaultCwd;
-      if (settings.theme === 'auto' || this.options.controls?.enabled) await this.detectBackground();
+      await this.loadTheme(settings);
       if (this.ended) return;
-      this.theme = createTheme(this.options.controls?.enabled ? 'auto' : settings.theme, this.background);
       const result = await this.connection.request({ kind: 'sessions.list' });
       if (!Array.isArray(result.sessions)) throw new Error('Missing daemon sessions');
       this.sessions = result.sessions.map(validateSession); this.selectedId = sortSessions(this.sessions)[0]?.id ?? null;
@@ -301,7 +305,13 @@ export class Homepage {
         const background = await controls.background(this.stdout);
         if (this.ended) return;
         this.background = background;
-        Object.assign(this.theme, createTheme('auto', background));
+        // v1.2.6: the app also sends this when the saved theme or a theme file changed, so read them again. A preview in
+        // /theme keeps its own theme until it closes.
+        const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
+        this.themeName = settings.theme; this.themeVariant = settings.themeVariant ?? 'system';
+        if (!isBuiltinTheme(this.themeName) && this.themeName !== 'auto' && this.themeName !== 'light') await this.loadThemes();
+        if (this.ended || this.popup instanceof ThemePicker) return;
+        Object.assign(this.theme, this.makeTheme(this.themeName, this.themeVariant));
         this.previous = null; this.previewCells = undefined; this.forceRedraw = true;
         controls.emit('theme'); this.draw(true);
       }).catch(this.onError);
@@ -417,7 +427,7 @@ export class Homepage {
       if(event.key==='enter'&&!this.field.text.includes(' ')){
         const command=choices[this.menuChoice];if(!command)return;
         // Commands whose argument is optional (they act on the selected agent) run at once; the others wait for one.
-        if(!['/copy','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/remote','/dev','/brain',...ADDON_COMMANDS.map(name=>`/${name}`)].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
+        if(!['/copy','/theme','/open','/diff','/export','/undo','/redo','/merge','/pr','/test','/test-cmd','/review','/queue','/remote','/dev','/brain',...ADDON_COMMANDS.map(name=>`/${name}`)].includes(command)&&commandRegistry.find(c=>c.name===command)?.argumentHint){this.field.text=command+' ';this.menuChoice=0;this.draw(true);return;}
         this.field.text='';this.menuChoice=0;this.queueSubmit(command);return;
       }
     }
@@ -604,14 +614,7 @@ export class Homepage {
     if(command==='/effort'){if(!argument){this.openBox('effort');return;}const effort=argument==='CLI default'?null:argument;if(!isEffortForEngine(this.engine,effort)){this.showNote('/effort '+effortValues(this.engine).join('|'));return;}this.effort=effort;this.showNote('');return;}
     if(command==='/mode'){if(!argument){this.openBox('mode');return;}const permission=argument==="don't ask"||argument==='dontAsk'?'dontAsk':argument;if(!isPermissionForEngine(this.engine,permission)){this.showNote(isExtraEngine(this.engine)?EXTRA_ENGINE_FACTS[this.engine].dontAskNote??'/mode ask|don\'t ask':this.engine==='codex'&&permission==='auto'?'Codex has no distinct auto mode; choose ask or don\'t ask':'/mode ask|auto|don\'t ask');return;}if(permission==='dontAsk'&&!modeValues(this.engine,this.agentSandbox.dontAsk).includes('dontAsk')){this.showNote(this.agentSandbox.note??"don't ask needs a sandbox");return;}this.permission=permission;this.showNote('');return;}
     if (text === '/exit') { await this.stop(); return; }
-    const theme = text.match(/^\/theme (graphite|slate|ink|auto|light)$/)?.[1];
-    if (isThemeName(theme)) {
-      const result = await this.connection.request({ kind: 'settings.set', patch: { theme } });
-      validateSettings(result.settings);
-      if (theme === 'auto') await this.detectBackground();
-      this.theme = createTheme(theme, this.background); this.previewCells = undefined; this.previous = null; this.forceRedraw = true; this.showNote(''); return;
-    }
-    if (text.startsWith('/theme')) { this.showNote('/theme graphite|slate|ink|auto|light'); return; }
+    if (command === '/theme') { if (!argument) await this.openThemePicker(); else await this.setThemeCommand(parts); return; }
     if (text === '/model' || text === '/cd') { this.engines=await this.loadEngines();this.keys=(await this.connection.request({kind:'keys.list'})).keys??[]; this.openBox(text === '/model' ? 'model' : 'folder'); return; }
     if (text==='/settings'||text==='/login') { await this.openCredentials(text==='/settings'?'settings':'login'); return; }
     if (command==='/preset') { await this.presetCommand(text); return; }
@@ -1323,6 +1326,67 @@ export class Homepage {
     }
     if ([...key].length === 1) this.boxText(key);
   }
+  // v1.2.6 themes. A theme file of your own needs its colors from the daemon (themes.list); system and auto need the
+  // terminal's background. In the app nothing saved yet means system: the window follows macOS, as it always did there.
+  private async loadTheme(settings: Settings): Promise<void> {
+    this.themeName = settings.theme;
+    this.themeVariant = settings.themeVariant ?? (this.options.controls?.enabled ? 'system' : 'dark');
+    if (!isBuiltinTheme(this.themeName) && this.themeName !== 'auto' && this.themeName !== 'light') await this.loadThemes();
+    if (this.themeName === 'auto' || this.themeVariant === 'system' || this.options.controls?.enabled) await this.detectBackground();
+    this.theme = this.makeTheme(this.themeName, this.themeVariant);
+    const missing = this.themeNote(this.themeName);
+    if (missing) this.showNote(missing);
+  }
+  private async loadThemes(): Promise<void> {
+    try { this.userThemes = validateThemeList((await this.connection.request({ kind: 'themes.list' })).themes ?? { themes: [], refused: [] }); }
+    catch (error) { this.userThemes = { themes: [], refused: [] }; this.showNote(`your theme files couldn't be read · ${error instanceof Error ? error.message.slice(0, 80) : 'no answer'}`); }
+  }
+  private makeTheme(name: ThemeName, variant: ThemeVariantSetting): Theme {
+    return createTheme(name, this.background, variant, this.userThemes.themes.find(t => t.name === name));
+  }
+  // A theme file that is gone or refused: graphite, and one note saying why (never half a theme).
+  private themeNote(name: ThemeName): string | null {
+    const problem = themeProblem(this.userThemes, name);
+    return problem ? `${problem} · graphite for now` : null;
+  }
+  private repaintTheme(): void { this.previewCells = undefined; this.previous = null; this.forceRedraw = true; this.draw(true); }
+  private async applyTheme(name: ThemeName, variant: ThemeVariantSetting): Promise<void> {
+    if (name === 'auto' || variant === 'system') await this.detectBackground();
+    this.theme = this.makeTheme(name, variant); this.repaintTheme();
+  }
+  private themeLabel(name: ThemeName): string {
+    return name === 'auto' ? 'Match my terminal' : BUILTIN_THEMES.find(t => t.id === name)?.name ?? this.userThemes.themes.find(t => t.name === name)?.label ?? name;
+  }
+  private async saveTheme(name: ThemeName, variant: ThemeVariantSetting | undefined): Promise<void> {
+    validateSettings((await this.connection.request({ kind: 'settings.set', patch: { theme: name, ...(variant ? { themeVariant: variant } : {}) } })).settings);
+    this.themeName = name; if (variant) this.themeVariant = variant;
+  }
+  // /theme <name> [dark|light|system]: set it directly, as before the picker.
+  private async setThemeCommand(parts: readonly string[]): Promise<void> {
+    const [name, variant, extra] = parts;
+    if (!isBuiltinTheme(name) && name !== 'auto' && name !== 'light') await this.loadThemes();
+    const known = isBuiltinTheme(name) || name === 'auto' || name === 'light' || this.userThemes.themes.some(t => t.name === name);
+    if (!name || !known || extra !== undefined || variant !== undefined && !isThemeVariant(variant)) {
+      this.showNote(`/theme ${[...BUILTIN_THEMES.map(t => t.id), 'auto', ...this.userThemes.themes.map(t => t.name)].join('|')} [dark|light|system]`); return;
+    }
+    await this.saveTheme(name, variant as ThemeVariantSetting | undefined);
+    await this.applyTheme(this.themeName, this.themeVariant); this.showNote('');
+  }
+  private async openThemePicker(): Promise<void> {
+    if (this.popup) { this.showNote('close the open popup first'); return; }
+    await this.loadThemes();
+    const saved = this.theme, close = () => { if (this.popup === picker) this.popup = undefined; };
+    const picker: ThemePicker = new ThemePicker(this.userThemes, { name: this.themeName, variant: this.themeVariant }, {
+      preview: choice => { this.enqueue(async () => { if (this.popup === picker) await this.applyTheme(choice.name, choice.variant); }); },
+      cancel: () => { this.enqueue(async () => { close(); this.theme = saved; this.repaintTheme(); }); },
+      pick: choice => { this.enqueue(async () => {
+        close();
+        try { await this.saveTheme(choice.name, choice.variant); await this.applyTheme(choice.name, choice.variant); this.showNote(`✓ theme ${this.themeLabel(choice.name)}${choice.name === 'auto' ? '' : ` · ${choice.variant}`}`); }
+        catch (error) { this.theme = saved; this.repaintTheme(); this.showNote(`theme not saved · ${error instanceof Error ? error.message.slice(0, 80) : 'no answer'}`); }
+      }); },
+    });
+    this.popup = picker; this.draw(true);
+  }
   private async detectBackground(): Promise<void> {
     if (this.background) return;
     if (this.options.controls?.enabled) { this.background = await this.options.controls.background(this.stdout); return; }
@@ -1546,6 +1610,9 @@ export async function homepage(connection: import('../connection.js').Connection
 }
 import { AddonFlow } from './addon-flow.js';
 import { SetupPanel, type SetupStep } from './setup-panel.js';
+import { ThemePicker } from './theme-picker.js';
+import { BUILTIN_THEMES, isBuiltinTheme } from '../../shared/theme-tokens.js';
+import { themeProblem, validateThemeList, type ThemeList } from '../../shared/user-themes.js';
 import { validateSetupStatus } from '../../shared/setup.js';
 import { AddonPanel } from './addon-panel.js';
 import type { AddonTarget } from '../../shared/addons.js';

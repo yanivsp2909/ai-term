@@ -92,13 +92,15 @@ test('the app follows the saved theme and fonts, live; system follows macOS', as
   const rgb = (hex: string, sep = ', ') => hex.slice(1).match(/../g)?.map(part => Number.parseInt(part, 16)).join(sep);
   const body = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   await page.evaluate(() => { Reflect.set(window, 'lookOutput', ''); window.terminal.onOutput(data => { Reflect.set(window, 'lookOutput', String(Reflect.get(window, 'lookOutput')) + data); }); });
+  const rows = () => page.locator('.xterm-accessibility-tree').evaluate(tree => tree.children.length), before = await rows();
   const client = await Connection.connect(getPaths(join(home, '.ai-term')), { entry: resolve('dist/cli/index.js'), autoStart: false });
   try {
     await client.request({ kind: 'settings.set', patch: { theme: 'slate', themeVariant: 'light', appFonts: { chrome: 'Helvetica Neue', chromeSize: 12, terminalSize: 15 } } });
     await expect.poll(body).toBe(`rgb(${rgb(themeColors('slate', 'light').bg)})`);
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.chrome') as Element).fontSize)).toBe('12px');
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.chrome') as Element).fontFamily)).toContain('Helvetica Neue');
-    await expect.poll(() => page.evaluate(() => (document.querySelector('.xterm-char-measure-element') as HTMLElement | null)?.style.fontSize)).toBe('15px');
+    // A bigger terminal font: fewer rows in the same window.
+    await expect.poll(rows).toBeLessThan(before);
     // ai inside repaints its own ground in the same theme.
     await expect.poll(() => page.evaluate(() => String(Reflect.get(window, 'lookOutput')))).toContain(`48;2;${rgb(themeColors('slate', 'light').bg, ';')}`);
     await client.request({ kind: 'settings.set', patch: { theme: 'dune', themeVariant: 'system' } });
@@ -207,7 +209,8 @@ test('live native theme changes recolor the TUI through a fresh OSC11 probe', as
   for (const mode of ['dark','light','dark'] as const) {
     await page.evaluate(()=>{Reflect.set(window,'themeOutput','');});
     await application.evaluate(({nativeTheme},source)=>{nativeTheme.themeSource=source;},mode);
-    const rgb = createTheme('auto',tokenColors(mode).bg).colors.ink.slice(1).match(/../g)?.map(hex=>Number.parseInt(hex,16)).join(';');
+    // v1.2.6: ai in the app wears the saved theme (graphite here) in the variant macOS shows, found by its OSC 11 probe.
+    const rgb = createTheme('graphite',tokenColors(mode).bg,'system').colors.ink.slice(1).match(/../g)?.map(hex=>Number.parseInt(hex,16)).join(';');
     await expect.poll(()=>page.evaluate(()=>getComputedStyle(document.body).backgroundColor)).toBe(`rgb(${tokenColors(mode).bg.slice(1).match(/../g)?.map(hex=>Number.parseInt(hex,16)).join(', ')})`);
     await expect.poll(()=>page.evaluate(()=>String(Reflect.get(window,'themeOutput')))).toContain('\x1b]11;?');
     await expect.poll(()=>page.evaluate(()=>String(Reflect.get(window,'themeOutput')))).toContain(`38;2;${rgb}`);

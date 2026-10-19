@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { appLook } from '../app/shared/look.js';
 import type { TerminalApi } from '../app/shared/api.js';
 const mocks = vi.hoisted(() => ({ expose: vi.fn(), send: vi.fn(), invoke: vi.fn().mockResolvedValue('clipboard'), on: vi.fn(), remove: vi.fn() }));
 vi.mock('electron', () => ({ contextBridge: { exposeInMainWorld: mocks.expose }, ipcRenderer: { send: mocks.send, invoke: mocks.invoke, on: mocks.on, removeListener: mocks.remove } }));
@@ -19,8 +20,10 @@ it('exposes only fixed-channel wrappers and strips IPC events from subscriptions
   expect(mocks.remove).toHaveBeenCalledWith('terminal:output', listener);
   const theme = vi.fn(); api.onTheme(theme);
   const themeListener = mocks.on.mock.calls[1]?.[1] as (event: unknown, value: unknown) => void;
-  themeListener({}, 'dark'); themeListener({}, 'unknown');
-  expect(theme.mock.calls).toEqual([['dark']]);
+  // v1.2.6: the look main sends, checked here; anything else (the old bare mode too) is refused.
+  const look = appLook({ theme: 'slate' }, { themes: [], refused: [] }, true);
+  themeListener({}, look); themeListener({}, 'dark'); themeListener({}, { ...look, colors: { ...look.colors, bg: 'red' } });
+  expect(theme.mock.calls).toEqual([[look]]);
   api.themeApplied('light'); expect(mocks.send).toHaveBeenCalledWith('terminal:theme-applied', 'light');
   const action = vi.fn(), stopAction = api.onMenuAction(action);
   const actionListener = mocks.on.mock.calls[2]?.[1] as (event: unknown, value: unknown) => void;

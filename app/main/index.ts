@@ -12,7 +12,9 @@ import { appMenu, menuShortcut, shortcutKey } from './menus.js';
 import { spawn, type IPty } from 'node-pty';
 import { Logger } from '../../src/daemon/log.js';
 import { tokenColors } from '../../src/shared/theme-tokens.js';
-import { channels, pasteErrors, type TerminalSize, type MenuAction } from '../shared/api.js';
+import { getPaths } from '../../src/shared/paths.js';
+import { channels, pasteErrors, type AppLook, type TerminalSize, type MenuAction } from '../shared/api.js';
+import { LookWatcher, readLook } from './look.js';
 import { MAX_COPY_BYTES, PasteRefusal, validateAppTheme, validateEmpty, validateOne, validatePaste, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
 import { CSP, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
 import { ControlGate } from './control-gate.js';
@@ -39,6 +41,17 @@ let log: Logger;
 let logReady = false;
 const lifecycle=new PtyLifecycle(()=>{failure('Desktop terminal cleanup failed');});
 let quitting=false,quitReady=false;
+// v1.2.6: the saved theme and app fonts (look.ts), read here and sent to the window; the last problem is logged once.
+let look: AppLook | undefined, lookProblem: string | null = null, lookWatcher: LookWatcher | undefined;
+async function refreshLook(): Promise<void> {
+  const read = await readLook(getPaths().root, nativeTheme.shouldUseDarkColors);
+  if (read.problem && read.problem !== lookProblem) log.error(`Desktop look: ${read.problem}`);
+  lookProblem = read.problem; look = read.look;
+  if (!window || window.isDestroyed()) return;
+  window.setBackgroundColor(look.colors.bg);
+  window.webContents.send(channels.theme, look);
+}
+function lookFailed(error: unknown): void { log.error(`Desktop look could not be read (${errorTag(error)})`); }
 function output(data: string): void { if (window && !window.isDestroyed()) window.webContents.send(channels.output, data); }
 // The terminal shows the fixed message; app.log also keeps the error's code or class (failures.ts).
 function failure(message: string, error?: unknown): void { log.error(error === undefined ? message : `${message} (${errorTag(error)})`); output(`\r\n✗ ${message}\r\n`); }
@@ -105,10 +118,11 @@ function registerIpc(): void {
   receive(channels.resize, args => { resize(validateSize(validateOne(args))); });
   receive(channels.themeApplied, args => {
     const theme = validateAppTheme(validateOne(args));
-    if (theme === (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')) command('theme-changed');
+    // The window now wears the current look: ai probes its background again and reads the saved theme (theme-changed).
+    if (look && theme === look.mode) command('theme-changed');
   });
   receive(channels.menuAction, args => { validateEmpty(args); if (closeNote) { menuAction('close-note'); closeNote = false; } });
-  receive(channels.theme, args => { validateEmpty(args); window?.webContents.send(channels.theme, nativeTheme.shouldUseDarkColors ? 'dark' : 'light'); });
+  receive(channels.theme, args => { validateEmpty(args); if (look) window?.webContents.send(channels.theme, look); else void refreshLook().catch(lookFailed); });
   ipcMain.handle(channels.openUrl, async (event, ...args: unknown[]) => {
     try { trusted(event); await shell.openExternal(validateUrl(validateOne(args))); }
     // eslint-disable-next-line preserve-caught-error -- IPC exposes only fixed reasons; app.log keeps the error code.
@@ -133,7 +147,7 @@ const BACKGROUND = process.env.AI_TERM_BACKGROUND === '1';
 if (BACKGROUND && process.platform === 'darwin') app.setActivationPolicy('prohibited');
 function createWindow(): Promise<void> {
   ended = false;
-  const colors = tokenColors(nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+  const colors = look?.colors ?? tokenColors(nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
   // AI_TERM_BACKGROUND=1 (the smoke tests): the window is never shown and never takes focus, so checks run while Yaniv
   // works; it still renders (no background throttling) for the tests to read.
   window = new BrowserWindow({ title: 'AI Term', width: 1100, height: 720, minWidth: 480, minHeight: 300, backgroundColor: colors.bg, titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 14 }, ...(BACKGROUND ? { show: false, focusable: false } : {}), webPreferences: { ...secureWebPreferences(join(here, '../preload/index.cjs')), ...(BACKGROUND ? { backgroundThrottling: false } : {}) } });
@@ -171,17 +185,16 @@ void app.whenReady().then(async () => {
   catch (error) { if (!(error && typeof error === 'object' && 'code' in error && error.code === 'EEXIST')) { log.error('Desktop first-use note could not be saved'); closeNote = true; } }
   Menu.setApplicationMenu(Menu.buildFromTemplate(appMenu({command,action:menuAction,theme:source=>{nativeTheme.themeSource=source;},themeSource:nativeTheme.themeSource,install:()=>{void manageCommand(true);},uninstall:()=>{void manageCommand(false);}})));
   registerIpc();
-  nativeTheme.on('updated', () => {
-    if (!window || window.isDestroyed()) return;
-    const mode = nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
-    window.setBackgroundColor(tokenColors(mode).bg);
-    window.webContents.send(channels.theme, mode);
-  });
+  // macOS light/dark changes a system variant (and auto's graphite); a saved choice changes whatever variant it names.
+  nativeTheme.on('updated', () => { void refreshLook().catch(lookFailed); });
+  await refreshLook().catch(lookFailed);
+  lookWatcher = new LookWatcher(getPaths().root, () => { void refreshLook().catch(lookFailed); }, message => { log.error(message); });
+  lookWatcher.start();
   app.on('activate', () => { if (!window&&!quitting) void createWindow().catch((error: unknown) => { startupFailed(error, { log, showErrorBox: (title, body) => { dialog.showErrorBox(title, body); }, quit: () => { app.quit(); } }); }); });
   await createWindow();
 }).catch((error: unknown) => { startupFailed(error, { ...(logReady ? { log } : {}), showErrorBox: (title, body) => { dialog.showErrorBox(title, body); }, quit: () => { app.quit(); } }); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit',event=>{
- if(quitReady)return;event.preventDefault();if(quitting)return;quitting=true;
+ if(quitReady)return;event.preventDefault();if(quitting)return;quitting=true;lookWatcher?.stop();
  void lifecycle.finish().then(()=>{quitReady=true;app.quit();}).catch(()=>{console.error('AI Term terminal shutdown failed');});
 });

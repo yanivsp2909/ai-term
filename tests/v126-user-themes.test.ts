@@ -12,8 +12,9 @@ import { validateRequest } from '../src/shared/validate.js';
 const cleanup: string[] = [];
 afterEach(async () => { for (const path of cleanup.splice(0)) await rm(path, { recursive: true, force: true }); });
 async function home() { const dir = await mkdtemp(join(tmpdir(), 'ai-themes-')); cleanup.push(dir); await mkdir(themesFolder(dir)); return dir; }
-const base = (id: 'slate' | 'dune', variant: 'dark' | 'light') => Object.fromEntries(BASE_COLOR_NAMES.map(name => [name, themeColors(id, variant)[name]]));
-const complete = { name: 'Ocean', dark: { ...base('slate', 'dark'), bg: '#0a1a2a' }, light: base('slate', 'light') };
+const base = (id: 'slate' | 'dune', variant: 'dark' | 'light'): Record<string, string> => Object.fromEntries(BASE_COLOR_NAMES.map(name => [name, themeColors(id, variant)[name]]));
+const omit = (set: Record<string, string>, ...names: string[]) => Object.fromEntries(Object.entries(set).filter(([name]) => !names.includes(name)));
+const complete: { name: string; dark: Record<string, string>; light: Record<string, string> } = { name: 'Ocean', dark: { ...base('slate', 'dark'), bg: '#0a1a2a' }, light: base('slate', 'light') };
 
 describe('a theme file', () => {
   it('complete: both variants with every base token, a label, the derived tokens filled in', () => {
@@ -27,7 +28,7 @@ describe('a theme file', () => {
   });
 
   it('incomplete: refused in one line that names the missing tokens', () => {
-    const { bg: _bg, ...dark } = complete.dark, { ink: _ink, cursor: _cursor, ...light } = complete.light;
+    const dark = omit(complete.dark, 'bg'), light = omit(complete.light, 'ink', 'cursor');
     const result = parseUserTheme('ocean.json', JSON.stringify({ dark, light }));
     expect(result).toEqual({ ok: false, refusal: { file: 'ocean.json', reason: 'missing dark.bg, light.ink, light.cursor' } });
     const empty = parseUserTheme('empty.json', '{}');
@@ -38,6 +39,8 @@ describe('a theme file', () => {
   it('wrong: unknown tokens, colors that are not #rrggbb, derived tokens set by hand, not JSON, too big, a built-in name', () => {
     const reason = (file: string, text: string) => { const r = parseUserTheme(file, text); return r.ok ? 'accepted' : r.refusal.reason; };
     expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, glow: '#ffffff' } }))).toBe('unknown token dark.glow');
+    // A name from the file reaches the screen as printable ASCII only.
+    expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, '\u001b[31mx': '#ffffff' } }))).toBe('unknown token dark.?[31mx');
     expect(reason('a.json', JSON.stringify({ ...complete, light: { ...complete.light, accent: 'teal' } }))).toBe("light.accent isn't a #rrggbb color");
     expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, 'status-running': '#ffffff' } }))).toBe('dark.status-running is derived (= accent); leave it out');
     expect(reason('a.json', JSON.stringify({ ...complete, extra: 1 }))).toBe('unknown field extra; a theme has name, dark and light');

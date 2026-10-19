@@ -88,7 +88,7 @@ describe('SettingsStore', () => {
   });
   it('refuses an invalid patch before reading or writing anything', async () => {
     const root = await temp(), store = new SettingsStore(root);
-    expect(() => store.set({ theme: 'neon' } as never)).toThrow('Invalid settings patch');
+    expect(() => store.set({ theme: 'Neon!' } as never)).toThrow('Invalid settings patch');
     expect(() => store.set({ secret: 'x' })).toThrow('Unknown settings patch field');
     expect(await readdir(root)).toEqual([]);
   });

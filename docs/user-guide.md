@@ -114,6 +114,16 @@ To copy, press `c` on an empty field. You get the agent's last reply. `/copy all
 
 To save a session as a file, use `/export [agent] [folder]`. It writes one HTML file to `~/Downloads`. Keys and passwords are replaced with `[redacted]`.
 
+## Themes and fonts
+
+Type `/theme` to choose how AI Term looks. A small list opens at the top right: Graphite (the default), Slate, Ink, Dune, High contrast, any theme files of your own, and Match my terminal. As you move with ↑ and ↓, the homepage behind the list is drawn in that theme. ← and → pick its variant: dark, light, or system, which follows your terminal's background (in the Mac app, macOS light or dark). Enter keeps it; Esc goes back to the one you had and saves nothing. `/theme dune light` sets one directly.
+
+Every text color in the built-in themes reads at 4.5:1 or better on its background, in both variants; High contrast reaches 6:1.
+
+To make your own, put a file in `~/.ai-term/themes/`, named with lowercase letters, digits and dashes, such as `ocean.json`. It holds an optional `name` and a `dark` and a `light` set with the same color names as `docs/design/tokens.json`: `bg`, `surface`, `surface-2`, `line`, `ink`, `ink-2`, `ink-3`, `accent`, `on-accent`, `status-waiting`, `status-error` and `cursor`, each as `#rrggbb`. It shows up in `/theme` as `Ocean · your file`. If a color is missing or wrong, the file is refused as a whole, and the list says why in one line, for example `✗ ocean.json refused · missing light.bg`. AI Term never uses part of a file.
+
+The Mac app wears the theme you pick, and changes the moment you save it. Its fonts are its own: in `/settings`, press `F` for app fonts. There you set the terminal font and size, the font and size of the window's title strip, and ligatures. Type a font's name, or leave it empty for the default. ← and → change a size. Space switches ligatures. Ligatures only show with a font that has them, such as JetBrains Mono or Fira Code; if the font isn't installed, the title strip says so. ⌘+ and ⌘− still zoom, and ⌘0 goes back to your saved size. In a terminal, `ai` keeps your terminal's own font.
+
 ## Worktrees
 
 When a new agent starts in a git repository, it gets its own branch and its own folder. The branch is named `ai/<name>`. The folder is outside your checkout, under `~/.ai-term/worktrees`. Your checkout is never touched.

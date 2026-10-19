@@ -13,10 +13,10 @@ it('S2 accepts settings patches and rejects unsafe defaults and themes', async (
     expect(await validateRequest(request)).toEqual(request);
   }
   expect(await validateRequest({ id: randomUUID(), kind: 'settings.get' })).toMatchObject({ kind: 'settings.get' });
-  for (const patch of [{ theme: 'bad' }, { theme: 'slate', permission: 'dontAsk' }, {}, null, { theme: 3 }]) {
+  for (const patch of [{ theme: 'Bad Theme' }, { theme: 'slate', permission: 'dontAsk' }, {}, null, { theme: 3 }]) {
     await expect(validateRequest({ id: randomUUID(), kind: 'settings.set', patch })).rejects.toThrow();
   }
-  expect(() => validateSuccess({ id: randomUUID(), ok: true, settings: { theme: 'bad' } })).toThrow();
+  expect(() => validateSuccess({ id: randomUUID(), ok: true, settings: { theme: 'Bad Theme' } })).toThrow();
 });
 it('persists the theme atomically at 0600 and loads it after reopening', async () => {
   const { SettingsStore } = await import('../src/daemon/settings.js');
@@ -35,7 +35,7 @@ it('refuses symlinked or malformed settings instead of silently replacing them',
   await symlink(target, join(root, 'settings.json'));
   await expect(new SettingsStore(root).get()).rejects.toThrow();
   await rm(join(root, 'settings.json'));
-  await writeFile(join(root, 'settings.json'), '{"theme":"invalid"}');
+  await writeFile(join(root, 'settings.json'), '{"theme":"not/valid"}');
   await expect(new SettingsStore(root).get()).rejects.toThrow();
 });
 it('settings.get and settings.set round-trip through the daemon with invalid patches refused', async () => {

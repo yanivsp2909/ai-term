@@ -38,7 +38,9 @@ export async function attach(connection:AttachConnection,id:string,options:Attac
   if(options.bar==='on'&&!probe)options.fallbackLog?.('Bar startup probe failed; using raw passthrough for this attach');
   let screen:SessionScreen|undefined;
   let barSession:SessionInfo|undefined;const others=new Map<string,SessionInfo>();
-  const theme=options.appTheme?.()??createTheme(options.settings?.theme??'graphite');
+  // Without the homepage (ai attach): the saved theme and a light variant; system is dark here, and a theme file of your
+  // own is graphite (only the homepage reads them).
+  const theme=options.appTheme?.()??createTheme(options.settings?.theme??'graphite',undefined,options.settings?.themeVariant==='light'?'light':'dark');
   let barKey='',barOutput='';
   const barBytes=()=>{
     if(!barSession)return '';

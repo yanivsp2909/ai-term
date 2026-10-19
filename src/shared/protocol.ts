@@ -14,7 +14,11 @@ export const COPY_CHUNK_BYTES = 1024 * 1024;
 export interface SessionText {sessionId:string;text:string;truncated:boolean;source?:'last-reply'|'session'}
 export type Engine = 'claude-code' | 'codex' | 'ai-term' | 'cursor' | 'gemini' | 'copilot' | 'shell'; // Shell spawning remains internal; the homepage can display it.
 export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'exited' | 'error';
-export type ThemeName = 'graphite' | 'slate' | 'ink' | 'auto' | 'light';
+// v1.2.6: a built-in theme (tokens.json), auto (match the terminal), light (the old name for graphite light) or the name
+// of a theme file of your own (~/.ai-term/themes/<name>.json); validate.ts isThemeName says which strings qualify.
+export type ThemeName = import('./theme-tokens.js').BuiltinThemeId | 'auto' | 'light' | (string & {});
+// system: dark or light from the terminal's background (in the app, from macOS).
+export type ThemeVariantSetting = import('./theme-tokens.js').ThemeVariant | 'system';
 // 'ai-term' is AI Term's own agent (v0.4): it runs only on an API key (D47). The official CLIs are CliEngine.
 export type CliEngine = 'claude-code' | 'codex';
 // Part B (2026-10-19): Cursor CLI, Gemini CLI and GitHub Copilot CLI, run untouched in a PTY with what their docs give:
@@ -54,7 +58,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
-export interface Settings {setup?:'pending'|'done'|'skipped';mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; remote?: boolean; devServers?: boolean; lspDiagnostics?: boolean; brainForAgents?: boolean; brainRepositories?: Record<string, { agents?: boolean; trusted?: boolean }>; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<import('./accounts.js').AccountEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; reversePath?: string | null; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {setup?:'pending'|'done'|'skipped';mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; themeVariant?: ThemeVariantSetting; appFonts?: import('./app-fonts.js').AppFonts; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; remote?: boolean; devServers?: boolean; lspDiagnostics?: boolean; brainForAgents?: boolean; brainRepositories?: Record<string, { agents?: boolean; trusted?: boolean }>; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<import('./accounts.js').AccountEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; reversePath?: string | null; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}
@@ -168,6 +172,8 @@ export type Request = {
 } | { kind: 'keys.list' }
   // v1.2 first-run setup: what is installed and ready on this machine (versions and the CLIs' own status commands only).
   | { kind: 'setup.status' }
+  // v1.2.6: the theme files of your own, read and checked by the daemon (each refused one with its reason).
+  | { kind: 'themes.list' }
   // v1.0.1 ai doctor: whether the OS keychain answers (a probe entry that never holds a key), asked of the daemon.
   | { kind: 'keys.health' }
   // secret is absent only for Ollama, which has no key; deployments are the model ids for every provider but Anthropic and OpenAI.
@@ -317,6 +323,7 @@ export interface SuccessResponse {
     settings?: Settings;
     engines?: EnginesStatus;
     setup?: import('./setup.js').SetupStatus;
+    themes?: import('./user-themes.js').ThemeList;
     notifier?: NotifierState;
     agentSandbox?: AgentSandbox;
     keychain?: { reachable: boolean; note?: string };
