@@ -21,12 +21,12 @@ function panel(kind: 'login' | 'settings', keys: KeyView[] = []) {
 }
 const type = async (p: CredentialsPanel, text: string) => { for (const char of text) await p.key(char); };
 // Part A: by label, so a provider added to the list doesn't move what a test picks.
-async function choose(p: CredentialsPanel, label: string) { const index = p.lines().slice(1).findIndex(line => line.slice(2) === label); if (index < 0) throw new Error(`no provider ${label}`); for (let i = 0; i < index; i++) await p.key('down'); await p.key('enter'); }
+async function choose(p: CredentialsPanel, label: string) { const index = p.lines().filter(line => /^[› ] /.test(line)).findIndex(line => line.slice(2) === label); if (index < 0) throw new Error(`no provider ${label}`); for (let i = 0; i < index; i++) await p.key('down'); await p.key('enter'); }
 
 it('/login lists every provider; a new one goes straight to its form (no CLI login exists for it)', async () => {
   const { p } = panel('login');
   const listed = p.lines().slice(0, 40);
-  expect(listed.slice(0, 5)).toEqual(['Connect a provider', '› Anthropic', '  OpenAI', '  Microsoft Foundry', '  xAI']);
+  expect(listed.slice(0, 6)).toEqual(['Connect a provider', "requests go to the provider's own servers", '› Anthropic', '  OpenAI', '  Microsoft Foundry', '  xAI']);
   for (const label of ['Moonshot · international', 'Moonshot · China', 'Z.ai · international', 'Zhipu (Z.ai) · China', 'OpenRouter', 'Amazon Bedrock', 'Google Vertex', 'Ollama', 'LM Studio', 'Custom OpenAI-compatible endpoint']) expect(listed).toContain(`  ${label}`);
   // Part A: the highlighted provider's region, one neutral line.
   expect(p.lines()).toContain("requests go to the provider's own servers");

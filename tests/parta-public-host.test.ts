@@ -59,13 +59,13 @@ describe('Part A review findings', () => {
     const { Readable } = await import('node:stream');
     const { toResponse } = await import('../src/agent/providers/public-fetch.js');
     for (const [status, method] of [[204, 'POST'], [205, 'POST'], [304, 'GET'], [200, 'HEAD']] as const) {
-      const res = Object.assign(Readable.from(['left over']), { statusCode: status, statusMessage: '', headers: { 'set-cookie': ['a=1', 'b=2'] } });
+      const res = Object.assign(Readable.from([Buffer.from('left over')]), { statusCode: status, statusMessage: '', headers: { 'set-cookie': ['a=1', 'b=2'] } });
       const response = toResponse(res as never, method);
       expect(response.status).toBe(status); expect(response.body).toBeNull(); expect(response.headers.get('set-cookie')).toBe('a=1, b=2');
       // Drained: the stream flows to its end instead of holding the keep-alive socket.
       await new Promise(done => res.once('end', done));
     }
-    const ok = Object.assign(Readable.from(['{"x":1}']), { statusCode: 200, statusMessage: 'OK', headers: {} });
+    const ok = Object.assign(Readable.from([Buffer.from('{"x":1}')]), { statusCode: 200, statusMessage: 'OK', headers: {} });
     expect(await toResponse(ok as never, 'POST').json()).toEqual({ x: 1 });
   });
 });
