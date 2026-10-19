@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { chmod, lstat, open, readdir, realpath } from 'node:fs/promises';
+import { lstat, open, readdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
@@ -45,10 +45,10 @@ export async function sweepTemp(options: { dir?: string; log: (text: string) => 
     try {
       const info = await lstat(folder);
       if (!info.isDirectory() || info.uid !== me) continue;
-      // A folder a test locked (chmod 000; it may write its own temp folder) is opened up once: it is yours (lstat above).
+      // A folder whose mark can't be read (a test locked its own temp folder) may not be AI Term's at all: it is left exactly
+      // as it is, without a log line every start (follow-up review: opening it up first changed a folder not proven ours).
       let pid: number | null;
-      try { pid = await ownerOf(folder, me); }
-      catch (error) { if (!isFsError(error, 'EACCES')) throw error; await chmod(folder, 0o700); pid = await ownerOf(folder, me); }
+      try { pid = await ownerOf(folder, me); } catch (error) { if (isFsError(error, 'EACCES')) continue; throw error; }
       if (pid === null || pid === process.pid || alive(pid)) continue;
       await removeTree(folder); removed++;
     } catch (error) {

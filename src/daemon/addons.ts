@@ -262,6 +262,9 @@ export class AddonService {
     const bisect = this.runner.addonBisect; if (!bisect) throw new AddonError('Bisect is unavailable');
     if (this.stopping) throw new AddonError(STOPPING);
     if (!plan.sandbox && !unsandboxed) throw new AddonError('No sandbox here · press Y to run the test command with your rights');
+    // One /bisect per folder at a time, kept here and not only in the popup (follow-up review: a second one, from another
+    // terminal or after a lost poll, ran with no popup left to stop the first).
+    if ([...this.runs.values()].some(other => other.stop && other.input.addon.local === 'bisect' && other.input.cwd === input.cwd)) throw new AddonError('A /bisect is already running in this folder · /bisect opens it, x there stops it');
     const id = randomUUID(), stop = new AbortController(), run: Run = { input, nonce: '', stop }; this.runs.set(id, run);
     run.done = bisect.call(this.runner, input.cwd, plan, !plan.sandbox && unsandboxed, stop.signal).then(result => { run.result = result; }, (error: unknown) => { run.error = this.runFailure(error); }).finally(() => { delete run.stop; });
     return id;

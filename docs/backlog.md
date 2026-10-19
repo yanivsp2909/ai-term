@@ -12,7 +12,17 @@ Verdicts:
 
 `PROGRESS.md:<n>` points at the line in PROGRESS.md as of 3f2d81c.
 
-## Fix now (6)
+## Fix now (6): all fixed 2026-10-19
+
+Each is a failing test commit, then a fix commit:
+- F1: 842b78b → 606653e
+- F2: 087beff → 7067fbe
+- F3: e431b78 → 54e972a
+- F4: 2affe32 → 0c033c0
+- F5: 9c181c3 → 4e54707, plus cfeb7e4 for test types
+- F6: 2ac6ddf → bc868bc
+
+The docs are in eef5eb4. The fresh reviews of these fixes found 1 MEDIUM and 7 LOW worth fixing: 5a49f67 → 4b7db3f. The rest are listed under "From the reviews of these fixes" below.
 
 | # | From | What | Why now |
 |---|---|---|---|
@@ -70,6 +80,17 @@ Verdicts:
 - Asks that run code confirming with y rather than ⏎ (kept on y on purpose, PROGRESS.md:945).
 - homepage.ts is far over the 800-line guideline (128 KB). Splitting it is a refactor of its own.
 - A trigger that fires while the queue is off is lost; `after` matches by title (PROGRESS.md:1102–1103). Both were the agent's own reading when the spec was cut off, so they need Yaniv's call.
+
+### From the reviews of these fixes (left, with reasons)
+- **The sweep and orphaned dev servers.** It removes the `ai-term-test-*` temp folder of a dev server that outlived a crashed daemon. That server is already unmanaged (it is on the dev-server item above). Its folder was its sandbox's HOME and TMPDIR, so it may fail once that folder is gone.
+- **A crash between `mkdtemp` and the owner-file write.** It leaves a folder with no mark, and the sweep never removes it. That window is microseconds long; marking first would need a rename into place.
+- **PID namespaces.** Liveness is `kill(pid, 0)`, so two daemons in different PID namespaces sharing one TMPDIR (containers) could misjudge each other. That is not a setup AI Term supports. Adding a boot id to the mark would close it.
+- **"The temporary copy was removed" after a failed removal.** The words say so even if the removal failed. The failure is logged, and the next start's sweep removes the copy.
+- **The /queue note doesn't survive a restart.** It is in memory only, so it goes after a second restart. The aside file stays on disk with the same name the note gave.
+- **A dead run's folder locked by its own test (chmod 000).** The sweep leaves it: its mark can't be read, and opening it up first would change a folder not proven to be AI Term's (follow-up review). Remove it yourself if one ever appears.
+- **A filter or helper that git started during the copy's checkout outlives an aborted checkout.** It can keep writing into the folder, so removing the folder may fail. The next start's sweep removes it.
+- **One /bisect per folder is also enforced by the daemon.** A popup closed before its run finished still says "a /bisect is running" until `/bisect` reopens it and sees the result.
+- **A test sandbox's own temp folder locked by its test.** It is removed anyway: Node's `rm` handled it in the review's test, so nothing was changed.
 
 ### Needs Yaniv (not code)
 - PID 83116, a packaged `AI Term.app` from build/desktop/dist started by an old smoke run, is still running (PROGRESS.md:1949). It may hold your state, so it is stopped only by you: `cd ~/ai-term && kill 83116`.
