@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error -- a plain .mjs build script with no type declarations
-import { commit, markers, permissive } from '../scripts/public-snapshot.mjs';
+import { build, commit, keepable, markers, permissive } from '../scripts/public-snapshot.mjs';
 
 // Part C review: the public snapshot script. A tree with a personal marker, an unfilled verification or a link never
 // becomes a commit, and the commit never takes anything from this machine's git setup.
@@ -68,4 +68,25 @@ describe('the commit', () => {
     await expect(readFile(join(hooks, 'pre-commit.ran'))).rejects.toThrow();
     await expect(run('git', ['-C', other, 'rev-parse', '--verify', 'HEAD'], { env: { PATH: process.env.PATH } })).rejects.toThrow();
   });
+});
+
+describe('the packaging review', () => {
+  it('MEDIUM: a guide is kept only when its header names a public upstream, so its attribution can be complete', () => {
+    const copy = (source: string) => `---\nname: x\ndescription: y\n---\nSource: ${source}\nLicense: Apache 2.0 (stated in the source).\nWhat changed: c.\n`;
+    expect(keepable(copy('~/.claude/skills/impeccable/SKILL.md (2026-10-18), its modes.'))).toBe(false);
+    expect(keepable(copy('https://github.com/example/skills/blob/0123abc/x/SKILL.md (Copyright 2025 Example).'))).toBe(true);
+    expect(keepable(copy('https://github.com/example/skills').replace('Apache 2.0 (stated in the source).', 'not stated.'))).toBe(false);
+  });
+
+  it('MEDIUM/LOW: the built tree has the public clone URL, no private links, and lists only what it left out', async () => {
+    const out = join(await folder(), 'snapshot');
+    await build(out, 'HEAD');
+    const readme = await readFile(join(out, 'README.md'), 'utf8'), snapshot = await readFile(join(out, 'PUBLIC_SNAPSHOT.md'), 'utf8');
+    expect(readme).toContain('git clone https://github.com/yanivsp2909/ai-term-public.git ai-term'); expect(readme).not.toContain('<this repository>');
+    expect(await readFile(join(out, 'docs', 'design.md'), 'utf8')).not.toContain('claude.ai/artifact');
+    expect(snapshot).not.toContain('`.codex`'); expect(snapshot).toContain('`docs/addons/inventory.md`');
+    expect((await readFile(join(out, 'addons', '_shared', 'LEFT_OUT.txt'), 'utf8')).split('\n')).toContain('skills/ui-mockup/SKILL.md');
+    await expect(readFile(join(out, 'licenses', 'Apache-2.0.txt'))).rejects.toThrow();
+    expect(snapshot).toContain('/design');
+  }, 60_000);
 });
