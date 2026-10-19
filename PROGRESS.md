@@ -1,12 +1,23 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: ec5218f fix: a build with no guides folder at all falls back to the add-on's own steps, like a missing guide
-Last commit: v1.2 Part A handover (this commit)
-Roadmap step: 2026-10-19 v1.2 run (A guides → B /triage and /migrate → C first-run setup) · A done, B and C not started
+Last code commit: the budget-ledger test fix (see Part B commits)
+Last commit: v1.2 Part B handover (this commit)
+Roadmap step: 2026-10-19 v1.2 run (A guides → B /triage and /migrate → C first-run setup) · A and B done, C not started
 Branch: main, pushed. No version bump or tag (waits for Yaniv's Mac).
 
 ## Run 2026-10-19 v1.2 (cloud container: `uname -s` Linux, running as root)
+
+### Part B · /triage and /migrate: done
+- **Commits:** aeadffd (RED), 9bf959e (GREEN), cb14628 (lint note), e662e50 → d196296 (review findings, RED → fix), the architecture note, and the budget-ledger test fix (below).
+- **/triage [issues | errors | <file>]:** read-only. `issues` (the default) runs `gh issue list --state open --limit 100 --json number,title,body,labels,author,updatedAt,url` with your own gh login (buildGhEnv: no token variables) and names the repository gh read; `errors` reads the newest regular `.log` in the folder or a real `logs/` folder inside the repository; a file name reads that log or test output (jailed, never a credential or env file, O_NOFOLLOW, its last 8 KB kept from the end). Everything reaches the model quoted. The popup lists groups most urgent first (urgent, high, normal, low); ↑↓ picks one, `c` copies, `s` turns the popup into `/issue #<first issue>` or `/fix <the group's errors>` with that command's own estimate and `y`. Its refusals are AddonErrors, so they reach the popup.
+- **/migrate <from> <to>:** exactly two words. The planning run is read-only: 1 to 12 steps, each with how to verify it, plus the risks; ↑↓ shows each step's prompt before you start. `a` starts the whole plan, in order, in one worktree agent in Ask mode: tests first and after every step, a step that can't get green is undone and reported, and AI Term runs the tests in its sandbox afterwards. The agent gets the two words you typed, never the model's from/to.
+- **Guides:** addons/guides/triage.md and migrate.md, written the Part A way. The originality script finds no 12-word overlap with any old copy in any of the 37 guides, and none even at 8 words for the two new ones.
+- **Review (TypeScript, fresh context):** 0 CRITICAL/HIGH. 2 MEDIUM, both fixed: a `logs` folder that is a link was followed out of the repository; /migrate's `a` started step prompts the popup never showed (and trusted the model's from/to). 8 LOW: fixed a plan too long to ever start (refused on arrival now), a rotated log aborting the scan, a single huge last line dropped, the issue list not naming its repository, the file name sitting outside the quoted block, issue numbers beyond what /issue accepts, stale usage after `s`, and weak tests. Not fixed: after `s` the popup stays under the /triage key, so plain `/triage` reopens the follow-up; the standup polish has the same shape, kept as is.
+- **The reserve-refusal flake (seen once in the long run and again here):** root cause found. The budget-ledger tests removed their temp folder while the ledger's background write was still landing, so rm hit ENOTEMPTY. The tests now wait for the ledger's writes first. 5 of 24 parallel runs failed before the fix and 0 of 24 after. The product was fine: `close()` already awaits the writes.
+- **Checks:** typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 369ms" · app:build "✓ built in 719ms" · npm test twice "Test Files 303 passed | 2 skipped (305) · Tests 1994 passed | 70 skipped (2064)" (148 s, 144 s) · `npm run live` tier 1 "Tier 1 passed: 32 checks in 104 s" · verification-loop: ready.
+- **Choice made (non-blocking):** the prompt doesn't say where `/triage errors` gets its errors, and AI Term keeps no test output. Picked the safe reading: the newest `.log` file here or in `logs/`.
+- **Suggestion (not done; outside this part):** /issue's and /pr-review's gh errors are GitHubErrors, not AddonErrors, so their popup shows "Session operation failed" instead of "gh isn't logged in". /triage wraps them; the other two could too.
 
 ### Part A · AI Term's own add-on guides: done
 - **Commits:** 0b71425 (RED), 39947ac (GREEN: 35 guides, `guide:` in addon.md, core, bundle, snapshot script, docs, `addons/_shared/` removed), 07b5f16 (RED for the review LOW, plus the originality rewrites), ec5218f (fix).
