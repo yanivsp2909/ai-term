@@ -39,8 +39,10 @@ export class ThemePicker {
   }
   draw(frame: Frame, theme: Theme): Frame {
     const grid = overlay(frame, theme), c = theme.colors, surface = c.surface;
-    const w = Math.min(grid.cols - 2, 72), inner = w - 4, refused = this.list.refused, h = this.rows.length + refused.length + 6;
-    const x = Math.max(0, grid.cols - w - 1), y = 1;
+    // As narrow as the footer allows, flush with the right edge (over the panel border, never beside it), so as much of
+    // the homepage as possible stays in view behind it (impeccable critique).
+    const w = Math.min(grid.cols, 66), inner = w - 4, refused = this.list.refused, h = this.rows.length + refused.length + 6;
+    const x = Math.max(0, grid.cols - w), y = 1;
     grid.box(x, y, w, h, 'Theme', surface);
     grid.text(x + 2, y + 1, 'the homepage behind shows the highlighted one', c['ink-3'], surface, false, inner);
     this.rows.forEach((row, i) => {
@@ -49,7 +51,7 @@ export class ThemePicker {
       const name = `${selected ? '›' : ' '} ${row.label}${row.name === this.saved ? ' · in use' : ''}`;
       const end = grid.text(x + 2, line, name, selected ? c.ink : c['ink-2'], bg, selected, inner);
       if (!selected) return;
-      const hint = row.name === 'auto' ? 'its own background, no variant' : VARIANTS.map(v => v === this.variant ? `[${v}]` : v).join(' · ');
+      const hint = row.name === 'auto' ? "uses your terminal's background" : VARIANTS.map(v => v === this.variant ? `[${v}]` : v).join(' · ');
       const start = Math.max(end + 2, x + w - 2 - [...hint].length);
       grid.text(start, line, hint, c.accent, bg, false, Math.max(0, x + w - 2 - start));
     });

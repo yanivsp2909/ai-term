@@ -48,7 +48,7 @@ describe('the theme picker', () => {
     const { p, seen } = picker();
     p.key('up'); expect(seen.at(-1)).toEqual({ name: 'auto', variant: 'dark' });
     p.key('right'); expect(seen).toHaveLength(1);
-    expect(text(p)).toMatch(/› Match my terminal .*its own background/);
+    expect(text(p)).toMatch(/› Match my terminal .*uses your terminal's background/);
     p.key('down'); expect(seen.at(-1)).toEqual({ name: 'graphite', variant: 'dark' });
   });
 });

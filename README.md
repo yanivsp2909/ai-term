@@ -287,7 +287,7 @@ Homepage slash commands:
 | `/settings` `a` or `+` / `i` / `l` | Add key / import env file / open provider login |
 | `/settings` ↑↓ / Enter / `x` / `t` | Select key/action/default row / activate (key row tests) / remove selected key / test |
 | `/settings` `d` / `f` / `e` / Tab | Save default model+engine / folder / effort / cycle theme (the built-ins and auto; `/theme` shows all of them with a preview); permission default is always Ask |
-| `/settings` `F` or app fonts row Enter | The AI Term app's fonts: terminal font and size, chrome font and size, ligatures. ↑↓ field, type a family (empty: the default chain), ←→ size (terminal 9–32, chrome 11–18), Space toggles ligatures on its row, ⏎ saves and goes back, Esc goes back. A family takes letters, digits, spaces, dots, dashes and underscores. The app uses them at once; a terminal keeps its own font |
+| `/settings` `F` or app fonts row Enter | The AI Term app's fonts: terminal font and size, chrome font and size, ligatures. ↑↓ field, type a family (empty: the default chain), ←→ size (terminal 9–32, chrome 11–26), Space toggles ligatures on its row, ⏎ saves and goes back, Esc goes back. A family name can only use letters, digits, spaces, dots, dashes and underscores. The app uses them at once; a terminal keeps its own font |
 | `/theme` ↑↓ / ←→ / ⏎ / Esc | Theme (the homepage behind shows it) / its variant: dark, light, system / keep it / go back to the saved one |
 | `/settings` `n` or notifications row Enter | Turn macOS notifications on or off (default on; saved with the other settings). If the helper is missing or failed to launch, the panel says `notifications unavailable: …` |
 | `/settings` `w` or worktrees row Enter | Toggle `worktrees: on` / `off` (default on); applies to new agents |

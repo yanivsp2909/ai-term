@@ -16,10 +16,11 @@ const NO_THEMES: ThemeList = { themes: [], refused: [] };
 async function readSettings(root: string): Promise<{ saved: Record<string, unknown>; problem: string | null }> {
   let text: string;
   try {
-    const handle = await open(join(root, 'settings.json'), constants.O_RDONLY | constants.O_NOFOLLOW);
-    try { const buffer = Buffer.alloc(SETTINGS_MAX_BYTES + 1); const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0); if (bytesRead > SETTINGS_MAX_BYTES) return { saved: {}, problem: 'settings.json is too big' }; text = buffer.subarray(0, bytesRead).toString('utf8'); }
+    // A regular file only, opened without blocking (security review: a FIFO here held a thread at each watch event).
+    const handle = await open(join(root, 'settings.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try { if (!(await handle.stat()).isFile()) return { saved: {}, problem: "settings.json isn't a regular file" }; const buffer = Buffer.alloc(SETTINGS_MAX_BYTES + 1); const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0); if (bytesRead > SETTINGS_MAX_BYTES) return { saved: {}, problem: 'settings.json is too big' }; text = buffer.subarray(0, bytesRead).toString('utf8'); }
     finally { await handle.close(); }
-  } catch (error) { if (isFsError(error, 'ENOENT')) return { saved: {}, problem: null }; return { saved: {}, problem: `settings.json couldn't be read (${error instanceof Error && 'code' in error ? String(error.code) : 'error'})` }; }
+  } catch (error) { if (isFsError(error, 'ENOENT')) return { saved: {}, problem: null }; if (isFsError(error, 'ELOOP')) return { saved: {}, problem: "settings.json isn't a regular file" }; return { saved: {}, problem: `settings.json couldn't be read (${error instanceof Error && 'code' in error ? String(error.code) : 'error'})` }; }
   let value: unknown;
   try { value = JSON.parse(text); } catch { return { saved: {}, problem: "settings.json isn't valid JSON" }; }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { saved: {}, problem: "settings.json isn't a JSON object" };

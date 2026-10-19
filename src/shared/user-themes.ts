@@ -20,7 +20,7 @@ export function themesFolder(root: string): string { return join(root, 'themes')
 export function isUserThemeName(value: unknown): value is string { return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,30}$/.test(value); }
 const printable = (value: unknown, max: number): value is string => typeof value === 'string' && value.length >= 1 && [...value].length <= max && !/[\p{C}\p{Zl}\p{Zp}]/u.test(value);
 // A name from the file goes into a reason as printable ASCII only (it is shown on screen and checked as printable).
-const shown = (name: string): string => name.replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+const shown = (name: string, max = 40): string => name.replace(/[^\x20-\x7e]/g, '?').slice(0, max);
 // Refusing to save a theme that can't be used: its one line reaches the client as is (the daemon passes ThemeError).
 export class ThemeError extends Error {}
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -37,8 +37,8 @@ function variantProblem(sets: Record<string, unknown>): string | null {
     const set = sets[variant]; if (!record(set)) continue;
     for (const [name, value] of Object.entries(set)) {
       const derived = DERIVED_COLORS.get(name as ColorName);
-      if (derived) return `${variant}.${name} is derived (= ${derived}); leave it out`;
-      if (!BASE_COLOR_NAMES.includes(name as ColorName)) return `unknown token ${variant}.${shown(name)}`;
+      if (derived) return `${variant}.${name} comes from ${derived}; leave it out`;
+      if (!BASE_COLOR_NAMES.includes(name as ColorName)) return `unknown color ${variant}.${shown(name)}`;
       if (typeof value !== 'string' || !HEX.test(value)) return `${variant}.${name} isn't a #rrggbb color`;
     }
   }
@@ -48,7 +48,8 @@ function variantProblem(sets: Record<string, unknown>): string | null {
 }
 const lower = (set: Record<string, unknown>): Partial<Colors> => Object.fromEntries(Object.entries(set).map(([k, v]) => [k, String(v).toLowerCase()]));
 export function parseUserTheme(file: string, text: string): Parsed {
-  const refuse = (reason: string): Parsed => ({ ok: false, refusal: { file, reason } });
+  // The file name is shown too: printable, at most 80 characters (security review: one odd name hid every theme).
+  const refuse = (reason: string): Parsed => ({ ok: false, refusal: { file: shown(file, 80), reason } });
   const name = file.match(FILE)?.[1];
   if (!name) return refuse('file name must be lowercase letters, digits and dashes, then .json');
   if (isBuiltinTheme(name) || name === 'auto' || name === 'light') return refuse(`takes the built-in name ${name}; rename the file`);
@@ -89,7 +90,7 @@ export async function readUserThemes(root: string): Promise<ThemeList> {
   const themes: UserTheme[] = [], refused: ThemeRefusal[] = [];
   for (const file of names.slice(0, MAX_THEME_FILES)) {
     const read = await readCapped(join(folder, file));
-    if ('problem' in read) { refused.push({ file, reason: read.problem }); continue; }
+    if ('problem' in read) { refused.push({ file: shown(file, 80), reason: read.problem }); continue; }
     const parsed = parseUserTheme(file, read.text);
     if (parsed.ok) themes.push(parsed.theme); else refused.push(parsed.refusal);
   }
