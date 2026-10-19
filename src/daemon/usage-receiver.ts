@@ -5,7 +5,8 @@ import {isUUID} from '../shared/validate.js';
 import type {UsageContext} from './usage-parse.js';
 import type {AgentEngine} from '../shared/protocol.js';
 const MAX_BODY=1024*1024;
-export type StatusEngine=Exclude<AgentEngine,'shell'>;
+// Part B's CLIs report no status (their card's status comes from their output), so they have no route.
+export type StatusEngine=Exclude<AgentEngine,'shell'|'cursor'|'gemini'|'copilot'>;
 // Claude puts whole files and replies in hook bodies. Codex bodies come only from ai status-notify: a type plus a
 // last reply capped at 256 KiB, which JSON escaping can grow up to six times (\u00XX), so 2 MiB always fits it.
 // AI Term's agent sends small events plus a last reply capped like Codex's, so the same 2 MiB bound fits.

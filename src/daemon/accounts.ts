@@ -1,22 +1,23 @@
 import { lstat, readlink, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { CliEngine } from '../shared/protocol.js';
-import { isAccountName } from '../shared/accounts.js';
+import { isAccountName, type AccountEngine } from '../shared/accounts.js';
 import { isFsError, privateDirectory } from '../shared/paths.js';
 
 // v0.6.4 (D53, D17): each account profile is the CLI's own config folder under ~/.ai-term/profiles/<name> (0700). Your skills,
 // agents and commands are shared into it by symlinks to those folders only (the D48 roots), never to credentials, settings
 // or history, so the CLI keeps the account's login and history apart while your extensions stay one set.
-const SHARED: Record<CliEngine, { home: string; folders: readonly string[] }> = {
+// Part B: Gemini CLI and Copilot CLI profiles share nothing: AI Term links none of their folders.
+const SHARED: Record<AccountEngine, { home: string; folders: readonly string[] }> = {
   'claude-code': { home: '.claude', folders: ['skills', 'agents', 'commands'] },
   codex: { home: '.codex', folders: ['prompts', 'skills', 'agents'] },
+  gemini: { home: '.gemini', folders: [] }, copilot: { home: '.copilot', folders: [] },
 };
 export const PROFILE_OTHER_ENGINE = 'Account folder belongs to another engine; pick a new name';
 export function profileDir(root: string, name: string): string {
   if (!isAccountName(name)) throw new Error('Invalid account name');
   return join(root, 'profiles', name);
 }
-export async function prepareProfile(root: string, engine: CliEngine, name: string, home: string): Promise<string> {
+export async function prepareProfile(root: string, engine: AccountEngine, name: string, home: string): Promise<string> {
   const dir = profileDir(root, name);
   // privateDirectory refuses a symlink or a folder owned by someone else, at both levels.
   await privateDirectory(join(root, 'profiles')); await privateDirectory(dir);

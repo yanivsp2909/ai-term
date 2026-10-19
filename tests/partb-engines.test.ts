@@ -81,8 +81,8 @@ describe('env and argv', () => {
     for (const model of ['bad model', '--force', 'x'.repeat(300)]) expect(() => buildExtraArgs({ engine: 'gemini', model, permission: 'ask' })).toThrow();
   });
 
-  it('the skip flags live in env.ts only', async () => {
-    const { stdout } = await run('/usr/bin/grep', ['-rlE', '--', "approval-mode=yolo|--allow-all-tools|'--yolo'|'--force'", 'src']).catch(() => ({ stdout: '' }));
+  it('the agents\' skip flags live in env.ts only (git.ts\'s worktree remove --force is not one)', async () => {
+    const { stdout } = await run('/usr/bin/grep', ['-rlE', '--', "approval-mode=yolo|allow-all-tools|'--yolo'|bypassPermissions|ask-for-approval=never|--dangerously", 'src']).catch(() => ({ stdout: '' }));
     expect(stdout.trim().split('\n').filter(Boolean)).toEqual(['src/daemon/env.ts']);
   });
 });
@@ -118,14 +118,14 @@ describe('in the daemon', () => {
   async function setup(settings: Record<string, unknown> = {}) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-partb-'))), paths = getPaths(join(root, 'home')); await preparePaths(paths);
     cleanups.push(() => rm(root, { recursive: true, force: true }));
-    await writeFile(paths.settings, JSON.stringify({ theme: 'slate', ...settings }), { mode: 0o600 });
+    await writeFile(join(paths.root, 'settings.json'), JSON.stringify({ theme: 'slate', ...settings }), { mode: 0o600 });
     const bin = join(root, 'bin'); await mkdir(bin);
     for (const name of ['gemini', 'copilot', 'cursor-agent']) { await writeFile(join(bin, name), '#!/bin/sh\necho "1.2.3"\n'); await chmod(join(bin, name), 0o755); }
     const repo = join(root, 'repo'); await mkdir(repo);
     await run('/usr/bin/git', ['init', '-q', '-b', 'main', '--', repo]); await writeFile(join(repo, 'a.txt'), 'a\n');
     await run('/usr/bin/git', ['add', '--', '.'], { cwd: repo }); await run('/usr/bin/git', ['commit', '-qm', 'initial', '--'], { cwd: repo });
     const oldPath = process.env.PATH; process.env.PATH = `${bin}:${oldPath ?? ''}`; cleanups.push(async () => { process.env.PATH = oldPath; });
-    process.env.GEMINI_API_KEY = 'AITERMCANARY-partB-env'; cleanups.push(async () => { delete process.env.GEMINI_API_KEY; });
+    for (const name of ['GEMINI_API_KEY', 'GH_TOKEN', 'CURSOR_API_KEY']) { process.env[name] = 'AITERMCANARY-partB-env'; cleanups.push(async () => { delete process.env[name]; }); }
     const manager = new SessionManager(paths, new Logger(paths.log)); await manager.load();
     cleanups.push(() => manager.shutdown());
     const spawned: { file: string; args: string[]; env: Record<string, string> }[] = [], real = pty.spawn;
@@ -140,7 +140,8 @@ describe('in the daemon', () => {
       const started = d.spawned.at(-1); if (!started) throw new Error('no spawn');
       expect(started.file).toBe(join(d.bin, engine === 'cursor' ? 'cursor-agent' : engine));
       expect(started.args).toEqual(engine === 'gemini' ? ['--approval-mode=default', '--prompt-interactive=hello'] : engine === 'copilot' ? ['--interactive=hello'] : ['hello']);
-      expect(started.env.GEMINI_API_KEY).toBeUndefined();
+      // Each CLI loses its own credential variables (another CLI's are not its business).
+      expect(started.env[engine === 'gemini' ? 'GEMINI_API_KEY' : engine === 'copilot' ? 'GH_TOKEN' : 'CURSOR_API_KEY']).toBeUndefined();
       expect(session).toMatchObject({ engine, auth: { kind: 'account' }, branch: expect.stringMatching(/^ai\//) });
       expect(session.worktree).toContain(join('home', 'worktrees'));
       await vi.waitFor(() => expect(d.manager.get(session.id).status).toBe('running'), { timeout: 10_000 });
@@ -176,6 +177,16 @@ describe('in the daemon', () => {
     expect(parseAccountCommand('/account add cursor x').kind).toBe('error');
   });
 
+  it('/send to one is refused, since it reports no status; /resume says /retry', async () => {
+    const d = await setup();
+    const session = await d.manager.create({ engine: 'gemini', model: null, auth: { kind: 'account' }, cwd: d.repo, permission: 'ask' });
+    await vi.waitFor(() => expect(d.manager.get(session.id).status).toBe('running'), { timeout: 10_000 });
+    await expect(d.manager.send(session.id, 'hello')).rejects.toThrow('This CLI reports no status; open it (⏎) and type there');
+    await d.manager.stop(session.id);
+    await vi.waitFor(() => expect(['exited', 'error']).toContain(d.manager.get(session.id).status), { timeout: 10_000 });
+    await expect(d.manager.resume(session.id)).rejects.toThrow("This CLI can't be resumed from AI Term; /retry starts it fresh");
+  });
+
   it('the request validator takes the new engines with their own modes only', async () => {
     const id = '6f1c4f53-3a1e-4bb0-9a49-3f3f3f3f3f3f', base = { id, kind: 'sessions.create', model: null, auth: { kind: 'account' }, cwd: '/tmp', effort: null };
     await expect(validateRequest({ ...base, engine: 'gemini', permission: 'dontAsk' })).resolves.toMatchObject({ engine: 'gemini' });
@@ -195,3 +206,33 @@ describe('the card', () => {
   });
 });
 
+
+describe('in /login and /settings', () => {
+  it('each CLI has a login row that starts its own login; /settings says installed or how to install', async () => {
+    const { CredentialsPanel } = await import('../src/client/tui/credentials.js');
+    const { randomUUID } = await import('node:crypto');
+    const logins: string[] = [];
+    const engines = { claudeCode: { installed: true, path: '/bin/claude', version: '2.1.0', loggedIn: true, authMethod: 'subscription' as const }, codex: { installed: false, path: null, version: null, loggedIn: null, authMethod: 'unknown' as const },
+      extra: { gemini: { installed: true, path: '/bin/gemini', version: '0.42.1', loggedIn: null, authMethod: 'unknown' as const }, copilot: { installed: false, path: null, version: null, loggedIn: null, authMethod: 'unknown' as const } } };
+    const request = async (body: { kind: string }) => ({ id: randomUUID(), ok: true as const, ...(body.kind === 'engines.status' ? { engines } : body.kind === 'settings.get' ? { settings: { theme: 'graphite' as const } } : body.kind === 'keys.list' ? { keys: [] } : {}) });
+    const login = new CredentialsPanel('login', { request, changed() {}, close() {}, login: async engine => { logins.push(engine); }, defaults() {}, theme: async () => {} });
+    while (!login.lines().includes('› Gemini CLI · CLI login')) await login.key('down');
+    expect(login.lines()[1]).toBe('signs in through Gemini CLI itself; AI Term never sees its login');
+    await login.key('enter'); expect(logins).toEqual(['gemini']);
+    const settings = new CredentialsPanel('settings', { request, changed() {}, close() {}, login: async () => {}, defaults() {}, theme: async () => {} });
+    await settings.load();
+    const text = settings.lines().join('\n');
+    expect(text).toContain('Gemini CLI: ✓ installed 0.42.1 · login: in the CLI · /login');
+    expect(text).toContain('Copilot CLI: ✗ not installed · npm install -g @github/copilot');
+    expect(text).toContain('Cursor: not checked');
+  });
+});
+
+describe('what AI Term won\'t do for them', () => {
+  it('the client says plainly why /send is refused for these CLIs', async () => {
+    const { AGENT_COMMAND_ERRORS } = await import('../src/daemon/session-manager.js');
+    const { sendFailure } = await import('../src/client/tui/send-command.js');
+    expect(AGENT_COMMAND_ERRORS).toContain('This CLI reports no status; open it (⏎) and type there');
+    expect(sendFailure('Gemini CLI', 'This CLI reports no status; open it (⏎) and type there')).toBe("Gemini CLI reports no status, so /send can't tell what it shows · open it (⏎) and type there");
+  });
+});

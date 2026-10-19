@@ -33,6 +33,8 @@ export function sendFailure(title: string, reason: string): string {
     'Agent has exited': `${title} has exited · /retry restarts it`,
     'Agent is open in a session': `${title} is open in a session or split · type there`,
     'Agent has not reported its status yet': `${title} may be asking to trust its folder · go inside first`,
+    // Part B: Cursor, Gemini and Copilot CLI report no status, so /send can't tell what they are showing.
+    "This CLI reports no status; open it (⏎) and type there": `${title} reports no status, so /send can't tell what it shows · open it (⏎) and type there`,
     'Agent does not accept pasted lines': `${title} doesn't accept pasted lines · send one line or go inside`,
     'Text pasted but not sent; go inside': `${title} started asking something · text pasted but not sent, go inside`,
     'Agent is busy with another send': `${title} is still taking the last /send`,

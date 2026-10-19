@@ -30,7 +30,9 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { isFsError, type Paths } from '../shared/paths.js';
 import { MAX_FIND_PER_AGENT, MAX_FIND_RESULTS, type SessionInfo, type SessionEvent, type TerminalModes, type CreateSession, type ClaudeStatusEvent, type WorktreeRecord, type WorktreeView, type FindMatch, type KeyView, type Settings, type TaskUsage, type UsageRecord, type CliEngine } from '../shared/protocol.js';
-import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery } from '../shared/validate.js';
+import { isUUID, isTitle, isSize, validCwd, validateSession, validateWorktreeRecord, isSendText, isFindQuery, isAgentEngine, isCliEngine } from '../shared/validate.js';
+import { EXTRA_ENGINE_FACTS, isExtraEngine } from '../shared/cli-engines.js';
+import { isAccountEngine } from '../shared/accounts.js';
 import { SettingsStore } from './settings.js';
 import { GitError, isWorktreeTop, repoCommonDir, repoTopLevel, runGit } from './git.js';
 import { worktreeDiff, worktreeStat } from './diff.js';
@@ -73,10 +75,10 @@ import { Logger } from './log.js';
 import { PtyHost, type SpawnRecipe } from './pty-host.js';
 import { Mirror, type MirrorSignal } from './mirror.js';
 import { electronNodeNeeded } from '../shared/runtime-paths.js';
-import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv,buildTestEnv,splitAgentSecrets } from './env.js';
+import { buildShellEnv, buildSpawnEnv, buildArgs, buildExtraArgs, buildExtraEnv, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv,buildTestEnv,splitAgentSecrets } from './env.js';
 import { KeyStore, KeyError, type FoundryBinding } from './keys.js';
 import { CLI_KEY_PROVIDERS, isBoundProvider, isLocalEndpoint, isLocalProvider, testedModels } from '../shared/providers.js';
-import { checkEngine } from './engines.js';
+import { checkEngine, checkExtraEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
 import { BudgetLedger } from './budget-ledger.js';
@@ -92,7 +94,7 @@ import { MAX_RECORD_COST_USD, validatePriceOverrides } from '../shared/validate.
 import { OutputClock } from './output-clock.js';
 // Fixed reasons /retry, /send and /find may return; the server passes only these through to the client.
 export const AGENT_COMMAND_ERRORS = ['Retry needs a finished agent','Retry already starting','Worktree in use by a running agent','Its worktree is gone','Its folder is gone',
-    'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',
+    'Agent has exited','Agent is open in a session','Agent is asking for permission','Agent is asking a question','Agent has not reported its status yet',"This CLI reports no status; open it (⏎) and type there",
     'Agent does not accept pasted lines','Agent is printing too fast to check','Agent is running a tool','Text pasted but not sent; go inside','Agent is busy with another send','Invalid send request','Invalid find request','Worktree is busy'] as const;
 interface Live {
     // v0.9.1: a queued agent's limit and how to tell the queue it was stopped at it.
@@ -259,7 +261,7 @@ export class SessionManager extends EventEmitter {
             if (!raw || typeof raw !== 'object')
                 throw new Error('Invalid session record');
             const r = raw as Record<string, unknown>;
-            if (!isUUID(r.id) || !isTitle(r.title) || !['shell','claude-code','codex','ai-term'].includes(String(r.engine)) || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
+            if (!isUUID(r.id) || !isTitle(r.title) || !(r.engine==='shell'||isAgentEngine(r.engine)) || typeof r.cwd !== 'string' || typeof r.createdAt !== 'string')
                 throw new Error('Invalid session record');
             const saved = validateSession(r);
             sessions.push({ id: saved.id, title: saved.title, engine: saved.engine, model: saved.model, auth: saved.auth, cwd: saved.cwd, permission: saved.permission, status: saved.status, statusDetail: saved.statusDetail, statusSince: saved.statusSince, exitCode: saved.exitCode, createdAt: saved.createdAt, lastOutputAt: saved.lastOutputAt, ctxPercent: saved.ctxPercent,lastActivity:saved.lastActivity??null, ...(saved.authMethod ? {authMethod:saved.authMethod} : {}), ...(saved.effort!==undefined?{effort:saved.effort}:{}), ...(saved.conversationId?{conversationId:saved.conversationId}:{}), ...(saved.worktree?{worktree:saved.worktree,branch:saved.branch}:{}), ...(saved.worktreeNote?{worktreeNote:saved.worktreeNote}:{}), ...(saved.login?{login:true as const}:{}), ...(saved.taskUsage?{taskUsage:saved.taskUsage}:{}),...(saved.handoffTo?{handoffTo:saved.handoffTo}:{}),...(saved.diffStat?{diffStat:saved.diffStat}:{}) });
@@ -310,6 +312,7 @@ export class SessionManager extends EventEmitter {
         if(!['exited','error'].includes(saved.status))throw new Error('Resume needs a finished agent');
         if(saved.engine==='shell')throw new Error('A shell has no AI conversation to resume');
         if(saved.engine==='ai-term')throw new Error("AI Term agent can't resume yet; /retry starts it fresh");
+        if(isExtraEngine(saved.engine))throw new Error("This CLI can't be resumed from AI Term; /retry starts it fresh");
         if(saved.engine==='claude-code'&&!saved.conversationId)throw new Error('This older Claude agent has no conversation ID');
         if(saved.conversationId&&this.list().some(s=>s.conversationId===saved.conversationId&&!['exited','error'].includes(s.status)))throw new Error('Conversation already running');
         const identity=saved.conversationId??saved.id;if(this.resuming.has(identity))throw new Error('Conversation already starting');
@@ -363,10 +366,12 @@ export class SessionManager extends EventEmitter {
         if(agent&&agent.engine!=='ai-term'&&agent.auth.kind==='account'){
             // Without settings the default account is unknown: guessing your normal login could bill the wrong account.
             if(settingsFailed&&agent.auth.profile!==OWN_ACCOUNT&&await profilesExist(this.paths.root))throw new Error("Settings unreadable; can't tell which account to use");
-            const choice=agent.auth.profile??settings?.defaultAccounts?.[agent.engine];
+            // Part B: Cursor takes no profile (its docs keep its login in one folder): any named account is not one of its own.
+            const accountEngine=isAccountEngine(agent.engine)?agent.engine:null;
+            const choice=agent.auth.profile??(accountEngine?settings?.defaultAccounts?.[accountEngine]:undefined);
             if(choice&&choice!==OWN_ACCOUNT){
-                if(!(settings?.accounts??[]).some(a=>a.name===choice&&a.engine===agent.engine))throw new Error('Account not found for this engine');
-                profile=choice;profilePath=await prepareProfile(this.paths.root,agent.engine,choice,homedir());
+                if(!accountEngine||!(settings?.accounts??[]).some(a=>a.name===choice&&a.engine===accountEngine))throw new Error('Account not found for this engine');
+                profile=choice;profilePath=await prepareProfile(this.paths.root,accountEngine,choice,homedir());
             }
         }
         // B30: only an explicit setting/choice loads the small index; logins and resumes never receive it.
@@ -374,7 +379,8 @@ export class SessionManager extends EventEmitter {
         const brain=agent&&!agent.login&&!continuation?.resume&&(agent.brain??agent.brainMention??preferences.agents)?await this.brainFor(request.cwd,preferences.trusted):null;
         const conversationId=agent?.engine==='claude-code'&&!agent.login?(continuation?.conversationId??randomUUID()):undefined;
         // Status is not billing: subscription and key sessions both report it. Login sessions only sign in.
-        const withStatus=Boolean(agent&&!agent.login&&this.usage);
+        // Part B's CLIs report none: their card's status comes from their output.
+        const withStatus=Boolean(agent&&!agent.login&&this.usage&&!isExtraEngine(agent.engine));
         const codexStatus=withStatus&&agent?.engine==='codex'?{node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})}:undefined;
         const mentioned=brain&&agent?.engine==='codex'?{firstMessage:brainMention(brain.file,agent.firstMessage??'')}:{};
         const argvRequest=agent?{...agent,...mentioned,...(conversationId?{conversationId}:{}),...(continuation?.resume?{resume:true}:{}),...(codexStatus?{codexStatus}:{}),...(brain&&agent.engine==='claude-code'?{brainFile:brain.file}:{}),...(addon?{addon}:{})}:null;
@@ -394,7 +400,17 @@ export class SessionManager extends EventEmitter {
             if(!agent.model||!models.includes(agent.model))throw new KeyError(key.provider==='foundry'?'Foundry deployment must pass its test first':catalog?'Pick a model for AI Term agent':'Model must pass its test first; test the key in /settings (t)');
             agentKey={view:key,models};authMethod='api-key';
             recipe={executable:process.execPath,args:[],env:{}};
-        } else if (agent) {
+        } else if (agent && isExtraEngine(agent.engine)) {
+            // Part B: the CLI's own login (account sessions only: keys never run here, route() sent them to AI Term's agent),
+            // argv and env from env.ts, Ask by default. A CLI that isn't installed says how to install it; AI Term never does.
+            const engine=agent.engine,facts=EXTRA_ENGINE_FACTS[engine];
+            if(agent.auth.kind!=='account')throw new KeyError('Key provider does not match engine');
+            const status=await checkExtraEngine(engine,process.env,undefined,profilePath);
+            if(!status.installed||!status.path)throw new Error(`${facts.word} not found in PATH · ${facts.install}`);
+            authMethod=status.authMethod;
+            recipe={executable:status.path,args:agent.login?[...facts.login]:buildExtraArgs({engine,model:agent.model,permission:agent.permission,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})}),env:buildExtraEnv(engine,process.env,{keepElectronNode:electronNodeNeeded(process.execPath,process.versions.electron),...(profilePath?{profileDir:profilePath}:{})})};
+            recipe = { ...recipe, ...await windowsRecipe({ executable: recipe.executable, args: recipe.args }, process.env.PATH ?? '') };
+        } else if (agent && isCliEngine(agent.engine)) {
             const engine=agent.engine;
             const status = await checkEngine(engine,process.env,undefined,profilePath);
             if (!status.installed || !status.path) throw new Error(`${agent.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`);
@@ -436,12 +452,13 @@ export class SessionManager extends EventEmitter {
             if(forkWorktree&&!info.worktree)throw new ForkError("The fork's worktree couldn't be made (the start commit may be gone); nothing started");
         }
         if((strictIsolation||addon&&!addon.readOnly)&&!info.worktree)throw new Error('Add-on worktree could not be made; nothing started');
-        const statusTelemetry=withStatus&&agent?this.usage?.registerStatus(info.id,agent.engine):undefined;
+        const statusTelemetry=withStatus&&agent&&!isExtraEngine(agent.engine)?this.usage?.registerStatus(info.id,agent.engine):undefined;
         // Usage counts API-key sessions (D27). Cost per task (v0.6.1, D55, on by default) also asks a subscription or
         // unknown-auth CLI for its usage, but only for its own token total: never Usage, a budget or a price.
-        const counted=agent&&!agent.login&&this.usage?(authMethod==='api-key'?'usage':agent.engine!=='ai-term'&&(settings?.taskCost!==false||addon||strictIsolation)?'task':null):null;
+        // Part B's CLIs report no usage AI Term could read, so they count none.
+        const counted=agent&&!agent.login&&this.usage&&!isExtraEngine(agent.engine)?(authMethod==='api-key'?'usage':agent.engine!=='ai-term'&&(settings?.taskCost!==false||addon||strictIsolation)?'task':null):null;
         const telemetry=counted&&agent&&this.usage?this.usage.register({sessionId:info.id,engine:agent.engine,provider:keyView?.provider??(agent.engine==='claude-code'?'anthropic':'openai'),model:agent.model,...(counted==='task'?{taskOnly:true}:{})}):undefined;
-        const cliEngine=agent&&agent.engine!=='ai-term'?agent.engine:null;
+        const cliEngine=agent&&isCliEngine(agent.engine)?agent.engine:null;
         // AI Term's agent gets its usage credential through buildAgentEnv at spawn; the CLIs through their own settings here.
         if(telemetry&&cliEngine){const extra=buildUsageArgs(cliEngine,telemetry),delimiter=recipe.args.indexOf('--');if(delimiter>=0)recipe.args.splice(delimiter,0,...extra);else recipe.args.push(...extra);Object.assign(recipe.env,buildUsageEnv(cliEngine,telemetry));}
         const replies = new ReplyBudget();
@@ -578,6 +595,8 @@ export class SessionManager extends EventEmitter {
     // Account logins always start the official CLIs. The homepage shows the same choice (models.ts keyEngine).
     private async route<T extends Exclude<CreateSession,{engine:'shell'}>>(request:T):Promise<T>{
         if(request.auth.kind!=='key'||request.login||request.engine==='ai-term')return request;
+        // Part B: keys never run on the added CLIs (D47; their spend couldn't be counted): always AI Term's agent.
+        if(isExtraEngine(request.engine))return {...request,engine:'ai-term',effort:null,permission:request.permission==='dontAsk'?'dontAsk':'ask'};
         let keysRunOn:Settings['keysRunOn'];
         try{keysRunOn=(await new SettingsStore(this.paths.root).get()).keysRunOn;}catch{this.log.error('Settings unreadable; keys run on AI Term agent');}
         // keyEngine applies the fallback, except for a provider no CLI can run (v0.6.5), which always starts AI Term's agent.
@@ -697,7 +716,7 @@ export class SessionManager extends EventEmitter {
     setHandoffWriter(writer:{prices:PriceSnapshot;summarize:Summarize}):void{this.handoffWriter=writer;}
     async addonAuthLabel(target:import('../shared/addons.js').AddonTarget):Promise<string>{
         if(target.auth.kind==='key'){const key=await this.keys.view(target.auth.keyId);return `${key.provider} · ${key.label} ····${key.last4}`;}
-        const settings=await new SettingsStore(this.paths.root).get();return `subscription · ${target.auth.profile??(target.engine!=='ai-term'?settings.defaultAccounts?.[target.engine]:undefined)??'own'}`;
+        const settings=await new SettingsStore(this.paths.root).get();return `subscription · ${target.auth.profile??(isAccountEngine(target.engine)?settings.defaultAccounts?.[target.engine]:undefined)??'own'}`;
     }
     // v1.1 /teach and /review <agent> deep: the agent's diff as data (redacted, within the first-message room) and the
     // worktree the model reads for context.
@@ -833,6 +852,8 @@ export class SessionManager extends EventEmitter {
     // v1.0.7 /reverse: the target (checked), REA (found, never installed) and its sandboxed server, for an engine whose
     // installed CLI takes a per-session MCP list. Errors are one line each and reach the popup.
     async addonReverse(cwd:string,args:string,target:import('../shared/addons.js').AddonTarget):Promise<ReversePlan>{
+        // Part B's CLIs take no per-session MCP list AI Term could pass (add-ons never list them).
+        if(isExtraEngine(target.engine))throw new Error("/reverse runs on Claude Code or AI Term's agent");
         if(target.engine!=='ai-term'){const status=await checkEngine(target.engine,process.env);if(!status.installed||!status.path)throw new Error(`${target.engine==='codex'?'codex':'claude'} not found in PATH`);await checkReverseCli(target.engine,status.path);}
         let setting:string|undefined;
         try{const value=(await new SettingsStore(this.paths.root).get()).reversePath;if(typeof value==='string')setting=value;}catch{this.log.error('Settings unreadable; /reverse looks for REA on PATH');}
@@ -1093,6 +1114,8 @@ export class SessionManager extends EventEmitter {
         // tool call. Codex reports approvals in its own output stream, which caughtUp has already read.
         if((live.info.engine==='claude-code'||live.info.engine==='ai-term')&&(live.statusState?.toolsInFlight??0)>0)return 'Agent is running a tool';
         // A status-line context report can come while a dialog is up; only a hook or run-state signal counts.
+        // Part B's CLIs report nothing, so a prompt of theirs could be up unseen: typed text could answer it (D50).
+        if(isExtraEngine(live.info.engine))return "This CLI reports no status; open it (⏎) and type there";
         if(live.info.engine!=='shell'&&!live.reported)return 'Agent has not reported its status yet';
         // A paused PTY holds unread output, which may be a prompt the status below hasn't seen.
         if(live.paused)return 'Agent is printing too fast to check';
@@ -1660,7 +1683,7 @@ export class SessionManager extends EventEmitter {
             const key=await this.keys.view(target.auth.keyId);authLabel=keyAuthLabel(key.provider,key.last4);
             if(target.model){const settings=await new SettingsStore(this.paths.root).get();price=findPrice(this.handoffWriter.prices,key.provider,target.model,overridesFor(settings,key.provider),key.provider==='foundry'?deploymentAlias(settings,target.model):undefined);}
         }else{
-            const engine=target.engine==='ai-term'?null:target.engine,status=engine?await checkEngine(engine,process.env).catch(()=>null):null;
+            const engine=isCliEngine(target.engine)?target.engine:null,status=engine?await checkEngine(engine,process.env).catch(()=>null):null;
             subscription=status?.authMethod==='subscription';authLabel=target.auth.profile&&target.auth.profile!==OWN_ACCOUNT?`account ${target.auth.profile}`:ownLoginLabel(status?.authMethod);
         }
         const used=live.info.taskUsage?.tokens,tokens=used?{low:Math.round(used/2),high:used*2}:null;

@@ -3,6 +3,7 @@ import type { Theme } from './theme.js';
 import type { AgentEngine, Permission, AuthRef, Effort } from '../../shared/protocol.js';
 import { engineLabel, type ModelChoice } from '../../shared/models.js';
 import type { MessageField } from './message-field.js';
+import { EXTRA_ENGINE_FACTS, isExtraEngine } from '../../shared/cli-engines.js';
 export interface AgentBox {kind:'start'|'model'|'folder'|'effort'|'mode';brain?:boolean;brainLoaded?:boolean;engine:AgentEngine;model:string|null;cwd:string;permission:Permission;message:string;messageField?:MessageField;messageNote?:string;worktreePreview?:import('../../shared/protocol.js').WorktreePreview;error:string;checking:boolean;row:number;filter:string;choices:ModelChoice[];choice:number;path:string;completions:string[];auth?:AuthRef;tabs?:string[];tab?:string;authLabel?:string;effort?:Effort|null;values?:readonly string[];preset?:string;presetCursor?:string;useWorktree?:boolean;restore?:NextAgent;accountLabel?:string;modeNote?:string;queue?:boolean}
 // The next-agent setup a preset replaced, put back when the start box is cancelled.
 export interface NextAgent {engine:AgentEngine;model:string|null;effort:Effort|null;auth:AuthRef;permission:Permission;folder:string}
@@ -18,7 +19,7 @@ export function drawAgentBox(frame:Frame,box:AgentBox,theme:Theme):Frame{
   line(1,`${box.row===0?'›':' '} model          ${box.model??'CLI default'} · ${engineLabel(box.engine)} · ${box.authLabel??'own login'}   m /model`);
   line(2,`${box.row===1?'›':' '} folder         ${box.cwd}   c /cd`);
   // v0.8.1: AI Term's agent without a sandbox for its bash offers Ask only, and says why instead of the toggle hint.
-  line(3,`${box.row===2?'›':' '} mode           ${box.permission==='dontAsk'?"! don't ask":box.permission} · ${box.engine==='ai-term'&&box.modeNote?box.modeNote:'⇥ toggles'}`,box.permission==='dontAsk'?t['status-error']:t['ink-2']);
+  line(3,`${box.row===2?'›':' '} mode           ${box.permission==='dontAsk'?"! don't ask":box.permission} · ${box.engine==='ai-term'&&box.modeNote?box.modeNote:isExtraEngine(box.engine)&&EXTRA_ENGINE_FACTS[box.engine].dontAskNote?EXTRA_ENGINE_FACTS[box.engine].dontAskNote:'⇥ toggles'}`,box.permission==='dontAsk'?t['status-error']:t['ink-2']);
   line(4,`${box.row===3?'›':' '} effort         ${box.effort??'CLI default'}   e /effort`);
   line(5,`${box.row===4?'›':' '} first message  ${box.messageField?.display(true)??box.message}`);
   line(6,`${box.row===5?'›':' '} brain          ${box.brain?'on':'off'} · b toggles · remembered for this repository`,t['ink-3']);

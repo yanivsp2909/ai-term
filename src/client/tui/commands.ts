@@ -1,9 +1,11 @@
 import type {AgentEngine,Effort,Permission,ThemeName} from '../../shared/protocol.js';
 import {EFFORT_LEVELS} from '../../shared/validate.js';
+import { EXTRA_ENGINE_FACTS, isExtraEngine } from '../../shared/cli-engines.js';
 // dontAsk: false where AI Term's agent can't have its bash sandbox (v0.8.1); it then offers Ask only.
 export interface CommandContext {engine:AgentEngine;model:string|null;cwd:string;theme:ThemeName;effort?:Effort|null;permission?:Permission;selectedTitle?:string;agents?:readonly string[];dontAsk?:boolean}
 export interface Command {name:string;description:string;argumentHint?:(context:CommandContext)=>string;values?:(context:CommandContext)=>readonly string[];current:(context:CommandContext)=>string}
-export const modeValues=(engine:AgentEngine,dontAsk=true):readonly Permission[]=>engine==='claude-code'?['ask','auto','dontAsk']:engine==='ai-term'&&!dontAsk?['ask']:['ask','dontAsk'];
+// Part B: the added CLIs offer the modes their facts list (Don't ask only for Gemini CLI, in its own sandbox).
+export const modeValues=(engine:AgentEngine,dontAsk=true):readonly Permission[]=>isExtraEngine(engine)?EXTRA_ENGINE_FACTS[engine].modes:engine==='claude-code'?['ask','auto','dontAsk']:engine==='ai-term'&&!dontAsk?['ask']:['ask','dontAsk'];
 export const modeLabel=(mode:Permission):string=>mode==='dontAsk'?"! don't ask":mode;
 export const effortValues=(engine:AgentEngine):readonly string[]=>['CLI default',...EFFORT_LEVELS[engine]];
 const none=()=>'';
@@ -22,7 +24,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/mcp',description:'MCP servers and per-tool load controls',argumentHint:()=> '[add|remove <name>]',current:none},
  {name:'/agents',description:'Browse subagents in the extensions popup',current:none},
  {name:'/preset',description:'Saved start setups: open, save, list, remove',argumentHint:()=>'[<name> | save <name> [first message] | rm <name>]',current:none},
- {name:'/account',description:'Accounts per engine: add (CLI login), default, use, remove',argumentHint:()=>'[add claude|codex <name> | default <name> | use <name|own> | rm <name>]',current:none},
+ {name:'/account',description:'Accounts per engine: add (CLI login), default, use, remove',argumentHint:()=>'[add claude|codex|gemini|copilot <name> | default <name> | use <name|own> | rm <name>]',current:none},
  {name:'/handoff',description:'Hand an agent over to another engine (spends tokens; asks first)',argumentHint:()=>'<agent> claude|codex[:account]',current:none},
  {name:'/settings',description:'Keys and saved defaults',current:none},
  {name:'/login',description:'Connect an engine or API key',current:none},

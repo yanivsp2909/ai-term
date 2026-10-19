@@ -1,4 +1,5 @@
 import type { Engine } from './protocol.js';
+import { isAgentEngine } from './validate.js';
 
 // v0.7.1 /export: what the daemon hands the client for one session's HTML file. Text only, already redacted
 // (src/shared/redact.ts), each part capped so the answer fits one protocol frame. The client builds and saves the page.
@@ -17,7 +18,7 @@ function isEntry(v: unknown): v is ExportEntry {
 export function validateSessionExport(value: unknown): SessionExport {
   const d = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
   const keys = ['title', 'engine', 'model', 'cwd', 'branch', 'createdAt', 'exportedAt', 'text', 'truncated', 'transcript', 'transcriptTruncated'];
-  if (!d || Object.keys(d).some(k => !keys.includes(k)) || !text(d.title, 200) || !['shell', 'claude-code', 'codex', 'ai-term'].includes(String(d.engine)) || !(d.model === null || text(d.model, 200))
+  if (!d || Object.keys(d).some(k => !keys.includes(k)) || !text(d.title, 200) || !(d.engine === 'shell' || isAgentEngine(d.engine)) || !(d.model === null || text(d.model, 200))
     || !text(d.cwd, 4096) || d.branch !== undefined && !text(d.branch, 200) || !date(d.createdAt) || !date(d.exportedAt) || !text(d.text, EXPORT_TEXT_CHARS + 1) || typeof d.truncated !== 'boolean'
     || !(d.transcript === null || Array.isArray(d.transcript) && d.transcript.length <= EXPORT_MAX_ENTRIES && d.transcript.every(isEntry)) || d.transcriptTruncated !== undefined && typeof d.transcriptTruncated !== 'boolean') throw new Error('Invalid export');
   return d as unknown as SessionExport;

@@ -6,7 +6,8 @@ import type {SuccessResponse} from '../src/shared/protocol.js';
 type Handler=(body:RequestBody)=>Partial<SuccessResponse>|Error;
 function panel(kind:'login'|'settings',handle:Handler){const requests:RequestBody[]=[];const p=new CredentialsPanel(kind,{request:async body=>{requests.push(body);const r=handle(body);if(r instanceof Error)throw r;return {id:randomUUID(),ok:true,...r} as SuccessResponse;},changed:()=>{},close:()=>{},login:async()=>{},defaults:()=>{},theme:async()=>{}});return {p,requests,text:()=>p.lines().join('\n')};}
 const key=(id=randomUUID())=>({id,provider:'foundry' as const,label:'Foundry',last4:'0000',endpoint:'https://x.openai.azure.com/openai/v1',deployments:['gpt']});
-async function foundryForm(p:CredentialsPanel){await p.key('down');await p.key('down');await p.key('enter');await p.key('enter');p.paste('https://x.openai.azure.com/openai/v1');await p.key('enter');p.paste('k'.repeat(32));await p.key('enter');p.paste('gpt');await p.key('enter');}
+// Down to Foundry by its label (Part B put the CLI logins above it).
+async function foundryForm(p:CredentialsPanel){while(!p.lines().includes('› Microsoft Foundry'))await p.key('down');await p.key('enter');await p.key('enter');p.paste('https://x.openai.azure.com/openai/v1');await p.key('enter');p.paste('k'.repeat(32));await p.key('enter');p.paste('gpt');await p.key('enter');}
 it('a saved key whose follow-up test fails still says it was saved, so nobody saves it twice',async()=>{
  const {p,text}=panel('login',body=>body.kind==='keys.add'?{key:key()}:body.kind==='keys.test'?new DaemonRequestError('Key operation timed out'):{keys:[]});
  await foundryForm(p);expect(text()).toContain('✓ saved to the OS keychain');expect(text()).toContain('test failed');expect(text()).not.toContain('could not be saved');

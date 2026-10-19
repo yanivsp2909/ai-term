@@ -6,6 +6,7 @@ import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DES
 import { isAgentCaps } from './agent-facts.js';
 import { PROVIDER_LABELS, isBedrockEndpoint, isDirectProvider, isLocalEndpoint, isLocalProvider } from './providers.js';
 import { isPublicEndpoint } from './public-host.js';
+import { EXTRA_ENGINE_FACTS, isExtraEngine } from './cli-engines.js';
 import { isDiffStat, validateAgentDiff } from './diff.js';
 import { validateSessionExport } from './session-export.js';
 import { validateUndoPlan } from './checkpoints.js';
@@ -322,7 +323,9 @@ export function validateSuccess(value: unknown): SuccessResponse {
     if(v.extensions!==undefined)validateExtensionCatalog(v.extensions);
     if(v.extension!==undefined)validateExtensionFile(v.extension);
     if(v.settings!==undefined)validateSettings(v.settings);
-    if(v.engines!==undefined) { if (!v.engines || typeof v.engines !== 'object' || !('claudeCode' in v.engines) || !('codex' in v.engines)) throw new ValidationError('Invalid engines status'); validateEngineStatus(v.engines.claudeCode); validateEngineStatus(v.engines.codex); }
+    if(v.engines!==undefined) { if (!v.engines || typeof v.engines !== 'object' || !('claudeCode' in v.engines) || !('codex' in v.engines)) throw new ValidationError('Invalid engines status'); validateEngineStatus(v.engines.claudeCode); validateEngineStatus(v.engines.codex);
+      // Part B: the added CLIs' statuses, by engine name only.
+      if('extra' in v.engines&&v.engines.extra!==undefined){const extra=v.engines.extra;if(!extra||typeof extra!=='object'||Array.isArray(extra))throw new ValidationError('Invalid engines status');for(const [engine,status] of Object.entries(extra)){if(!isExtraEngine(engine))throw new ValidationError('Invalid engines status');validateEngineStatus(status);}} }
     if(v.agentSandbox!==undefined&&(!v.agentSandbox||typeof v.agentSandbox!=='object'||Array.isArray(v.agentSandbox)||typeof (v.agentSandbox as Record<string,unknown>).dontAsk!=='boolean'||Object.keys(v.agentSandbox).some(k=>k!=='dontAsk'&&k!=='note')||(v.agentSandbox as Record<string,unknown>).note!==undefined&&(typeof (v.agentSandbox as Record<string,unknown>).note!=='string'||String((v.agentSandbox as Record<string,unknown>).note).length>120||/[\p{C}]/u.test(String((v.agentSandbox as Record<string,unknown>).note)))))throw new ValidationError('Invalid agent sandbox state');
     if(v.notifier!==undefined&&!['ready','not built','launch failed','none'].includes(String(v.notifier)))throw new ValidationError('Invalid notifier state');
     if(v.notificationPermission!==undefined&&!['allowed','denied','not-asked','unknown'].includes(String(v.notificationPermission)))throw new ValidationError('Invalid notification permission');
@@ -354,7 +357,7 @@ export function validateExitCode(value:unknown):number|undefined {
 export function isThemeName(value: unknown): value is import('./protocol.js').ThemeName {
     return typeof value === 'string' && ['graphite', 'slate', 'ink', 'auto', 'light'].includes(value);
 }
-export function isAgentEngine(value: unknown): value is import('./protocol.js').AgentEngine { return value === 'claude-code' || value === 'codex' || value === 'ai-term'; }
+export function isAgentEngine(value: unknown): value is import('./protocol.js').AgentEngine { return value === 'claude-code' || value === 'codex' || value === 'ai-term' || isExtraEngine(value); }
 export function isCliEngine(value: unknown): value is import('./protocol.js').CliEngine { return value === 'claude-code' || value === 'codex'; }
 export function isModel(value: unknown): value is string | null { return value === null || typeof value === 'string' && isValidModelId(value); }
 export function isPermission(value: unknown): value is import('./protocol.js').Permission { return value === 'ask' || value === 'auto' || value === 'dontAsk'; }
@@ -365,10 +368,13 @@ export const EFFORT_LEVELS:Record<import('./protocol.js').AgentEngine,readonly i
  codex:['none','minimal','low','medium','high','xhigh','max','ultra','persistent'],
  // AI Term's agent takes no effort level in v0.4.1; null (the model's default) only.
  'ai-term':[],
+ // Part B: AI Term passes no effort to these CLIs (their docs name no flag for it).
+ cursor:[],gemini:[],copilot:[],
 };
 export function isEffort(value:unknown):value is import('./protocol.js').Effort|null{return value===null||typeof value==='string'&&EFFORT_LEVELS.codex.includes(value as import('./protocol.js').Effort);}
 export function isEffortForEngine(engine:unknown,value:unknown):value is import('./protocol.js').Effort|null{return isAgentEngine(engine)&&isEffort(value)&&(value===null||EFFORT_LEVELS[engine].includes(value));}
-export function isPermissionForEngine(engine:unknown,value:unknown):value is import('./protocol.js').Permission{return isAgentEngine(engine)&&isPermission(value)&&(value!=='auto'||engine==='claude-code');}
+// Part B: the CLIs added later offer the modes their facts list (src/shared/cli-engines.ts).
+export function isPermissionForEngine(engine:unknown,value:unknown):value is import('./protocol.js').Permission{return isAgentEngine(engine)&&isPermission(value)&&(isExtraEngine(engine)?EXTRA_ENGINE_FACTS[engine].modes.includes(value):value!=='auto'||engine==='claude-code');}
 function isAccount(value: unknown): boolean { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const a = value as Record<string, unknown>; return a.kind === 'account' && (Object.keys(a).length === 1 || Object.keys(a).length === 2 && isAccountChoice(a.profile)); }
 export function sanitizeTitle(value: string): string { return [...stripVTControlCharacters(value).replace(/[\p{C}]/gu, '').trim()].slice(0,60).join(''); }
 export function validateSettingsPatch(value: unknown, patchOnly = false): import('./protocol.js').SettingsPatch {
@@ -441,7 +447,7 @@ export function validateSession(value: unknown): import('./protocol.js').Session
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid daemon session');
     const s = value as Record<string, unknown>;
     const date = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
-    if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !['shell', 'claude-code', 'codex', 'ai-term'].includes(s.engine)) || s.engine === 'ai-term' && (!s.auth || typeof s.auth !== 'object' || !('kind' in s.auth) || s.auth.kind !== 'key') ||
+    if (!isUUID(s.id) || !isTitle(s.title) || (typeof s.engine !== 'string' || !(s.engine === 'shell' || isAgentEngine(s.engine))) || s.engine === 'ai-term' && (!s.auth || typeof s.auth !== 'object' || !('kind' in s.auth) || s.auth.kind !== 'key') ||
         !isModel(s.model) || typeof s.cwd !== 'string' || !isAbsolute(s.cwd) || s.cwd.includes('\0') ||
         s.worktree!==undefined&&!isSafeAbsolutePath(s.worktree) || s.branch!==undefined&&!isWorktreeBranch(s.branch) || (s.worktree===undefined)!==(s.branch===undefined) || s.worktreeNote!==undefined&&!isWorktreeNote(s.worktreeNote) || s.login!==undefined&&(s.login!==true||s.engine==='shell') ||
         !isAuthView(s.auth) || !(s.engine==='shell'?s.permission==='ask':isPermissionForEngine(s.engine,s.permission)) || s.effort!==undefined && !isEffortForEngine(s.engine,s.effort) || s.conversationId!==undefined && (s.engine!=='claude-code'||!isUUID(s.conversationId)) ||

@@ -1,5 +1,6 @@
 import { catalogModels } from './model-catalog.js';
 import { CLI_KEY_PROVIDERS, PROVIDER_LABELS, isLocalProvider, keyAuthLabel, testedModels } from './providers.js';
+import { EXTRA_ENGINES, EXTRA_ENGINE_FACTS, isExtraEngine } from './cli-engines.js';
 import type { AgentEngine, AuthRef, KeyView, KeyProvider, KeysRunOn, AuthMethod, EnginesStatus, DeploymentTest } from './protocol.js';
 export interface ModelChoice {engine:AgentEngine;model:string|null;label:string;auth?:AuthRef;authLabel?:string;group?:string}
 // Claude aliases come from installed --help; Codex id from the v0.1 CLI spike.
@@ -9,6 +10,8 @@ export const accountModels:ModelChoice[]=[
  {engine:'claude-code',model:'sonnet',label:'sonnet'},
  {engine:'codex',model:null,label:'CLI default'},
  {engine:'codex',model:'gpt-6.1-sol',label:'gpt-6.1-sol'},
+ // Part B: each added CLI's default, then the model words its docs list.
+ ...EXTRA_ENGINES.flatMap(engine=>[{engine,model:null,label:'CLI default'},...EXTRA_ENGINE_FACTS[engine].models.map(model=>({engine,model,label:model}))]),
 ];
 
 // Providers AI Term's own agent can talk to: every key AI Term stores (v0.4.2; v0.6.5 and Part A add the providers in
@@ -24,11 +27,18 @@ export function keyEngine(provider:KeyProvider,keysRunOn:KeysRunOn|undefined):Ag
  return provider==='anthropic'?'claude-code':'codex';
 }
 // Plain-text engine names (D51: no logos, no provider names in ours).
-export function engineLabel(engine:AgentEngine|'shell'):string{return engine==='codex'?'codex':engine==='ai-term'?'ai term':engine==='shell'?'shell':'claude code';}
-export function engineTitle(engine:AgentEngine):string{return engine==='codex'?'Codex':engine==='ai-term'?'AI Term':'Claude Code';}
+export function engineLabel(engine:AgentEngine|'shell'):string{return isExtraEngine(engine)?EXTRA_ENGINE_FACTS[engine].label:engine==='codex'?'codex':engine==='ai-term'?'ai term':engine==='shell'?'shell':'claude code';}
+export function engineTitle(engine:AgentEngine):string{return isExtraEngine(engine)?EXTRA_ENGINE_FACTS[engine].title:engine==='codex'?'Codex':engine==='ai-term'?'AI Term':'Claude Code';}
+// The word an engine goes by in commands and notes (/account add <word>, "<word> not found in PATH"): claude, codex, or a
+// Part B CLI's word.
+export function engineWord(engine:Exclude<AgentEngine,'ai-term'>):string{return isExtraEngine(engine)?EXTRA_ENGINE_FACTS[engine].word:engine==='codex'?'codex':'claude';}
+// A CLI engine's installed/login status from engines.status (Part B's CLIs under `extra`).
+export function engineStatus(engines:EnginesStatus|undefined,engine:Exclude<AgentEngine,'ai-term'>):EnginesStatus['claudeCode']|undefined{return isExtraEngine(engine)?engines?.extra?.[engine]:engine==='codex'?engines?.codex:engines?.claudeCode;}
 export function ownLoginLabel(method:AuthMethod|undefined):string{return method==='subscription'?'own login · sub':method==='api-key'?'own login · API key':'own login';}
 export function modelChoices(keys:KeyView[],engines?:EnginesStatus,keysRunOn?:KeysRunOn):ModelChoice[]{
- const choices:ModelChoice[]=accountModels.map(c=>({...c,auth:{kind:'account'},authLabel:ownLoginLabel(c.engine==='codex'?engines?.codex.authMethod:engines?.claudeCode.authMethod),group:c.engine==='codex'?'OPENAI':'ANTHROPIC'}));
+ // Part B's CLIs come last, after the keys, so the tabs keep their order (ANTHROPIC, OPENAI, then your keys).
+ const accountChoice=(c:ModelChoice):ModelChoice=>({...c,auth:{kind:'account'},authLabel:ownLoginLabel(isExtraEngine(c.engine)?engines?.extra?.[c.engine]?.authMethod:c.engine==='codex'?engines?.codex.authMethod:engines?.claudeCode.authMethod),group:isExtraEngine(c.engine)?EXTRA_ENGINE_FACTS[c.engine].title.toUpperCase():c.engine==='codex'?'OPENAI':'ANTHROPIC'});
+ const choices:ModelChoice[]=accountModels.filter(c=>!isExtraEngine(c.engine)).map(accountChoice);
  for(const key of keys){
   const auth:AuthRef={kind:'key',keyId:key.id},authLabel=keyAuthLabel(key.provider,key.last4);
   if(key.provider==='foundry'){
@@ -46,5 +56,5 @@ export function modelChoices(keys:KeyView[],engines?:EnginesStatus,keysRunOn?:Ke
    if(keyEngine(key.provider,keysRunOn)==='ai-term')for(const model of catalogModels(key.provider))choices.push({engine:'ai-term',model,label:model,auth,authLabel,group});
    else for(const model of accountModels.filter(c=>c.engine===(key.provider==='anthropic'?'claude-code':'codex')))choices.push({...model,auth,authLabel,group});
   }
- }return choices;
+ }return [...choices,...accountModels.filter(c=>isExtraEngine(c.engine)).map(accountChoice)];
 }

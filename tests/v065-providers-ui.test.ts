@@ -25,8 +25,8 @@ async function choose(p: CredentialsPanel, label: string) { const index = p.line
 
 it('/login lists every provider; a new one goes straight to its form (no CLI login exists for it)', async () => {
   const { p } = panel('login');
-  const listed = p.lines().slice(0, 40);
-  expect(listed.slice(0, 6)).toEqual(['Connect a provider', "requests go to the provider's own servers", '› Anthropic', '  OpenAI', '  Microsoft Foundry', '  xAI']);
+  const listed = p.lines();
+  expect(listed.slice(0, 9)).toEqual(['Connect a provider', "requests go to the provider's own servers", '› Anthropic', '  OpenAI', '  Cursor · CLI login', '  Gemini CLI · CLI login', '  Copilot CLI · CLI login', '  Microsoft Foundry', '  xAI']);
   for (const label of ['Moonshot · international', 'Moonshot · China', 'Z.ai · international', 'Zhipu (Z.ai) · China', 'OpenRouter', 'Amazon Bedrock', 'Google Vertex', 'Ollama', 'LM Studio', 'Custom OpenAI-compatible endpoint']) expect(listed).toContain(`  ${label}`);
   // Part A: the highlighted provider's region, one neutral line.
   expect(p.lines()).toContain("requests go to the provider's own servers");

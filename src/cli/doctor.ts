@@ -11,6 +11,8 @@ import type { AgentSandbox } from '../shared/protocol.js';
 import { agentSandbox } from '../daemon/agent-sandbox.js';
 import { notifierAppPath, NOTIFIER_EXECUTABLE } from '../daemon/notifier.js';
 import { systemTool } from '../shared/executable.js';
+import { EXTRA_ENGINES, EXTRA_ENGINE_FACTS } from '../shared/cli-engines.js';
+import { checkExtraEngine } from '../daemon/engines.js';
 export function versionNumber(output: string): string { return output.match(/\b\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?\b/)?.[0] ?? 'unavailable'; }
 export function claudeAuth(output: string): string {
     let value: unknown;
@@ -123,6 +125,11 @@ export async function doctorLines(entry: string, each: (line: string) => void = 
         print(`${name}: ${path}; version ${versionNumber(version.output)}`);
         const auth = await run(path, name === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status'], env);
         print(`${name} auth: ${name === 'claude' ? claudeAuth(auth.output) : codexAuth(auth.code, auth.output)}`);
+    }
+    // Part B: the added CLIs, found the way a session finds them; their login is their own, so none is read here.
+    for (const engine of EXTRA_ENGINES) {
+        const facts = EXTRA_ENGINE_FACTS[engine], status = await checkExtraEngine(engine, process.env);
+        print(status.installed && status.path ? `${facts.word}: ${status.path}; version ${status.version ?? 'unknown'} · login: in the CLI` : `${facts.word}: not found · ${facts.install}`);
     }
     // The connection stays open until here: the keychain line asks this daemon.
     try {

@@ -12,12 +12,15 @@ export const MAX_FIND_CHARS = 200, MAX_FIND_RESULTS = 200, MAX_FIND_PER_AGENT = 
 export interface FindMatch {sessionId:string;fromEnd:number;text:string;start:number;length:number}
 export const COPY_CHUNK_BYTES = 1024 * 1024;
 export interface SessionText {sessionId:string;text:string;truncated:boolean;source?:'last-reply'|'session'}
-export type Engine = 'claude-code' | 'codex' | 'ai-term' | 'shell'; // Shell spawning remains internal; the homepage can display it.
+export type Engine = 'claude-code' | 'codex' | 'ai-term' | 'cursor' | 'gemini' | 'copilot' | 'shell'; // Shell spawning remains internal; the homepage can display it.
 export type Status = 'starting' | 'running' | 'waiting' | 'done' | 'exited' | 'error';
 export type ThemeName = 'graphite' | 'slate' | 'ink' | 'auto' | 'light';
 // 'ai-term' is AI Term's own agent (v0.4): it runs only on an API key (D47). The official CLIs are CliEngine.
 export type CliEngine = 'claude-code' | 'codex';
-export type AgentEngine = CliEngine | 'ai-term';
+// Part B (2026-10-19): Cursor CLI, Gemini CLI and GitHub Copilot CLI, run untouched in a PTY with what their docs give:
+// their own login, status from their output, no keys (D47 keeps keys on AI Term's agent). src/shared/cli-engines.ts.
+export type ExtraEngine = 'cursor' | 'gemini' | 'copilot';
+export type AgentEngine = CliEngine | ExtraEngine | 'ai-term';
 // D47's fallback: where a key whose provider AI Term's agent supports starts. Absent means 'ai-term'.
 export type KeysRunOn = 'ai-term' | 'cli';
 export type Permission = 'ask' | 'auto' | 'dontAsk';
@@ -26,7 +29,7 @@ export type AuthMethod = 'subscription' | 'api-key' | 'unknown';
 export type EngineCheckError = 'Engine executable check failed' | 'Engine version check failed' | 'Engine login check failed';
 export type ProviderFailureReason = 'Provider request timed out' | 'Provider connection failed' | 'Provider reply too large' | 'Provider request failed' | 'Provider address is not on the public internet';
 export interface EngineStatus { installed: boolean; path: string | null; version: string | null; loggedIn: boolean | null; authMethod: AuthMethod; error?: EngineCheckError }
-export interface EnginesStatus { claudeCode: EngineStatus; codex: EngineStatus }
+export interface EnginesStatus { claudeCode: EngineStatus; codex: EngineStatus; extra?: Partial<Record<ExtraEngine, EngineStatus>> }
 // v0.6.5 adds xAI, Moonshot, Z.ai, OpenRouter, Bedrock, Vertex (express) and Ollama (local, no key): src/shared/providers.ts.
 // Part A (2026-10-19) adds more fixed-host providers (a region is a provider of its own: moonshot-cn, zai-cn, …), LM Studio
 // and any OpenAI-compatible server on this machine (no key), and one custom https endpoint per key, bound to it like Foundry.
@@ -51,7 +54,7 @@ export interface UsageSummary {today:UsagePeriod;week:UsagePeriod;month:UsagePer
 export interface UsageDiagnostic {sessionId:string;at:string;values:{name:string;value:number}[]}
 export interface UsageDiagnostics {port:number;sessions:UsageDiagnostic[]}
 export interface UsageRecord {ts:string;sessionId:string;provider:KeyProvider;model:string;inputTokens:number;outputTokens:number;cachedTokens?:number;costUsd:number|null;costSource:'cli-estimate'|'price-table'|'worst-case'}
-export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; remote?: boolean; devServers?: boolean; lspDiagnostics?: boolean; brainForAgents?: boolean; brainRepositories?: Record<string, { agents?: boolean; trusted?: boolean }>; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<CliEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; reversePath?: string | null; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
+export interface Settings {mcp?:import('./mcp.js').McpServer[];mcpApprovals?:Record<string,string>;mcpOverrides?:Record<string,{enabled?:boolean;tools:Record<string,boolean>}>;extensions?:Record<string,boolean>;budgets?:Budgets;priceOverrides?:Record<string,ModelPrice>;providerPrices?:Partial<Record<KeyProvider,Record<string,ModelPrice>>>; theme: ThemeName; defaultEngine?: CliEngine; keysRunOn?: KeysRunOn; deploymentModels?: Record<string,string>; agentCaps?: import('./agent-facts.js').AgentCaps; contextWarning?: boolean; taskCost?: boolean; handoff?: boolean; checkpoints?: boolean; secretScan?: boolean; autoTest?: boolean; queue?: boolean; remote?: boolean; devServers?: boolean; lspDiagnostics?: boolean; brainForAgents?: boolean; brainRepositories?: Record<string, { agents?: boolean; trusted?: boolean }>; devCommands?: Record<string, string[]>; testCommands?: Record<string, string[]>; testLoopback?: string[]; autoReview?: boolean; autoReviewDailyUsd?: number; reviewModel?: { keyId: string; model: string }; accounts?: import('./accounts.js').AccountProfile[]; defaultAccounts?: Partial<Record<import('./accounts.js').AccountEngine, string>>; presets?: Record<string, import('./presets.js').Preset>; presetsEnabled?: boolean; defaultModel?: string | null; defaultEffort?:Effort|null; defaultCwd?: string; reversePath?: string | null; permission?: 'ask'; notifications?: boolean; bar?: 'on'|'off'; worktrees?: 'on'|'off'; [key: string]: unknown }
 export type SettingsPatch = Partial<Settings>;
 export type WorktreeNote = 'worktree off: not a git repo' | 'worktree off: repo has no commits' | 'worktree off: git check failed' | 'worktree off: creation failed';
 export interface WorktreePreview {branch?:string;head?:string;dirty?:boolean;note?:WorktreeNote}

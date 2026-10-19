@@ -3,8 +3,9 @@ import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
-import type { CliEngine, EngineStatus, EnginesStatus, AuthMethod, EngineCheckError } from '../shared/protocol.js';
-import { buildSpawnEnv } from './env.js';
+import type { CliEngine, EngineStatus, EnginesStatus, AuthMethod, EngineCheckError, ExtraEngine } from '../shared/protocol.js';
+import { EXTRA_ENGINES, EXTRA_ENGINE_FACTS } from '../shared/cli-engines.js';
+import { buildExtraEnv, buildSpawnEnv } from './env.js';
 import { windowsRecipe } from './win-launch.js';
 // Windows (v0.8.2): name.exe (a native install), then name.cmd (npm's launcher, which win-launch.ts reads, never runs),
 // folder by folder in PATH order.
@@ -56,7 +57,29 @@ export async function checkEngine(engine:CliEngine,base:NodeJS.ProcessEnv=proces
     if(loggedIn===null)error='Engine login check failed';
     return {installed:true,path,version,loggedIn,authMethod,...(error?{error}:{})};
 }
+// Part B: the added CLIs. Found on PATH with the account env they will run in, version from --version; their login status
+// is the CLI's own business (none documents a status AI Term could read without touching its files), so it is unknown and
+// the CLI asks you to sign in when it needs to. Cursor's `agent` counts only when its own --help names Cursor.
+export async function checkExtraEngine(engine:ExtraEngine,base:NodeJS.ProcessEnv=process.env,runner:EngineRunner=run,profileDir?:string):Promise<EngineStatus>{
+    const env=buildExtraEnv(engine,base,profileDir?{profileDir}:{}),options={env,timeout:5000,maxBuffer:64*1024,windowsHide:true};
+    const missing:EngineStatus={installed:false,path:null,version:null,loggedIn:null,authMethod:'unknown'};
+    for(const name of EXTRA_ENGINE_FACTS[engine].executables){
+        let path:string|null;
+        try{path=await resolveExecutable(name,env.PATH??'');}catch{return {...missing,error:'Engine executable check failed'};}
+        if(!path)continue;
+        let launch:{executable:string;args:string[]};try{launch=await windowsRecipe({executable:path,args:[]},env.PATH??'');}catch{continue;}
+        if(engine==='cursor'&&name==='agent'){
+            let help:EngineRunResult;try{help=await runner(launch.executable,[...launch.args,'--help'],options);}catch{continue;}
+            if(!/\bcursor\b/i.test(help.stdout+help.stderr))continue;
+        }
+        let versionResult:EngineRunResult;
+        try{versionResult=await runner(launch.executable,[...launch.args,'--version'],options);}catch{versionResult={code:null,stdout:'',stderr:''};}
+        const version=versionResult.code===0?(versionResult.stdout+versionResult.stderr).match(/\b\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?\b/)?.[0]??null:null;
+        return {installed:true,path,version,loggedIn:null,authMethod:'unknown',...(versionResult.code===0?{}:{error:'Engine version check failed' as const})};
+    }
+    return missing;
+}
 export async function enginesStatus(base:NodeJS.ProcessEnv=process.env):Promise<EnginesStatus>{
-    const [claudeCode,codex]=await Promise.all([checkEngine('claude-code',base),checkEngine('codex',base)]);
-    return {claudeCode,codex};
+    const [claudeCode,codex,cursor,gemini,copilot]=await Promise.all([checkEngine('claude-code',base),checkEngine('codex',base),...EXTRA_ENGINES.map(engine=>checkExtraEngine(engine,base))]);
+    return {claudeCode,codex,extra:{...(cursor?{cursor}:{}),...(gemini?{gemini}:{}),...(copilot?{copilot}:{})}};
 }

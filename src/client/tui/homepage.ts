@@ -28,7 +28,8 @@ import { diffFrame, type Frame } from './grid.js';
 import { homepageLayout, renderHomepage, sortSessions, filteredCommands, visibleCards } from './layout.js';
 import { nextCardTick } from './agent-card.js';
 import { CredentialsPanel } from './credentials.js';
-import { modelChoices, ownLoginLabel, engineTitle, keyEngine } from '../../shared/models.js';
+import { modelChoices, ownLoginLabel, engineTitle, keyEngine, engineLabel, engineStatus, engineWord } from '../../shared/models.js';
+import { EXTRA_ENGINES, EXTRA_ENGINE_FACTS, isExtraEngine } from '../../shared/cli-engines.js';
 import { keyAuthLabel } from '../../shared/providers.js';
 import { drawAgentBox, type AgentBox, type NextAgent } from './agent-box.js';
 import { folderPath, completeFolder } from './folders.js';
@@ -61,7 +62,7 @@ import { saveExport } from '../export-file.js';
 import { validateSessionExport } from '../../shared/session-export.js';
 import { validateAgentDiff } from '../../shared/diff.js';
 import { accountAuthLabel, parseAccountCommand, parseHandoffTarget } from './accounts.js';
-import { OWN_ACCOUNT, type AccountProfile } from '../../shared/accounts.js';
+import { OWN_ACCOUNT, type AccountEngine, type AccountProfile } from '../../shared/accounts.js';
 import { validateHandoffPlan, validateHandoffSummary } from '../../shared/handoff.js';
 import { validatePreset, MAX_PRESETS, type Preset } from '../../shared/presets.js';
 import { openFolder, OpenError, type FolderApp } from './open-folder.js';
@@ -597,7 +598,7 @@ export class Homepage {
     if(command==='/shell'){if(argument){this.showNote('/shell takes no argument; use /cd');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.create',engine:'shell',cwd:this.folder}));}catch(error){this.showNote(error instanceof Error?error.message:'Shell could not start');}return;}
     if(command==='/resume'){if(argument){this.showNote('/resume uses the selected agent');return;}const session=this.sessions.find(s=>s.id===this.selectedId);if(!session||!['exited','error'].includes(session.status)){this.showNote('Select an exited or failed agent to resume');return;}if(session.engine==='shell'){this.showNote('A shell has no AI conversation to resume');return;}if(session.engine==='claude-code'&&!session.conversationId){this.showNote('This older Claude agent has no conversation ID');return;}try{await this.selectNew(await this.connection.request({kind:'sessions.resume',sessionId:session.id}));if(session.engine==='codex')this.showNote('Codex resume picker · choose its conversation');}catch(error){this.showNote(error instanceof Error?error.message:'Resume failed');}return;}
     if(command==='/effort'){if(!argument){this.openBox('effort');return;}const effort=argument==='CLI default'?null:argument;if(!isEffortForEngine(this.engine,effort)){this.showNote('/effort '+effortValues(this.engine).join('|'));return;}this.effort=effort;this.showNote('');return;}
-    if(command==='/mode'){if(!argument){this.openBox('mode');return;}const permission=argument==="don't ask"||argument==='dontAsk'?'dontAsk':argument;if(!isPermissionForEngine(this.engine,permission)){this.showNote(this.engine==='codex'&&permission==='auto'?'Codex has no distinct auto mode; choose ask or don\'t ask':'/mode ask|auto|don\'t ask');return;}if(permission==='dontAsk'&&!modeValues(this.engine,this.agentSandbox.dontAsk).includes('dontAsk')){this.showNote(this.agentSandbox.note??"don't ask needs a sandbox");return;}this.permission=permission;this.showNote('');return;}
+    if(command==='/mode'){if(!argument){this.openBox('mode');return;}const permission=argument==="don't ask"||argument==='dontAsk'?'dontAsk':argument;if(!isPermissionForEngine(this.engine,permission)){this.showNote(isExtraEngine(this.engine)?EXTRA_ENGINE_FACTS[this.engine].dontAskNote??'/mode ask|don\'t ask':this.engine==='codex'&&permission==='auto'?'Codex has no distinct auto mode; choose ask or don\'t ask':'/mode ask|auto|don\'t ask');return;}if(permission==='dontAsk'&&!modeValues(this.engine,this.agentSandbox.dontAsk).includes('dontAsk')){this.showNote(this.agentSandbox.note??"don't ask needs a sandbox");return;}this.permission=permission;this.showNote('');return;}
     if (text === '/exit') { await this.stop(); return; }
     const theme = text.match(/^\/theme (graphite|slate|ink|auto|light)$/)?.[1];
     if (isThemeName(theme)) {
@@ -636,7 +637,7 @@ export class Homepage {
     b.auth={kind:'account',profile:next};b.accountLabel=next===OWN_ACCOUNT?'own login':next;b.error='';
   }
   private limitNote(session:SessionInfo):string{
-    const engine=session.engine==='codex'?'codex':'claude',current=session.auth.kind==='account'?session.auth.profile:undefined;
+    const engine=session.engine==='ai-term'||session.engine==='shell'?'claude':engineWord(session.engine),current=session.auth.kind==='account'?session.auth.profile:undefined;
     const other=this.accounts.find(a=>a.engine===session.engine&&a.name!==current)?.name??(current?OWN_ACCOUNT:undefined);
     return `${session.title} hit its limit${session.limit?.resets?` · resets ${session.limit.resets}`:''} · wait, or ${other?`/handoff ${session.title} ${engine}:${other}`:`/account add ${engine} <name> for another account you own`}`;
   }
@@ -649,12 +650,12 @@ export class Homepage {
     const accounts=settings.accounts??[],defaults=settings.defaultAccounts??{},find=(name:string)=>accounts.find(a=>a.name===name);
     const save=async(patch:import('../../shared/protocol.js').SettingsPatch,done:string)=>{try{const next=validateSettings((await this.connection.request({kind:'settings.set',patch})).settings);this.accounts=next.accounts??[];this.defaultAccounts=next.defaultAccounts??{};this.showNote(done);return true;}catch(error){this.showNote(`account not saved: ${error instanceof Error?error.message:'settings could not be saved'}`);return false;}};
     this.accounts=accounts;
-    if(parsed.kind==='list'){this.showNote(accounts.length?accounts.map(a=>`${a.name} · ${a.engine==='codex'?'codex':'claude'}${defaults[a.engine]===a.name?' · default':''}`).join(' · ')+' · /account add claude|codex <name>':'no accounts yet · /account add claude|codex <name> logs a second account in through the CLI');return;}
+    if(parsed.kind==='list'){this.showNote(accounts.length?accounts.map(a=>`${a.name} · ${engineWord(a.engine)}${defaults[a.engine]===a.name?' · default':''}`).join(' · ')+' · /account add claude|codex|gemini|copilot <name>':'no accounts yet · /account add claude|codex|gemini|copilot <name> logs a second account in through the CLI');return;}
     if(parsed.kind==='add'){
       if(find(parsed.name)){this.showNote(`account ${parsed.name} exists · /account rm ${parsed.name} first`);return;}
       if(!(await save({accounts:[...accounts,{name:parsed.name,engine:parsed.engine}]},`✓ account ${parsed.name} added · log in below`)))return;
       // The CLI's own login, in its own folder; AI Term never sees the token.
-      try{const response=await this.connection.request({kind:'sessions.create',engine:parsed.engine,model:null,auth:{kind:'account',profile:parsed.name},cwd:this.folder,permission:'ask',login:true,title:`${parsed.engine==='codex'?'Codex':'Claude'} login · ${parsed.name}`});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;await this.openSelected();}
+      try{const response=await this.connection.request({kind:'sessions.create',engine:parsed.engine,model:null,auth:{kind:'account',profile:parsed.name},cwd:this.folder,permission:'ask',login:true,title:`${parsed.engine==='codex'?'Codex':parsed.engine==='claude-code'?'Claude':engineTitle(parsed.engine)} login · ${parsed.name}`});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;await this.openSelected();}
       catch(error){
         // Take the name back, so /account add can simply be run again.
         const reason=error instanceof Error?error.message:'request failed';
@@ -669,12 +670,12 @@ export class Homepage {
       if(engine===undefined||engine==='ai-term'){this.showNote('/account use applies to Claude Code and Codex');return;}
       // The model belongs to the engine: switching engines goes back to the CLI default, as /model does.
       if(engine!==this.engine)this.model=null;
-      this.engine=engine;this.auth={kind:'account',profile:parsed.name};this.compatibleDefaults(engine);this.showNote(`next agent: ${parsed.name===OWN_ACCOUNT?'own login':parsed.name} · ${engine==='codex'?'codex':'claude code'}`);return;
+      this.engine=engine;this.auth={kind:'account',profile:parsed.name};this.compatibleDefaults(engine);this.showNote(`next agent: ${parsed.name===OWN_ACCOUNT?'own login':parsed.name} · ${engineLabel(engine)}`);return;
     }
     const account=find(parsed.name);
     if(!account){this.showNote(`no account ${parsed.name}`);return;}
-    if(parsed.kind==='default'){await save({defaultAccounts:{...defaults,[account.engine]:account.name}},`✓ ${account.name} is the default ${account.engine==='codex'?'codex':'claude'} account`);return;}
-    const rest:Partial<Record<'claude-code'|'codex',string>>=Object.fromEntries(Object.entries(defaults).filter(([,name])=>name!==account.name));
+    if(parsed.kind==='default'){await save({defaultAccounts:{...defaults,[account.engine]:account.name}},`✓ ${account.name} is the default ${engineWord(account.engine)} account`);return;}
+    const rest:Partial<Record<AccountEngine,string>>=Object.fromEntries(Object.entries(defaults).filter(([,name])=>name!==account.name));
     // Only the name goes: the CLI's folder keeps its login until you log out there (AI Term never deletes it).
     if(this.auth.kind==='account'&&this.auth.profile===account.name)this.auth={kind:'account'};
     await save({accounts:accounts.filter(a=>a.name!==account.name),defaultAccounts:rest},`✓ account ${account.name} removed · its folder stays: ~/.ai-term/profiles/${account.name} (log out there first if you delete it)`);
@@ -1133,7 +1134,7 @@ export class Homepage {
     this.box=undefined;
     const panel=new CredentialsPanel(kind,{
       request:body=>this.connection.request(body),changed:()=>this.draw(true),close:()=>{panel.dispose();if(this.credentials===panel)this.credentials=undefined;this.enqueue(async()=>{await this.refreshSettings();this.draw(true);});},
-      login:async engine=>{const response=await this.connection.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:this.folder,permission:'ask',login:true,title:engine==='codex'?'Codex login':'Claude login'});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.credentials=undefined;await this.openSelected();},
+      login:async engine=>{const response=await this.connection.request({kind:'sessions.create',engine,model:null,auth:{kind:'account'},cwd:this.folder,permission:'ask',login:true,title:engine==='codex'?'Codex login':engine==='claude-code'?'Claude login':`${engineTitle(engine)} login`});const session=validateSession(response.session);this.sessions=[session,...this.sessions.filter(s=>s.id!==session.id)];this.selectedId=session.id;this.credentials=undefined;await this.openSelected();},
       price:(settings,keys)=>{this.credentials=undefined;this.usageForm=new PriceForm(settings,keys);this.draw(true);},
       caps:current=>{this.credentials=undefined;this.usageForm=new CapsForm(current??DEFAULT_AGENT_CAPS);this.draw(true);},
       defaults:kind=>{this.credentials=undefined;this.openBox(kind);this.savingDefault=true;},
@@ -1167,9 +1168,11 @@ export class Homepage {
         try{box.worktreePreview=validateWorktreePreview((await this.connection.request({kind:'worktrees.preview',cwd:box.cwd,title:engineTitle(box.engine)})).worktreePreview);}catch{box.worktreePreview=undefined;}
       }
       // AI Term's agent is this program: nothing to install or log in to; its key is checked when it starts.
-      const status = box.engine === 'ai-term' ? null : box.engine === 'codex' ? this.engines?.codex : this.engines?.claudeCode;
-      if (status !== null && !status?.installed) box.error = `${box.engine === 'codex' ? 'codex' : 'claude'} not found in PATH`;
-      else if (status !== null && box.auth?.kind!=='key' && status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
+      const status = box.engine === 'ai-term' ? null : engineStatus(this.engines, box.engine);
+      // Part B: a missing CLI says how to install it (AI Term never installs one).
+      if (status !== null && !status?.installed && box.engine !== 'ai-term') box.error = `${engineWord(box.engine)} not found in PATH${isExtraEngine(box.engine) ? ` · ${EXTRA_ENGINE_FACTS[box.engine].install}` : ''}`;
+      // Part B's CLIs keep their login to themselves: each asks you to sign in when it starts, so nothing is checked here.
+      else if (status && box.auth?.kind!=='key' && box.engine !== 'ai-term' && !isExtraEngine(box.engine) && status.loggedIn !== true) box.error = status.loggedIn === false ? 'Engine is not logged in' : 'Engine login status unavailable';
     } catch (error) { box.error = error instanceof Error ? error.message : 'Engine check failed'; }
     finally { box.checking = false; this.draw(true); }
   }
@@ -1182,14 +1185,14 @@ export class Homepage {
   }
   private nextAuthLabel():string {
     if(this.auth.kind==='key'){const id=this.auth.keyId,key=this.keys.find(k=>k.id===id);return key?keyAuthLabel(key.provider,key.last4):'key ····';}
-    return accountAuthLabel(this.auth,this.engine,this.defaultAccounts,ownLoginLabel(this.engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod));
+    return accountAuthLabel(this.auth,this.engine,this.defaultAccounts,ownLoginLabel(this.engine==='ai-term'?undefined:engineStatus(this.engines,this.engine)?.authMethod));
   }
   private allModelChoices():import('../../shared/models.js').ModelChoice[]{
     const b=this.box,choices=modelChoices(this.keys,this.engines,this.keysRunOn);if(!b)return choices;
     const matches=choices.filter(c=>c.label.toLowerCase().includes(b.filter.toLowerCase()));
     if(b.filter&&isValidModelId(b.filter)&&!matches.some(c=>c.model===b.filter)){
-      const engine=b.tab==='ANTHROPIC'?'claude-code':b.tab==='OPENAI'?'codex':null;
-      if(engine)matches.push({engine,model:b.filter,label:`${b.filter} (custom)`,auth:{kind:'account'},authLabel:ownLoginLabel(engine==='codex'?this.engines?.codex.authMethod:this.engines?.claudeCode.authMethod),group:b.tab});
+      const engine=b.tab==='ANTHROPIC'?'claude-code':b.tab==='OPENAI'?'codex':EXTRA_ENGINES.find(e=>EXTRA_ENGINE_FACTS[e].title.toUpperCase()===b.tab)??null;
+      if(engine)matches.push({engine,model:b.filter,label:`${b.filter} (custom)`,auth:{kind:'account'},authLabel:ownLoginLabel(engineStatus(this.engines,engine)?.authMethod),group:b.tab});
     }
     return matches;
   }
@@ -1197,7 +1200,7 @@ export class Homepage {
     const b=this.box;if(!b)return;const choices=modelChoices(this.keys,this.engines,this.keysRunOn);
     b.tabs=[...new Set(choices.map(c=>c.group??''))];
     const current=choices.find(c=>c.engine===b.engine&&c.model===b.model&&(c.auth?.kind??'account')===(b.auth?.kind??'account')&&(c.auth?.kind!=='key'||b.auth?.kind==='key'&&c.auth.keyId===b.auth.keyId));
-    b.tab=current?.group??(b.engine==='codex'?'OPENAI':'ANTHROPIC');
+    b.tab=current?.group??(isExtraEngine(b.engine)?EXTRA_ENGINE_FACTS[b.engine].title.toUpperCase():b.engine==='codex'?'OPENAI':'ANTHROPIC');
     b.choices=choices.filter(c=>c.group===b.tab);b.choice=Math.max(0,b.choices.indexOf(current as import('../../shared/models.js').ModelChoice));
   }
   private modelChoices(): void {

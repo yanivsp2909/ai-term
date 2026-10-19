@@ -5,6 +5,7 @@ import { reviewCardText } from './review-ask.js';
 import { compactTokens } from './usage-panel.js';
 import { ownLoginLabel, engineLabel } from '../../shared/models.js';
 import { isLocalProvider, keyAuthLabel } from '../../shared/providers.js';
+import { isExtraEngine } from '../../shared/cli-engines.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { ColorName } from './theme.js';
 // design.md status marks. The card says "done"; the top line counts the same agents as "to review".
@@ -50,8 +51,10 @@ function activity(session: SessionInfo, now: number): Styled | null {
   if (session.status === 'error') return { text: session.exitCode !== null && !session.statusDetail.startsWith('exit ') ? `exit ${session.exitCode} · ${session.statusDetail}` : session.statusDetail, color: 'status-error' };
   if (session.status !== 'running') return null;
   const quiet = quietSince(session);
-  if (quiet !== null && now - quiet >= QUIET_AFTER_MS) return { text: `quiet ${compact(now - quiet, 's')}`, color: 'ink-3' };
-  return session.lastActivity ? { text: session.lastActivity.tool, color: 'ink-3' } : null;
+  // Part B's CLIs report nothing: running and quiet come from their output, and the card says so.
+  const source = isExtraEngine(session.engine) ? 'status from output' : null;
+  if (quiet !== null && now - quiet >= QUIET_AFTER_MS) return { text: [`quiet ${compact(now - quiet, 's')}`, source].filter(Boolean).join(' · '), color: 'ink-3' };
+  return session.lastActivity ? { text: session.lastActivity.tool, color: 'ink-3' } : source ? { text: source, color: 'ink-3' } : null;
 }
 export function testsText(tests: TestResult): Styled {
   switch (tests.state) {

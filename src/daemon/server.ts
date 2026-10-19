@@ -38,6 +38,7 @@ import { RUN_FAILED } from './addons.js';
 import { REMOTE_SERVICE_ERRORS, type RemoteService } from './remote/service.js';
 import { REVERSE_CLI_ERRORS } from './addon-cli.js';
 import packageInfo from '../../package.json' with { type: 'json' };
+import { EXTRA_ENGINES, EXTRA_ENGINE_FACTS } from '../shared/cli-engines.js';
 interface Peer {
     socket: Socket;
     hello: boolean;
@@ -501,7 +502,7 @@ export class DaemonServer {
                 'Invalid key id','Key not found','Invalid key metadata','Invalid key details','Key details must not contain the secret',
                 'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
                 // AI Term's agent (v0.4.1–v0.4.2).
-                'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh",'Pick a model for AI Term agent','Unknown catalog model',
+                'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh","This CLI can't be resumed from AI Term; /retry starts it fresh","A first message for Cursor can't start with -",...EXTRA_ENGINES.map(engine=>`${EXTRA_ENGINE_FACTS[engine].word} not found in PATH · ${EXTRA_ENGINE_FACTS[engine].install}`),'Pick a model for AI Term agent','Unknown catalog model',
                 ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,...QUEUE_ERRORS,...DEV_ERRORS,...BRAIN_ERRORS,'brain.json is unreadable; /brain rm, then /brain','The brain folder is not a plain folder; AI Term left it alone',
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
