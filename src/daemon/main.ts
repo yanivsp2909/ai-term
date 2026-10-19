@@ -34,7 +34,8 @@ export async function runDaemon(entry?:string): Promise<void> {
     await preparePaths(paths, { daemon: true });
     const log = new Logger(paths.log), release = await acquireLock(paths.pid);
     // A new AI Term folder gets the first-run setup once (v1.2); checked before anything here writes settings or state.
-    await markFreshSetup(paths.root, paths.state);
+    // A failed mark never stops the daemon: the setup then just doesn't open by itself (Part C review).
+    try { await markFreshSetup(paths.root, paths.state); } catch (error) { log.error(`First-run setup mark failed (${error instanceof Error && 'code' in error ? String(error.code) : 'error'}); /setup still opens it`); }
     const usage=new UsageService(paths.root,log);
     // macOS: the signed helper app, with click-through. Linux (v0.8.1): notify-send when installed, no click-through.
     const mac = process.platform === 'darwin';

@@ -51,6 +51,7 @@ export const commandRegistry:readonly Command[]=[
  {name:'/worktrees',description:'Review and delete AI Term worktrees',current:none},
  {name:'/copy',description:'Copy Claude last reply; cleaned session fallback',argumentHint:()=> '[all]',values:()=>['all'],current:c=>c.selectedTitle??''},
  {name:'/budget',description:'Daily, weekly and monthly USD limits',current:none},
+ {name:'/setup',description:'What is installed and ready, and the next steps (the first-run setup)',current:none},
  {name:'/usage',description:'API spend and tokens by provider',current:none},
  {name:'/doctor',description:'Check Node, daemon, files and CLIs',current:none},
  {name:'/help',description:'Commands and keyboard help',current:none},

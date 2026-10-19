@@ -18,7 +18,7 @@ export function validateSetupStatus(value: unknown): SetupStatus {
   const v = object(value);
   const tool = (x: unknown) => { const t = object(x); return !!t && keys(t, 'id', 'name', 'found', 'version', 'login', 'install') && (SETUP_TOOLS as readonly unknown[]).includes(t.id) && plain(t.name, 60)
     && (SETUP_FOUND as readonly unknown[]).includes(t.found) && (t.version === null || typeof t.version === 'string' && VERSION.test(t.version)) && (t.login === null || (SETUP_LOGIN as readonly unknown[]).includes(t.login)) && plain(t.install, 160); };
-  const key = (x: unknown) => { const k = object(x); return !!k && keys(k, 'label', 'provider', 'last4') && plain(k.label, 80) && plain(k.provider, 40) && typeof k.last4 === 'string' && /^[A-Za-z0-9_-]{0,4}$/.test(k.last4); };
+  const key = (x: unknown) => { const k = object(x); return !!k && keys(k, 'label', 'provider', 'last4') && plain(k.label, 240) && plain(k.provider, 40) && typeof k.last4 === 'string' && /^[A-Za-z0-9_-]{0,4}$/.test(k.last4); };
   if (!v || !keys(v, 'tools', 'keys', 'sandbox', 'sandboxNote') || !Array.isArray(v.tools) || v.tools.length > SETUP_TOOLS.length || !v.tools.every(tool) || !Array.isArray(v.keys) || v.keys.length > 100 || !v.keys.every(key)
     || !['sandbox-exec', 'bwrap', 'none'].includes(String(v.sandbox)) || !(v.sandboxNote === null || plain(v.sandboxNote, 300))) throw new Error('Invalid setup status');
   return v as unknown as SetupStatus;

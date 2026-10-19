@@ -18,7 +18,9 @@ function toolLine(t: SetupTool): string {
 export function setupLines(status: SetupStatus): Line[] {
   const line = (text: string, tone: Line['tone'] = 'ink-2'): Line => ({ text, tone });
   return [
-    line("Welcome to AI Term. Here's what's on this machine, and what to do next.", 'ink'), line(''),
+    line("Welcome to AI Term. Here's what's on this machine, and what to do next.", 'ink'),
+    // The keys first, so they show on a small terminal before any scrolling (Part C review: 80x24 hid them).
+    line('l log in · k key · b budget · d engine · ⏎ done · Esc skips', 'ink-3'), line(''),
     line("What's installed", 'ink'), ...status.tools.map(t => line(toolLine(t))), line(''),
     line("What's ready", 'ink'),
     line(`  API keys: ${status.keys.length ? status.keys.map(k => `${k.provider} ····${k.last4} (${k.label})`).join(', ') : 'none yet'}`),
@@ -26,20 +28,23 @@ export function setupLines(status: SetupStatus): Line[] {
     line('Next steps', 'ink'),
     line('  l  log in to a CLI (its own login, inside AI Term)'), line('  k  add an API key'), line('  b  set a budget'), line('  d  pick a default engine'),
     line('  /remote on  reach your agents from your phone, later (needs Tailscale)'), line(''),
-    line('⏎ done · Esc skips · ai setup shows this again', 'ink-3'),
+    line('⏎ done · Esc skips · ai setup or /setup shows this again', 'ink-3'),
   ];
 }
 const STEPS: Readonly<Record<string, SetupStep>> = { l: 'login', k: 'key', b: 'budget', d: 'engine' };
 export class SetupPanel {
-  private panel: TextPanel; private ready = false;
+  private panel: TextPanel; private ready = false; private closing = false;
   constructor(changed: () => void, private actions: SetupActions) { this.panel = new TextPanel('Setup', changed, () => this.actions.finish('skipped'), '· checking what is installed'); }
   set(status: SetupStatus): void { this.ready = true; this.panel.set(setupLines(status)); }
   // The check failed (an older daemon, a refused request): said in plain words; Esc still skips and ⏎ still finishes.
   fail(reason: string): void { this.ready = true; this.panel.set([{ text: `Setup couldn't check this machine · ${reason}`, tone: 'ink-2' }, { text: '', tone: 'ink-2' }, { text: '/login connects an engine or a key · /doctor shows what AI Term sees · ⏎ done · Esc skips', tone: 'ink-3' }]); }
+  // One choice only: after it, keys wait here until the homepage has saved it and closed this (Part C review: a second ⏎
+  // reached the homepage and opened the selected agent).
   key(key: string): void {
-    if (key === 'escape') { this.actions.finish('skipped'); return; }
-    if (key === 'enter' && this.ready) { this.actions.finish('done'); return; }
-    const step = STEPS[key]; if (step && this.ready) { this.actions.step(step); return; }
+    if (this.closing) return;
+    if (key === 'escape') { this.closing = true; this.actions.finish('skipped'); return; }
+    if (key === 'enter' && this.ready) { this.closing = true; this.actions.finish('done'); return; }
+    const step = STEPS[key]; if (step && this.ready) { this.closing = true; this.actions.step(step); return; }
     this.panel.key(key);
   }
   draw(frame: Frame, theme: Theme): Frame { return this.panel.draw(frame, theme); }

@@ -215,7 +215,7 @@ export class Homepage {
       // what you were typing); then a note says how instead.
       const busy=Boolean(this.field.text||this.box||this.credentials||this.helpOffset!==null);
       // v1.2 first-run setup: once on a new AI Term folder (the daemon marked it pending), or on `ai setup`.
-      if(this.options.setup===true||settings.setup==='pending'&&!busy)await this.openSetup();
+      if(this.options.setup===true||settings.setup==='pending'&&!busy)this.openSetup();
       else if(engines && engines.claudeCode.loggedIn!==true && engines.codex.loggedIn!==true && !this.keys.length){if(busy)this.showNote('No engine is logged in and no API key is saved · /login connects one');else await this.openCredentials('login');}
       else this.draw(true);
       await this.subscribeStats(true);await this.subscribeUsage(true);
@@ -591,6 +591,8 @@ export class Homepage {
     if(['/retry','/budget','/usage','/doctor'].includes(command??'')&&argument){this.showNote(`${command} takes no argument${command==='/retry'?'; it uses the selected agent':''}`);return;}
     if(command==='/retry'){await this.retrySelected(copyTarget);return;}
     if(command==='/budget'){this.usageForm=new BudgetForm(this.budgets);this.draw(true);return;}
+    // v1.2: the first-run setup again from inside AI Term (the Mac app has no shell for `ai setup`).
+    if(command==='/setup'){if(this.popup){this.showNote('close the open popup first');return;}this.openSetup();return;}
     if(command==='/usage'){await this.openUsage();return;}
     if(command==='/doctor'){await this.openDoctor();return;}
     if(command==='/find'){await this.openFind(text.trim().slice('/find'.length).trim());return;}
@@ -1134,15 +1136,19 @@ export class Homepage {
   }
   private async openCredentials(kind:'login'|'settings'):Promise<void>{await this.createCredentials(kind).load();}
   // v1.2 first-run setup. Finishing (⏎ or a next step) or skipping (Esc) is saved, so it never opens by itself again.
-  private async openSetup():Promise<void>{
+  // The panel opens at once and fills in when the check answers; the homepage never waits for it (Part C review).
+  private openSetup():void{
+    const close=()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);};
     const panel:SetupPanel=new SetupPanel(()=>this.draw(true),{
-      finish:how=>{if(this.popup===panel)this.popup=undefined;this.draw(true);this.enqueue(()=>this.saveSetup(how));},
-      step:step=>{if(this.popup===panel)this.popup=undefined;this.enqueue(async()=>{await this.saveSetup('done');await this.setupStep(step);});},
+      finish:how=>{this.enqueue(async()=>{await this.saveSetup(how);close();});},
+      step:step=>{this.enqueue(async()=>{await this.saveSetup('done');close();await this.setupStep(step);});},
     });
     this.popup=panel;this.draw(true);
-    try{panel.set(validateSetupStatus((await this.connection.request({kind:'setup.status'})).setup));}
-    catch(error){panel.fail(error instanceof DaemonRequestError?error.message.slice(0,160):'the check failed; /doctor shows what AI Term sees');}
-    this.draw(true);
+    this.enqueue(async()=>{
+      try{panel.set(validateSetupStatus((await this.connection.request({kind:'setup.status'})).setup));}
+      catch(error){panel.fail(error instanceof DaemonRequestError?error.message.slice(0,160):'the check failed; /doctor shows what AI Term sees');}
+      this.draw(true);
+    });
   }
   private async saveSetup(how:'done'|'skipped'):Promise<void>{
     try{await this.connection.request({kind:'settings.set',patch:{setup:how}});}
