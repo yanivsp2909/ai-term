@@ -111,7 +111,7 @@ describe('servers on this machine', () => {
     const ids = await listLocalOpenAI('http://127.0.0.1:1234', async url => { asked.push(url.href); return { status: 200, body: JSON.stringify({ data: [{ id: 'qwen3-coder' }, { id: 'bad id\u001b' }, { id: 'qwen3-coder' }, { nope: 1 }, ...Array.from({ length: 50 }, (_, i) => ({ id: `m${i}` }))] }) }; });
     expect(asked).toEqual(['http://127.0.0.1:1234/v1/models']); expect(ids[0]).toBe('qwen3-coder'); expect(ids).not.toContain('bad id\u001b'); expect(ids).toHaveLength(40);
     await expect(listLocalOpenAI('http://localhost:1234')).rejects.toThrow('The server must be at http://127.0.0.1:<port>');
-    await expect(listLocalOpenAI('http://127.0.0.1:1234', async () => { throw Object.assign(new Error('x /Users/me'), { code: 'ECONNREFUSED' }); })).rejects.toThrow('Nothing answers there; start the server, then test again (t)');
+    await expect(listLocalOpenAI('http://127.0.0.1:1234', async () => { throw Object.assign(new Error('x /Users/me'), { code: 'ECONNREFUSED' }); })).rejects.toThrow('Nothing answers at that port; start the server, then test again (t)');
     await expect(listLocalOpenAI('http://127.0.0.1:1234', async () => ({ status: 200, body: 'not json' }))).rejects.toThrow('The server did not answer with a model list');
   });
 });
