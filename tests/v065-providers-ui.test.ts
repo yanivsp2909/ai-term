@@ -132,3 +132,24 @@ it('Part A: a custom endpoint must be public https, and nothing is sent until ad
   expect(sent.find(b => b.kind === 'keys.add')).toEqual({ kind: 'keys.add', provider: 'custom', label: 'Custom OpenAI-compatible endpoint', secret: KEY, endpoint: 'https://llm.example.com/v1', deployments: ['m1'], confirm: 'add' });
   expect(p.lines().join('\n')).not.toContain(KEY);
 });
+
+it('Part A review MEDIUM: the region line sits under the title, so it is on screen whichever provider is highlighted', async () => {
+  const { p } = panel('login');
+  while (!p.lines().includes('› Mistral')) await p.key('down');
+  expect(p.lines().slice(0, 2)).toEqual(['Connect a provider', "requests go to Mistral's servers; it doesn't commit to a location for this endpoint"]);
+  const { createTheme } = await import('../src/client/tui/theme.js');
+  const { Grid, plainText } = await import('../src/client/tui/grid.js');
+  const theme = createTheme('graphite'), frame = new Grid(100, 24, theme).cells;
+  expect(plainText(p.draw(frame, theme))).toContain("requests go to Mistral's servers");
+});
+
+it('Part A review: t on a local server with no models says to load one there, not to pull one with ollama', async () => {
+  const local: KeyView = { id: '8f1c4f53-3a1e-4bb0-9a49-3f3f3f3f3f3f', provider: 'lmstudio', label: 'LM Studio', last4: '', endpoint: 'http://127.0.0.1:1234', deployments: [] };
+  const sent: RequestBody[] = [];
+  const request = async (body: RequestBody): Promise<SuccessResponse> => { sent.push(body); return body.kind === 'keys.list' ? { id: randomUUID(), ok: true, keys: [local] } : body.kind === 'keys.test' ? { id: randomUUID(), ok: true, results: [] } : { id: randomUUID(), ok: true, settings: { theme: 'graphite' } }; };
+  const p = new CredentialsPanel('settings', { request, changed() {}, close() {}, login: async () => {}, defaults() {}, theme: async () => {} });
+  await p.load(); await p.key('t');
+  expect(sent.some(b => b.kind === 'keys.test')).toBe(true);
+  const text = p.lines().join('\n');
+  expect(text).toContain('load one in the server'); expect(text).not.toContain('ollama pull');
+});

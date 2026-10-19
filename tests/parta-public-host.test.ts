@@ -47,3 +47,25 @@ describe('public addresses', () => {
     } finally { await new Promise(done => server.close(done)); }
   });
 });
+
+describe('Part A review findings', () => {
+  it('security LOW: an IPv4-compatible IPv6 address (::a.b.c.d, written ::7f00:1) is not public; nor is an endpoint ending in ? or #', () => {
+    for (const address of ['::7f00:1', '::102:304', '::a00:1']) expect(isPublicAddress(address), address).toBe(false);
+    for (const endpoint of ['https://[::127.0.0.1]/v1', 'https://[::7f00:1]/v1', 'https://[::1.2.3.4]/v1', 'https://llm.example.com/v1?', 'https://llm.example.com/v1#'])
+      expect(isPublicEndpoint(endpoint), endpoint).toBe(false);
+  });
+
+  it('code LOW: an empty-body answer (204, 205, 304, HEAD) is a Response with no body, and its socket is drained', async () => {
+    const { Readable } = await import('node:stream');
+    const { toResponse } = await import('../src/agent/providers/public-fetch.js');
+    for (const [status, method] of [[204, 'POST'], [205, 'POST'], [304, 'GET'], [200, 'HEAD']] as const) {
+      const res = Object.assign(Readable.from(['left over']), { statusCode: status, statusMessage: '', headers: { 'set-cookie': ['a=1', 'b=2'] } });
+      const response = toResponse(res as never, method);
+      expect(response.status).toBe(status); expect(response.body).toBeNull(); expect(response.headers.get('set-cookie')).toBe('a=1, b=2');
+      // Drained: the stream flows to its end instead of holding the keep-alive socket.
+      await new Promise(done => res.once('end', done));
+    }
+    const ok = Object.assign(Readable.from(['{"x":1}']), { statusCode: 200, statusMessage: 'OK', headers: {} });
+    expect(await toResponse(ok as never, 'POST').json()).toEqual({ x: 1 });
+  });
+});
