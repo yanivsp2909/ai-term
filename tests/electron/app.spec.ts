@@ -1,6 +1,6 @@
 import type { TerminalApi } from '../../app/shared/api.js';
 declare global { interface Window { terminal: TerminalApi } }
-import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
+import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -62,12 +62,31 @@ async function commandKey(key: string): Promise<void> {
   }, key);
 }
 
+// Nothing is logged in here, so the login popup opens. Since v1.1's providers it is taller than the command bar's row
+// in this window and covers its placeholder (v1.2.0 Mac check): Esc closes it, then the homepage shows whole.
+async function homepageReady(page: Page): Promise<void> {
+  const screen = page.locator('.xterm-accessibility-tree');
+  await expect(screen).toContainText('Connect a provider');
+  await page.locator('.xterm-helper-textarea').focus();
+  await page.keyboard.press('Escape');
+  await expect(screen).toContainText('What do you want to build?');
+}
+
+test('/setup opens the first-run setup inside the app; Esc closes it', async () => {
+  const page = await application.firstWindow(), screen = page.locator('.xterm-accessibility-tree');
+  await homepageReady(page);
+  await page.keyboard.type('/setup'); await page.keyboard.press('Enter');
+  await expect(screen).toContainText("What's installed");
+  for (const part of ['✗ Claude Code · not found', "What's ready", 'Sandbox: sandbox-exec', 'Next steps']) await expect(screen).toContainText(part);
+  await page.keyboard.press('Escape');
+  await expect(screen).not.toContainText("What's installed");
+  await expect(screen).toContainText('What do you want to build?');
+});
+
 test('opens ai homepage, types immediately, preserves paste, searches and resizes', async () => {
   const page = await application.firstWindow();
   const screen = page.locator('.xterm-accessibility-tree');
-  await expect(screen).toContainText('What do you want to build?');
-  await page.locator('.xterm-helper-textarea').focus();
-  await page.keyboard.press('Escape');
+  await homepageReady(page);
   await expect(screen).not.toContainText('Connect a provider');
   await page.keyboard.type('desktop smoke');
   await expect(screen).toContainText('desktop smoke');
@@ -87,7 +106,7 @@ test('opens ai homepage, types immediately, preserves paste, searches and resize
 
 test('runtime sandbox and preload expose only the nine operations', async () => {
   const page = await application.firstWindow();
-  await expect(page.locator('.xterm-accessibility-tree')).toContainText('What do you want to build?');
+  await homepageReady(page);
   expect(await page.evaluate(() => Object.keys(window.terminal).sort())).toEqual(['copy', 'onOutput', 'onTheme', 'onMenuAction', 'themeApplied', 'openUrl', 'paste', 'resize', 'write'].sort());
   expect(await page.evaluate(() => ({ node: typeof Reflect.get(window, 'require'), process: typeof Reflect.get(window, 'process'), ipc: typeof Reflect.get(window, 'ipcRenderer') }))).toEqual({ node: 'undefined', process: 'undefined', ipc: 'undefined' });
   const preferences = await application.evaluate(({ BrowserWindow }) => {
@@ -105,7 +124,7 @@ test('runtime sandbox and preload expose only the nine operations', async () => 
 
 test('clipboard paste refuses a paste-end escape before it can become an approval key', async () => {
   const page = await application.firstWindow();
-  await expect(page.locator('.xterm-accessibility-tree')).toContainText('What do you want to build?');
+  await homepageReady(page);
   expect(await page.evaluate(async () => {
     await window.terminal.copy('\x1b[201~y');
     try { await window.terminal.paste(); return false; } catch { return true; }
@@ -119,7 +138,7 @@ test('clipboard paste refuses a paste-end escape before it can become an approva
 
 test('native Command shortcuts open palette, start, search, settings and select the first homepage agent', async () => {
   const page = await application.firstWindow(), screen = page.locator('.xterm-accessibility-tree');
-  await expect(screen).toContainText('What do you want to build?');
+  await homepageReady(page);
   await expect(page.locator('.chrome')).toHaveText('Closing or quitting keeps your agents running.');
   await commandKey('E'); await expect(screen).not.toContainText('Connect a provider');
   await commandKey('K'); await expect(screen).toContainText('/settings');
@@ -152,7 +171,7 @@ test('native Command shortcuts open palette, start, search, settings and select 
 
 test('live native theme changes recolor the TUI through a fresh OSC11 probe', async () => {
   const page = await application.firstWindow();
-  await expect(page.locator('.xterm-accessibility-tree')).toContainText('What do you want to build?');
+  await homepageReady(page);
   await page.evaluate(() => {
     Reflect.set(window,'themeOutput','');
     window.terminal.onOutput(data=>{Reflect.set(window,'themeOutput', String(Reflect.get(window,'themeOutput')) + data);});
@@ -170,7 +189,7 @@ test('live native theme changes recolor the TUI through a fresh OSC11 probe', as
 });
 test('native navigation closes search and returns typing focus to xterm', async () => {
   const page=await application.firstWindow(),screen=page.locator('.xterm-accessibility-tree');
-  await expect(screen).toContainText('What do you want to build?');
+  await homepageReady(page);
   await commandKey('E');
   for(const key of ['K','T','E']){
     await commandKey('F'); await expect(page.getByRole('textbox',{name:'Search scrollback'})).toBeFocused();
@@ -187,7 +206,7 @@ test('native navigation closes search and returns typing focus to xterm', async 
 
 test('a pasted authenticated control sequence does nothing in the real ai client', async () => {
   const page = await application.firstWindow(), screen = page.locator('.xterm-accessibility-tree');
-  await expect(screen).toContainText('What do you want to build?');
+  await homepageReady(page);
   await commandKey('E'); await expect(screen).not.toContainText('Connect a provider');
   // Capture only this disposable launch's native menu write in memory. No token
   // accessor or test hook is added to the product/preload.

@@ -31,7 +31,10 @@ test('window uses an existing protocol-compatible dev daemon without stopping it
   const original=(await client.request({kind:'sessions.create',engine:'shell',cwd:home,title:'agent before app'})).session;
   application=await electron.launch({...electronLaunch(resolve('app/out/main/index.js'),packaged),env});
   await application.evaluate(async({app})=>{await app.whenReady();});
-  const page=await application.firstWindow();await expect(page.locator('.xterm-accessibility-tree')).toContainText('agent before app');
+  const page=await application.firstWindow();
+  // Nothing is logged in, so the login popup opens over the agent list first (v1.2.0 Mac check): Esc closes it.
+  await expect(page.locator('.xterm-accessibility-tree')).toContainText('Connect a provider');await page.locator('.xterm-helper-textarea').focus();await page.keyboard.press('Escape');
+  await expect(page.locator('.xterm-accessibility-tree')).toContainText('agent before app');
   expect((await client.request({kind:'hello',protocol:1,version:'test'})).daemonPid).toBe(daemon.pid);
   if(packaged){
    const connected=client;
