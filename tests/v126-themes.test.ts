@@ -49,6 +49,15 @@ describe('the built-in themes', () => {
     expect(themeColors('ink', 'dark')).toMatchObject({ bg: '#111317', surface: '#191c21', 'surface-2': '#242830', line: '#3a3f48', ink: '#e6e8eb', 'ink-2': '#a3a9b4', 'ink-3': '#8e96a3', accent: '#4fd1c5' });
   });
 
+  it('graphite stays at value.dark and value.light, where readers of the old shape look (spikes/renderer/theme.js, the A/B noise)', async () => {
+    for (const token of tokens.color.tokens) if (typeof token.value === 'object') {
+      const value = token.value as unknown as Record<string, unknown>;
+      expect([value.dark, value.light], token.name).toEqual([themeColors('graphite', 'dark')[token.name as ColorName], themeColors('graphite', 'light')[token.name as ColorName]]);
+    }
+    const spike = await import('../spikes/renderer/theme.js') as { dark: Record<string, string> };
+    expect(spike.dark.bg).toBe(themeColors('graphite', 'dark').bg);
+  });
+
   it('contrastRatio is the WCAG ratio', () => {
     expect(contrastRatio('#000000', '#ffffff')).toBeCloseTo(21, 5);
     expect(contrastRatio('#777777', '#777777')).toBeCloseTo(1, 5);
