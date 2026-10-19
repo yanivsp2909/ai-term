@@ -78,7 +78,7 @@ import { electronNodeNeeded } from '../shared/runtime-paths.js';
 import { buildShellEnv, buildSpawnEnv, buildArgs, buildExtraArgs, buildExtraEnv, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv,buildTestEnv,splitAgentSecrets } from './env.js';
 import { KeyStore, KeyError, type FoundryBinding } from './keys.js';
 import { CLI_KEY_PROVIDERS, isBoundProvider, isLocalEndpoint, isLocalProvider, testedModels } from '../shared/providers.js';
-import { checkEngine, checkExtraEngine } from './engines.js';
+import { checkEngine, checkExtraEngine, geminiSandboxRunner, GEMINI_NO_SANDBOX } from './engines.js';
 import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
 import { BudgetLedger } from './budget-ledger.js';
@@ -139,7 +139,8 @@ export const HANDOFF_NOT_STARTED_PAID="The new agent didn't start; the old one k
 // Every handoff refusal is one of these fixed texts, so the socket can return it as written.
 export class ForkError extends Error {}
 export const FORK_ERRORS=['Only an AI agent can be forked',"The fork's worktree couldn't be made (the start commit may be gone); nothing started","Fork needs the agent's first message; it started without one, or before the background service restarted",'Fork needs an agent with a worktree, so the two can be compared','Pick two different agents to compare','These agents are in different repositories'] as const;
-export const HANDOFF_ERRORS=[HANDOFF_NOT_STOPPED,'Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done',"Agent hit its limit and can't write the note · add an API key for the summary",'Agent is being handed off'];
+const EXTRA_NO_NOTE="This CLI reports no status, so it can't write the note · add an API key for the summary";
+export const HANDOFF_ERRORS=[HANDOFF_NOT_STOPPED,EXTRA_NO_NOTE,'Handoff is off · /settings g turns it on (it spends tokens)','Only an AI agent can hand off','Handoff already running','Agent has exited','Agent is asking for permission','Agent is asking a question','Agent is running a tool','The handoff note came back empty','The handoff summary request failed','Agent exited before writing its handoff note',"The agent didn't write its handoff note in time; it keeps running",'The handoff would pass your daily budget','The handoff would pass your weekly budget','The handoff would pass your monthly budget','Budget check unavailable; try again',HANDOFF_NOT_STARTED,HANDOFF_NOT_STARTED_PAID,"Agent hasn't started yet",'The summary writer changed; run /handoff again','Agent exited before the handoff finished','Agent is still working · hand off when it is done',"Agent hit its limit and can't write the note · add an API key for the summary",'Agent is being handed off'];
 const HANDOFF_SUMMARY_MS=120_000,HANDOFF_REPLY_MS=300_000;
 function sameWriter(approved:HandoffWriter,writer:import('./handoff.js').KeyedWriter|null):boolean{return approved.kind==='agent'?writer===null:writer!==null&&approved.provider===writer.key.provider&&approved.model===writer.model&&approved.last4===writer.key.last4;}
 export class SessionManager extends EventEmitter {
@@ -405,8 +406,11 @@ export class SessionManager extends EventEmitter {
             // argv and env from env.ts, Ask by default. A CLI that isn't installed says how to install it; AI Term never does.
             const engine=agent.engine,facts=EXTRA_ENGINE_FACTS[engine];
             if(agent.auth.kind!=='account')throw new KeyError('Key provider does not match engine');
+            // Add-ons list Claude Code, Codex and AI Term's agent only: their read-only and isolation rules need those.
+            if(addon)throw new AddonError('Engine unavailable for this add-on');
             const status=await checkExtraEngine(engine,process.env,undefined,profilePath);
             if(!status.installed||!status.path)throw new Error(`${facts.word} not found in PATH · ${facts.install}`);
+            if(engine==='gemini'&&agent.permission==='dontAsk'&&!agent.login&&!(await geminiSandboxRunner(process.env.PATH??'')))throw new Error(GEMINI_NO_SANDBOX);
             authMethod=status.authMethod;
             recipe={executable:status.path,args:agent.login?[...facts.login]:buildExtraArgs({engine,model:agent.model,permission:agent.permission,...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})}),env:buildExtraEnv(engine,process.env,{keepElectronNode:electronNodeNeeded(process.execPath,process.versions.electron),...(profilePath?{profileDir:profilePath}:{})})};
             recipe = { ...recipe, ...await windowsRecipe({ executable: recipe.executable, args: recipe.args }, process.env.PATH ?? '') };
@@ -925,6 +929,8 @@ export class SessionManager extends EventEmitter {
         const source=await this.handoffSource(id,engine,account),screen=(await this.text(id)).text,writer=cheapestWriter(await this.keys.list(),source.settings,this.handoffWriter.prices);
         // Said before the ask, not after ⏎: a limited agent can't write its own note.
         if(!writer&&source.live.info.limit)throw new Error("Agent hit its limit and can't write the note · add an API key for the summary");
+        // Part B's CLIs never report a finished turn, so only a keyed summary can hand one off (Part B review).
+        if(!writer&&isExtraEngine(source.live.info.engine))throw new Error(EXTRA_NO_NOTE);
         const plan=handoffPlan(source.live.info.title,engine,screen,writer,source.live.info.authMethod==='subscription');
         return source.account===OWN_ACCOUNT?plan:{...plan,account:source.account};
     }
@@ -1008,6 +1014,7 @@ export class SessionManager extends EventEmitter {
     private async agentSummary(live:Live,engine:CliEngine):Promise<string>{
         // An agent at its account limit can't write anything; only a keyed summary can hand it off.
         if(live.info.limit)throw new Error('Agent hit its limit and can\'t write the note · add an API key for the summary');
+        if(isExtraEngine(live.info.engine))throw new Error(EXTRA_NO_NOTE);
         if(live.info.status!=='done')throw new Error('Agent is still working · hand off when it is done');
         const before=live.lastReply;
         await this.sendText(live,`${handoffInstructions(engine)} Reply with the note only.`);

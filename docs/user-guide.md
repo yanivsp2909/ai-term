@@ -155,7 +155,7 @@ Use `/account default <name>` to set the default for an engine. Use `/account us
 
 AI Term never switches accounts by itself. At a usage limit, the card shows the reset time. You choose what to do next.
 
-Cursor, Gemini CLI and Copilot CLI run like Claude Code and Codex, on your own login. Pick one in `/model`. To sign in, choose its `· CLI login` row in `/login`. A key you pick for one of them runs on AI Term's agent instead. Their cards say `status from output`: they report nothing to AI Term, so `/send` can't reach them. Open them with ⏎ and type there. Gemini CLI has Don't ask in its own sandbox. Cursor and Copilot CLI are Ask only. Gemini CLI and Copilot CLI take extra accounts (`/account add gemini <name>`).
+Cursor, Gemini CLI and Copilot CLI run like Claude Code and Codex, on your own login. Pick one in `/model`. To sign in, choose its `· CLI login` row in `/login`. A key you pick for one of them runs on AI Term's agent instead. Their cards say `status from output`: they report nothing to AI Term, so `/send` can't reach them. Open them with ⏎ and type there. Gemini CLI has Don't ask in its own sandbox (on Linux it needs Docker or Podman). Cursor and Copilot CLI are Ask only, but tools their own settings allow run without asking. Gemini CLI and Copilot CLI take extra accounts (`/account add gemini <name>`); log in once in each. Cursor needs a first message of at least two words, because one word could run one of its commands. Gemini CLI reads a key from a project `.env`, so keep `GEMINI_API_KEY` out of one you run it in.
 
 Use `/login` to connect an engine or add an API key. Every key's models are tested at once. Only models that pass are offered.
 

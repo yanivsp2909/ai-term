@@ -138,10 +138,10 @@ describe('in the daemon', () => {
   it('starts each CLI in its own worktree, Ask by default, with its credential variables gone and status from output', async () => {
     const d = await setup();
     for (const engine of ['gemini', 'copilot', 'cursor'] as const) {
-      const session = await d.manager.create({ engine, model: null, auth: { kind: 'account' }, cwd: d.repo, permission: 'ask', firstMessage: 'hello' });
+      const session = await d.manager.create({ engine, model: null, auth: { kind: 'account' }, cwd: d.repo, permission: 'ask', firstMessage: 'say hello' });
       const started = d.spawned.at(-1); if (!started) throw new Error('no spawn');
       expect(started.file).toBe(join(d.bin, engine === 'cursor' ? 'cursor-agent' : engine));
-      expect(started.args).toEqual(engine === 'gemini' ? ['--approval-mode=default', '--prompt-interactive=hello'] : engine === 'copilot' ? ['--interactive=hello'] : ['hello']);
+      expect(started.args).toEqual(engine === 'gemini' ? ['--approval-mode=default', '--prompt-interactive=say hello'] : engine === 'copilot' ? ['--interactive=say hello'] : ['say hello']);
       // Each CLI loses its own credential variables (another CLI's are not its business).
       expect(started.env[engine === 'gemini' ? 'GEMINI_API_KEY' : engine === 'copilot' ? 'GH_TOKEN' : 'CURSOR_API_KEY']).toBeUndefined();
       expect(session).toMatchObject({ engine, auth: { kind: 'account' }, branch: expect.stringMatching(/^ai\//) });

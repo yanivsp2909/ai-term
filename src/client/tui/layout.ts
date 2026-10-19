@@ -1,15 +1,19 @@
 import packageInfo from '../../../package.json' with { type: 'json' };
 import { engineLabel } from '../../shared/models.js';
+import { isExtraEngine } from '../../shared/cli-engines.js';
 // design.md: two letters for the model family (CL Claude, GP GPT, KI Kimi, GR Grok, DS DeepSeek, GL GLM). AI Term's agent can
 // run any of them, so its badge follows the deployment name; an unknown family reads AT.
 const FAMILIES: [RegExp, string][] = [[/^claude|^opus|^sonnet|^haiku/i, 'CL'], [/^gpt|^o\d|^codex/i, 'GP'], [/^kimi/i, 'KI'], [/^grok/i, 'GR'], [/^deepseek/i, 'DS'], [/^glm/i, 'GL']];
-function badge(session: SessionInfo): string {
+// Part B's CLIs pick their own models, so their badge names the CLI (CU Cursor, GE Gemini CLI, CP Copilot CLI).
+const EXTRA_BADGES: Readonly<Record<ExtraEngine, string>> = { cursor: 'CU', gemini: 'GE', copilot: 'CP' };
+export function badge(session: SessionInfo): string {
   if (session.engine === 'shell') return 'SH';
+  if (isExtraEngine(session.engine)) return EXTRA_BADGES[session.engine];
   if (session.engine === 'codex') return 'GP';
   if (session.engine === 'claude-code') return 'CL';
   return FAMILIES.find(([pattern]) => pattern.test(session.model ?? ''))?.[1] ?? 'AT';
 }
-import type { SessionInfo, AgentEngine, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
+import type { ExtraEngine, SessionInfo, AgentEngine, SystemStats, UsageSummary, Budgets, Effort, Permission } from '../../shared/protocol.js';
 import { Grid, graphemes, type Frame } from './grid.js';
 import { textWidth } from '../../shared/unicode-width.js';
 import type { Theme } from './theme.js';

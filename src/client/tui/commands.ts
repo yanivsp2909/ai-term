@@ -1,6 +1,7 @@
 import type {AgentEngine,Effort,Permission,ThemeName} from '../../shared/protocol.js';
 import {EFFORT_LEVELS} from '../../shared/validate.js';
 import { EXTRA_ENGINE_FACTS, isExtraEngine } from '../../shared/cli-engines.js';
+import { engineLabel } from '../../shared/models.js';
 // dontAsk: false where AI Term's agent can't have its bash sandbox (v0.8.1); it then offers Ask only.
 export interface CommandContext {engine:AgentEngine;model:string|null;cwd:string;theme:ThemeName;effort?:Effort|null;permission?:Permission;selectedTitle?:string;agents?:readonly string[];dontAsk?:boolean}
 export interface Command {name:string;description:string;argumentHint?:(context:CommandContext)=>string;values?:(context:CommandContext)=>readonly string[];current:(context:CommandContext)=>string}
@@ -18,7 +19,7 @@ export const LOCAL_ADDON_COMMANDS:readonly string[]=['bisect','standup','study-d
 export const WEB_ADDON_COMMANDS:readonly string[]=['research'];
 export const ADDON_HINTS:Readonly<Record<string,string>>={plan:'<goal>',prompt:'<file or text>',explain:'<path or question>',teach:'[agent]',fix:'<error text or file>',cover:'[path]',bisect:'[--no-deps] <test command> [good ref]',refactor:'[path]',perf:'[path or command]',types:'[path]',failures:'[path]',security:'[path]','review-deep':'[agent]',issue:'<#number or issue URL>','pr-review':'<#number or PR URL>',deps:'[path]',commit:'[agent]',changelog:'[from..to]',docs:'[path]',handover:'[path]',standup:'',adr:'<decision>',context:'',opensource:'',deck:'<topic>',slides:'<topic>',diagram:'<what to draw>',design:'<screen>',polish:'<path>',a11y:'<path>',e2e:'<app or flow>',animate:'<motion>',video:'<topic>',research:'<question>',study:'[topic]','study-due':'',reverse:'<target> | path <path>'};
 export const commandRegistry:readonly Command[]=[
- {name:'/model',description:'Choose model and provider',current:c=>`${c.model??'CLI default'} · ${c.engine==='codex'?'codex':'claude code'}`},
+ {name:'/model',description:'Choose model and provider',current:c=>`${c.model??'CLI default'} · ${engineLabel(c.engine)}`},
  {name:'/cd',description:'Choose the next agent folder',current:c=>c.cwd},
  {name:'/skills',description:'Browse and enable skills, agents and commands',current:none},
  {name:'/mcp',description:'MCP servers and per-tool load controls',argumentHint:()=> '[add|remove <name>]',current:none},

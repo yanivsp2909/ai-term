@@ -817,7 +817,8 @@ export class Homepage {
     try{
       // A local add-on sends no target; /standup still gets the choices, for its m (a model pass that asks first).
       const local=LOCAL_ADDON_COMMANDS.includes(name),keys=(await this.connection.request({kind:'keys.list'})).keys??[];
-      let targets:AddonTarget[]=modelChoices(keys,this.engines,'ai-term').map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
+      // Part B's CLIs aren't add-on engines (no add-on lists them), so they're never offered here.
+      let targets:AddonTarget[]=modelChoices(keys,this.engines,'ai-term').filter(choice=>!isExtraEngine(choice.engine)).map(choice=>({engine:choice.engine,model:choice.model,auth:choice.auth??{kind:'account'}}));
       // /research needs an engine with its own web tools; AI Term's agent stays offered only when nothing else is, so the
       // daemon's one-line reason can say why.
       if(WEB_ADDON_COMMANDS.includes(name)){const web=targets.filter(t=>t.engine!=='ai-term');if(web.length)targets=web;}
@@ -1262,7 +1263,7 @@ export class Homepage {
         if (b.kind === 'model') {
           const choice = b.choices[b.choice]; if (!choice) { b.error = 'Enter a valid model id'; this.draw(true); return; }
           // Saved defaults carry no key, so an AI Term model saved as one would start a CLI login instead.
-          if (this.savingDefault && !isCliEngine(choice.engine)) { b.error = "AI Term agent models can't be the saved default yet"; this.draw(true); return; }
+          if (this.savingDefault && !isCliEngine(choice.engine)) { b.error = "Only a Claude Code or Codex model can be the saved default"; this.draw(true); return; }
           // An account picked for this engine stays with a model of the same engine; another engine or a key drops it.
           const keep=(!choice.auth||choice.auth.kind==='account')&&choice.engine===b.engine&&b.auth?.kind==='account'&&b.auth.profile?b.auth:undefined;
           b.engine = choice.engine; b.model = choice.model; b.auth=keep??choice.auth??{kind:'account'};this.auth=b.auth;if(!keep)delete b.accountLabel;this.engine = choice.engine;this.compatibleDefaults(choice.engine);if(!isEffortForEngine(choice.engine,b.effort??null))b.effort=null;if(!isPermissionForEngine(choice.engine,b.permission))b.permission='ask'; this.model = choice.model;b.authLabel=this.nextAuthLabel();

@@ -15,7 +15,8 @@ import { DEV_ERRORS, SessionManager, AGENT_COMMAND_ERRORS, FORK_ERRORS, HANDOFF_
 import { SettingsStore } from './settings.js';
 import { Logger } from './log.js';
 import { UsageService } from './usage-service.js';
-import { enginesStatus } from './engines.js';
+import { enginesStatus, GEMINI_NO_SANDBOX } from './engines.js';
+import { CURSOR_ONE_WORD } from './env.js';
 import { KeyStore, KeyError, FOUNDRY_KEY_ERRORS, KEYCHAIN_ERRORS } from './keys.js';
 import { testFoundry } from './providers/foundry.js';
 import { testDirect } from './providers/direct.js';
@@ -502,7 +503,7 @@ export class DaemonServer {
                 'Invalid key id','Key not found','Invalid key metadata','Invalid key details','Key details must not contain the secret',
                 'Only Foundry keys have deployment tests','Foundry needs an endpoint and deployments','Key provider does not match engine','Foundry deployment must pass its test first',
                 // AI Term's agent (v0.4.1–v0.4.2).
-                'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh","This CLI can't be resumed from AI Term; /retry starts it fresh","A first message for Cursor can't start with -",...EXTRA_ENGINES.map(engine=>`${EXTRA_ENGINE_FACTS[engine].word} not found in PATH · ${EXTRA_ENGINE_FACTS[engine].install}`),'Pick a model for AI Term agent','Unknown catalog model',
+                'AI Term agent needs an API key',"AI Term agent can't use this key yet","AI Term agent can't resume yet; /retry starts it fresh","This CLI can't be resumed from AI Term; /retry starts it fresh","A first message for Cursor can't start with -",CURSOR_ONE_WORD,GEMINI_NO_SANDBOX,...EXTRA_ENGINES.map(engine=>`${EXTRA_ENGINE_FACTS[engine].word} not found in PATH · ${EXTRA_ENGINE_FACTS[engine].install}`),'Pick a model for AI Term agent','Unknown catalog model',
                 ...KEYCHAIN_ERRORS,...AGENT_SANDBOX_ERRORS,...CLI_LAUNCH_ERRORS,...QUEUE_ERRORS,...DEV_ERRORS,...BRAIN_ERRORS,'brain.json is unreadable; /brain rm, then /brain','The brain folder is not a plain folder; AI Term left it alone',
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',

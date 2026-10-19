@@ -22,6 +22,13 @@ export async function resolveExecutable(name:string,path:string,platform:NodeJS.
     }
     return null;
 }
+// Part B review: Gemini CLI's Don't ask is its yolo mode with --sandbox, which needs a runner: sandbox-exec (Seatbelt) on
+// macOS, Docker or Podman elsewhere. Without one it isn't started, so Don't ask never runs unsandboxed.
+export const GEMINI_NO_SANDBOX="Gemini CLI's sandbox needs Docker or Podman here · Don't ask is off until one is installed";
+export async function geminiSandboxRunner(path:string,platform:NodeJS.Platform=process.platform):Promise<string|null>{
+    for(const name of platform==='darwin'?['sandbox-exec']:['docker','podman']){const found=await resolveExecutable(name,path,platform);if(found)return found;}
+    return null;
+}
 export interface EngineRunResult {code:number|null;stdout:string;stderr:string}
 export type EngineRunner=(file:string,args:string[],options:{env:NodeJS.ProcessEnv;timeout:number;maxBuffer:number;windowsHide?:boolean})=>Promise<EngineRunResult>;
 const run:EngineRunner=(file,args,options)=>new Promise(resolve=>execFile(file,args,options,(error,stdout,stderr)=>resolve({code:error?typeof error.code==='number'?error.code:null:0,stdout,stderr})));

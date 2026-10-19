@@ -19,7 +19,7 @@ export function buildShellEnv(base: NodeJS.ProcessEnv, options: {keepElectronNod
 
 import { isAddonBundle } from '../agent/addon-bundle.js';
 import type { AddonMcp, AddonRunOptions } from './addons.js';
-import { dirname, isAbsolute, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { AgentEngine, CliEngine, ExtraEngine, Permission, Effort, ThemeName, KeyProvider } from '../shared/protocol.js';
 import { EXTRA_ENGINE_FACTS } from '../shared/cli-engines.js';
 import { isSafeAbsolutePath, isModel, isPermissionForEngine, isEffortForEngine, isUUID, isStatusCommandPath, isValidModelId, isThemeName, isEndpoint, isSecret, isKeyProvider, isFirstMessage } from '../shared/validate.js';
@@ -72,7 +72,10 @@ const PERMISSION_ARGS:Record<AgentEngine,Partial<Record<Permission,readonly stri
 export const CURSOR_AUTH_VARS=['CURSOR_API_KEY','CURSOR_CONFIG_DIR'] as const;
 export const GEMINI_AUTH_VARS=['GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_CLOUD_PROJECT','GOOGLE_CLOUD_PROJECT_ID','GOOGLE_CLOUD_LOCATION','GOOGLE_APPLICATION_CREDENTIALS','GOOGLE_GENAI_API_VERSION',
     'GOOGLE_GEMINI_BASE_URL','GOOGLE_VERTEX_BASE_URL','CODE_ASSIST_ENDPOINT','GOOGLE_GENAI_USE_VERTEXAI','GOOGLE_GENAI_USE_GCA','GEMINI_CLI_HOME','GEMINI_CLI_TRUST_WORKSPACE','GEMINI_CLI_TRUSTED_FOLDERS_PATH',
-    'GEMINI_TELEMETRY_OTLP_ENDPOINT','GEMINI_TELEMETRY_OTLP_HEADERS','OTLP_GOOGLE_CLOUD_PROJECT'] as const;
+    'GEMINI_TELEMETRY_OTLP_ENDPOINT','GEMINI_TELEMETRY_OTLP_HEADERS','OTLP_GOOGLE_CLOUD_PROJECT',
+    // Its sandbox switches (Part B review): SANDBOX tells Gemini CLI it already runs inside one, so --sandbox would start
+    // none; GEMINI_SANDBOX=false turns it off; SEATBELT_PROFILE swaps the macOS profile. Don't ask always gets the default.
+    'SANDBOX','GEMINI_SANDBOX','SEATBELT_PROFILE'] as const;
 export const COPILOT_AUTH_VARS=['COPILOT_GITHUB_TOKEN','GH_TOKEN','GITHUB_TOKEN','GH_HOST','COPILOT_GH_HOST','COPILOT_PROVIDER_*','COPILOT_PROVIDERS_CONFIG','COPILOT_OFFLINE','COPILOT_HOME','COPILOT_ALLOW_ALL'] as const;
 const EXTRA_AUTH_VARS:Record<ExtraEngine,readonly string[]>={cursor:CURSOR_AUTH_VARS,gemini:GEMINI_AUTH_VARS,copilot:COPILOT_AUTH_VARS};
 const EXTRA_PROFILE_VAR:Partial<Record<ExtraEngine,string>>={gemini:'GEMINI_CLI_HOME',copilot:'COPILOT_HOME'};
@@ -82,9 +85,14 @@ export function buildExtraEnv(engine:ExtraEngine,base:NodeJS.ProcessEnv,options:
     const result=buildShellEnv(base,options),fold=(options.platform??process.platform)==='win32'?(name:string)=>name.toUpperCase():(name:string)=>name;
     const vars=EXTRA_AUTH_VARS[engine];
     for(const key of Object.keys(result))if(vars.some(pattern=>pattern.endsWith('*')?fold(key).startsWith(pattern.slice(0,-1)):fold(key)===pattern))delete result[key];
-    if(options.profileDir!==undefined){const name=EXTRA_PROFILE_VAR[engine];if(!name||!absolute(options.profileDir))throw new Error(`${EXTRA_ENGINE_FACTS[engine].title} has one account`);result[name]=options.profileDir;}
+    if(options.profileDir!==undefined){const name=EXTRA_PROFILE_VAR[engine];if(!name||!absolute(options.profileDir))throw new Error(`${EXTRA_ENGINE_FACTS[engine].title} has one account`);result[name]=options.profileDir;
+        // Copilot CLI falls back to `gh auth token` when it has no login of its own; a new profile would quietly use your
+        // gh account. Its own (empty) gh folder makes it ask for a login instead (Part B review).
+        if(engine==='copilot')result.GH_CONFIG_DIR=join(options.profileDir,'gh');}
     return result;
 }
+const CURSOR_COMMAND_WORD=/^[a-z][a-z-]*$/i;
+export const CURSOR_ONE_WORD='Cursor would read a one-word first message as a command · add a word, or type it inside Cursor';
 // The model is one --model=<id> element; the first message one element too: Gemini's --prompt-interactive=<text> and
 // Copilot's --interactive=<text> (both run it and stay interactive), Cursor's positional prompt, which must not start with
 // - (it would read as a flag).
@@ -92,6 +100,8 @@ export function buildExtraArgs(request:{engine:ExtraEngine;model:string|null;per
     const {engine}=request,flags=PERMISSION_ARGS[engine][request.permission];
     if(!flags||!isPermissionForEngine(engine,request.permission)||!isModel(request.model)||request.firstMessage!==undefined&&!isFirstMessage(request.firstMessage))throw new Error('Invalid session request');
     if(engine==='cursor'&&request.firstMessage?.startsWith('-'))throw new Error("A first message for Cursor can't start with -");
+    // Cursor's prompt is a positional argument, so one bare word (logout, update, mcp) would run that command instead.
+    if(engine==='cursor'&&request.firstMessage!==undefined&&CURSOR_COMMAND_WORD.test(request.firstMessage))throw new Error(CURSOR_ONE_WORD);
     const args=[...flags,...(request.model!==null?[`--model=${request.model}`]:[])];
     if(request.firstMessage!==undefined)args.push(engine==='gemini'?`--prompt-interactive=${request.firstMessage}`:engine==='copilot'?`--interactive=${request.firstMessage}`:request.firstMessage);
     return args;
