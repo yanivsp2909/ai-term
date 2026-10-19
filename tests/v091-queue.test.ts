@@ -147,7 +147,9 @@ it('end to end: /queue add over the socket, the due item starts a real session t
     const added = await client.request({ kind: 'queue.add', trigger: { kind: 'at', time: '20:30' }, limit: { until: '23:00' }, request: request({ cwd: proj }) });
     expect(added.queue).toHaveLength(1);
     clock = new Date(2026, 9, 15, 20, 31); await queue.tick();
-    const listed = (await client.request({ kind: 'queue.list' })).queue ?? [];
+    const response = await client.request({ kind: 'queue.list' }), listed = response.queue ?? [];
+    // Backlog F6: the list says what couldn't be read at start (nothing here).
+    expect(response.queueUnreadable).toBeNull();
     expect(listed[0]).toMatchObject({ state: 'started', sessionId: expect.any(String) });
     expect(manager.list().find(session => session.id === listed[0]?.sessionId)).toMatchObject({ engine: 'codex', permission: 'ask', cwd: proj });
     await expect(client.request({ kind: 'queue.add', trigger: { kind: 'after', agent: 'x' }, limit: { usd: 2 }, request: request({ cwd: proj }) })).rejects.toThrow('An agent on your subscription needs a stop time');

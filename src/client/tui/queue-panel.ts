@@ -1,7 +1,7 @@
 import type { Frame } from './grid.js';
 import type { Theme } from './theme.js';
 import { TextPanel } from './text-panel.js';
-import { limitFields, queueLines, type QueueItem, type QueueLimit, type QueueRequest, type QueueTrigger } from '../../shared/queue.js';
+import { limitFields, queueLines, type QueueItem, type QueueLimit, type QueueRequest, type QueueTrigger, type QueueUnreadable } from '../../shared/queue.js';
 
 // v0.9.1 /queue: each waiting agent with its trigger, limit, engine, folder and mode (Don't ask in red), and what became of
 // it. ↑↓ choose, x removes, Esc closes.
@@ -9,11 +9,13 @@ export class QueuePanel {
   private items: QueueItem[] = [];
   private choice = 0;
   private note = '';
+  private unread: QueueUnreadable | null = null;
   private removing = false;
   private readonly panel: TextPanel;
   constructor(private readonly changed: () => void, private readonly close: () => void, private readonly remove: (id: string) => Promise<QueueItem[]>, private readonly enabled: boolean) {
     this.panel = new TextPanel('Queue', changed, close);
   }
+  setUnreadable(unread: QueueUnreadable | null): void { this.unread = unread; this.render(); }
   set(items: readonly QueueItem[]): void { this.items = [...items]; this.choice = Math.min(this.choice, Math.max(0, items.length - 1)); this.render(); }
   key(key: string): void {
     if (key === 'up' || key === 'down') { this.choice = Math.max(0, Math.min(this.items.length - 1, this.choice + (key === 'up' ? -1 : 1))); this.render(); return; }
@@ -31,6 +33,7 @@ export class QueuePanel {
     this.panel.set([
       { text: 'Agents that start after an agent finishes, or at a time; each stops at its limit', tone: 'ink-3' },
       ...this.enabled ? [] : [{ text: 'the queue is off · nothing starts · turn it on in /settings (b)', tone: 'status-waiting' as const }],
+      ...this.unread ? [{ text: `! ${this.unread.items === null ? "the queue file couldn't be read" : `${this.unread.items} queued item${this.unread.items === 1 ? '' : 's'} couldn't be read and ${this.unread.items === 1 ? 'was' : 'were'} left out`} · the file as it was: ${this.unread.file} in AI Term's folder`, tone: 'status-waiting' as const }] : [],
       ...rows.length ? rows : [{ text: 'nothing queued · /queue add sets one up from the start box', tone: 'ink-3' as const }],
       ...this.note ? [{ text: this.note, tone: this.note.startsWith('✗') ? 'status-error' as const : 'ink-3' as const }] : [],
       { text: '↑↓ choose · x removes · Esc closes', tone: 'ink-3' },

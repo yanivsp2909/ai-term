@@ -266,7 +266,7 @@ export class DaemonServer {
                     if (request.kind === 'queue.add' && request.request.permission === 'dontAsk' && await this.manager.effectiveEngine({ ...request.request }) === 'ai-term') { const note = dontAskNote(await currentAgentSandbox()); if (note) throw new Error(note); }
                     if (request.kind === 'queue.add') await queue.add({ trigger: request.trigger, limit: request.limit, request: request.request });
                     if (request.kind === 'queue.remove') await queue.remove(request.itemId);
-                    this.control(peer, { id: request.id, ok: true, queue: queue.list() }); break;
+                    this.control(peer, { id: request.id, ok: true, queue: queue.list(), ...request.kind === 'queue.list' ? { queueUnreadable: queue.unreadable() } : {} }); break;
                 }
                 case 'daemon.stop':
                     // Answered first: the daemon then shuts down as it does on SIGTERM (main.ts), pipe file and all.

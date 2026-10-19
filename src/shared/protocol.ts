@@ -280,6 +280,7 @@ export interface SuccessResponse {
     daemonPid?: number;
     proof?: string;
     queue?: import('./queue.js').QueueItem[];
+    queueUnreadable?: import('./queue.js').QueueUnreadable | null;
     remote?: import('./remote.js').RemoteStatus;
     devPlan?: import('./dev.js').DevPlan;
     brainPlan?: import('./brain.js').BrainPlan;

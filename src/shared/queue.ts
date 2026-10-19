@@ -88,6 +88,16 @@ export function validateQueueItem(value: unknown): QueueItem {
   const request = validateQueueRequest(v.request);
   return { id: v.id, createdAt: v.createdAt, trigger: validateQueueTrigger(v.trigger), limit: validateLimit(v.limit, request), request, state: v.state as QueueState, ...v.sessionId !== undefined ? { sessionId: String(v.sessionId) } : {}, ...v.note !== undefined ? { note: String(v.note) } : {} };
 }
+// Backlog F6: queued items AI Term couldn't read at start, kept aside in AI Term's folder under this file name.
+export interface QueueUnreadable { items: number | null; file: string }
+export function validateQueueUnreadable(value: unknown): QueueUnreadable | null {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Invalid queue note');
+  const v = value as Record<string, unknown>;
+  if (Object.keys(v).some(key => key !== 'items' && key !== 'file') || !(v.items === null || typeof v.items === 'number' && Number.isSafeInteger(v.items) && v.items >= 0 && v.items <= 10_000)
+    || typeof v.file !== 'string' || !/^queue\.json\.unreadable-\d{1,16}$/.test(v.file)) throw new ValidationError('Invalid queue note');
+  return { items: v.items as number | null, file: v.file };
+}
 export function validateQueue(value: unknown): QueueItem[] {
   if (!Array.isArray(value) || value.length > MAX_QUEUE_ITEMS) throw new ValidationError('Invalid queue');
   return value.map(validateQueueItem);

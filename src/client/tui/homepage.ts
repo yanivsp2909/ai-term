@@ -70,7 +70,7 @@ import { basename, isAbsolute, sep } from 'node:path';
 import { QueueForm, QueuePanel } from './queue-panel.js';
 import { RemotePanel } from './remote-panel.js';
 import { validateRemoteStatus, type RemoteStatus } from '../../shared/remote.js';
-import { validateQueue } from '../../shared/queue.js';
+import { validateQueue, validateQueueUnreadable } from '../../shared/queue.js';
 import { DevAsk } from './dev-ask.js';
 import { BrainAsk } from './brain-ask.js';
 import { brainAge, validateBrainPlan, validateBrainResult, type BrainPlan } from '../../shared/brain.js';
@@ -873,7 +873,7 @@ export class Homepage {
     if(this.popup){this.showNote('close the open popup first');return;}
     const panel:QueuePanel=new QueuePanel(()=>this.draw(true),()=>{if(this.popup===panel)this.popup=undefined;this.draw(true);},async id=>validateQueue((await this.connection.request({kind:'queue.remove',itemId:id})).queue),enabled);
     this.popup=panel;this.draw(true);
-    try{panel.set(validateQueue((await this.connection.request({kind:'queue.list'})).queue));}catch(error){this.showNote(error instanceof Error?error.message:'Queue unavailable');}
+    try{const listed=await this.connection.request({kind:'queue.list'});panel.set(validateQueue(listed.queue));panel.setUnreadable(validateQueueUnreadable(listed.queueUnreadable));}catch(error){this.showNote(error instanceof Error?error.message:'Queue unavailable');}
   }
   private openQueueForm(b:AgentBox):void{
     const request={brain:b.brain===true,engine:b.engine,model:b.model,auth:b.auth??{kind:'account' as const},cwd:b.cwd,permission:b.permission,effort:b.effort??null,...(b.message?{firstMessage:b.message}:{}),...(b.useWorktree!==undefined?{useWorktree:b.useWorktree}:{})};

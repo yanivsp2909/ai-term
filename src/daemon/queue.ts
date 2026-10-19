@@ -1,11 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { rename } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { atomicWrite, readState } from './store.js';
 import { SettingsStore } from './settings.js';
 import { errorKind } from './log.js';
-import { MAX_QUEUE_ITEMS, MAX_RUN_MS, nextLocalTime, stopDelayMs, untilWithin, validateQueueItem, type QueueItem, type QueueLimit, type QueueRequest, type QueueTrigger } from '../shared/queue.js';
+import { MAX_QUEUE_ITEMS, MAX_RUN_MS, nextLocalTime, stopDelayMs, untilWithin, validateQueueItem, type QueueItem, type QueueLimit, type QueueRequest, type QueueTrigger, type QueueUnreadable } from '../shared/queue.js';
 import type { SessionInfo } from '../shared/protocol.js';
 import type { StatusState } from './status-reducer.js';
 
@@ -34,6 +34,8 @@ export class QueueService extends EventEmitter {
   private saving: Promise<void> = Promise.resolve();
   private closed = false;
   private settingsFailed = false;
+  // Backlog F6: what load() couldn't read, for /queue (items: null when the file wasn't a list at all).
+  private setAside: QueueUnreadable | null = null;
   private readonly path: string;
   constructor(root: string, private readonly manager: QueueManager, private readonly log: { error(text: string): void; info(text: string): void }, private readonly now: () => Date = () => new Date(),
     private readonly enabled: () => Promise<boolean> = async () => (await new SettingsStore(root).get()).queue === true) {
@@ -41,6 +43,7 @@ export class QueueService extends EventEmitter {
     manager.on('statusChanged', (session, previous, next) => { this.onStatus(session.title, previous.status, next.status).catch((error: unknown) => this.log.error(`Queue trigger failed (${errorKind(error)})`)); });
   }
   list(): QueueItem[] { return this.items.map(item => ({ ...item })); }
+  unreadable(): QueueUnreadable | null { return this.setAside ? { ...this.setAside } : null; }
   // Each item on its own: one that no longer validates is left out, and the file as it was is kept beside it.
   async load(): Promise<void> {
     let raw: unknown;
@@ -53,6 +56,7 @@ export class QueueService extends EventEmitter {
     if (!missing && (!Array.isArray(raw) || this.items.length !== raw.length)) {
       const aside = `${this.path}.unreadable-${Date.now()}`;
       await rename(this.path, aside);
+      this.setAside = { items: Array.isArray(raw) ? raw.length - this.items.length : null, file: basename(aside) };
       this.log.error('Queue file had items AI Term could not read; it was kept beside it and the rest load');
       changed = true;
     }
