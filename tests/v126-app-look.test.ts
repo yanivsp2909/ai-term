@@ -9,6 +9,7 @@ import { appLook } from '../app/shared/look.js';
 import { validateLook } from '../app/shared/validation.js';
 import { readLook } from '../app/main/look.js';
 import { ligatureRanges } from '../app/renderer/ligatures.js';
+import { firstFamily, fontNote } from '../app/renderer/font-check.js';
 import { FontsForm } from '../src/client/tui/fonts-form.js';
 import type { AppFonts } from '../src/shared/app-fonts.js';
 
@@ -119,5 +120,17 @@ describe('reading the look from disk (app main)', () => {
     expect(await readLook(root, true)).toEqual({ look: appLook({}, { themes: [], refused: [] }, true), problem: "settings.json isn't valid JSON" });
     await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'slate', appFonts: { terminal: 'bad;font' } }));
     expect(await readLook(root, true)).toMatchObject({ look: { colors: { bg: themeColors('slate', 'dark').bg }, fonts: { terminal: monoFont } }, problem: 'the saved fonts are not valid; the defaults are used' });
+  });
+});
+
+describe('ligatures without a font that has them (Yaniv, during the run)', () => {
+  it('the title strip says so in one line when the first terminal family is not installed; otherwise nothing', () => {
+    const stacks = (fonts: AppFonts) => appLook({ appFonts: fonts }, LIST, true).fonts;
+    expect(firstFamily(monoFont)).toBe('JetBrains Mono');
+    expect(firstFamily(stacks({ terminal: 'Fira Code' }).terminal)).toBe('Fira Code');
+    expect(fontNote(stacks({ ligatures: false }), () => false)).toBeNull();
+    expect(fontNote(stacks({ ligatures: true }), () => true)).toBeNull();
+    expect(fontNote(stacks({ ligatures: true }), () => false)).toBe("JetBrains Mono isn't installed, so ligatures can't show");
+    expect(fontNote(stacks({ terminal: 'No Such Font Zq', ligatures: true }), family => family !== 'No Such Font Zq')).toBe("No Such Font Zq isn't installed, so ligatures can't show");
   });
 });

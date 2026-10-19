@@ -111,6 +111,19 @@ test('the app follows the saved theme and fonts, live; system follows macOS', as
   } finally { client.close(); }
 });
 
+// Ligatures need a font that has them; with none installed the title strip says so (Yaniv asked during the v1.2.0 run).
+test('ligatures on with a terminal font that is not installed: the title strip says so; off says nothing', async () => {
+  const page = await application.firstWindow();
+  await homepageReady(page);
+  const client = await Connection.connect(getPaths(join(home, '.ai-term')), { entry: resolve('dist/cli/index.js'), autoStart: false });
+  try {
+    await client.request({ kind: 'settings.set', patch: { appFonts: { terminal: 'No Such Font Zq', ligatures: true } } });
+    await expect(page.locator('.chrome')).toHaveText("No Such Font Zq isn't installed, so ligatures can't show");
+    await client.request({ kind: 'settings.set', patch: { appFonts: { terminal: 'No Such Font Zq', ligatures: false } } });
+    await expect(page.locator('.chrome')).not.toContainText("isn't installed");
+  } finally { client.close(); }
+});
+
 test('opens ai homepage, types immediately, preserves paste, searches and resizes', async () => {
   const page = await application.firstWindow();
   const screen = page.locator('.xterm-accessibility-tree');
