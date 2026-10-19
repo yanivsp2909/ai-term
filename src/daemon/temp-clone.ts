@@ -17,7 +17,8 @@ export async function tempClone(repo: string, commit: string, signal?: AbortSign
   const dispose = () => removeTree(folder);
   try {
     await runGit(folder, ['clone', '--quiet', '--shared', '--no-checkout', '--', repo, path], 'Git check failed', { timeout: 60_000, ...(signal ? { signal } : {}) });
-    await runGit(path, ['checkout', '--quiet', '--detach', '--end-of-options', commit], 'Git check failed', { timeout: 120_000, ...(signal ? { signal } : {}) });
+    // switch, not checkout: git 2.43's checkout takes --end-of-options after --detach for a path and refuses (B34).
+    await runGit(path, ['switch', '--quiet', '--detach', '--end-of-options', commit], 'Git check failed', { timeout: 120_000, ...(signal ? { signal } : {}) });
     return { path, dispose };
   } catch (error) { await dispose(); throw error; }
 }

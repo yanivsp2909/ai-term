@@ -38,7 +38,7 @@ it.skipIf(!SELF)('B33: /bisect npx vitest on a temporary clone of AI Term finds 
   const repo = join(root, 'ai-term'), temp = join(root, 'tmp');
   // Your checkout is only read: cloned without hard links, and its node_modules cloned copy-on-write.
   await git(root, 'clone', '--quiet', '--no-hardlinks', '--no-checkout', '--', here, repo);
-  await git(repo, 'checkout', '--quiet', '--detach', '--end-of-options', head);
+  await git(repo, 'switch', '--quiet', '--detach', '--end-of-options', head);
   await run('/bin/cp', ['-c', '-P', '-R', '--', join(here, 'node_modules'), join(repo, 'node_modules')]);
   await appendFile(join(repo, 'tests', 'protocol.test.ts'), "\nit('planted by the B33 self-bisect', () => { expect(1).toBe(2); });\n");
   await git(repo, 'commit', '-qam', 'planted: a failing protocol test', '--');

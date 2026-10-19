@@ -157,7 +157,8 @@ export async function runBisect(options: BisectOptions): Promise<Extract<AddonRe
     const atBad = await step(plan.command, copy.path, env, box, BISECT_STEP_TIMEOUT_MS, signal);
     if (atBad.state === 'pass') throw new BisectError(`${testCommandText(plan.command)} passes at HEAD; nothing to bisect`);
     if (atBad.state !== 'fail') throw new BisectError(`The test command didn't run at HEAD: ${why(atBad)}`);
-    if ((await gitInCopy(['checkout', '--quiet', '--detach', '--end-of-options', plan.good])).state !== 'pass') throw new BisectError(`git couldn't check out ${plan.goodLabel} in the temporary copy`);
+    // switch, not checkout: git 2.43's checkout refuses --end-of-options after --detach (B34, temp-clone.ts).
+    if ((await gitInCopy(['switch', '--quiet', '--detach', '--end-of-options', plan.good])).state !== 'pass') throw new BisectError(`git couldn't check out ${plan.goodLabel} in the temporary copy`);
     const atGood = await step(plan.command, copy.path, env, box, BISECT_STEP_TIMEOUT_MS, signal);
     // The copy has committed files and the cloned or linked dependency folders, no build output: say so where it most often bites.
     if (atGood.state === 'fail') throw new BisectError(`${testCommandText(plan.command)} also fails at ${plan.goodLabel}; pick an older good ref, or the test needs files the copy doesn't have (only committed files${cloned.length + linked.length ? ' and your installed dependencies' : ''} are there)`);
