@@ -105,6 +105,8 @@ export const keyTable:readonly [string,string][]=[
  ['/types f · /failures, /security, /review deep ↑↓','Fix the selected finding in a worktree / select a finding to read it'],
  ['/perf a / Y','Run the A/B in the sandbox / without one, only after AI Term says there is none'],
  ['/bisect y / Y','Start in the test sandbox / start without one (capital Y) when there is none'],
+ ['/bisect · /perf x','Stop a running /bisect or A/B: its processes, then its temporary copy (Esc only closes; /bisect alone reopens it)'],
+ ['/study r','In the due list: reopen this folder\'s last /study session'],
  ['/commit c / y','Copy the message / commit it in the agent\'s worktree (never in your checkout)'],
  ['/changelog c / w','Copy the section / write it into CHANGELOG.md in a worktree'],
  ['/pr-review c · /standup m','Copy the review (nothing is posted) / polish today\'s standup with a model'],
