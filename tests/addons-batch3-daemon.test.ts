@@ -136,3 +136,18 @@ it('MEDIUM (v1.0 gate): o opens model-written HTML and SVG with no script able t
   if (live) live.info.status = 'running';
   await expect(m.addonFile(agent.id, 'out/deck/x.html', 'open')).rejects.toThrow('Wait until the agent finishes');
 });
+
+it("backlog F4: a folder on the way that is a file, a path out of the folder and a worktree that's gone are refused in AI Term's own words", async () => {
+  const { dir, m, agent, tree } = await manager();
+  SessionManager.fileOpener = async () => { throw new Error('nothing may open'); };
+  await mkdir(join(tree, 'out'), { recursive: true }); await writeFile(join(tree, 'out', 'deck'), 'a file where the folder was');
+  await writeFile(join(dir, 'outside.md'), 'x');
+  const refusals: [string, string][] = [['out/deck/pitch.html', "isn't in the agent's folder"], ['out/deck/../../../outside.md', "inside the agent's folder"]];
+  for (const [file, words] of refusals) {
+    const error = await m.addonFile(agent.id, file, 'open').then(() => null, (e: unknown) => e);
+    expect(error, file).toBeInstanceOf(AddonError); expect((error as Error).message, file).toContain(words); expect((error as Error).message, file).not.toContain(dir);
+  }
+  await rm(tree, { recursive: true, force: true });
+  const gone = await m.addonFile(agent.id, 'out/deck/pitch.html', 'open').then(() => null, (e: unknown) => e);
+  expect(gone).toBeInstanceOf(AddonError); expect((gone as Error).message).toContain("worktree is gone"); expect((gone as Error).message).not.toContain(dir);
+});
