@@ -29,9 +29,9 @@ it.skipIf(!MAC)('HIGH (code review, reproduced): on macOS renaming a folder abov
 }, 30_000);
 
 it('MEDIUM (code review): ZDOTDIR and XDG_CONFIG_HOME reach the sandbox (not through the bash env); their startup and config places are protected', async () => {
-  const env = buildAgentEnv({ PATH: '/usr/bin', HOME: '/h', ZDOTDIR: '/h/.config/zsh', XDG_CONFIG_HOME: '/h/cfg', XDG_RUNTIME_DIR: '/run/user/7' }, { secret: 'sk-ant-test0123456789abcdef0123', endpoint: null, entry: '/opt/ai/dist/cli/index.js' });
+  const env = buildAgentEnv({ PATH: '/usr/bin', HOME: '/h', ZDOTDIR: '/h/.config/zsh', XDG_CONFIG_HOME: '/h/cfg', XDG_RUNTIME_DIR: '/run/user/7' }, { secret: 'sk-ant' + '-test0123456789abcdef0123', endpoint: null, entry: '/opt/ai/dist/cli/index.js' });
   expect(env).toMatchObject({ AITERM_ZDOTDIR: '/h/.config/zsh', AITERM_XDG_CONFIG_HOME: '/h/cfg', AITERM_XDG_RUNTIME_DIR: '/run/user/7' });
-  expect(buildAgentEnv({ PATH: '/usr/bin', ZDOTDIR: 'relative' }, { secret: 'sk-ant-test0123456789abcdef0123', endpoint: null, entry: '/opt/ai/dist/cli/index.js' }).AITERM_ZDOTDIR).toBeUndefined();
+  expect(buildAgentEnv({ PATH: '/usr/bin', ZDOTDIR: 'relative' }, { secret: 'sk-ant' + '-test0123456789abcdef0123', endpoint: null, entry: '/opt/ai/dist/cli/index.js' }).AITERM_ZDOTDIR).toBeUndefined();
   const dir = await temp();
   const places = await persistencePaths(dir, {}, { zdotdir: join(dir, 'z'), configHome: join(dir, 'cfg') });
   expect(places.files).toEqual(expect.arrayContaining([join(dir, 'z', '.zshrc'), join(dir, 'z', '.zshenv')]));

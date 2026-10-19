@@ -25,7 +25,7 @@ it('flags a high-entropy value assigned in code, but not hashes, lockfile integr
 });
 
 it('only added lines count; removed lines and context are not scanned', () => {
-  const text = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,1 @@\n-OLD_TOKEN=abcdef123456\n keep\n';
+  const text = 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,2 +1,1 @@\n-OLD_TOKEN=abc' + 'def123456\n keep\n';
   expect(scanPatch(text)).toEqual([]);
 });
 

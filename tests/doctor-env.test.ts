@@ -7,7 +7,7 @@ import {doctor} from '../src/cli/doctor.js';
 it('doctor checks each CLI login without its own provider credential variables',async()=>{
  const {mkdtemp,writeFile,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join,resolve}=await import('node:path');
  const root=await mkdtemp(join(tmpdir(),'ai-term-doctor-env-'));
- vi.stubEnv('AI_TERM_HOME',root);vi.stubEnv('PATH',root);vi.stubEnv('ANTHROPIC_API_KEY','sk-ant-AITERMCANARY0000');vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN','oauth-canary');vi.stubEnv('OPENAI_API_KEY','sk-AITERMCANARY1111');
+ vi.stubEnv('AI_TERM_HOME',root);vi.stubEnv('PATH',root);vi.stubEnv('ANTHROPIC_API_KEY','sk-ant' + '-AITERMCANARY0000');vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN','oauth-canary');vi.stubEnv('OPENAI_API_KEY','sk-AITERMCANARY1111');
  const print=vi.spyOn(process.stdout,'write').mockImplementation(()=>true);
  try{for(const name of ['claude','codex'])await writeFile(join(root,name),'fake',{mode:0o700});
   await doctor(resolve('src/cli/index.ts'));

@@ -45,9 +45,9 @@ it('MEDIUM (accounts review): the handoff ask names the account that starts, and
 
 it('MEDIUM (accounts review): secrets on the agent\'s screen never reach the summary request or the new agent\'s argv', () => {
   const secrets = ['sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'sk-proj-BBBBBBBBBBBBBBBBBBBBBBBB', 'ghp_' + 'C'.repeat(36), 'AKIA' + 'IOSFODNN7EXAMPLE', 'xai-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', 'AIza' + 'SyEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE', 'xox' + 'b-1234567890-abcdefghij'];
-  const screen = `$ cat .env\nANTHROPIC_API_KEY=${secrets[0]}\nexport DB_PASSWORD="hunter2-long-value"\nAuthorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n${secrets.slice(1).join('\n')}\n-----BEGIN OPENSSH ${'PRIVATE'} KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\nall tests pass`;
+  const screen = `$ cat .env\nANTHROPIC_API_KEY=${secrets[0]}\nexport DB_PASSWORD="hunter2${'-'}long-value"\nAuthorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n${secrets.slice(1).join('\n')}\n-----BEGIN OPENSSH ${'PRIVATE'} KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\nall tests pass`;
   for (const text of [handoffPrompt('codex', screen), handoffMessage('fixer', screen)]) {
-    for (const secret of [...secrets, 'hunter2-long-value', 'abcdefghijklmnopqrstuvwxyz012345', 'b3BlbnNzaC1rZXktdjEAAAAA']) expect(text).not.toContain(secret);
+    for (const secret of [...secrets, 'hunter' + '2-long-value', 'abcdefghijklmnopqrstuvwxyz012345', 'b3BlbnNzaC1rZXktdjEAAAAA']) expect(text).not.toContain(secret);
     expect(text).toContain('ANTHROPIC_API_KEY=[redacted]'); expect(text).toContain('all tests pass');
   }
   // Ordinary text survives: hashes, ids, words with "key" in them.

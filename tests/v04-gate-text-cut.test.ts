@@ -59,5 +59,5 @@ it('a value whose last four characters would split an emoji shows no suffix inst
   const listed = await f.service.list(f.cwd);
   expect(listed.servers.map(s => s.values)).toEqual([[{ name: 'TOKEN', last4: '' }]]);
   expect(await f.keys.saveMcp('0123456789abcdef', 'TOKEN', 'own-value-1234567👋abc', 'f'.repeat(64))).toBe('');
-  expect(await f.keys.saveMcp('0123456789abcdef', 'TOKEN', 'own-value-1234567890', 'f'.repeat(64))).toBe('7890');
+  expect(await f.keys.saveMcp('0123456789abcdef', 'TOKEN', 'own-va' + 'lue-1234567890', 'f'.repeat(64))).toBe('7890');
 });

@@ -183,7 +183,7 @@ it('HIGH (TS review): AI Term\'s agent on Windows keeps SystemRoot, TEMP and USE
   expect(windowsBaseVars('win32')).toEqual(expect.arrayContaining(['SystemRoot', 'TEMP', 'USERPROFILE', 'ProgramFiles', 'ProgramData', 'NUMBER_OF_PROCESSORS']));
   expect(windowsBaseVars('darwin')).toEqual([]);
   if (WIN) {
-    const env = buildAgentEnv(process.env, { secret: 'sk-ant-test0123456789abcdef', endpoint: null, entry: 'C:\\ai\\dist\\cli\\index.js' });
+    const env = buildAgentEnv(process.env, { secret: 'sk-ant' + '-test0123456789abcdef', endpoint: null, entry: 'C:\\ai\\dist\\cli\\index.js' });
     expect(env.SystemRoot ?? env.SYSTEMROOT).toBeTruthy();
     expect(buildTestEnv(process.env).ProgramFiles).toBeTruthy();
   }

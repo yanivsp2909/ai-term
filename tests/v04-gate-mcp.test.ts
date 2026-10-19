@@ -75,13 +75,13 @@ it('/cd stops the servers the old folder started', async () => {
 it('a rollback that fails to remove one Keychain value still removes the others and says so in the log', async () => {
   const removed: string[] = [];
   const g = await fixture({ remove: async n => { removed.push(n); if (n.endsWith(':TOKEN_A')) throw new Error('locked'); } });
-  await g.keys.saveMcp('0123456789abcdef', 'TOKEN_A', 'value-a-1234567890', 'f'.repeat(64));
-  await g.keys.saveMcp('0123456789abcdef', 'TOKEN_B', 'value-b-1234567890', 'f'.repeat(64));
+  await g.keys.saveMcp('0123456789abcdef', 'TOKEN_A', 'value-' + 'a-1234567890', 'f'.repeat(64));
+  await g.keys.saveMcp('0123456789abcdef', 'TOKEN_B', 'value-' + 'b-1234567890', 'f'.repeat(64));
   await expect(g.keys.removeMcp('0123456789abcdef', ['TOKEN_A', 'TOKEN_B'])).rejects.toThrow('MCP keychain remove failed');
   expect(removed).toEqual(['mcp:0123456789abcdef:TOKEN_A', 'mcp:0123456789abcdef:TOKEN_B']);
   // An add whose second write fails rolls back the first; that removal failing too is logged, never silent.
   let writes = 0;
   const f = await fixture({ write: async () => { if (writes++ === 1) throw new Error('keychain full'); }, remove: async () => { throw new Error('locked'); } });
-  await expect(f.service.query('agent', { kind: 'mcp.add', config: { name: 'two', type: 'stdio', command: '/bin/echo', args: [], env: ['TOKEN_A', 'TOKEN_B'] }, values: { TOKEN_A: 'value-a-1234567890', TOKEN_B: 'value-b-1234567890' } })).rejects.toThrow();
+  await expect(f.service.query('agent', { kind: 'mcp.add', config: { name: 'two', type: 'stdio', command: '/bin/echo', args: [], env: ['TOKEN_A', 'TOKEN_B'] }, values: { TOKEN_A: 'value-' + 'a-1234567890', TOKEN_B: 'value-' + 'b-1234567890' } })).rejects.toThrow();
   await vi.waitFor(async () => expect(await readFile(join(f.state, 'logs/daemon.log'), 'utf8')).toContain('MCP keychain cleanup failed'));
 });

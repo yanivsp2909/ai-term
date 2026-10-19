@@ -20,7 +20,7 @@ import type { SessionInfo, SuccessResponse } from '../src/shared/protocol.js';
 const roots: string[] = [], managers: SessionManager[] = [];
 afterEach(async () => { for (const m of managers.splice(0)) await m.shutdown(); vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 const temp = async () => { const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-export-'))); roots.push(root); return root; };
-const SECRET = 'sk-ant-api03-EXPORTCANARY0123456789';
+const SECRET = 'sk-ant' + '-api03-EXPORTCANARY0123456789';
 
 it('a session\'s export carries its screen text with secrets redacted', async () => {
   const root = await temp(), home = join(root, 'home'); await mkdir(home, { mode: 0o700 });

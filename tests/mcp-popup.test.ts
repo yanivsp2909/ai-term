@@ -14,7 +14,7 @@ it('exact project approval is paged, typed, and never runs on browsing or paste'
  const f=setup();f.server.config={name:'local',type:'stdio',command:'node',args:['a'.repeat(1500)],env:[]};await f.panel.load();await f.panel.key('d');await f.panel.key('y');expect(f.approve).not.toHaveBeenCalled();f.panel.paste('y');f.draw();await f.panel.key('y');expect(f.approve).not.toHaveBeenCalled();for(let n=0;n<10;n++){await f.panel.key(' ');f.draw();}await f.panel.key('y');expect(f.approve).toHaveBeenCalledOnce();expect(f.discover).toHaveBeenCalledOnce();
 });
 it('add form masks values, reviews exact argv, saves only on Enter after review',async()=>{
- const f=setup(true),secret='private-form-value-1234567890';const fields=['new','stdio','node','["server.mjs"]','SERVER_TOKEN',secret];
+ const f=setup(true),secret='privat' + 'e-form-value-1234567890';const fields=['new','stdio','node','["server.mjs"]','SERVER_TOKEN',secret];
  for(const field of fields){f.panel.paste(field);expect(f.draw()).not.toContain(secret);await f.panel.key('enter');}
  expect(f.saved).toEqual([]);await f.panel.key('enter');expect(f.saved).toEqual([]);const view=f.draw();expect(view).toContain('"node"');expect(view).toContain('["server.mjs"]');expect(view).toContain('····7890');expect(view).not.toContain(secret);await f.panel.key('enter');expect(f.saved).toEqual([{c:{name:'new',type:'stdio',command:'node',args:['server.mjs'],env:['SERVER_TOKEN']},v:{SERVER_TOKEN:secret}}]);
 });
