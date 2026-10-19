@@ -38,11 +38,11 @@ describe('a theme file', () => {
 
   it('wrong: unknown tokens, colors that are not #rrggbb, derived tokens set by hand, not JSON, too big, a built-in name', () => {
     const reason = (file: string, text: string) => { const r = parseUserTheme(file, text); return r.ok ? 'accepted' : r.refusal.reason; };
-    expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, glow: '#ffffff' } }))).toBe('unknown token dark.glow');
+    expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, glow: '#ffffff' } }))).toBe('unknown color dark.glow');
     // A name from the file reaches the screen as printable ASCII only.
-    expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, '\u001b[31mx': '#ffffff' } }))).toBe('unknown token dark.?[31mx');
+    expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, '\u001b[31mx': '#ffffff' } }))).toBe('unknown color dark.?[31mx');
     expect(reason('a.json', JSON.stringify({ ...complete, light: { ...complete.light, accent: 'teal' } }))).toBe("light.accent isn't a #rrggbb color");
-    expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, 'status-running': '#ffffff' } }))).toBe('dark.status-running is derived (= accent); leave it out');
+    expect(reason('a.json', JSON.stringify({ ...complete, dark: { ...complete.dark, 'status-running': '#ffffff' } }))).toBe('dark.status-running comes from accent; leave it out');
     expect(reason('a.json', JSON.stringify({ ...complete, extra: 1 }))).toBe('unknown field extra; a theme has name, dark and light');
     expect(reason('a.json', '{ not json')).toBe("isn't valid JSON");
     expect(reason('a.json', '[]')).toBe("isn't a JSON object");
@@ -90,5 +90,19 @@ describe('the themes folder', () => {
   it('themes.list is a request with no fields', async () => {
     await expect(validateRequest({ id: randomUUID(), kind: 'themes.list' })).resolves.toMatchObject({ kind: 'themes.list' });
     await expect(validateRequest({ id: randomUUID(), kind: 'themes.list', dir: '/etc' })).rejects.toThrow();
+  });
+});
+
+describe('security review LOWs', () => {
+  it('a file name with controls or 100 characters is refused as printable text, and every other theme still lists', async () => {
+    const dir = await home(), folder = themesFolder(dir);
+    await writeFile(join(folder, 'ocean.json'), JSON.stringify(complete));
+    await writeFile(join(folder, 'x\u001b[2J.json'), '{}');
+    await writeFile(join(folder, `${'a'.repeat(100)}.json`), '{}');
+    const list = await readUserThemes(dir);
+    expect(() => validateThemeList(JSON.parse(JSON.stringify(list)))).not.toThrow();
+    expect(list.themes.map(t => t.name)).toEqual(['ocean']);
+    for (const r of list.refused) { expect(r.file).toMatch(/^[\x20-\x7e]{1,80}$/); expect(r.reason).toBe('file name must be lowercase letters, digits and dashes, then .json'); }
+    expect(list.refused).toHaveLength(2);
   });
 });

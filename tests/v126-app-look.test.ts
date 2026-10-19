@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { monoFont, sansFont, themeColors, BASE_COLOR_NAMES } from '../src/shared/theme-tokens.js';
 import { describeFonts, validateAppFonts } from '../src/shared/app-fonts.js';
 import { validateSettingsPatch } from '../src/shared/validate.js';
@@ -53,7 +55,7 @@ describe('fonts in settings', () => {
     expect(validateAppFonts(good)).toEqual(good);
     expect(validateSettingsPatch({ appFonts: good }, true)).toEqual({ appFonts: good });
     expect(validateSettingsPatch({ themeVariant: 'system' }, true)).toEqual({ themeVariant: 'system' });
-    for (const bad of [{ terminal: 'Menlo, monospace' }, { terminal: '"Menlo"' }, { chrome: 'a'.repeat(49) }, { chrome: ' ' }, { terminalSize: 8 }, { terminalSize: 33 }, { chromeSize: 19 }, { terminalSize: 13.5 }, { ligatures: 'yes' }, { color: 'red' }])
+    for (const bad of [{ terminal: 'Menlo, monospace' }, { terminal: '"Menlo"' }, { chrome: 'a'.repeat(49) }, { chrome: ' ' }, { terminalSize: 8 }, { terminalSize: 33 }, { chromeSize: 27 }, { terminalSize: 13.5 }, { ligatures: 'yes' }, { color: 'red' }])
       expect(() => validateAppFonts(bad), JSON.stringify(bad)).toThrow();
     expect(() => validateSettingsPatch({ themeVariant: 'dim' }, true)).toThrow();
   });
@@ -91,7 +93,7 @@ describe('the fonts form (/settings, the app only)', () => {
     for (const ch of 'Menlo,x') await comma.key(ch);
     await comma.key('enter');
     expect(saved).toHaveLength(1);
-    expect(comma.lines().join('\n')).toContain('a font name takes letters, digits, spaces, dots, dashes and underscores');
+    expect(comma.lines().join('\n')).toContain('a font name can only use letters, digits, spaces, dots, dashes and underscores');
   });
 });
 
@@ -133,4 +135,16 @@ describe('ligatures without a font that has them (Yaniv, during the run)', () =>
     expect(fontNote(stacks({ ligatures: true }), () => false)).toBe("JetBrains Mono isn't installed, so ligatures can't show");
     expect(fontNote(stacks({ terminal: 'No Such Font Zq', ligatures: true }), family => family !== 'No Such Font Zq')).toBe("No Such Font Zq isn't installed, so ligatures can't show");
   });
+});
+
+describe('security review LOW: settings.json that is not a regular file', () => {
+  const cleanup: string[] = [];
+  afterEach(async () => { for (const path of cleanup.splice(0)) await rm(path, { recursive: true, force: true }); });
+  it('a FIFO is the default look with a reason, at once, never a blocked read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ai-look-fifo-')); cleanup.push(root);
+    await promisify(execFile)('/usr/bin/mkfifo', [join(root, 'settings.json')]);
+    const started = Date.now();
+    expect(await readLook(root, true)).toEqual({ look: appLook({}, { themes: [], refused: [] }, true), problem: "settings.json isn't a regular file" });
+    expect(Date.now() - started).toBeLessThan(2000);
+  }, 10_000);
 });
