@@ -22,6 +22,7 @@ import { marks, cardText } from './agent-card.js';
 import { commandRegistry, commandRows, modeLabel } from './commands.js';
 import { agentUsage, drawThisMac } from './this-mac.js';
 import { drawField } from './command-bar.js';
+import { fitBottomLine, SEPARATOR, type LineField } from './bottom-line.js';
 import type { FieldView } from './message-field.js';
 export interface Rect { x: number; y: number; w: number; h: number }
 export function homepageLayout(cols: number, rows: number, visible = true) {
@@ -45,6 +46,22 @@ export const commands = commandRegistry.map(c=>c.name);
 export function filteredCommands(text: string): string[] { return commands.filter(command => command.startsWith(text.split(' ')[0] ?? '')); }
 export interface HomepageView { cols: number; rows: number; sessions: SessionInfo[]; selectedId: string | null; input: string; note: string; notePriority?: boolean; commandMenu?: boolean; warning?: string; previewVisible: boolean; cwd: string; engine?: AgentEngine; model?: string | null; now: number; listStart?: number; previewCells?: Frame; linesBack?: number; newLines?: number; copying?: boolean; stats?: SystemStats | null; cpuHistory?: readonly number[]; menuChoice?: number; authLabel?: string; field?: FieldView;usage?:UsageSummary|null;budgets?:Budgets;effort?:Effort|null;permission?:Permission;worktrees?:'on'|'off';themeName?:import('../../shared/protocol.js').ThemeName;marked?:ReadonlySet<string>;contextWarning?:boolean;taskCost?:boolean }
 export const SPLIT_MARK = '◆ marked';
+// The next agent's defaults on the bottom line (B35), in the order they read; rank is who keeps its room first: engine,
+// auth, model, mode, then a picked effort, the worktree, the key hints and the folder (the longest, so it goes first).
+// An unset effort is left out: the CLI picks it, and a second bare "CLI default" next to the model's read as one value
+// twice. A picked one is labelled ("effort high"), as the start box's row is.
+const HINTS_RANK = 7;
+function nextAgentFields(view: HomepageView): LineField[] {
+  const folder = { text: view.cwd, rank: 8 };
+  if (!view.engine) return [{ text: 'shell', rank: 1 }, folder];
+  return [
+    { text: view.model ?? 'CLI default', rank: 3 }, { text: engineLabel(view.engine), rank: 1 }, { text: view.authLabel ?? 'own login', rank: 2 },
+    ...(view.effort ? [{ text: `effort ${view.effort}`, rank: 5 }] : []),
+    { text: modeLabel(view.permission ?? 'ask'), rank: 4, warn: view.permission === 'dontAsk' },
+    ...(view.worktrees ? [{ text: `worktree ${view.worktrees}`, rank: 6 }] : []),
+    folder,
+  ];
+}
 export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   const { cols, rows } = view, t = theme.colors, grid = new Grid(cols, rows, theme), layout = homepageLayout(cols, rows, view.previewVisible);
   if (layout.tiny) { const label = 'make the window bigger'; grid.text(Math.floor((cols - label.length) / 2), Math.floor(rows / 2), label, t['ink-3']); return grid.cells; }
@@ -107,12 +124,9 @@ export function renderHomepage(view: HomepageView, theme: Theme): Frame {
   }
   grid.box(0, rows - 4, cols, 3, '', t.surface); grid.text(2, rows - 3, '›', t.accent, t.surface);
   const units = graphemes(view.input); drawField(grid, view.field ?? { units, caret: units.length, selection: null }, cols, rows - 3, theme);
-  const hints = '↑↓ agents  ⏎ open  p preview  / commands', hintsX = cols - hints.length - 1;
-  const defaultWidth=Math.max(0,hintsX-2),auth=view.engine?` · ${view.authLabel??'own login'} · ${view.effort??'CLI default'} · ${modeLabel(view.permission??'ask')}${view.worktrees?' · worktree '+view.worktrees:''}`:'',model=view.engine?`${view.model??'CLI default'} · ${engineLabel(view.engine)}`:'shell';
-  let clippedModel='';for(const char of graphemes(model)){if(textWidth(clippedModel+char)>Math.max(0,defaultWidth-textWidth(auth)-3))break;clippedModel+=char;}
-  const prefix=`${clippedModel} · `,folderWidth=Math.max(0,defaultWidth-textWidth(prefix)-textWidth(auth));
-  let folder='';for(const char of graphemes(view.cwd)){if(textWidth(folder+char)>folderWidth)break;folder+=char;}
-  grid.text(1, rows - 1, prefix+folder+auth, t['ink-3'], t.bg, false, defaultWidth); if(view.permission==='dontAsk')grid.text(1+textWidth(prefix+folder+auth)-textWidth(modeLabel('dontAsk'))-textWidth(view.worktrees?' · worktree '+view.worktrees:''),rows-1,modeLabel('dontAsk'),t['status-error'],t.bg,false,textWidth(modeLabel('dontAsk'))); grid.text(hintsX, rows - 1, hints, t['ink-3']);
+  const hints = '↑↓ agents  ⏎ open  p preview  / commands', line = fitBottomLine(nextAgentFields(view), { width: textWidth(hints), rank: HINTS_RANK }, cols - 2);
+  line.fields.reduce((x, field, i) => grid.text(i ? grid.text(x, rows - 1, SEPARATOR, t['ink-3']) : x, rows - 1, field.text, field.warn ? t['status-error'] : t['ink-3']), 1);
+  if (line.hints) grid.text(cols - textWidth(hints) - 1, rows - 1, hints, t['ink-3']);
   const commandMenu = view.commandMenu!==false&&view.input.startsWith('/')&&!view.notePriority;
   if (commandMenu) {
     const choices = commandRows(view.input,{engine:view.engine??'claude-code',model:view.model??null,cwd:view.cwd,theme:theme.name,effort:view.effort,permission:view.permission,selectedTitle:selected?.title}), capacity=Math.max(1,Math.min(choices.length,rows-7)),choice=Math.min(view.menuChoice??0,Math.max(0,choices.length-1)),start=visibleStart(choice,capacity,0),h=capacity+2,y=rows-4-h,w=cols;

@@ -16,7 +16,7 @@ const shown = (line: string): string[] => line.replace(HINTS, '').trim().replace
 
 describe('B35 the homepage bottom line', () => {
   it('at 120 columns shows the engine, auth, model, mode and worktree whole, then the key hints; the folder is left out', () => {
-    expect(bottom(fresh(120))).toBe(` ${'CLI default · claude code · own login · sub · ask · worktree on'.padEnd(120 - HINTS.length - 2)}${HINTS} `);
+    expect(bottom(fresh(120)).trimEnd()).toBe(` ${'CLI default · claude code · own login · sub · ask · worktree on'.padEnd(120 - HINTS.length - 2)}${HINTS}`);
   });
   it('at 100 columns drops the key hints before any field, and the folder fits whole', () => {
     expect(bottom(fresh(100)).trimEnd()).toBe(' CLI default · claude code · own login · sub · ask · worktree on · ~/projects/demo');
@@ -28,7 +28,8 @@ describe('B35 the homepage bottom line', () => {
     // Highest first; the key hints sit right of the fields, two columns apart.
     const priority = ['claude code', 'own login · sub', 'CLI default', 'ask', 'worktree on', HINTS, '~/projects/demo'];
     const cost = (items: readonly string[]): number => { const fields = items.filter(item => item !== HINTS); return fields.join(' · ').length + (items.includes(HINTS) ? HINTS.length + 2 : 0); };
-    for (let cols = 10; cols <= 200; cols++) {
+    // Under 60 columns the homepage only asks for a bigger window.
+    for (let cols = 60; cols <= 200; cols++) {
       const line = bottom(fresh(cols)), fields = shown(line), present = [...fields, ...line.includes(HINTS) ? [HINTS] : []];
       expect(line, `${cols} columns`).not.toMatch(/·\s+·|·\s*$|^\s*·/);
       for (const field of fields) expect(FIELDS, `${cols} columns: "${field}"`).toContain(field);

@@ -12,14 +12,25 @@ import {electronLaunch} from '../../scripts/electron-launch.js';
 
 let home: string;
 let application: ElectronApplication;
-test.beforeEach(async () => {
+// B35's test runs with Claude Code found and logged in (a stub that says so) in home/bin; the others find nothing there.
+const LOGGED_IN = 'B35';
+const STUB_CLAUDE = `#!/bin/sh
+case "$1" in
+  --version) echo "2.0.0 (Claude Code)" ;;
+  auth) echo '{"loggedIn":true,"authMethod":"claude.ai"}' ;;
+esac
+`;
+// eslint-disable-next-line no-empty-pattern -- Playwright requires fixture destructuring even when none are used.
+test.beforeEach(async ({}, info) => {
   home = await mkdtemp(join(tmpdir(), 'ai-term-desktop-'));
   const state = join(home, '.ai-term');
   await mkdir(state, { mode: 0o700 });
+  await mkdir(join(home, 'bin'));
+  if (info.title.startsWith(LOGGED_IN)) await writeFile(join(home, 'bin', 'claude'), STUB_CLAUDE, { mode: 0o755 });
   await writeFile(join(state, 'settings.json'), JSON.stringify({ theme: 'graphite', notifications: false }));
   const launch=electronLaunch(resolve('app/out/main/index.js'),process.env.AI_TERM_TEST_APP);
   application = await electron.launch({ ...launch,args: [...launch.args, '--disable-background-networking', '--disable-component-update'], env: {
-    HOME: home, AI_TERM_HOME: state, AI_TERM_APP_DATA: join(home, 'electron'), PATH: '/usr/bin:/bin', SHELL: '/bin/sh', LANG: 'en_US.UTF-8',
+    HOME: home, AI_TERM_HOME: state, AI_TERM_APP_DATA: join(home, 'electron'), PATH: `${join(home, 'bin')}:/usr/bin:/bin`, SHELL: '/bin/sh', LANG: 'en_US.UTF-8',
     // Hidden, no Dock icon, never focused: the smoke tests never pop up in front of you.
     AI_TERM_BACKGROUND: '1',
   } });
@@ -278,5 +289,22 @@ test('a pasted authenticated control sequence does nothing in the real ai client
     await expect(screen).toContainText('What do you want to build?');
   } finally {
     await application.evaluate(()=>{const restore:unknown=Reflect.get(globalThis,'restoreControlCapture');if(typeof restore==='function')restore();});
+  }
+});
+
+// B35 in the app: ai inside draws the same bottom line as in a terminal, so at every window width each field is whole
+// or left out, the engine and its login are never cut, and no field is empty.
+test(`${LOGGED_IN}: the bottom line keeps claude code · own login whole at every window width`, async () => {
+  const page = await application.firstWindow(), screen = page.locator('.xterm-accessibility-tree');
+  await expect(screen).toContainText('What do you want to build?');
+  const hints = '↑↓ agents  ⏎ open  p preview  / commands', whole = ['CLI default', 'claude code', 'own login · sub', 'ask', 'worktree on'];
+  const bottom = () => screen.evaluate(tree => [...tree.children].map(row => (row.textContent ?? '').replace(/\u00a0/g, ' ').trimEnd()).filter(Boolean).at(-1) ?? '');
+  for (const width of [1400, 1000, 760]) {
+    await application.evaluate(({ BrowserWindow }, w) => { BrowserWindow.getAllWindows()[0]?.setSize(w, 700); }, width);
+    await expect.poll(bottom).toMatch(/· claude code · own login · sub/);
+    const line = await bottom(), fields = line.replace(hints, '').trim().replace('own login · sub', 'own login\u0000sub').split(' · ').map(field => field.replace('\u0000', ' · '));
+    expect(line, `${width} px`).not.toMatch(/·\s+·|·\s*$/);
+    // The folder is the app's working folder, whatever it is; every other field is one of the whole ones.
+    for (const field of fields.slice(0, -1)) expect(whole, `${width} px: "${field}"`).toContain(field);
   }
 });
