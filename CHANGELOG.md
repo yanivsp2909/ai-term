@@ -4,6 +4,49 @@ AI Term is the `ai` command: a terminal screen for running AI coding agents, wit
 
 Dates are commit dates from `git log` for each version's own work. Between 2026-10-11 and 2026-10-15 everything was built in a few days, so most later versions share one date.
 
+## 1.2.0 (2026-10-19)
+
+Guides of AI Term's own, two more read-only helpers, a first-run setup, themes and fonts, and the first Mac release check since 1.0.
+
+### Add-on guides (v1.2)
+- **Every model add-on has its own guide** in `addons/guides/`, written for AI Term under its MIT license; `addon.md` names it with `guide:`. A build without a guide runs the add-on on its own steps and says so.
+
+### /triage and /migrate (v1.2)
+- **`/triage [issues | errors | <file>]`** sorts open issues (your own `gh` login) or an error log into groups, most urgent first, read-only; `s` starts `/issue` or `/fix` for one, with its own estimate.
+- **`/migrate <from> <to>`** plans a move to a new library, framework or version in steps you can read first; `a` runs them in one worktree in Ask mode, tests first and after every step.
+
+### First-run setup (v1.2)
+- **A new AI Term folder opens a setup:** what's installed (Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI, gh, Tailscale, Ollama, LM Studio), which logins and keys are ready, the sandbox, and the next steps. `ai setup` and `/setup` show it again. Only versions and the CLIs' own status commands run; nothing is installed.
+
+### Themes and fonts (v1.2.6)
+- **Five themes, each dark and light:** Graphite, Slate, Ink, Dune and High contrast, all from `docs/design/tokens.json`. Every text color holds 4.5:1 on its ground (High contrast 6:1). A system variant follows your terminal's background, or macOS in the app.
+- **`/theme`** lists them with the homepage drawn live in the highlighted one; ⏎ keeps it, Esc goes back. `/theme <name> [variant]` sets one directly.
+- **Theme files of your own** in `~/.ai-term/themes/`, refused whole with one line when anything is missing or wrong.
+- **The Mac app follows your theme** live, and has its own fonts (`/settings` → `F`): terminal and chrome family and size, ligatures. The title strip says when ligatures can't show because the font isn't installed.
+
+### Mac release check
+- **First full Mac run since v1.0.9:** the Electron smoke, the macOS sandboxes and the live suite's tier 1. Only tests needed fixes: macOS checks each new executable on its first run, which slowed fresh stub CLIs past their timeouts, and the login popup now covers the command bar in the app's window.
+
+## 1.1.0 (2026-10-19)
+
+More providers and engines, a live suite that drives the real `ai`, and a test suite that gives the same answer on any machine.
+
+### Providers (v1.1)
+- **25 more official hosts for AI Term's agent** (a region is a provider of its own: Mistral, Groq, Cerebras, Together AI, Fireworks AI, DeepInfra, Hugging Face, DeepSeek, Qwen, MiniMax, Volcengine Ark, BytePlus, SiliconFlow, Baidu Qianfan, StepFun, Tencent TokenHub, Moonshot and Zhipu in China, the Gemini API), plus LM Studio and any OpenAI-compatible server on 127.0.0.1, and a custom https endpoint that is checked against private addresses at every connection.
+
+### Engines (v1.1)
+- **Cursor, Gemini CLI and Copilot CLI** run untouched in a PTY on your own logins, each in its own worktree. Gemini CLI's Don't ask starts only inside its own sandbox.
+
+### The live suite
+- **`npm run live`** drives the built `ai` in a real PTY the way you'd use it: tier 1 in a throwaway world that needs nothing of yours, tier 2 on your own logins only when you ask. It found three bugs on its first runs, all fixed.
+
+### Backlog sweep
+- **Six fixes from the backlog:** `x` stops a running `/bisect` or `/perf` A/B, one `/bisect` per folder, AI Term's own temporary copies removed after a crash, `/study` reopens its last session, clearer `/queue` and dev-server errors, and `o`/`s` refusals in plain words.
+
+### Hermetic tests and the snapshot
+- **The suite runs the same on any machine** (B34): each test's git reads one temp config, and tests that need a missing tool skip with the reason. It found two real bugs: `/bisect` on git 2.43, and a same-size edit missing from a diff.
+- **`scripts/public-snapshot.mjs`** builds a curated public source snapshot with a fresh one-commit history (it stays private).
+
 ## 1.0.0 (2026-10-18)
 
 AI Term 1.0: the homepage, the background service, three engines, worktrees, review and merge, and the add-ons, checked by the v0.9 + v1.0 release gate. The v1.0.x steps below are in this release.
