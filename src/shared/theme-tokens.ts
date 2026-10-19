@@ -8,7 +8,8 @@ export const sansFont = tokens.type.families.sans;
 export const terminalFontSize = Number.parseInt(tokens.type.groups[0]?.styles[0]?.fontSize ?? '13', 10);
 export const chromeFontSize = Number.parseInt(tokens.type.groups[1]?.styles[0]?.fontSize ?? '13', 10);
 
-// v1.2.6: every theme is a column of docs/design/tokens.json (value.<theme>.<variant>); a token whose value is `{name}`
+// v1.2.6: every theme is a column of docs/design/tokens.json: graphite at value.dark and value.light (where it always was,
+// and where readers of that shape, like the spike renderer, still look), the others at value.<theme>.<variant>. A token whose value is `{name}`
 // is derived from that token in every theme (running = accent, done = ink-2, idle = ink-3).
 export const BUILTIN_THEMES: readonly { id: BuiltinThemeId; name: string }[] = tokens.color.themes.map(t => ({ id: t.id as BuiltinThemeId, name: t.name }));
 export function isBuiltinTheme(value: unknown): value is BuiltinThemeId { return BUILTIN_THEMES.some(t => t.id === value); }
@@ -24,7 +25,10 @@ export function deriveColors(base: Readonly<Partial<Colors>>): Colors {
 }
 export function themeColors(id: BuiltinThemeId, variant: ThemeVariant): Colors {
   const base: Partial<Colors> = {};
-  for (const token of tokens.color.tokens) if (typeof token.value === 'object') base[token.name as ColorName] = (token.value as Record<string, Record<ThemeVariant, string>>)[id]?.[variant];
+  for (const token of tokens.color.tokens) if (typeof token.value === 'object') {
+    const value = token.value as unknown as Record<string, string | Record<ThemeVariant, string>>, column = id === 'graphite' ? value[variant] : value[id];
+    base[token.name as ColorName] = typeof column === 'string' ? column : column?.[variant];
+  }
   return deriveColors(base);
 }
 // The graphite column, as before v1.2.6 (the remote page, /export and the app's first paint use it).

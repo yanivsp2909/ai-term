@@ -35,7 +35,7 @@ Full values and usage notes are in `docs/design/tokens.json`. Code reads colors 
 | `status-done` | = `ink-2` | = `ink-2` | ✓ done: calm, not a signal |
 | `status-running` | = `accent` | = `accent` | ◐ running |
 
-**Themes (v1.2.6).** Every theme is a column of `docs/design/tokens.json` (`value.<theme>.<dark|light>`), read only through the one theme module (`src/shared/theme-tokens.ts`). Each built-in has a dark and a light variant, and every text token (ink, ink-2, ink-3, accent, status-waiting, status-error) holds 4.5:1 or more on bg, surface and surface-2, on-accent on accent too (`tests/v126-themes.test.ts`). One accent hue (teal) in all of them.
+**Themes (v1.2.6).** Every theme is a column of `docs/design/tokens.json` (graphite at `value.dark` and `value.light`, as before, the others at `value.<theme>.<dark|light>`), read only through the one theme module (`src/shared/theme-tokens.ts`). Each built-in has a dark and a light variant, and every text token (ink, ink-2, ink-3, accent, status-waiting, status-error) holds 4.5:1 or more on bg, surface and surface-2, on-accent on accent too (`tests/v126-themes.test.ts`). One accent hue (teal) in all of them.
 - **`graphite`** (default): the two columns above. Dark chosen by Yaniv on 2026-10-11 after trying each live in Terminal.app.
 - **`slate`:** blue-gray. Its dark is the slate palette of 2026-10-11 (bg `#1B2029`, surface `#232935`, surface-2 `#2D3443`, line `#46506A`, ink `#E6EAF0`, ink-2 `#AEB6C4`, ink-3 `#9AA4B5`, accent `#58D6C9`); its light is a cool blue-gray paper.
 - **`ink`:** the original darkest (bg `#111317`, surface `#191C21`, surface-2 `#242830`, line `#3A3F48`, ink `#E6E8EB`, ink-2 `#A3A9B4`, ink-3 `#8E96A3`, accent `#4FD1C5`); its light is plain white paper with near-black ink.

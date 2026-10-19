@@ -54,7 +54,7 @@ describe('the built-in themes', () => {
       const value = token.value as unknown as Record<string, unknown>;
       expect([value.dark, value.light], token.name).toEqual([themeColors('graphite', 'dark')[token.name as ColorName], themeColors('graphite', 'light')[token.name as ColorName]]);
     }
-    const spike = await import('../spikes/renderer/theme.js') as { dark: Record<string, string> };
+    const spikeTheme = '../spikes/renderer/theme.js', spike = await import(spikeTheme) as { dark: Record<string, string> };
     expect(spike.dark.bg).toBe(themeColors('graphite', 'dark').bg);
   });
 
