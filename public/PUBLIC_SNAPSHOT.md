@@ -9,22 +9,23 @@ is where AI Term is developed. This snapshot has its own one-commit history; non
 {{LEFT_OUT}}
 
 **Shared add-on guides.** Add-ons bundle short guides adapted from skills and agents (`addons/_shared/`). A copy is
-kept only when its source states MIT, Apache-2.0 or a BSD license. {{COPIES}} copies state no license (or a mixed one),
-so they are left out; `addons/_shared/LEFT_OUT.txt` lists them. Those add-ons still work: an add-on whose guide is
+kept only when its source states MIT, Apache-2.0 or a BSD license and names a public upstream it can be credited to.
+{{COPIES}} copies don't (most state no license; the one Apache-2.0 copy names only a local path), so they are left out; `addons/_shared/LEFT_OUT.txt` lists them. Those add-ons still work: an add-on whose guide is
 missing runs on its own steps, and its prompt says which guide this build leaves out (`src/daemon/addons.ts`). The
 add-ons that run without their guide here: {{FALLBACKS}}.
 
-Some documents still mention files that are left out (PROGRESS.md, `docs/reviews/`, three `docs/spikes/` reports).
-Their absence is deliberate. Before the export, the private repository replaced a real Azure resource name, a key
+Some documents still mention files that are left out (PROGRESS.md, `docs/reviews/`, `docs/addons/inventory.md`, three
+`docs/spikes/` reports). Their absence is deliberate. AGENTS.md and CLAUDE.md describe the private development rules
+(they mention PROGRESS.md and `.claude/`); they are kept as context, not as instructions for this repository. Before the export, the private repository replaced a real Azure resource name, a key
 label, a key's last four characters and a time zone in tests and docs with example values.
 
 ## Added for the public tree
 
 - `README.md`: a public introduction (what it is, honest status, the security model, no affiliation) followed by the
   private README from its Install section on, which holds the full list of commands and keys.
-- `LICENSE` (MIT), `SECURITY.md` (private vulnerability reporting), `THIRD_PARTY_NOTICES.md`, `licenses/Apache-2.0.txt`
-  (for the one kept guide adapted from an Apache-2.0 skill), `.gitleaks.toml` (gitleaks' default rules, nothing
-  allowlisted), `addons/_shared/LEFT_OUT.txt`, and this file.
+- `LICENSE` (MIT), `SECURITY.md` (private vulnerability reporting), `THIRD_PARTY_NOTICES.md`, `.gitleaks.toml`
+  (gitleaks' default rules, nothing allowlisted), `addons/_shared/LEFT_OUT.txt`, and this file.
+- In `docs/design.md`, the links to the private design mockups are replaced by a sentence saying they are private.
 
 ## Verification
 
@@ -54,16 +55,19 @@ private repository or import its refs.
 
 ## Publishing (for the maintainer)
 
-Nothing here has been published. To publish this snapshot as `yanivsp2909/ai-term-public`, from this folder:
+Nothing here has been published. The folder holds one commit. From this folder, first scan it, then create the
+repository, turn on private vulnerability reporting before any code is public, and only then push:
 
 ```sh
+gitleaks git --redact --config .gitleaks.toml .
 gh repo create yanivsp2909/ai-term-public --public --description "AI Term: one terminal homepage for AI coding agents (source snapshot)"
-git remote add origin https://github.com/yanivsp2909/ai-term-public.git
-git push -u origin main
 gh api --method PUT repos/yanivsp2909/ai-term-public/private-vulnerability-reporting
 gh api repos/yanivsp2909/ai-term-public/private-vulnerability-reporting
+git remote add origin https://github.com/yanivsp2909/ai-term-public.git
+git push -u origin main
 ```
 
-The last command should print `{"enabled":true}`. Then open
+The fourth command should show `"enabled": true`. If gitleaks reports a test fixture, build that value from parts at
+run time in the private repository and export again rather than allowlisting it. After the push, open
 https://github.com/yanivsp2909/ai-term-public/security/advisories/new to see the reporting form SECURITY.md links to.
 If the repository gets another name, update the URL in SECURITY.md first.

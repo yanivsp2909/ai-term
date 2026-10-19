@@ -21,24 +21,28 @@ appear only to say which official tools AI Term can start.
 - Checks that need real logins, real keys, a phone or the packaged app were run by hand on macOS and are not part of
   this snapshot.
 
-## The security model, in plain words
+## Security, in short
 
 - **Your logins stay with their CLIs.** AI Term runs Claude Code, Codex, Cursor, Gemini CLI and Copilot CLI as they
   are. It never reads, copies or forwards their logins, and never writes to their config folders. An agent on your
   login runs with that CLI's API-key variables removed, so it can't quietly bill a key instead.
-- **API keys live only in your OS keychain** (macOS Keychain, Windows Credential Manager, or a Secret Service keyring
-  on Linux). Never in a file, a log or the screen; the homepage only knows a key's last four characters. A key is read
-  right before it is used, and goes only to its own provider's fixed address. A custom endpoint must be https on the
-  public internet, and you confirm it by typing `add`.
-- **Agents ask before they act** unless you choose otherwise for one agent. "Don't ask" is offered only where a sandbox
-  holds: AI Term's own agent runs its commands in a sandbox, Codex keeps its own, and Gemini CLI uses its own. Cursor
-  and Copilot CLI are Ask only.
-- **Nothing an agent writes runs outside a sandbox without asking.** Tests and dev servers started by AI Term run
-  sandboxed where the platform allows it, and ask first where it doesn't.
+- **API keys are stored only in your OS keychain** (macOS Keychain, Windows Credential Manager, or a Secret Service
+  keyring on Linux), never in a settings file, a log or on screen; the homepage only knows a key's last four
+  characters. A key is read right before it is used. A CLI gets it in its own environment; AI Term's own agent gets
+  it through a one-time file only you can read, which it deletes as it starts. Each key goes only to the address bound
+  to it when you added it: its provider's fixed address, or the Azure AI Foundry endpoint, Bedrock region or custom
+  endpoint you entered. A custom endpoint must be https on the public internet, and you confirm it by typing `add`.
+- **Agents ask before they act by default.** Don't ask is a choice you make per agent. In it, AI Term's own agent runs
+  its commands in a sandbox, and Codex and Gemini CLI keep their own; Claude Code in Don't ask has no sandbox and can
+  do whatever your account can. Cursor and Copilot CLI are Ask only.
+- **Tests and dev servers that AI Term starts** run in a sandbox where the platform has one, and ask first where it
+  doesn't.
 - **Everything stays on your machine.** The background service listens on a socket only you can open, and its local
   HTTP endpoints accept only 127.0.0.1 with a token. The optional phone remote works only over your own Tailscale
   network and is off by default.
 - **Anything that spends tokens asks first** and shows an estimated price, and budgets can stop it.
+
+The details and their caveats are under [Security model, in plain words](#security-model-in-plain-words).
 
 Found a security problem? Please report it privately: see [SECURITY.md](SECURITY.md).
 

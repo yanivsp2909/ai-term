@@ -33,18 +33,23 @@ const LEFT_OUT = [
   ['.agents', 'local agent settings for development'],
   ['public', 'the overlay this script copies in'],
   ['scripts/public-snapshot.mjs', 'this script'],
+  ['tests/partc-snapshot.test.ts', 'it tests this script, which stays private'],
 ];
 // Shared add-on copies are kept only when their source license allows sharing: the License line of the header (the
 // lines right after the front matter) must name MIT, Apache-2.0 or a BSD license and nothing else.
 const PERMISSIVE = /^License: (?:MIT|Apache[ -]2\.0|BSD(?:-[23]-Clause)?)(?: \([^()]*\))?\.?$/;
+function header(text) {
+  const lines = text.split('\n'), end = lines[0] === '---' ? lines.indexOf('---', 1) : -1, out = [];
+  if (end >= 0) for (const line of lines.slice(end + 1)) { if (!line.trim()) break; out.push(line); }
+  return out;
+}
 export function permissive(text) {
-  const lines = text.split('\n'), end = lines[0] === '---' ? lines.indexOf('---', 1) : -1;
-  if (end < 0) return false;
-  const header = [];
-  for (const line of lines.slice(end + 1)) { if (!line.trim()) break; header.push(line); }
-  const licenses = header.filter(line => line.startsWith('License:'));
+  const licenses = header(text).filter(line => line.startsWith('License:'));
   return licenses.length === 1 && PERMISSIVE.test(licenses[0]);
 }
+// Kept: a permissive license and a public upstream named in the header, so the notices can attribute it fully (a local
+// path can't be checked or credited; Part C packaging review).
+export function keepable(text) { return permissive(text) && header(text).some(line => /^Source: https:\/\/\S+/.test(line)); }
 // A tree with any of these in it is refused: real names this repository's history once held. Fake ones in tests are
 // listed as allowed. Built from parts so this file doesn't trip its own check.
 // (The GitHub handle in SECURITY.md and the noreply author are public on purpose; the macOS user name is not.)
@@ -84,13 +89,14 @@ export async function build(target, ref) {
     await run('tar', ['-xf', tar, '-C', out], { maxBuffer: MAX });
   } finally { await rm(scratch, { recursive: true, force: true }); }
 
-  for (const [path] of LEFT_OUT) await rm(join(out, path), { recursive: true, force: true });
+  const removed = [];
+  for (const [path, why] of LEFT_OUT) { if (!(await gone(join(out, path)))) removed.push([path, why]); await rm(join(out, path), { recursive: true, force: true }); }
 
   await walk(out);
   const shared = join(out, 'addons', '_shared'), leftCopies = [];
   for (const file of (await walk(shared)).sort()) {
     if (!file.endsWith('.md')) throw new Error(`addons/_shared/${file} is not a guide this script knows how to check`);
-    if (!permissive(await readFile(join(shared, file), 'utf8'))) { leftCopies.push(file); await rm(join(shared, file)); }
+    if (!keepable(await readFile(join(shared, file), 'utf8'))) { leftCopies.push(file); await rm(join(shared, file)); }
   }
   for (const dir of await readdir(join(shared, 'skills'))) if (!(await readdir(join(shared, 'skills', dir))).length) await rm(join(shared, 'skills', dir), { recursive: true });
   await writeFile(join(shared, 'LEFT_OUT.txt'), leftCopies.join('\n') + '\n');
@@ -105,16 +111,19 @@ export async function build(target, ref) {
 
   const readme = await readFile(join(out, 'README.md'), 'utf8'), from = readme.indexOf('\n## Install');
   if (from < 0) throw new Error('README.md has no ## Install section to keep');
-  await writeFile(join(out, 'README.md'), (await readFile(join(OVERLAY, 'README.md'), 'utf8')).trimEnd() + '\n' + readme.slice(from));
+  const kept = readme.slice(from).replace('git clone <this repository> ai-term', 'git clone https://github.com/yanivsp2909/ai-term-public.git ai-term');
+  await writeFile(join(out, 'README.md'), (await readFile(join(OVERLAY, 'README.md'), 'utf8')).trimEnd() + '\n' + kept);
+  // design.md links the private mockups in Claude Design; nobody else can open them.
+  const design = join(out, 'docs', 'design.md');
+  await writeFile(design, (await readFile(design, 'utf8')).replace(/Mockups: canvas "AI Term screens" \(https:\/\/claude\.ai\/artifact\/\w+\); design system: https:\/\/claude\.ai\/artifact\/\w+\. Agents can't open those/, "Its mockups and design system are private. Nobody else can open those"));
   for (const file of ['LICENSE', 'SECURITY.md', '.gitleaks.toml']) await copyFile(join(OVERLAY, file), join(out, file));
-  await mkdir(join(out, 'licenses'), { recursive: true });
-  await copyFile(join(OVERLAY, 'licenses', 'Apache-2.0.txt'), join(out, 'licenses', 'Apache-2.0.txt'));
+  if (await usesApache(shared)) { await mkdir(join(out, 'licenses'), { recursive: true }); await copyFile(join(OVERLAY, 'licenses', 'Apache-2.0.txt'), join(out, 'licenses', 'Apache-2.0.txt')); }
   await writeFile(join(out, 'THIRD_PARTY_NOTICES.md'), await notices(out, shared));
   const template = await readFile(join(OVERLAY, 'PUBLIC_SNAPSHOT.md'), 'utf8');
   await writeFile(join(out, 'PUBLIC_SNAPSHOT.md'), template
     .replaceAll('{{COMMIT}}', commit)
     .replaceAll('{{DATE}}', (await git(['show', '-s', '--format=%cs', '--end-of-options', commit])).trim())
-    .replace('{{LEFT_OUT}}', LEFT_OUT.filter(([path]) => !['public', 'scripts/public-snapshot.mjs'].includes(path)).map(([path, why]) => `- \`${path}\`: ${why}.`).join('\n'))
+    .replace('{{LEFT_OUT}}', removed.filter(([path]) => !['public', 'scripts/public-snapshot.mjs', 'tests/partc-snapshot.test.ts'].includes(path)).map(([path, why]) => `- \`${path}\`: ${why}.`).join('\n'))
     .replace('{{COPIES}}', String(leftCopies.length))
     .replace('{{FALLBACKS}}', fallbacks.join(', '))
     .replace('{{VERIFICATION}}', 'Not verified yet: run the checks below, then record their last lines here before the commit.'));
@@ -124,6 +133,10 @@ export async function build(target, ref) {
   process.stdout.write(`Snapshot of ${commit} in ${out}: ${leftCopies.length} shared copies left out; add-ons on their own steps: ${fallbacks.join(', ')}\n`);
 }
 
+async function usesApache(shared) {
+  for (const file of await walk(shared)) if (file.endsWith('.md') && /^License: Apache/m.test(header(await readFile(join(shared, file), 'utf8')).join('\n'))) return true;
+  return false;
+}
 // npm packages and their licenses from package-lock.json (none of them is in this tree; npm installs them), and the
 // shared copies this snapshot keeps with the license their source states.
 async function notices(out, shared) {
@@ -150,7 +163,7 @@ AI Term's own code is under the MIT license (LICENSE).
 Add-ons bundle short guides adapted from skills and agents. This snapshot keeps only those whose source states a
 license that allows sharing; the others are left out (PUBLIC_SNAPSHOT.md).
 
-${kept.join('\n')}
+${kept.length ? kept.join('\n') : 'None in this snapshot: every guide either states no license or names no public upstream to credit.'}
 
 ## Price data
 
