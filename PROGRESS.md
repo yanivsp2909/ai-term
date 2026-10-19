@@ -1,9 +1,9 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: see the newest commits; this block is rewritten at the end of each part of this run
-Last commit: Part A handover (this commit)
-Roadmap step: 2026-10-19 long run (B34 → Part A providers → Part B engines → Part C public snapshot) · B34 and Part A done, B and C not started
+Last code commit: 7f15ff0 fix: Part B review findings (Gemini sandbox variables and runner, Cursor one-word messages, Copilot profile gh folder, labels, add-ons, handoff)
+Last commit: Part B handover (this commit)
+Roadmap step: 2026-10-19 long run (B34 → Part A providers → Part B engines → Part C public snapshot) · B34, Part A and Part B done, Part C not started
 Branch: main, pushed.
 
 ## Run 2026-10-19 (cloud container, Linux, root): B34 first
@@ -36,6 +36,34 @@ Branch: main, pushed.
 - **Reviews (fresh context, 40c49d7..HEAD):** code review 0 CRITICAL/HIGH, 1 MEDIUM (the region line was off screen for most providers), 1 LOW (empty answers not drained, a 205 would throw), 1 cosmetic (`t` still said "ollama pull" for LM Studio); security review 0 CRITICAL/HIGH/MEDIUM, 1 LOW (IPv4-compatible IPv6 `[::127.0.0.1]` passed; not reachable on Linux or macOS without a tunnel), 1 informational (a trailing `?` or `#`). All fixed: RED commit, then fix commit.
 - **Checks:** typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 304ms" · app:build "✓ built in 817ms" · npm test twice "Test Files 298 passed | 2 skipped (300) · Tests 1941 passed | 70 skipped (2011)" (119 s, 120 s) · `npm run live` tier 1 "Tier 1 passed: 32 checks in 119 s" · Electron smoke: not here (no Electron binary; needs Yaniv).
 - **Manual checks (need Yaniv, real keys):** see the Manual checks list at the end of this run's block.
+
+### Part B · Cursor CLI, Gemini CLI and Copilot CLI as engines: done
+- **Commits:** 7591a88 (RED), fae4165 (GREEN), 81f9f12 → 7f15ff0 (review findings, RED → fix).
+- **What it is:** each official CLI runs untouched in a PTY, in its own worktree, on your own login (`/login` · CLI login row: `agent login`, `copilot login`, Gemini CLI's own first screen). argv only; model `--model=<id>`; the first message one element. Facts per CLI in `src/shared/cli-engines.ts`; argv and env only in `src/daemon/env.ts`.
+- **Per engine:**
+  - **Cursor** (`agent`, older `cursor-agent`; `agent` counts only when its `--help` names Cursor): status from output · Ask only (its docs don't say whether `--force` keeps its sandbox) · one account (`CURSOR_CONFIG_DIR` moves its config but its login stays in `~/.cursor`) · first message of two words or more (one bare word would run a command like `logout`).
+  - **Gemini CLI** (`gemini`): status from output · Ask (`--approval-mode=default`) and Don't ask (`--approval-mode=yolo --sandbox`, started only when its runner is on PATH: sandbox-exec on macOS, Docker or Podman elsewhere; `SANDBOX`, `GEMINI_SANDBOX`, `SEATBELT_PROFILE` stripped) · accounts (`GEMINI_CLI_HOME`).
+  - **Copilot CLI** (`copilot`): status from output · Ask only (no documented sandbox with `--allow-all-tools`) · accounts (`COPILOT_HOME`, plus its own `GH_CONFIG_DIR` so a new profile never uses your gh login).
+- **Rules held:** keys never run on them (route() sends a key request to AI Term's agent: tested); credential and routing variables from each CLI's docs stripped (§7.3, S27); skip flags only in env.ts (grep test); AI Term never writes to `~/.cursor`, `~/.gemini`, `~/.copilot` or gh's folder; a missing CLI shows its install command, never installed. `/send` is refused (no status: a prompt could be up unseen), `/resume` points to `/retry`, add-ons and a keyless `/handoff` are refused with why.
+- **Status source:** none of them documents hooks AI Term could use without writing into their config folders, so the card says `status from output` (running on output, quiet after 10 s, exited at exit).
+- **Where the code or the docs disagreed with the prompt:** Cursor's command is now `agent` (`cursor-agent` is the old name); Gemini CLI's unpaid tier and Google One users moved to Antigravity CLI on 2026-06-18 (its README), so its login may need a paid or Workspace account.
+- **Reviews (fresh context, 69afea5..fae4165):**
+  - security: 0 CRITICAL/HIGH · 2 MEDIUM (Gemini's `SANDBOX`/`GEMINI_SANDBOX` could leave Don't ask unsandboxed, and nothing checked that its runner exists; docs didn't name a project `.env`) · 1 LOW-MEDIUM (Cursor/Copilot Ask can be widened by their own settings: docs) · 3 LOW (Cursor one-word message runs a subcommand; loose `agent` check; a new Copilot profile may fall back to `gh auth token`). All fixed except the loose `agent` check: kept, since any executable on PATH is trusted the same way (`claude`, `codex`) and tightening to a help string its docs don't promise would hide a real Cursor.
+  - code: 0 CRITICAL/HIGH · 3 MEDIUM (`/model` hint said "claude code"; a vacuous key-routing test; no retry/reload coverage) · 4 LOW (badges read `AT`; add-on flow offered the CLIs; keyless handoff said "still working"; the saved-default wording). All fixed.
+- **Checks (after the fixes):** typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 301ms" · app:build "✓ built in 621ms" · npm test twice "Test Files 299 passed | 2 skipped (301) · Tests 1967 passed | 70 skipped (2037)" (134 s, 142 s) · `npm run live` tier 1 "Tier 1 passed: 32 checks in 104 s" · Electron smoke: not here (no Electron binary; needs Yaniv).
+- **Not built:** the Ask caveat for Cursor and Copilot is in the docs, not the mode row (the row already carries their Don't ask note; a second line there felt noisier).
+
+### Manual checks of this run (new only)
+- Part A key: `cd ~/ai-term && npm run dev` then `/login` → DeepSeek (or any new provider) → add a key → `t` → its models appear in `/model` · ai term
+- Part A region: `cd ~/ai-term && npm run dev` then `/login` → Moonshot · China → the line under the title names Beijing and real-name verification
+- Part A local: `cd ~/ai-term && npm run dev` with LM Studio's server on 1234, then `/login` → LM Studio → `t` lists its loaded models
+- Part A custom: `cd ~/ai-term && npm run dev` then `/login` → Custom OpenAI-compatible endpoint → an https endpoint → type `add` → the card shows its host
+- Part B Gemini: `cd ~/ai-term && npm run dev` then `/login` → Gemini CLI · CLI login → sign in on its first screen, then `/model` → Gemini CLI tab → start in Ask; it asks before a write
+- Part B Gemini Don't ask: `cd ~/ai-term && npm run dev` then a Gemini CLI agent with `/mode don't ask` → its header says sandbox (Seatbelt)
+- Part B Copilot: `cd ~/ai-term && npm run dev` then `/login` → Copilot CLI · CLI login → `copilot login` finishes, then start a Copilot CLI agent
+- Part B Copilot account: `cd ~/ai-term && npm run dev` then `/account add copilot work` → its login row → a new device login, not your gh account
+- Part B Cursor: `cd ~/ai-term && npm run dev` then `/login` → Cursor · CLI login → `agent login`, then start a Cursor agent with a two-word message
+- Electron smoke (hidden): `cd ~/ai-term && npm run build && npm run app:build && npm run app:test`
 
 ## Checkpoint (backlog sweep)
 Last code commit: 32d4fd2 fix: the sweep leaves a folder whose mark it can't read exactly as it is, and the daemon runs one /bisect per folder (follow-up review)
