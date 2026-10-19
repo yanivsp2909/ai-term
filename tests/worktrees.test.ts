@@ -16,7 +16,7 @@ const run=promisify(execFile),roots:string[]=[],managers:SessionManager[]=[];
 afterEach(async()=>{for(const manager of managers.splice(0))await manager.shutdown();vi.restoreAllMocks();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});
 async function fixture(committed=true){
  const temp=await mkdtemp(join(tmpdir(),'ai-trees-'));roots.push(temp);const repo=join(temp,'repo spaces'),home=join(temp,'home');await mkdir(repo);await mkdir(home,{mode:0o700});await mkdir(join(repo,'sub'));
- await writeFile(join(repo,'sub','tracked.txt'),'committed');await run('/usr/bin/git',['init','--',repo]);
+ await writeFile(join(repo,'sub','tracked.txt'),'committed');await run('/usr/bin/git',['init','-b','main','--',repo]);
  await run('/usr/bin/git',['add','--','sub/tracked.txt'],{cwd:repo});
  if(committed)await run('/usr/bin/git',['-c','user.name=Test','-c','user.email=test@example.invalid','-c','commit.gpgsign=false','commit','-m','initial','--'],{cwd:repo});
  return {temp,repo,home};
@@ -59,7 +59,7 @@ it('a branch and tag with the same name still reserve the branch slug',async()=>
  expect(await previewWorktree(home,repo,'Codex')).toMatchObject({branch:'ai/codex-2'});expect(await prepareWorktree(home,repo,'Codex')).toMatchObject({branch:'ai/codex-2'});
 });
 it('a repo name ending in a space never routes git operations into its sibling',async()=>{
- const {temp,repo,home}=await fixture(),trailing=join(temp,'repo spaces ');await mkdir(trailing);await run('/usr/bin/git',['init','--',trailing]);
+ const {temp,repo,home}=await fixture(),trailing=join(temp,'repo spaces ');await mkdir(trailing);await run('/usr/bin/git',['init','-b','main','--',trailing]);
  await run('/usr/bin/git',['-c','user.name=Test','-c','user.email=test@example.invalid','-c','commit.gpgsign=false','commit','--allow-empty','-m','different','--'],{cwd:trailing});
  const head=(await run('/usr/bin/git',['show','--no-patch','--format=%H','--'],{cwd:trailing})).stdout.trim();
  expect(await previewWorktree(home,trailing,'space')).toMatchObject({head,branch:'ai/space'});const started=await prepareWorktree(home,trailing,'space');expect(started.branch).toBe('ai/space');
