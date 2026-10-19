@@ -1,11 +1,37 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: 4483ed3 chore: release 1.2.0 (CHANGELOG 1.1.0 and 1.2.0, package version, README status)
-Last commit: v1.2.0 run handover and final report (this commit)
-Tag: v1.2.0 (annotated) on 4483ed3, pushed
-Roadmap step: 2026-10-19 v1.2.0 release run on Yaniv's Mac (A Mac release check → B themes and fonts → C public snapshot and the tag) · done: A, B, C; v1.2.0 tagged
+Last code commit: 00e8493 test: B35 review (the app's bottom line waits for a real refit …)
+Last commit: B35 handover (this commit)
+Tag: v1.2.0 (annotated) on 4483ed3; no version bump in this run
+Roadmap step: 2026-10-19 B35 the homepage bottom line · done
 Branch: main, pushed.
+
+## Run 2026-10-19 B35 · the homepage bottom line (Yaniv's Mac: `uname -s` Darwin 25.5.0)
+- **Cause (one line):** layout.ts clipped `model · engine` character by character to whatever the auth, effort, mode and worktree text and the fixed key hints left, then gave the folder the rest (0 at 120 columns), so the line read `CLI default · claude c ·  · own login …` and tier 2's `/claude code · .*own login/` never matched.
+- **Why "CLI default" twice:** the first was the model (none picked), the second the effort (none picked). Both mean "the CLI chooses", but for two different settings; shown bare they read as one value twice. Now an unset effort is left out (the model's `CLI default` already says the CLI chooses) and a picked one reads `effort high`, as the start box's `effort` row does (design:ux-copy).
+- **Fix:** src/client/tui/bottom-line.ts `fitBottomLine`: every field whole or left out, never cut, never empty. They claim the room in rank order: engine, auth, model, mode, a picked effort, worktree, the key hints, folder. One is left out only when it wouldn't fit even with everything after it gone. Display order is now `model · engine · auth · effort · mode · worktree · folder` (the folder moved to the end, so auth follows the engine, as tier 2's checks already expected). Don't ask keeps status-error wherever it lands. docs/design.md "Line under it" and "Fitting (B35)" say so.
+- **What the line shows now** (fresh folder, Claude Code logged in, folder `~/projects/demo`; tests/b35-bottom-line*.test.ts):
+  - 120: `CLI default · claude code · own login · sub · ask · worktree on` + the key hints (the folder doesn't fit beside them)
+  - 100: `CLI default · claude code · own login · sub · ask · worktree on · ~/projects/demo` (no hints)
+  - 80: `CLI default · claude code · own login · sub · ask · worktree on`
+  - The real built `ai` on this Mac (temp AI Term folder, real PATH and login, homepage only, its daemon stopped after): 120 `… · worktree on · ~/ai-term` + hints; 100 and 80 `… · worktree on · ~/ai-term`.
+- **The app:** it runs the same TUI in xterm (app/renderer has no bottom line of its own). A new Electron smoke test (Claude Code stub logged in) reads the app's line at 760 and 1400 px after ai refits; on the old layout it fails with `CLI d ·  · own login …`.
+- **Tier 2:** check 1 now waits for `/· claude code · own login/` (auth right after the engine: what a correct line shows, stricter than before); check 3 the same for codex (review LOW). Its key check (`<model> · ai term · key ····`) could never match while the folder sat between engine and auth; it now can. Tier 2 was not run (not allowed in this run).
+- **Commits:** 401ccf5 (RED), fc20374 (fix), 00e8493 (review fixes), this handover.
+- **Review (typescript-reviewer, fresh context):** 0 CRITICAL/HIGH. MEDIUM 2: a model id too long to fit is left out while lower fields show (kept: it can't fit even alone with engine and auth, and stopping there would hide the model too; now in the sweep, and auth-labels' old "clipped" test asserts it is left out whole); the Electron test could read a stale row and skipped the last field (fixed: waits for the column count to change, checks every field; proven failing on the old layout). LOW 3: tier 2's codex check kept `.*` (fixed); the sweep never varied the fields (fixed: don't ask + effort, a wide-character folder, a long model); a folder starting with a zero-width character is measured whole but drawn cut (not changed: real paths don't start with one).
+- **Checks:** typecheck exit 0 · lint "ESLint: No issues found" · build "ESM ⚡️ Build success in 54ms" · app:build "✓ built in 59ms" · npm test twice "Test Files 314 passed | 1 skipped (315) · Tests 2126 passed | 8 skipped (2134)" (57 s, 56 s) · Electron smoke "13 passed (54.4s)" · `npm run live` tier 1 "Tier 1 passed: 32 checks in 122 s" (and 95 s before the review fixes).
+- **Where the code disagreed with the prompt:** the empty field was the folder (clipped to 0 columns), not a missing value; design.md had the folder between engine and auth and "clipped before auth", which tier 2's key check never allowed for. No other disagreement.
+- **Choices made:** hints rank above the folder (keys appear only here; the folder is the longest field and also shows in the start box and /cd); the hints are one unit (all or none); a too-long folder is left out rather than shortened to its last part.
+- **Not touched:** your uncommitted docs/user-guide.md sentence ("One bisect runs per folder at a time.") stays uncommitted. `npm ci` again left Electron without its binary; `node node_modules/electron/install.js` fetched it (the gotcha below).
+
+### Manual checks (B35)
+- The real homepage at 120, 100 and 80 columns: ran (above).
+- `npm run live -- --with-logins` tier 2 past check 1: needs Yaniv.
+- The app's bottom line by eye: `cd ~/ai-term && npm run app:dev`, narrow and widen the window: needs Yaniv.
+
+### Concepts introduced (B35)
+- **Fit by rank, whole or nothing** (src/client/tui/bottom-line.ts): instead of cutting text to the room left, each field is all-or-nothing, and fields are offered the room in a fixed order. A field is skipped only if it can't fit with everything ranked above it, so a lower field never pushes out a higher one, and a short low field can still use space a long one couldn't.
 
 ## Run 2026-10-19 v1.2.0 (Yaniv's Mac: `uname -s` Darwin 25.5.0, Node 26.3.0, npm 11.16.0)
 
