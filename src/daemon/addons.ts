@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { lstat, open, realpath, readdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { parseAddon, isAddonTarget, addonName, GATHERED_INPUTS, type Addon, type AddonAsk, type AddonInput, type AddonTarget, type BisectAsk } from '../shared/addons.js';
 import type { Gathered } from './addon-gather.js';
 import { extractAddonResult, OUTPUT_FOLDERS, type AbView, type AddonResult, type Finding } from '../shared/addon-results.js';
@@ -97,6 +97,14 @@ function reverseFacts(plan: ReversePlan): string[] {
 }
 export const RUN_FAILED = 'The add-on run failed; the daemon log says why';
 const STOPPING = 'AI Term is stopping; start it again after';
+// A guide that is really missing: the nearest thing on its path that exists is a real folder. A dangling link (to a file
+// or a folder) also reads as ENOENT, and is refused like any other link (Part C review).
+async function absent(root: string, path: string): Promise<boolean> {
+  for (let at = join(root, path); at !== root && at.startsWith(root); at = dirname(at)) {
+    try { const stat = await lstat(at); return stat.isDirectory(); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+  }
+  return false;
+}
 const exists = async (path: string): Promise<boolean> => { try { await lstat(path); return true; } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return false; throw error; } };
 export class AddonService {
   private receipts = new Map<string, { input: Input; ask: AddonAsk; expires: number }>();
@@ -183,7 +191,7 @@ export class AddonService {
     // A build may leave a shared copy out (the public snapshot drops every copy whose source license doesn't allow
     // sharing): the add-on then runs on its own steps and its prompt says so. Only a missing file; anything unsafe throws.
     for (const path of [...addon.skills.map(n => `skills/${n}/SKILL.md`), ...addon.agents.map(n => `agents/${n}.md`)]) {
-      try { files.push({ path, text: await addonFile(this.definitions, `_shared/${path}`) }); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; missing.push(path); }
+      try { files.push({ path, text: await addonFile(this.definitions, `_shared/${path}`) }); } catch (error) { if (!isFsError(error, 'ENOENT') || !await absent(join(this.definitions, '_shared'), path)) throw error; missing.push(path); }
     }
     let brain: BrainPlan | null = null;
     if (addon.brain !== 'none') { try { brain = await this.runner.brainPlan(cwd); } catch (error) { if (!(error instanceof Error) || !error.message.includes("isn't in a git repository")) throw error; } }

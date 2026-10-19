@@ -34,25 +34,39 @@ const LEFT_OUT = [
   ['public', 'the overlay this script copies in'],
   ['scripts/public-snapshot.mjs', 'this script'],
 ];
-// Shared add-on copies are kept only when their source license allows sharing.
-const PERMISSIVE = /^License: (MIT|Apache[ -]2\.0|BSD)\b/m;
-export function permissive(text) { return PERMISSIVE.test(text); }
+// Shared add-on copies are kept only when their source license allows sharing: the License line of the header (the
+// lines right after the front matter) must name MIT, Apache-2.0 or a BSD license and nothing else.
+const PERMISSIVE = /^License: (?:MIT|Apache[ -]2\.0|BSD(?:-[23]-Clause)?)(?: \([^()]*\))?\.?$/;
+export function permissive(text) {
+  const lines = text.split('\n'), end = lines[0] === '---' ? lines.indexOf('---', 1) : -1;
+  if (end < 0) return false;
+  const header = [];
+  for (const line of lines.slice(end + 1)) { if (!line.trim()) break; header.push(line); }
+  const licenses = header.filter(line => line.startsWith('License:'));
+  return licenses.length === 1 && PERMISSIVE.test(licenses[0]);
+}
 // A tree with any of these in it is refused: real names this repository's history once held. Fake ones in tests are
 // listed as allowed. Built from parts so this file doesn't trip its own check.
 // (The GitHub handle in SECURITY.md and the noreply author are public on purpose; the macOS user name is not.)
-const FORBIDDEN = [['yaniv', 'sp(?!2909)'], ['yaniv', '2909sp'], ['gmail', '\\.com'], ['narvis', '-resource'], ['Jeru', 'salem'], ["(?:'|····)IT", 'id\\b']].map(parts => new RegExp(parts.join('')));
+const FORBIDDEN = [...[['yaniv', 'sp(?!2909)'], ['yaniv', '2909sp'], ['gmail', '\\.com'], ['narvis', '-resource'], ['Jeru', 'salem']].map(parts => new RegExp(parts.join(''), 'i')),
+  new RegExp(["(?:'|····)IT", 'id\\b'].join(''))];
 const ALLOWED = {
   users: new Set(['me', 'test', 'x', 'y', 'foo', 'secret', 'someone', 'victim']),
+  homes: new Set(['me', 'u', 'brain', 'linuxbrew', 'addons', 'stop', 'reattach', 'plans']),
+  windowsUsers: new Set(['me']),
   tailnets: new Set(['tail1234']),
   azure: new Set(['example', 'example-resource', 'r', 'x', 'b28', 'secrets']),
 };
 
 async function git(args, cwd = ROOT) { return (await run('git', args, { cwd, maxBuffer: MAX })).stdout; }
 async function gone(path) { try { await lstat(path); return false; } catch (error) { if (error?.code === 'ENOENT') return true; throw error; } }
+// Every file under dir. A link is refused: tar keeps tracked links, and writes, deletes or reads through one could
+// reach outside the snapshot (Part C review).
 async function walk(dir, base = dir) {
   const out = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
+    if (entry.isSymbolicLink()) throw new Error(`${relative(base, full)} is a link; the snapshot holds none`);
     if (entry.isDirectory()) { if (entry.name !== '.git') out.push(...await walk(full, base)); }
     else out.push(relative(base, full));
   }
@@ -72,9 +86,10 @@ export async function build(target, ref) {
 
   for (const [path] of LEFT_OUT) await rm(join(out, path), { recursive: true, force: true });
 
+  await walk(out);
   const shared = join(out, 'addons', '_shared'), leftCopies = [];
   for (const file of (await walk(shared)).sort()) {
-    if (!file.endsWith('.md')) continue;
+    if (!file.endsWith('.md')) throw new Error(`addons/_shared/${file} is not a guide this script knows how to check`);
     if (!permissive(await readFile(join(shared, file), 'utf8'))) { leftCopies.push(file); await rm(join(shared, file)); }
   }
   for (const dir of await readdir(join(shared, 'skills'))) if (!(await readdir(join(shared, 'skills', dir))).length) await rm(join(shared, 'skills', dir), { recursive: true });
@@ -151,35 +166,53 @@ ${sections.join('\n\n')}
 `;
 }
 
-export async function markers(out) {
+// What a line (or a file name) holds that the snapshot must not: a real name, or a home, tailnet or Azure name that
+// isn't one of the tests' fakes.
+function lineMarkers(line) {
+  const found = FORBIDDEN.filter(pattern => pattern.test(line)).map(pattern => pattern.source);
+  for (const [, name] of line.matchAll(/\/Users\/([A-Za-z0-9._-]+)/gi)) if (!ALLOWED.users.has(name)) found.push(`/Users/${name}`);
+  for (const [, name] of line.matchAll(/\/home\/([A-Za-z0-9._-]+)/gi)) if (!ALLOWED.homes.has(name)) found.push(`/home/${name}`);
+  for (const [, name] of line.matchAll(/[A-Za-z]:\\+Users\\+([A-Za-z0-9._-]+)/gi)) if (!ALLOWED.windowsUsers.has(name.toLowerCase())) found.push(`C:\\Users\\${name}`);
+  for (const [, name] of line.matchAll(/([a-z0-9-]+)\.ts\.net/gi)) if (!ALLOWED.tailnets.has(name)) found.push(`${name}.ts.net`);
+  for (const [, name] of line.matchAll(/([a-z0-9-]+)\.openai\.azure\.com/gi)) if (!ALLOWED.azure.has(name)) found.push(`${name}.openai.azure.com`);
+  return found;
+}
+// files: the paths to check (default: every file under out). A file that isn't text is reported, never skipped.
+export async function markers(out, files) {
   const found = [];
-  for (const file of await walk(out)) {
-    let text;
-    try { text = await readFile(join(out, file), 'utf8'); } catch (error) { found.push(`${file}: unreadable (${error?.code ?? 'error'})`); continue; }
-    if (text.includes('\u0000')) continue;
-    text.split('\n').forEach((line, index) => {
-      const at = `${file}:${index + 1}`;
-      for (const pattern of FORBIDDEN) if (pattern.test(line)) found.push(`${at}: ${pattern.source}`);
-      for (const [, name] of line.matchAll(/\/Users\/([A-Za-z0-9._-]+)/g)) if (!ALLOWED.users.has(name)) found.push(`${at}: /Users/${name}`);
-      for (const [, name] of line.matchAll(/([a-z0-9-]+)\.ts\.net/g)) if (!ALLOWED.tailnets.has(name)) found.push(`${at}: ${name}.ts.net`);
-      for (const [, name] of line.matchAll(/([a-z0-9-]+)\.openai\.azure\.com/g)) if (!ALLOWED.azure.has(name)) found.push(`${at}: ${name}.openai.azure.com`);
-    });
+  for (const file of files ?? await walk(out)) {
+    for (const marker of lineMarkers(file)) found.push(`${file}: name matches ${marker}`);
+    const text = await readFile(join(out, file), 'utf8');
+    if (text.includes('\u0000')) { found.push(`${file}: not text; check it by hand and leave it out`); continue; }
+    text.split('\n').forEach((line, index) => { for (const marker of lineMarkers(line)) found.push(`${file}:${index + 1}: ${marker}`); });
   }
   return found;
 }
 
+// base: only PATH (and SystemRoot on Windows) is taken from it. Git gets an empty home and config, UTC, no template, no
+// hooks and no signing, so nothing of this machine (an ignore file, GIT_DIR, a hook, a key, the time zone) shapes the
+// public commit (Part C review). The files git would commit are checked again, and nothing is committed on a refusal.
 export async function commit(target, base = process.env) {
   const out = resolve(target);
   if (!(await gone(join(out, '.git')))) throw new Error(`${out} already has a git repository`);
-  const source = (await readFile(join(out, 'PUBLIC_SNAPSHOT.md'), 'utf8')).match(/commit `([0-9a-f]{40})`/)?.[1];
+  const snapshot = await readFile(join(out, 'PUBLIC_SNAPSHOT.md'), 'utf8'), source = snapshot.match(/commit `([0-9a-f]{40})`/)?.[1];
   if (!source) throw new Error('PUBLIC_SNAPSHOT.md names no source commit');
-  // A private git config: no signing key, hooks or template of this machine reach the public commit.
-  const env = { ...base, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: AUTHOR.name, GIT_AUTHOR_EMAIL: AUTHOR.email, GIT_COMMITTER_NAME: AUTHOR.name, GIT_COMMITTER_EMAIL: AUTHOR.email };
-  const g = args => run('git', args, { cwd: out, env, maxBuffer: MAX });
-  await g(['init', '-q', '-b', 'main', '--template=', '--', out]);
-  await g(['add', '-A', '--', '.']);
-  await g(['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', `AI Term public source snapshot\n\nExported from private commit ${source.slice(0, 12)}; see PUBLIC_SNAPSHOT.md.`]);
-  process.stdout.write((await g(['log', '--format=%H %an <%ae> %s', '-1'])).stdout);
+  if (snapshot.includes('Not verified yet')) throw new Error('PUBLIC_SNAPSHOT.md is not verified yet: run its checks and record them first');
+  const home = await mkdtemp(join(tmpdir(), 'ai-term-snapshot-home-')), empty = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  const env = { PATH: base.PATH ?? '', ...(base.SystemRoot ? { SystemRoot: base.SystemRoot } : {}), HOME: home, XDG_CONFIG_HOME: home, TZ: 'UTC', LANG: 'C', GIT_CONFIG_GLOBAL: empty, GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0',
+    GIT_AUTHOR_NAME: AUTHOR.name, GIT_AUTHOR_EMAIL: AUTHOR.email, GIT_COMMITTER_NAME: AUTHOR.name, GIT_COMMITTER_EMAIL: AUTHOR.email };
+  const g = args => run('git', ['-c', `core.hooksPath=${empty}`, '-c', `core.excludesFile=${empty}`, '-c', 'commit.gpgsign=false', ...args], { cwd: out, env, maxBuffer: MAX });
+  try {
+    await g(['init', '-q', '-b', 'main', '--template=', '--', out]);
+    await g(['add', '-A', '--', '.']);
+    const files = (await g(['ls-files', '-z'])).stdout.split('\0').filter(Boolean);
+    for (const file of files) if ((await lstat(join(out, file))).isSymbolicLink()) throw new Error(`${file} is a link; the snapshot holds none`);
+    const found = await markers(out, files);
+    if (found.length) throw new Error(`Personal markers left in the snapshot:\n${found.join('\n')}`);
+    await g(['commit', '-q', '-m', `AI Term public source snapshot\n\nExported from private commit ${source.slice(0, 12)}; see PUBLIC_SNAPSHOT.md.`]);
+    process.stdout.write((await g(['log', '--format=%H %an <%ae> %ai %s', '-1'])).stdout);
+  } catch (error) { await rm(join(out, '.git'), { recursive: true, force: true }); throw error; }
+  finally { await rm(home, { recursive: true, force: true }); }
 }
 
 const [first, second, third] = process.argv.slice(2);
