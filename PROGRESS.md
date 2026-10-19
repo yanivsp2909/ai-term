@@ -1,6 +1,30 @@
 # PROGRESS
 
 ## Checkpoint
+Last code commit: ec5218f fix: a build with no guides folder at all falls back to the add-on's own steps, like a missing guide
+Last commit: v1.2 Part A handover (this commit)
+Roadmap step: 2026-10-19 v1.2 run (A guides → B /triage and /migrate → C first-run setup) · A done, B and C not started
+Branch: main, pushed. No version bump or tag (waits for Yaniv's Mac).
+
+## Run 2026-10-19 v1.2 (cloud container: `uname -s` Linux, running as root)
+
+### Part A · AI Term's own add-on guides: done
+- **Commits:** 0b71425 (RED), 39947ac (GREEN: 35 guides, `guide:` in addon.md, core, bundle, snapshot script, docs, `addons/_shared/` removed), 07b5f16 (RED for the review LOW, plus the originality rewrites), ec5218f (fix).
+- **What it is:** `addons/guides/<name>.md` for each of the 35 model add-ons (every add-on folder except the local bisect, standup and study-due). Each starts with `<!-- Copyright (c) 2026 AI Term contributors. MIT license: see LICENSE in the repository root. -->` and has When to use it, Steps, Done when, Never, Result (the JSON shape its parser expects). 49 to 85 lines each. `addon.md` names it with `guide: <name>`; the `skills` and `agents` keys are gone and refused. The core bundles `guides/<name>.md` (the first message: "Read this add-on's bundled guide first"); a build without the guide (or without the whole folder) runs the add-on on its own steps and says so.
+- **Clean room:** written only from each addon.md, the result formats in src/daemon/addons.ts and AI Term's docs. I didn't open addons/_shared/ in this run. Disclosed exposure: in the previous session I had seen every old copy's header lines and one body paragraph of the old ui-mockup copy.
+- **Special shapes:** /explain, /teach, /study: the why first, a tiny diagram (explain, teach), one idea per chunk with a check question, Space for the next chunk, three recap lines. /deck: the 11-slide pitch arc. /slides: says it is not a pitch, with talk, lesson, walkthrough and demo structures. /animate: "should this animate at all?" first.
+- **Originality check (fresh context, every guide against every old copy from git history, exact runs of 12+ words after normalizing, a fuzzy sentence pass, and step lists read side by side):** 33 clean, 2 flagged and rewritten:
+  - context.md: a 13-word run plus a 6-word echo;
+  - design.md: echoes of the ui-mockup paragraph I had seen (its states list, its widths phrase, a one-line idea per variant).
+  - Also reworded, though below the threshold: the closest note (pr-review.md, a 10-word echo).
+  - After the rewrites the reviewer's own script finds 0 runs of 12 or more words in all 35 guides.
+  - No copied step lists or examples were found.
+- **Snapshot:** scripts/public-snapshot.mjs ships addons/guides/ and refuses a guide without the MIT header or any leftover addons/_shared/ (`guideProblems`); the old license filter, LEFT_OUT.txt and the Apache text are gone. THIRD_PARTY_NOTICES says the guides are AI Term's own.
+- **Reviews:** TypeScript review (a7c5999..HEAD): 0 above LOW; 1 LOW fixed (no guides folder at all threw ENOENT instead of falling back). Originality: see above.
+- **Checks:** typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 279ms" · app:build "✓ built in 692ms" · npm test twice "Test Files 302 passed | 2 skipped (304) · Tests 1981 passed | 70 skipped (2051)" (131 s, 122 s) · `npm run live` tier 1 "Tier 1 passed: 32 checks in 118 s" · verification-loop: ready.
+- **Where the code disagreed with the prompt:** there are 38 add-on folders, not 35: 35 model add-ons plus 3 local ones that run no model and get no guide. The 35 old copies didn't map one to one onto add-ons: some were shared, /reverse had none, and /review deep and /security had two each.
+
+## Checkpoint (long run: B34 → Part A providers → Part B engines → Part C snapshot)
 Last code commit: 8c43a67 docs: architecture 12.33 matches the reviewed snapshot script (upstream rule, commit checks and isolation)
 Last commit: Part C handover (this commit)
 Roadmap step: 2026-10-19 long run (B34 → Part A providers → Part B engines → Part C public snapshot) · done: B34, Part A, Part B, Part C
