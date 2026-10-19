@@ -14,7 +14,7 @@ import { Logger } from '../../src/daemon/log.js';
 import { tokenColors } from '../../src/shared/theme-tokens.js';
 import { getPaths } from '../../src/shared/paths.js';
 import { channels, pasteErrors, type AppLook, type TerminalSize, type MenuAction } from '../shared/api.js';
-import { LookWatcher, readLook } from './look.js';
+import { LookWatcher, lookPublisher, readLook } from './look.js';
 import { MAX_COPY_BYTES, PasteRefusal, validateAppTheme, validateEmpty, validateOne, validatePaste, validateSize, validateUrl, validateWrite } from '../shared/validation.js';
 import { CSP, denyPermissions, lockNavigation, secureWebPreferences } from './security.js';
 import { ControlGate } from './control-gate.js';
@@ -42,15 +42,18 @@ let logReady = false;
 const lifecycle=new PtyLifecycle(()=>{failure('Desktop terminal cleanup failed');});
 let quitting=false,quitReady=false;
 // v1.2.6: the saved theme and app fonts (look.ts), read here and sent to the window; the last problem is logged once.
-let look: AppLook | undefined, lookProblem: string | null = null, lookWatcher: LookWatcher | undefined;
-async function refreshLook(): Promise<void> {
+let lookProblem: string | null = null, lookWatcher: LookWatcher | undefined;
+const looks = lookPublisher(async () => {
   const read = await readLook(getPaths().root, nativeTheme.shouldUseDarkColors);
   if (read.problem && read.problem !== lookProblem) log.error(`Desktop look: ${read.problem}`);
-  lookProblem = read.problem; look = read.look;
+  lookProblem = read.problem;
+  return read.look;
+}, (next: AppLook) => {
   if (!window || window.isDestroyed()) return;
-  window.setBackgroundColor(look.colors.bg);
-  window.webContents.send(channels.theme, look);
-}
+  window.setBackgroundColor(next.colors.bg);
+  window.webContents.send(channels.theme, next);
+});
+const refreshLook = (): Promise<void> => looks.refresh();
 function lookFailed(error: unknown): void { log.error(`Desktop look could not be read (${errorTag(error)})`); }
 function output(data: string): void { if (window && !window.isDestroyed()) window.webContents.send(channels.output, data); }
 // The terminal shows the fixed message; app.log also keeps the error's code or class (failures.ts).
@@ -87,7 +90,7 @@ function resize(size: TerminalSize): void {
 }
 function command(action: AppCommand): void {
   if (!terminal || !window || window.isDestroyed()) return;
-  if (action !== 'theme-changed') menuAction('focus-terminal');
+  if (action !== 'theme-changed' && action !== 'appearance dark' && action !== 'appearance light') menuAction('focus-terminal');
   // Before the client is on its own screen its PTY still echoes input: the control (and its token) would show.
   const control = gate.command(action);
   if (!control) return;
@@ -119,10 +122,11 @@ function registerIpc(): void {
   receive(channels.themeApplied, args => {
     const theme = validateAppTheme(validateOne(args));
     // The window now wears the current look: ai probes its background again and reads the saved theme (theme-changed).
-    if (look && theme === look.mode) command('theme-changed');
+    // macOS's own appearance first, which a system variant follows (the window wears the saved one).
+    if (looks.look && theme === looks.look.mode) { command(nativeTheme.shouldUseDarkColors ? 'appearance dark' : 'appearance light'); command('theme-changed'); }
   });
   receive(channels.menuAction, args => { validateEmpty(args); if (closeNote) { menuAction('close-note'); closeNote = false; } });
-  receive(channels.theme, args => { validateEmpty(args); if (look) window?.webContents.send(channels.theme, look); else void refreshLook().catch(lookFailed); });
+  receive(channels.theme, args => { validateEmpty(args); if (looks.look) looks.resend(); else void refreshLook().catch(lookFailed); });
   ipcMain.handle(channels.openUrl, async (event, ...args: unknown[]) => {
     try { trusted(event); await shell.openExternal(validateUrl(validateOne(args))); }
     // eslint-disable-next-line preserve-caught-error -- IPC exposes only fixed reasons; app.log keeps the error code.
@@ -147,7 +151,7 @@ const BACKGROUND = process.env.AI_TERM_BACKGROUND === '1';
 if (BACKGROUND && process.platform === 'darwin') app.setActivationPolicy('prohibited');
 function createWindow(): Promise<void> {
   ended = false;
-  const colors = look?.colors ?? tokenColors(nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
+  const colors = looks.look?.colors ?? tokenColors(nativeTheme.shouldUseDarkColors ? 'dark' : 'light');
   // AI_TERM_BACKGROUND=1 (the smoke tests): the window is never shown and never takes focus, so checks run while Yaniv
   // works; it still renders (no background throttling) for the tests to read.
   window = new BrowserWindow({ title: 'AI Term', width: 1100, height: 720, minWidth: 480, minHeight: 300, backgroundColor: colors.bg, titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 14 }, ...(BACKGROUND ? { show: false, focusable: false } : {}), webPreferences: { ...secureWebPreferences(join(here, '../preload/index.cjs')), ...(BACKGROUND ? { backgroundThrottling: false } : {}) } });

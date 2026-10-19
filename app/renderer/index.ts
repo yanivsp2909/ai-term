@@ -43,6 +43,10 @@ function App(): unknown {
       console.warn('AI Term: WebGL unavailable; using the DOM renderer');
     };
     try { webgl = new WebglAddon(); webgl.onContextLoss(fallback); terminal.loadAddon(webgl); } catch { fallback(); }
+    // Before apply(), which resizes when the font changes (TS review: it was declared after its first use).
+    const resize = (): void => {
+      fitToWindow(fit, terminal, size => { api.resize(size); });
+    };
     // v1.2.6: the saved theme and app fonts (checked in preload). ⌘+/⌘− zoom on top of the saved size; ⌘0 goes back to it.
     let baseSize = first.fonts.terminalSize, zoom = 0, joiner: number | undefined;
     const fontSize = (): number => Math.max(8, Math.min(32, baseSize + zoom));
@@ -64,9 +68,6 @@ function App(): unknown {
     const input = terminal.onData(data => { api.write(data); });
     const stopOutput = api.onOutput(data => { terminal.write(data); });
     const stopTheme = api.onTheme(look => { apply(look); api.themeApplied(look.mode); });
-    const resize = (): void => {
-      fitToWindow(fit, terminal, size => { api.resize(size); });
-    };
     const observer = new ResizeObserver(resize); observer.observe(host.current);
     const action = (item: MenuAction): void => {
       if (item === 'close-note') { setCloseNote(true); return; }

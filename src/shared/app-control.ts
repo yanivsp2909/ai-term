@@ -1,9 +1,11 @@
 // This OSC belongs to the outer ai client, never to a daemon protocol or an agent.
 const PREFIX = '\x1b]777;ai-term;';
 const PASTE_START = '\x1b[200~', PASTE_END = '\x1b[201~';
-export type AppCommand = 'palette' | 'new-agent' | `select ${1|2|3|4|5|6|7|8|9}` | 'split' | 'theme-changed' | 'home' | 'settings';
+// appearance (v1.2.6): macOS light or dark, sent before theme-changed, so a system variant follows macOS rather than the
+// window's own background (which wears the saved variant).
+export type AppCommand = 'palette' | 'new-agent' | `select ${1|2|3|4|5|6|7|8|9}` | 'split' | 'theme-changed' | 'home' | 'settings' | 'appearance dark' | 'appearance light';
 export function isAppCommand(value: string): value is AppCommand {
-  return ['palette', 'new-agent', 'split', 'theme-changed', 'home', 'settings'].includes(value) || /^select [1-9]$/.test(value);
+  return ['palette', 'new-agent', 'split', 'theme-changed', 'home', 'settings', 'appearance dark', 'appearance light'].includes(value) || /^select [1-9]$/.test(value);
 }
 export function takeAppToken(env: Record<string, string | undefined>): string | undefined {
   const token = env.AI_TERM_APP_TOKEN;

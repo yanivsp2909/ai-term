@@ -18,6 +18,8 @@ export class ThemePicker {
   private index: number;
   private variant: ThemeVariantSetting;
   private readonly saved: ThemeName;
+  // After ⏎ or Esc the picker takes no more keys: a quick Esc after ⏎ would otherwise undo the pick (TS review).
+  private closing = false;
   constructor(private readonly list: ThemeList, current: ThemeChoice, private readonly actions: ThemePickerActions) {
     this.rows = [...BUILTIN_THEMES.map(t => ({ name: t.id, label: t.name })), ...list.themes.map(t => ({ name: t.name, label: `${t.label} · your file` })), { name: 'auto', label: 'Match my terminal' }];
     // light is the old name of graphite light.
@@ -27,8 +29,9 @@ export class ThemePicker {
   }
   choice(): ThemeChoice { return { name: this.rows[this.index]?.name ?? 'graphite', variant: this.variant }; }
   key(key: string): void {
-    if (key === 'escape') { this.actions.cancel(); return; }
-    if (key === 'enter') { this.actions.pick(this.choice()); return; }
+    if (this.closing) return;
+    if (key === 'escape') { this.closing = true; this.actions.cancel(); return; }
+    if (key === 'enter') { this.closing = true; this.actions.pick(this.choice()); return; }
     if (key === 'up' || key === 'down') { this.index = (this.index + (key === 'up' ? -1 : 1) + this.rows.length) % this.rows.length; this.actions.preview(this.choice()); return; }
     if ((key === 'left' || key === 'right') && this.choice().name !== 'auto') {
       const next = VARIANTS.indexOf(this.variant) + (key === 'left' ? -1 : 1);

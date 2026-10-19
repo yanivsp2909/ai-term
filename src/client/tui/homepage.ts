@@ -122,6 +122,14 @@ export class Homepage {
   private themeName: ThemeName = 'graphite';
   private themeVariant: ThemeVariantSetting = 'dark';
   private userThemes: ThemeList = { themes: [], refused: [] };
+  // themes.list failed: its note stays instead of calling a saved theme of yours missing (TS review).
+  private themesUnread = false;
+  // In the app: macOS light or dark (the appearance command), which a system variant follows (TS review).
+  private appearance?: ThemeVariant;
+  // While /theme is open: the saved theme to go back to, rebuilt when macOS flips (TS review).
+  private pickerSaved?: Theme;
+  // A terminal that never answered OSC 11 isn't asked again at every preview (TS review).
+  private backgroundAsked = false;
   private backgroundResolve?: () => void;
   private backgroundTimer?: ReturnType<typeof setTimeout>;
   private inputTimer?: ReturnType<typeof setTimeout>;
@@ -296,6 +304,7 @@ export class Homepage {
   };
   private onAppCommand = (command: AppCommand): void => {
     if (this.ended) return;
+    if (command === 'appearance dark' || command === 'appearance light') { this.appearance = command === 'appearance dark' ? 'dark' : 'light'; return; }
     if (command === 'theme-changed') {
       // Theme must not queue behind a long-lived attach. The query's replies are
       // intercepted upstream, so they cannot become keys in the focused agent.
@@ -310,8 +319,9 @@ export class Homepage {
         const settings = validateSettings((await this.connection.request({ kind: 'settings.get' })).settings);
         this.themeName = settings.theme; this.themeVariant = settings.themeVariant ?? 'system';
         if (!isBuiltinTheme(this.themeName) && this.themeName !== 'auto' && this.themeName !== 'light') await this.loadThemes();
-        if (this.ended || this.popup instanceof ThemePicker) return;
-        Object.assign(this.theme, this.makeTheme(this.themeName, this.themeVariant));
+        if (this.ended) return;
+        if (this.popup instanceof ThemePicker) { this.pickerSaved = this.makeTheme(this.themeName, this.themeVariant); this.theme = this.makeTheme(this.popup.choice().name, this.popup.choice().variant); }
+        else Object.assign(this.theme, this.makeTheme(this.themeName, this.themeVariant));
         this.previous = null; this.previewCells = undefined; this.forceRedraw = true;
         controls.emit('theme'); this.draw(true);
       }).catch(this.onError);
@@ -1338,14 +1348,16 @@ export class Homepage {
     if (missing) this.showNote(missing);
   }
   private async loadThemes(): Promise<void> {
-    try { this.userThemes = validateThemeList((await this.connection.request({ kind: 'themes.list' })).themes ?? { themes: [], refused: [] }); }
-    catch (error) { this.userThemes = { themes: [], refused: [] }; this.showNote(`your theme files couldn't be read · ${error instanceof Error ? error.message.slice(0, 80) : 'no answer'}`); }
+    try { this.themesUnread = false; this.userThemes = validateThemeList((await this.connection.request({ kind: 'themes.list' })).themes ?? { themes: [], refused: [] }); }
+    catch (error) { this.userThemes = { themes: [], refused: [] }; this.themesUnread = true; this.showNote(`your theme files couldn't be read · ${error instanceof Error ? error.message.slice(0, 80) : 'no answer'}`); }
   }
   private makeTheme(name: ThemeName, variant: ThemeVariantSetting): Theme {
-    return createTheme(name, this.background, variant, this.userThemes.themes.find(t => t.name === name));
+    const resolved = variant === 'system' && this.appearance ? this.appearance : variant;
+    return createTheme(name, this.background, resolved, this.userThemes.themes.find(t => t.name === name));
   }
   // A theme file that is gone or refused: graphite, and one note saying why (never half a theme).
   private themeNote(name: ThemeName): string | null {
+    if (this.themesUnread) return null;
     const problem = themeProblem(this.userThemes, name);
     return problem ? `${problem} · graphite for now` : null;
   }
@@ -1375,12 +1387,13 @@ export class Homepage {
   private async openThemePicker(): Promise<void> {
     if (this.popup) { this.showNote('close the open popup first'); return; }
     await this.loadThemes();
-    const saved = this.theme, close = () => { if (this.popup === picker) this.popup = undefined; };
+    this.pickerSaved = this.theme;
+    const close = () => { if (this.popup === picker) this.popup = undefined; };
     const picker: ThemePicker = new ThemePicker(this.userThemes, { name: this.themeName, variant: this.themeVariant }, {
       preview: choice => { this.enqueue(async () => { if (this.popup === picker) await this.applyTheme(choice.name, choice.variant); }); },
-      cancel: () => { this.enqueue(async () => { close(); this.theme = saved; this.repaintTheme(); }); },
+      cancel: () => { this.enqueue(async () => { if (this.popup !== picker) return; close(); if (this.pickerSaved) this.theme = this.pickerSaved; this.pickerSaved = undefined; this.repaintTheme(); }); },
       pick: choice => { this.enqueue(async () => {
-        close();
+        close(); const saved = this.pickerSaved ?? this.theme; this.pickerSaved = undefined;
         try { await this.saveTheme(choice.name, choice.variant); await this.applyTheme(choice.name, choice.variant); this.showNote(`✓ theme ${this.themeLabel(choice.name)}${choice.name === 'auto' ? '' : ` · ${choice.variant}`}`); }
         catch (error) { this.theme = saved; this.repaintTheme(); this.showNote(`theme not saved · ${error instanceof Error ? error.message.slice(0, 80) : 'no answer'}`); }
       }); },
@@ -1388,7 +1401,8 @@ export class Homepage {
     this.popup = picker; this.draw(true);
   }
   private async detectBackground(): Promise<void> {
-    if (this.background) return;
+    if (this.background || this.backgroundAsked) return;
+    this.backgroundAsked = true;
     if (this.options.controls?.enabled) { this.background = await this.options.controls.background(this.stdout); return; }
     await new Promise<void>(resolve => {
       this.backgroundResolve = () => { if (this.backgroundTimer) clearTimeout(this.backgroundTimer); this.backgroundResolve = undefined; resolve(); };
@@ -1611,7 +1625,7 @@ export async function homepage(connection: import('../connection.js').Connection
 import { AddonFlow } from './addon-flow.js';
 import { SetupPanel, type SetupStep } from './setup-panel.js';
 import { ThemePicker } from './theme-picker.js';
-import { BUILTIN_THEMES, isBuiltinTheme } from '../../shared/theme-tokens.js';
+import { BUILTIN_THEMES, isBuiltinTheme, type ThemeVariant } from '../../shared/theme-tokens.js';
 import { themeProblem, validateThemeList, type ThemeList } from '../../shared/user-themes.js';
 import { validateSetupStatus } from '../../shared/setup.js';
 import { AddonPanel } from './addon-panel.js';

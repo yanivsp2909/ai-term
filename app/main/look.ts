@@ -37,6 +37,25 @@ export async function readLook(root: string, nativeDark: boolean): Promise<{ loo
   return { look: appLook(saved, list, nativeDark), problem: problem ?? themeProblem ?? fontsProblem };
 }
 
+// The window gets a look only when it changed (any settings.json write, budgets or presets too, wakes the watcher, and
+// each look sent makes ai probe and redraw) and never an older one: a slow read that ends after a newer one is dropped
+// (TS review). resend() answers the renderer's own request with the current one.
+export function lookPublisher(read: () => Promise<AppLook>, send: (look: AppLook) => void): { refresh(): Promise<void>; resend(): void; readonly look: AppLook | undefined } {
+  let generation = 0, last: string | null = null, current: AppLook | undefined;
+  return {
+    async refresh(): Promise<void> {
+      const mine = ++generation, look = await read();
+      if (mine !== generation) return;
+      current = look;
+      const key = JSON.stringify(look);
+      if (key === last) return;
+      last = key; send(look);
+    },
+    resend(): void { if (current) { last = JSON.stringify(current); send(current); } },
+    get look() { return current; },
+  };
+}
+
 // fs.watch on the AI Term folder (settings.json is replaced by a rename, so the folder sees it) and on the themes folder
 // once it exists. Changes are batched for 50 ms: one save can arrive as several events.
 const SETTLE_MS = 50;
