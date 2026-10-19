@@ -77,7 +77,8 @@ test('/setup opens the first-run setup inside the app; Esc closes it', async () 
   await homepageReady(page);
   await page.keyboard.type('/setup'); await page.keyboard.press('Enter');
   await expect(screen).toContainText("What's installed");
-  for (const part of ['✗ Claude Code · not found', "What's ready", 'Sandbox: sandbox-exec', 'Next steps']) await expect(screen).toContainText(part);
+  // The sandbox line names the platform's own sandbox (TS review: the smoke runs off macOS too).
+  for (const part of ['✗ Claude Code · not found', "What's ready", process.platform === 'darwin' ? 'Sandbox: sandbox-exec' : 'Sandbox:', 'Next steps']) await expect(screen).toContainText(part);
   await page.keyboard.press('Escape');
   await expect(screen).not.toContainText("What's installed");
   await expect(screen).toContainText('What do you want to build?');
