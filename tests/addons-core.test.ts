@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { parseAddon } from '../src/shared/addons.js';
 import { parseAddonResult } from '../src/shared/addon-results.js';
 import { AddonService } from '../src/daemon/addons.js';
+import { testDefinitions } from './shared-copies.js';
 import { AddonPanel } from '../src/client/tui/addon-panel.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 
@@ -43,7 +44,8 @@ it('all pilots run once on a stub engine; approval saves the plan and only s sta
     async text(id: string) { return { sessionId: id, text: answers.get(id) ?? '', truncated: false }; },
     async brainPlan() { return null; },
   };
-  const service = new AddonService(home, new URL('../addons/', import.meta.url).pathname, engine);
+  const definitions = await testDefinitions(new URL('../addons/', import.meta.url).pathname); if (definitions.root) cleanup.push(definitions.root);
+  const service = new AddonService(home, definitions.path, engine);
   let planRun = '';
   for (const name of ['plan', 'prompt', 'explain']) {
     const ask = await service.plan(name, name === 'prompt' ? 'prompt.md' : 'trace src/a.ts', repo, { engine: 'codex', model: null, auth: { kind: 'account' } });

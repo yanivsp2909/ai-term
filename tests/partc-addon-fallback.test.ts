@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { AddonTarget } from '../src/shared/addons.js';
 import { AddonService } from '../src/daemon/addons.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
+import { testDefinitions } from './shared-copies.js';
 
 // Part C: the public snapshot leaves out every shared skill or agent copy whose source license isn't MIT, Apache-2.0 or
 // BSD. An add-on whose copy is missing still runs, on its own steps, and its prompt says which guide this build lacks.
@@ -16,7 +17,9 @@ const CODEX: AddonTarget = { engine: 'codex', model: null, auth: { kind: 'accoun
 async function setup() {
   const root = await mkdtemp(join(tmpdir(), 'ai-partc-addons-')); cleanup.push(root);
   const definitions = join(root, 'addons'), repo = join(root, 'repo'), home = join(root, 'home');
-  await cp(new URL('../addons/', import.meta.url).pathname, definitions, { recursive: true });
+  // The real guides where this build has them, stand-ins where it leaves them out (shared-copies.ts).
+  const source = await testDefinitions(new URL('../addons/', import.meta.url).pathname); if (source.root) cleanup.push(source.root);
+  await cp(source.path, definitions, { recursive: true });
   await mkdir(join(repo, 'src'), { recursive: true }); await mkdir(home); await writeFile(join(repo, 'src', 'a.ts'), 'export const a = 1;\n');
   const runs: Record<string, unknown>[] = [];
   const engine = {

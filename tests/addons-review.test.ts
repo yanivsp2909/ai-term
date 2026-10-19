@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AddonService } from '../src/daemon/addons.js';
+import { testDefinitions } from './shared-copies.js';
 import { extractAddonResult } from '../src/shared/addon-results.js';
 import type { CreateSession, SessionInfo } from '../src/shared/protocol.js';
 import { AddonPanel } from '../src/client/tui/addon-panel.js';
@@ -16,7 +17,8 @@ async function setup() {
   const home = join(root, 'home'), repo = join(root, 'repo'); await mkdir(home); await mkdir(repo);
   const messages: string[] = [];
   const runner = { create: async (request: Exclude<CreateSession, { engine: 'shell' }>) => { messages.push(request.firstMessage ?? ''); return { id: randomUUID() } as SessionInfo; }, text: async (id: string) => ({ sessionId: id, text: '', truncated: false }), brainPlan: async () => null };
-  const service = new AddonService(home, new URL('../addons/', import.meta.url).pathname, runner);
+  const definitions = await testDefinitions(new URL('../addons/', import.meta.url).pathname); if (definitions.root) roots.push(definitions.root);
+  const service = new AddonService(home, definitions.path, runner);
   const plan = (args = 'Audit this prompt') => service.plan('prompt', args, repo, { engine: 'codex', model: null, auth: { kind: 'account' } });
   return { root, home, repo, messages, service, plan };
 }
