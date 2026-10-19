@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -38,7 +38,7 @@ describe('what setup finds', () => {
       codex: `case "$1" in --version) echo 'codex-cli 0.160.1';; login) echo 'Not logged in'; exit 1;; esac`,
       'cursor-agent': `printf '${ESC}]0;title${ESC}\\\\2026.10.01-abc\\n'`,
       copilot: 'exec /bin/sleep 30',
-      gh: `case "$1" in --version) echo 'gh version 2.81.0 (2026-10-01)';; auth) exit 1;; esac`,
+      gh: `case "$1" in --version) echo 'gh version 2.81.0 (2026-10-01)';; auth) echo 'You are not logged into any GitHub hosts. To log in, run: gh auth login' >&2; exit 1;; esac`,
       ollama: "echo 'ollama version is 0.12.3'",
     });
     const started = Date.now();
@@ -61,6 +61,19 @@ describe('what setup finds', () => {
     // Nothing printed by a tool reaches the status as raw text.
     expect(JSON.stringify(status)).not.toContain('\\u001b'); expect(JSON.stringify(status)).not.toContain(String.fromCharCode(27));
     expect(validateSetupStatus(JSON.parse(JSON.stringify(status)))).toEqual(status);
+  }, 20_000);
+
+  it('review: a hung Claude Code is not found-and-fine; gh offline is not "not logged in"; one broken probe or a long version never blanks the rest', async () => {
+    const loop = await folder(); await symlink(join(loop, 'gh'), join(loop, 'gh'));
+    const s = await stubs({ claude: 'exec /bin/sleep 30', ollama: `echo 'ollama version is 0.12.3-beta+${'a'.repeat(60)}'`, lms: 'echo lms version 0.3.30' });
+    const status = await setupStatus({ env: { PATH: `${loop}:${s.bin}` }, timeoutMs: 400, keys: [{ label: 'é'.repeat(55), provider: 'anthropic', last4: 'WXYZ' }], sandbox: { dontAsk: false }, platform: 'linux', tailscaleCandidates: [] });
+    const tool = (id: string) => status.tools.find(t => t.id === id);
+    expect(tool('claude-code')).toMatchObject({ found: "couldn't check", version: null, login: null });
+    expect(tool('gh')).toMatchObject({ found: "couldn't check" });
+    expect(tool('lmstudio')).toMatchObject({ found: 'found', version: '0.3.30' });
+    expect(validateSetupStatus(JSON.parse(JSON.stringify(status)))).toEqual(status);
+    const offline = await stubs({ gh: `case "$1" in --version) echo 'gh version 2.81.0';; auth) echo 'error connecting to api.github.com' >&2; exit 1;; esac` });
+    expect((await setupStatus({ env: { PATH: offline.bin }, timeoutMs: 400, keys: [], sandbox: { dontAsk: false }, platform: 'linux', tailscaleCandidates: [] })).tools.find(t => t.id === 'gh')).toMatchObject({ found: 'found', login: "couldn't check" });
   }, 20_000);
 
   it('the sandbox line names what AI Term found; the setting takes done or skipped only', async () => {
@@ -158,6 +171,30 @@ describe('the setup screen', () => {
     expect(await markFreshSetup(used, join(used, 'state.json'))).toBe(false);
     const plain = await homepage({});
     try { expect(plain.requests.some(r => r.kind === 'setup.status')).toBe(false); } finally { await plain.home.stop(); }
+  });
+
+  it('/setup brings it back inside AI Term too (the Mac app has no shell), and the keys show even on 80x24', async () => {
+    const { commandRegistry } = await import('../src/client/tui/commands.js');
+    expect(commandRegistry.some(c => c.name === '/setup')).toBe(true);
+    const h = await homepage({ setup: 'done' });
+    try {
+      h.tty.emit('data', Buffer.from('/setup\r'));
+      await vi.waitFor(async () => expect(await screen(h.tty)).toContain("What's installed"), { timeout: 5000 });
+      expect(await screen(h.tty)).toContain('ai setup or /setup shows this again');
+    } finally { await h.home.stop(); }
+    const requests: RequestBody[] = [];
+    const client = Object.assign(new EventEmitter(), { async request(body: RequestBody): Promise<SuccessResponse> {
+      requests.push(body); const response: SuccessResponse = { id: randomUUID(), ok: true };
+      if (body.kind === 'settings.get') response.settings = { theme: 'graphite', setup: 'pending' }; if (body.kind === 'sessions.list') response.sessions = []; if (body.kind === 'keys.list') response.keys = []; if (body.kind === 'setup.status') response.setup = STATUS;
+      return response;
+    } });
+    const small = Object.assign(new TTY(), { columns: 80, rows: 24 }), home = new Homepage(client as never, { stdin: small, stdout: small, signals: new EventEmitter(), cwd: '/tmp', terminalProgram: 'unknown' });
+    await home.start();
+    try {
+      const term = new headless.Terminal({ cols: 80, rows: 24, allowProposedApi: true });
+      await vi.waitFor(async () => { await new Promise<void>(r => term.write(small.output, r)); const text = Array.from({ length: 24 }, (_, y) => term.buffer.active.getLine(y)?.translateToString(true) ?? '').join('\n'); expect(text).toContain('l log in · k key · b budget · d engine · ⏎ done · Esc skips'); }, { timeout: 5000 });
+      term.dispose();
+    } finally { await home.stop(); }
   });
 
   it('ai setup is a command the README lists', async () => {
