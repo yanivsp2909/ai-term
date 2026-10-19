@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, open, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, open, readdir, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { isFsError } from '../shared/paths.js';
@@ -290,10 +290,12 @@ export async function isolatedGitDir(path: string, base?: string, options: { wri
         await writeFile(join(temp, 'info', 'exclude'), '\n/.ai-term-restore-*/\n', { flag: 'a', mode: 0o600 });
         await writeFile(join(temp, 'objects', 'info', 'alternates'), `${join(common, 'objects')}\n`, { mode: 0o600 });
         // The index tells git which files are tracked (and lets it skip unchanged ones); only a regular file is copied.
-        const index = join(gitDir, 'index');
-        try { if ((await lstat(index)).isFile()) await copyFile(index, join(temp, 'index')); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+        // Its times are kept: git reads a file again when its entry is as new as the index file ("racily clean"), and a
+        // copy with a fresh mtime would hide a same-size edit made in the second the index was written (B34).
+        const copyIndex = async (from: string, to: string): Promise<void> => { const stat = await lstat(from); if (!stat.isFile()) return; await copyFile(from, to); await utimes(to, stat.atime, stat.mtime); };
+        try { await copyIndex(join(gitDir, 'index'), join(temp, 'index')); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
         // A split index keeps most entries in sharedindex.<hash> beside it (core.splitIndex, feature.manyFiles).
-        for (const name of await readdir(gitDir)) if (/^sharedindex\.[0-9a-f]{40,64}$/.test(name) && (await lstat(join(gitDir, name))).isFile()) await copyFile(join(gitDir, name), join(temp, name));
+        for (const name of await readdir(gitDir)) if (/^sharedindex\.[0-9a-f]{40,64}$/.test(name)) await copyIndex(join(gitDir, name), join(temp, name));
     } catch (error) { await rm(temp, { recursive: true, force: true }); throw error; }
     const objects = join(common, 'objects');
     return { args: [`--git-dir=${temp}`, `--work-tree=${path}`, `--attr-source=${EMPTY_TREE}`, '-c', 'core.attributesFile=/dev/null'], common, env: options.writes ? { GIT_OBJECT_DIRECTORY: objects } : {}, dispose: () => rm(temp, { recursive: true, force: true }) };
