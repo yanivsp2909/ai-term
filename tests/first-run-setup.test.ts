@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import headless from '@xterm/headless';
 import { setupStatus } from '../src/daemon/setup.js';
 import { markFreshSetup } from '../src/daemon/settings.js';
@@ -16,16 +18,20 @@ import type { SuccessResponse } from '../src/shared/protocol.js';
 // v1.2 Part C: the first time ai starts on an empty AI Term folder (and on `ai setup`), the homepage shows what's
 // installed, what's ready and the next steps. Tools are found on PATH and run only with --version or their own status
 // command, argv only, with a short timeout; their config and credential files are never read.
+const run = promisify(execFile);
 const cleanup: string[] = [];
 afterEach(async () => { for (const path of cleanup.splice(0)) await rm(path, { recursive: true, force: true }); });
 async function folder() { const dir = await realpath(await mkdtemp(join(tmpdir(), 'ai-setup-'))); cleanup.push(dir); return dir; }
 
 // Each stub writes the arguments it got to argv.log, then does what its case needs.
+// macOS assesses a new executable on its first run, one at a time and ~250 ms each, so nine fresh stubs blew the 400 ms
+// timeout on a Mac (v1.2.0 Mac check). Each stub runs once first with STUB_WARM=1, which exits before logging anything.
 async function stubs(cases: Record<string, string>) {
   const bin = await folder(), log = join(bin, 'argv.log');
   for (const [name, body] of Object.entries(cases)) {
-    await writeFile(join(bin, name), `#!/bin/sh\nprintf '%s %s\\n' "${name}" "$*" >> "${log}"\n${body}\n`);
+    await writeFile(join(bin, name), `#!/bin/sh\n[ "$STUB_WARM" = 1 ] && exit 0\nprintf '%s %s\\n' "${name}" "$*" >> "${log}"\n${body}\n`);
     await chmod(join(bin, name), 0o755);
+    await run(join(bin, name), [], { env: { STUB_WARM: '1' } });
   }
   return { bin, calls: async () => (await readFile(log, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean) };
 }

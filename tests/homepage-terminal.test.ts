@@ -23,9 +23,10 @@ it('source CLI opens homepage, enters a shell, returns via Ctrl+E, previews it a
     child = pty.spawn(process.execPath, ['--import', 'tsx', entry], { env, cwd: resolve('.'), cols: 130, rows: 45, name: 'xterm-256color' });
     childDone = new Promise<number>(r => child?.onExit(event => { finished = true; r(event.exitCode); }));
     let output = ''; child.onData(data => { output += data; terminal.write(data); });
-    await expect.poll(lines, { timeout: 10_000 }).toContain('Agents 1');
-    // v1.2: a new AI Term folder opens the first-run setup (it replaced the login popup there); Esc skips it.
+    // v1.2: a new AI Term folder opens the first-run setup (it replaced the login popup there); Esc skips it. The setup
+    // first: on a Mac it covers the Agents title before a poll sees it (v1.2.0 Mac check).
     await expect.poll(lines, { timeout: 10_000 }).toContain("What's installed"); child.write('\x1b'); await expect.poll(lines, { timeout: 10_000 }).not.toContain("What's installed");
+    await expect.poll(lines, { timeout: 10_000 }).toContain('Agents 1');
     child.write('\r'); await expect.poll(lines, { timeout: 10_000 }).not.toContain('AI Term_');
     child.write('printf HOMEPAGE_SHELL_TEXT\r'); await expect.poll(lines, { timeout: 10_000 }).toContain('HOMEPAGE_SHELL_TEXT');
     child.write('\x05'); await expect.poll(lines, { timeout: 10_000 }).toContain('AI Term_'); await expect.poll(lines, { timeout: 10_000 }).toContain('HOMEPAGE_SHELL_TEXT');
