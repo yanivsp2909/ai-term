@@ -24,18 +24,24 @@ export type Permission = 'ask' | 'auto' | 'dontAsk';
 export type Effort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'persistent';
 export type AuthMethod = 'subscription' | 'api-key' | 'unknown';
 export type EngineCheckError = 'Engine executable check failed' | 'Engine version check failed' | 'Engine login check failed';
-export type ProviderFailureReason = 'Provider request timed out' | 'Provider connection failed' | 'Provider reply too large' | 'Provider request failed';
+export type ProviderFailureReason = 'Provider request timed out' | 'Provider connection failed' | 'Provider reply too large' | 'Provider request failed' | 'Provider address is not on the public internet';
 export interface EngineStatus { installed: boolean; path: string | null; version: string | null; loggedIn: boolean | null; authMethod: AuthMethod; error?: EngineCheckError }
 export interface EnginesStatus { claudeCode: EngineStatus; codex: EngineStatus }
 // v0.6.5 adds xAI, Moonshot, Z.ai, OpenRouter, Bedrock, Vertex (express) and Ollama (local, no key): src/shared/providers.ts.
-export type KeyProvider = 'anthropic' | 'foundry' | 'openai' | 'xai' | 'moonshot' | 'zai' | 'openrouter' | 'bedrock' | 'vertex' | 'ollama';
+// Part A (2026-10-19) adds more fixed-host providers (a region is a provider of its own: moonshot-cn, zai-cn, …), LM Studio
+// and any OpenAI-compatible server on this machine (no key), and one custom https endpoint per key, bound to it like Foundry.
+export type KeyProvider = 'anthropic' | 'foundry' | 'openai' | 'xai' | 'moonshot' | 'moonshot-cn' | 'zai' | 'zai-cn' | 'openrouter' | 'bedrock' | 'vertex' | 'ollama'
+  | 'gemini' | 'mistral' | 'groq' | 'cerebras' | 'together' | 'fireworks' | 'deepinfra' | 'huggingface'
+  | 'deepseek' | 'qwen' | 'qwen-cn' | 'minimax' | 'minimax-cn' | 'ark' | 'byteplus' | 'byteplus-eu' | 'siliconflow' | 'siliconflow-cn' | 'qianfan' | 'qianfan-cn' | 'hunyuan' | 'stepfun' | 'stepfun-cn'
+  | 'lmstudio' | 'local' | 'custom';
 // 'ready': the Responses API answered. 'chat': only Chat Completions did (v0.4.2; older saved results say 'not a chat model'),
 // which AI Term's agent can use and Codex can't (D30).
 export interface DeploymentTest { model: string; status: 'ready' | 'chat' | 'not a chat model' | 'error'; httpStatus?: number; errorCode?: string; reason?: ProviderFailureReason }
 export interface KeyView { id: string; provider: KeyProvider; label: string; last4: string; endpoint?: string; deployments?: string[]; lastTest?: DeploymentTest[] }
 // v0.6.4: an account reference may name a profile (or `own` for your normal login); absent means the engine's default.
 export type AuthRef = {kind:'account';profile?:string} | {kind:'key';keyId:string};
-export type AuthView = {kind:'account';profile?:string} | {kind:'key';keyId:string;provider:KeyProvider;keyLabel:string;last4:string};
+// host (Part A): a custom endpoint's host, so every card that uses the key says where its requests go.
+export type AuthView = {kind:'account';profile?:string} | {kind:'key';keyId:string;provider:KeyProvider;keyLabel:string;last4:string;host?:string};
 export interface Budgets {daily:number|null;weekly:number|null;monthly:number|null}
 export interface ModelPrice {input:number;output:number;cacheRead?:number}
 // cachedTokens is the cache-read share already inside tokens; optional only for summaries from older daemons.
@@ -160,7 +166,8 @@ export type Request = {
   // v1.0.1 ai doctor: whether the OS keychain answers (a probe entry that never holds a key), asked of the daemon.
   | { kind: 'keys.health' }
   // secret is absent only for Ollama, which has no key; deployments are the model ids for every provider but Anthropic and OpenAI.
-  | { kind: 'keys.add'; provider: KeyProvider; label: string; secret?: string; endpoint?: string; deployments?: string[] }
+  // confirm (Part A): a custom endpoint is added only with the word `add` typed, so one ⏎ never sends a key somewhere new.
+  | { kind: 'keys.add'; provider: KeyProvider; label: string; secret?: string; endpoint?: string; deployments?: string[]; confirm?: 'add' }
   | { kind: 'keys.remove' | 'keys.test'; keyId: string }
   | { kind: 'keys.scanEnvFile'; path: string }
   | { kind: 'keys.importEnv'; path: string; names: string[] }

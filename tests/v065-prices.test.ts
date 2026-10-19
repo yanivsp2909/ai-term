@@ -18,7 +18,8 @@ it('trimPrices keeps the six new provider tables (and only valid prices), with t
   const snapshot = trimPrices(raw, '2026-10-15');
   expect(snapshot.providers).toMatchObject({ xai: { 'grok-9': { input: 3, output: 15, cacheRead: 0.75 } }, moonshotai: { 'kimi-k9': { input: 0.6, output: 2.5 } }, zai: { 'glm-9': { input: 0.6, output: 2.2, cacheRead: 0.11 } }, openrouter: { 'vendor/model:free': { input: 0, output: 0 } }, 'amazon-bedrock': { 'us.anthropic.claude-x-v1:0': { input: 5, output: 25 } }, 'google-vertex': { 'gemini-9-flash': { input: 0.3, output: 2.5 } } });
   expect(snapshot.providers.openrouter).not.toHaveProperty('vendor/broken');
-  expect(snapshot.providers).not.toHaveProperty('moonshotai-cn');
+  // Part A keeps moonshotai-cn too; a table no provider uses is still dropped.
+  expect(snapshot.providers).not.toHaveProperty('github-copilot');
   expect(snapshot.limits?.xai).toEqual({ 'grok-9': { context: 256000, output: 64000 } });
 });
 

@@ -26,7 +26,8 @@ import { TEST_ERRORS } from './test-run.js';
 import { REVIEW_ERRORS } from './review.js';
 import { BRAIN_ERRORS } from './brain.js';
 import { listOllama, OllamaError, OLLAMA_ERRORS } from './providers/ollama.js';
-import { DIRECT_HOSTS } from '../shared/providers.js';
+import { listLocalOpenAI, LocalServerError, LOCAL_SERVER_ERRORS } from './providers/local-openai.js';
+import { DIRECT_HOSTS, isDirectProvider, isLocalProvider } from '../shared/providers.js';
 import { SystemSampler, defaultSamplerDeps } from './sysstats.js';
 import { currentAgentSandbox, dontAskNote, AGENT_SANDBOX_ERRORS } from './agent-sandbox.js';
 import { CLI_LAUNCH_ERRORS } from './win-launch.js';
@@ -238,18 +239,21 @@ export class DaemonServer {
                 case 'keys.importEnv': this.control(peer,{id:request.id,ok:true,keys:await this.keys.importEnv(request.path,request.names)}); break;
                 case 'keys.test': {
                     const key=await this.keys.view(request.keyId),provider=key.provider;
-                    // Ollama: the local server's own list is the check; it has no key to send anywhere.
-                    if(provider==='ollama'){
+                    // Ollama, LM Studio, any server on this machine: its own list is the check; it has no key to send anywhere.
+                    if(isLocalProvider(provider)){
                         let models:string[];
-                        try{models=await listOllama(key.endpoint??'');}catch(error){this.log.error(`Ollama list failed: ${error instanceof OllamaError?error.detail:'unexpected error'}`);throw new KeyError(error instanceof OllamaError?error.message:'Ollama did not answer');}
+                        if(provider==='ollama'){try{models=await listOllama(key.endpoint??'');}catch(error){this.log.error(`Ollama list failed: ${error instanceof OllamaError?error.detail:'unexpected error'}`);throw new KeyError(error instanceof OllamaError?error.message:'Ollama did not answer');}}
+                        else{try{models=await listLocalOpenAI(key.endpoint??'');}catch(error){this.log.error(`Local server list failed: ${error instanceof LocalServerError?error.detail:'unexpected error'}`);throw new KeyError(error instanceof LocalServerError?error.message:'The server did not answer with a model list');}}
                         const saved=await this.keys.saveModels(key.id,models);this.control(peer,{id:request.id,ok:true,results:saved.lastTest??[]});break;
                     }
                     if(provider==='anthropic'||provider==='openai'||!key.deployments)throw new KeyError('Only Foundry keys have deployment tests');
                     // Only the Keychain-bound endpoint and deployments, never settings.json's copy (B12); the fixed-host
-                    // providers' hosts come from code (v0.6.5).
+                    // providers' hosts come from code (v0.6.5, Part A).
                     const results=await this.keys.withSecret(key.id,(secret,binding)=>{
                         if(provider==='foundry'){if(!binding)throw new KeyError('Only Foundry keys have deployment tests');return testFoundry(binding.endpoint,binding.deployments,secret);}
                         if(provider==='bedrock'){if(!binding)throw new KeyError('Bedrock key details changed outside AI Term; add the key again');return testDirect('bedrock',binding.endpoint,binding.deployments,secret);}
+                        if(provider==='custom'){if(!binding)throw new KeyError('Custom endpoint details changed outside AI Term; add the key again');return testDirect('custom',binding.endpoint,binding.deployments,secret);}
+                        if(!isDirectProvider(provider))throw new KeyError('Only Foundry keys have deployment tests');
                         return testDirect(provider,DIRECT_HOSTS[provider],key.deployments??[],secret);
                     });
                     await this.keys.saveTest(key.id,results);this.control(peer,{id:request.id,ok:true,results});break;
@@ -502,7 +506,7 @@ export class DaemonServer {
                 'Key metadata failed and keychain cleanup failed; remove the new test entry in Keychain Access',
                 'Key metadata could not be saved','Key removed from keychain; metadata could not be saved','Key is missing from the OS keychain',
                 'Env file must be a small regular file owned by you','Env file contains duplicate import fields',
-                ...PRICE_ERRORS,'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS,...REVERSE_ERRORS,...REVERSE_CLI_ERRORS,'This add-on is unavailable',...REMOTE_SERVICE_ERRORS,'/remote is unavailable',RUN_FAILED
+                ...PRICE_ERRORS,'Invalid env import selection','Selected env key is missing or invalid','Foundry import needs AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT',...FOUNDRY_KEY_ERRORS,...OLLAMA_ERRORS,...LOCAL_SERVER_ERRORS,'Model must pass its test first; test the key in /settings (t)',...HANDOFF_ERRORS,...WORKTREE_DELETE_ERRORS,...AGENT_COMMAND_ERRORS,...REVERSE_ERRORS,...REVERSE_CLI_ERRORS,'This add-on is unavailable',...REMOTE_SERVICE_ERRORS,'/remote is unavailable',RUN_FAILED
             ]);
             const message = error instanceof AddonError ? shownAddonError(error.message) : error instanceof Error && (fixed.has(error.message) || error instanceof MergeError && CHECKOUT_NOT_ON_BASE.test(error.message) || error instanceof KeyError && /^Import failed and [1-9]\d? new keys? could not be removed; remove (?:it|them) in \/settings or Keychain Access$/.test(error.message)) ? error.message : 'Session operation failed';
             // The validated request kind and the same fixed reason the client gets: never argv, paths or provider text.

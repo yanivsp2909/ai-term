@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { AGENT_ASK_FLAG, AGENT_DONT_ASK_FLAG, AGENT_LSP_FLAG, buildBashEnv, isBrainFile } from '../daemon/env.js';
 import { killAllBash } from './bash.js';
 import { isEndpoint, isKeyProvider, isSecret, isThemeName, isValidModelId } from '../shared/validate.js';
-import { isLocalEndpoint } from '../shared/providers.js';
+import { isBoundProvider, isLocalEndpoint, isLocalProvider } from '../shared/providers.js';
 import type { KeyProvider, ThemeName } from '../shared/protocol.js';
 import { createTheme } from '../client/tui/theme.js';
 import { Agent, type AgentPermission } from './agent.js';
@@ -84,9 +84,10 @@ export async function runAgent(args: readonly string[], terminal: AgentTerminal 
   const secrets = takeSecrets(env);
   let parsed: AgentArgs;
   try { parsed = parseAgentArgs(args); } catch (error) { terminal.stderr.write(`ai agent: ${error instanceof AgentUsageError ? error.message : 'invalid arguments'}\n`); return 2; }
-  // Ollama (v0.6.5) has no key, only its local endpoint; Foundry and Bedrock need their bound endpoint.
-  const local = parsed.provider === 'ollama';
-  if (local ? secrets.key !== null || !isLocalEndpoint(secrets.endpoint) : !secrets.key || (parsed.provider === 'foundry' || parsed.provider === 'bedrock') && !secrets.endpoint) { terminal.stderr.write('ai agent runs inside AI Term: start it from the homepage with an API key.\n'); return 2; }
+  // A local server (Ollama v0.6.5, LM Studio and others, Part A) has no key, only its local endpoint; Foundry, Bedrock and a
+  // custom endpoint need their bound endpoint.
+  const local = isLocalProvider(parsed.provider);
+  if (local ? secrets.key !== null || !isLocalEndpoint(secrets.endpoint) : !secrets.key || isBoundProvider(parsed.provider) && !secrets.endpoint) { terminal.stderr.write('ai agent runs inside AI Term: start it from the homepage with an API key.\n'); return 2; }
   // The SDK prints its warnings to the console, which here is the agent's own screen.
   (globalThis as { AI_SDK_LOG_WARNINGS?: boolean }).AI_SDK_LOG_WARNINGS = false;
   const { key, endpoint } = secrets, redact = redactor(key);

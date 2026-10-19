@@ -157,6 +157,10 @@ AI Term never switches accounts by itself. At a usage limit, the card shows the 
 
 Use `/login` to connect an engine or add an API key. Every key's models are tested at once. Only models that pass are offered.
 
+The `/login` list holds many providers. Where one runs a separate service for China, it has two rows: international and China. The line under the list says where the highlighted provider's requests go. Ollama, LM Studio and any OpenAI-compatible server on this machine need no key. AI Term reaches them only at `http://127.0.0.1:<port>`.
+
+You can also add a custom OpenAI-compatible endpoint. It must be https on the public internet. AI Term refuses an address on this machine, your network or a tailnet. Type `add` in the form's last field to confirm. Every agent card that uses the key shows its host.
+
 API keys are stored in the macOS Keychain. On Linux they go in the Secret Service, and on Windows in Credential Manager. They are never written to a file. The `/settings` screen shows only the last four characters.
 
 Open `/settings` to manage keys and defaults. Press `a` to add a key, `x` to remove one and `t` to test one. Press `r` to choose whether keys run on AI Term's agent or on the CLI.

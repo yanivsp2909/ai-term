@@ -1,6 +1,7 @@
 import { serversFound } from '../../shared/lsp-languages.js';
 import type { AgentEngine, DeploymentTest, KeyProvider, KeyView, EnginesStatus, ThemeName, SuccessResponse, Settings, NotifierState,NotificationAuthorization } from '../../shared/protocol.js';
-import { OLLAMA_DEFAULT_ENDPOINT, PROVIDER_LABELS, bedrockEndpoint, isDirectProvider, isLocalEndpoint } from '../../shared/providers.js';
+import { LOCAL_DEFAULT_ENDPOINTS, PROVIDER_LABELS, bedrockEndpoint, isDirectProvider, isLocalEndpoint, isLocalProvider, regionLine } from '../../shared/providers.js';
+import { isPublicEndpoint } from '../../shared/public-host.js';
 import { ownLoginLabel } from '../../shared/models.js';
 import { catalogIds } from '../../shared/model-catalog.js';
 import { priceCount } from '../../shared/prices.js';
@@ -13,8 +14,11 @@ interface Actions {
  request(body:RequestBody):Promise<SuccessResponse>;changed():void;close():void;
  login(engine:AgentEngine):Promise<void>;defaults(kind:'model'|'folder'|'effort'):void;price?(settings:Settings|undefined,keys:readonly KeyView[]):void;caps?(current:AgentCaps|undefined):void;theme(theme:ThemeName):Promise<void>;
 }
-// v0.6.5 adds the providers only AI Term's agent can use (no CLI login exists for them) and Ollama on this Mac.
-const providerOrder:readonly KeyProvider[]=['anthropic','openai','foundry','xai','moonshot','zai','openrouter','bedrock','vertex','ollama'];
+// v0.6.5 adds the providers only AI Term's agent can use (no CLI login exists for them) and Ollama on this Mac; Part A more
+// of them (a region is its own row), LM Studio and any server on this Mac, and a custom endpoint, last.
+const providerOrder:readonly KeyProvider[]=['anthropic','openai','foundry','xai','gemini','mistral','groq','cerebras','together','fireworks','deepinfra','huggingface','openrouter','bedrock','vertex',
+ 'deepseek','moonshot','moonshot-cn','zai','zai-cn','qwen','qwen-cn','minimax','minimax-cn','byteplus','byteplus-eu','ark','siliconflow','siliconflow-cn','qianfan','qianfan-cn','stepfun','stepfun-cn','hunyuan',
+ 'ollama','lmstudio','local','custom'];
 const providers:readonly [string,KeyProvider][]=providerOrder.map(p=>[PROVIDER_LABELS[p],p]);
 const DEFAULT_LABELS:Partial<Record<KeyProvider,string>>={foundry:'Foundry',bedrock:'Bedrock',vertex:'Vertex'};
 // One line per tested model: status, then the HTTP status or a fixed reason (never the provider's text).
@@ -27,7 +31,7 @@ export class CredentialsPanel {
  // "This deployment is model X" (v0.4.2): the Foundry key and deployment being marked, and the catalog filter.
  private mapping:{key:KeyView;deployment:string;filter:string}|null=null;
  private choice=0;private row=0;private provider:KeyProvider='anthropic';private keys:KeyView[]=[];private engines?:EnginesStatus;private notifier?:NotifierState;private notificationPermission:NotificationAuthorization='unknown';private settings?:Settings;
- private label='';private endpoint='';private deployments='';private secret='';private path='';private names:{name:string;provider:KeyProvider}[]=[];private selected=new Set<string>();private message='';private busy=false;private disposed=false;
+ private label='';private endpoint='';private deployments='';private secret='';private confirm='';private path='';private names:{name:string;provider:KeyProvider}[]=[];private selected=new Set<string>();private message='';private busy=false;private disposed=false;
  // The language servers diagnostics found on PATH (v0.9.3); null until load() looked.
  private lspFound:string[]|null=null;
  constructor(kind:'login'|'settings',private readonly actions:Actions,private readonly lspPath=process.env.PATH??''){this.screen=kind==='login'?'providers':'settings';}
@@ -55,15 +59,16 @@ export class CredentialsPanel {
   finally{this.busy=false;this.actions.changed();}
  }
  // region (Bedrock) and endpoint share one value; models (v0.6.5 providers) and deployments (Foundry) share another.
- private fieldNames():string[]{const p=this.provider;return p==='foundry'?['label','endpoint','secret','deployments']:p==='bedrock'?['label','region','secret','models']:p==='ollama'?['label','endpoint']:isDirectProvider(p)?['label','secret','models']:['label','secret'];}
+ // confirm (Part A): a custom endpoint's key is sent only after `add` is typed there.
+ private fieldNames():string[]{const p=this.provider;return p==='foundry'?['label','endpoint','secret','deployments']:p==='bedrock'?['label','region','secret','models']:p==='custom'?['label','endpoint','secret','models','confirm']:isLocalProvider(p)?['label','endpoint']:isDirectProvider(p)?['label','secret','models']:['label','secret'];}
  private field():string{return this.screen==='import'?'path':this.fieldNames()[this.row]??'label';}
  paste(text:string):void{if(this.busy||this.disposed)return;const field=this.field();if(this.screen!=='form'&&this.screen!=='import')return;
   const safe=text.replace(/[\r\n]/g,'');if(field==='secret'){if(this.secret.length+safe.length>512){this.secret='';this.message='Key is too long; enter at most 512 characters';this.actions.changed();return;}this.secret+=safe;}
-  else if(field==='path')this.path=(this.path+safe).slice(0,4096);else if(field==='label')this.label=(this.label+safe).slice(0,60);else if(field==='endpoint'||field==='region')this.endpoint=(this.endpoint+safe).slice(0,2048);else this.deployments=(this.deployments+safe).slice(0,3200);
+  else if(field==='path')this.path=(this.path+safe).slice(0,4096);else if(field==='confirm')this.confirm=(this.confirm+safe).slice(0,8);else if(field==='label')this.label=(this.label+safe).slice(0,60);else if(field==='endpoint'||field==='region')this.endpoint=(this.endpoint+safe).slice(0,2048);else this.deployments=(this.deployments+safe).slice(0,3200);
   this.message='';this.actions.changed();
  }
- private backspace():void{const f=this.field();if(f==='secret')this.secret=this.secret.slice(0,-1);else if(f==='path')this.path=this.path.slice(0,-1);else if(f==='label')this.label=this.label.slice(0,-1);else if(f==='endpoint'||f==='region')this.endpoint=this.endpoint.slice(0,-1);else this.deployments=this.deployments.slice(0,-1);}
- private form(provider:KeyProvider):void{this.provider=provider;this.screen='form';this.row=0;this.label=DEFAULT_LABELS[provider]??PROVIDER_LABELS[provider];this.endpoint=provider==='ollama'?OLLAMA_DEFAULT_ENDPOINT:'';this.deployments='';this.secret='';this.message='';}
+ private backspace():void{const f=this.field();if(f==='confirm')this.confirm=this.confirm.slice(0,-1);else if(f==='secret')this.secret=this.secret.slice(0,-1);else if(f==='path')this.path=this.path.slice(0,-1);else if(f==='label')this.label=this.label.slice(0,-1);else if(f==='endpoint'||f==='region')this.endpoint=this.endpoint.slice(0,-1);else this.deployments=this.deployments.slice(0,-1);}
+ private form(provider:KeyProvider):void{this.provider=provider;this.screen='form';this.row=0;this.label=DEFAULT_LABELS[provider]??PROVIDER_LABELS[provider];this.endpoint=isLocalProvider(provider)?LOCAL_DEFAULT_ENDPOINTS[provider]:'';this.deployments='';this.secret='';this.confirm='';this.message='';}
  async key(key:string):Promise<void>{
   if(this.disposed)return;
   if(key==='escape'){this.secret='';this.actions.close();return;}if(this.busy)return;
@@ -132,7 +137,8 @@ export class CredentialsPanel {
  // What the form must hold before anything is sent, or the words saying what's missing.
  private formError(deployments:string[]):string|null{
   const p=this.provider,keyOk=this.secret.length>0&&!/\s/.test(this.secret),modelsOk=deployments.length>0&&deployments.every(isValidModelId);
-  if(p==='ollama')return isLocalEndpoint(this.endpoint)?null:'Ollama must be at http://127.0.0.1:<port>';
+  if(isLocalProvider(p))return isLocalEndpoint(this.endpoint)?null:`${p==='ollama'?'Ollama':'The server'} must be at http://127.0.0.1:<port>`;
+  if(p==='custom')return !isPublicEndpoint(this.endpoint)?'The endpoint must be https on the public internet, like https://api.example.com/v1':!keyOk||!modelsOk?'Enter a key and model ids, comma separated':this.confirm!=='add'?'Type add to send this key to that endpoint':null;
   if(p==='foundry')return keyOk&&isEndpoint(this.endpoint)&&modelsOk?null:'Enter a key and valid endpoint/deployments';
   if(p==='bedrock')return keyOk&&bedrockEndpoint(this.endpoint)&&modelsOk?null:'Enter a key, a region like us-east-1 and model ids';
   if(isDirectProvider(p))return keyOk&&modelsOk?null:'Enter a key and model ids, comma separated';
@@ -142,16 +148,17 @@ export class CredentialsPanel {
   const deployments=this.deployments.split(',').map(d=>d.trim()).filter(Boolean),p=this.provider;
   const error=this.formError(deployments);if(error){this.message=error;this.actions.changed();return;}
   const endpoint=p==='bedrock'?bedrockEndpoint(this.endpoint)??'':this.endpoint;
-  // Ollama has no key: the request carries none at all.
-  const body:Extract<RequestBody,{kind:'keys.add'}>={kind:'keys.add',provider:p,label:this.label,...(p!=='ollama'?{secret:this.secret}:{}),...(p==='foundry'||p==='bedrock'||p==='ollama'?{endpoint}:{}),...(p!=='anthropic'&&p!=='openai'&&p!=='ollama'?{deployments}:{})};
+  // A local server has no key: the request carries none at all.
+  const local=isLocalProvider(p);
+  const body:Extract<RequestBody,{kind:'keys.add'}>={kind:'keys.add',provider:p,label:this.label,...(!local?{secret:this.secret}:{}),...(p==='foundry'||p==='bedrock'||p==='custom'||local?{endpoint}:{}),...(p!=='anthropic'&&p!=='openai'&&!local?{deployments}:{}),...(p==='custom'?{confirm:'add' as const}:{})};
   this.secret='';this.busy=true;this.actions.changed();
   let saved:KeyView|undefined;
   try{const pending=this.actions.request(body);if(body.secret!==undefined)body.secret='';saved=(await pending).key;}
   catch(error){this.message=reason(error,'Key could not be saved; check OS keychain access');this.busy=false;this.actions.changed();return;}
   // From here the key is saved: a failed test or refresh must say so, or a retry saves it twice.
-  this.screen='result';this.message=saved?.provider==='ollama'?'✓ saved · Ollama needs no key':'✓ saved to the OS keychain';
+  this.screen='result';this.message=saved&&isLocalProvider(saved.provider)?`✓ saved · ${PROVIDER_LABELS[saved.provider]} needs no key`:'✓ saved to the OS keychain';
   // Every key that carries models is tested at once: a model is offered only after its test passed (v0.6.5).
-  try{if(saved){this.keys=[saved];if(saved.provider!=='anthropic'&&saved.provider!=='openai'){const test=await this.actions.request({kind:'keys.test',keyId:saved.id});this.message+=' · '+(testText(test.results??[])||'no models found; pull one with ollama pull <model>, then t');this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}}}
+  try{if(saved){this.keys=[saved];if(saved.provider!=='anthropic'&&saved.provider!=='openai'){const test=await this.actions.request({kind:'keys.test',keyId:saved.id});this.message+=' · '+(testText(test.results??[])||(saved.provider==='ollama'?'no models found; pull one with ollama pull <model>, then t':'no models found; load one in the server, then t'));this.keys=(await this.actions.request({kind:'keys.list'})).keys??[];}}}
   catch(error){this.message+=' · test failed: '+reason(error,'try t in /settings');}finally{this.busy=false;this.actions.changed();}
  }
  private notificationText():string{
@@ -160,14 +167,15 @@ export class CredentialsPanel {
  }
  lines():string[]{
   const lines:string[]=[];
-  if(this.screen==='providers')lines.push('Connect a provider',...providers.map(([label],i)=>`${i===this.choice?'›':' '} ${label}`));
+  // The highlighted provider's region (Part A): one neutral line, words only (D51).
+  if(this.screen==='providers'){const chosen=providers[this.choice]?.[1];lines.push('Connect a provider',...providers.map(([label],i)=>`${i===this.choice?'›':' '} ${label}`),...(chosen?[regionLine(chosen)]:[]));}
   if(this.screen==='method')lines.push(providers.find(p=>p[1]===this.provider)?.[0]??'',`${this.choice===0?'›':' '} ${this.provider==='anthropic'?'Claude Code':'Codex'} · ${ownLoginLabel(this.provider==='anthropic'?this.engines?.claudeCode.authMethod:this.engines?.codex.authMethod)} · official CLI login`,`${this.choice===1?'›':' '} API key · OS keychain`,'What happens: the CLI owns login; AI Term never reads its credentials');
-  if(this.screen==='form'){lines.push(this.provider==='ollama'?'Add Ollama · this Mac, no key':`Add API key · ${PROVIDER_LABELS[this.provider]}`);for(const [i,name]of this.fieldNames().entries()){const value=name==='secret'?'•'.repeat(this.secret.length):name==='label'?this.label:name==='endpoint'||name==='region'?this.endpoint:this.deployments;lines.push(`${i===this.row?'›':' '} ${name}: ${value}`);}lines.push('↑↓ fields · ⏎ next/save · key is masked');}
+  if(this.screen==='form'){lines.push(isLocalProvider(this.provider)?`Add ${PROVIDER_LABELS[this.provider]} · this Mac, no key`:`Add API key · ${PROVIDER_LABELS[this.provider]}`,this.provider==='custom'?(isPublicEndpoint(this.endpoint)?`requests and this key go to ${new URL(this.endpoint).hostname}, a host AI Term doesn't know · type add to confirm`:'requests and this key go to the https host you enter · type add to confirm'):regionLine(this.provider));for(const [i,name]of this.fieldNames().entries()){const value=name==='secret'?'•'.repeat(this.secret.length):name==='label'?this.label:name==='endpoint'||name==='region'?this.endpoint:name==='confirm'?this.confirm:this.deployments;lines.push(`${i===this.row?'›':' '} ${name==='confirm'?'type add':name}: ${value}`);}lines.push('↑↓ fields · ⏎ next/save · key is masked');}
   if(this.screen==='settings'){
    const action=(index:number,text:string)=>`${this.choice===this.keys.length+index?'›':' '} ${text}`;
    lines.push('KEYS · OS keychain');
    const keyStart=Math.max(0,Math.min(this.choice,this.keys.length-1)-2);
-   for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${PROVIDER_LABELS[k.provider]} · ${k.provider==='ollama'?'no key':`key ····${k.last4}`}${k.endpoint?' · '+k.endpoint:''}`);
+   for(const [offset,k]of this.keys.slice(keyStart,keyStart+5).entries())lines.push(`${keyStart+offset===this.choice?'›':' '} ${k.label} · ${PROVIDER_LABELS[k.provider]} · ${isLocalProvider(k.provider)?'no key':`key ····${k.last4}`}${k.endpoint?' · '+k.endpoint:''}`);
    lines.push(action(0,'+ add key (a)'),action(1,'import from .env (i)'),action(2,'login (l)'),'ENGINES');
    for(const [name,status]of [['Claude Code',this.engines?.claudeCode],['Codex',this.engines?.codex]] as const)lines.push(status?`${name}: ${status.installed?'✓ installed':'✗ not installed'} · ${status.loggedIn===null?'status unavailable':status.loggedIn?'✓ logged in':'✗ not logged in · /login'} · ${ownLoginLabel(status.authMethod)}${status.error?' · '+status.error:''}`:`${name}: status unavailable`);
    lines.push('DEFAULTS',action(3,`model: ${this.settings?.defaultModel??'CLI default'} · ${this.settings?.defaultEngine??'claude-code'} (d)`),action(4,`folder: ${this.settings?.defaultCwd??'launch folder'} (f)`),action(5,`permission: ask only · theme: ${this.settings?.theme??'graphite'} · ⇥ change`),action(6,`effort: ${this.settings?.defaultEffort??'CLI default'} (e)`),action(7,`your prices: ${priceCount(this.settings??{})} · per provider and model, per 1M (p)`),action(8,`notifications: ${this.settings?.notifications===false?'off':this.notificationText()} (n)`),action(9,`bar: ${this.settings?.bar??'off'} (h)`),action(10,`worktrees: ${this.settings?.worktrees??'on'} (w)`),action(11,`keys run on: ${this.settings?.keysRunOn==='cli'?'the cli':'ai term'} (r)`),action(12,`agent caps: ${this.capsText()} per run (c)`),action(13,`context warning at 85%: ${this.settings?.contextWarning===false?'off':'on'} (k)`),action(14,`cost per task: ${this.settings?.taskCost===false?'off':'on'} · cards and /usage (o)`),action(15,`presets: ${this.settings?.presetsEnabled===false?'off':'on'} · /preset (s)`),action(16,`handoff: ${this.settings?.handoff===true?'on':'off'} · /handoff spends tokens (g)`),action(17,`checkpoints: ${this.settings?.checkpoints===false?'off':'on'} · /undo and /redo (u)`),action(18,`secret scan: ${this.settings?.secretScan===false?'off':'on'} · before /merge and /pr (v)`),action(19,`auto-test: ${this.settings?.autoTest===false?'off':'on'} · /test-cmd runs when an agent finishes (j)`),action(20,`auto-review: ${this.settings?.autoReview===true?'on':'off'} · ${this.settings?.reviewModel?.model??'no model yet'}, up to $${(this.settings?.autoReviewDailyUsd??1).toFixed(2)} a day · spends tokens (q)`),action(21,`queue: ${this.settings?.queue===true?'on':'off'} · /queue starts agents by itself, each with a limit (b)`),action(22,`dev servers: ${this.settings?.devServers===true?'on':'off'} · /dev runs an agent's dev server on its own port (y)`),action(23,`diagnostics: ${this.settings?.lspDiagnostics===true?'on':'off'} · ${this.lspFound===null?'':this.lspFound.length?`servers found: ${this.lspFound.join(', ')} · AI Term's agent sees a file's errors after it writes`:'no language server installed; README lists them'} (z)`),action(24,`phone remote: ${this.settings?.remote===true?'on':'off'} · /remote on reaches your agents from your phone over Tailscale (R)`),'keys are never shown in full and never written to .env');
@@ -178,7 +186,7 @@ export class CredentialsPanel {
   if(this.screen==='catalog'&&this.mapping){const rows=this.catalogRows(),start=Math.max(0,this.choice-6);lines.push(`${this.mapping.deployment} is…`,`Filter: ${this.mapping.filter}█`,...rows.slice(start,start+12).map((id,i)=>`${start+i===this.choice?'›':' '} ${id}`),`${rows.length-1} catalog models · ↑↓ · ⏎ saves · Esc closes`);}
   if(this.screen==='import')lines.push('Import from .env',`path: ${this.path}█`,'Names only are shown; source file is never modified');
   if(this.screen==='names')lines.push('Select names to import',...this.names.map((n,i)=>`${i===this.choice?'›':' '} [${this.selected.has(n.name)?'x':' '}] ${n.name} · ${n.provider}`),'↑↓ select · Space toggle · ⏎ import');
-  if(this.screen==='result')lines.push('Keys',...this.keys.map(k=>`${k.label} · ${k.provider==='ollama'?'no key':`key ····${k.last4}`}`),...this.keys.flatMap(k=>(k.lastTest??[]).map(r=>`${r.model} · ${r.status}${r.reason?' · '+r.reason:''}`)));
+  if(this.screen==='result')lines.push('Keys',...this.keys.map(k=>`${k.label} · ${isLocalProvider(k.provider)?'no key':`key ····${k.last4}`}`),...this.keys.flatMap(k=>(k.lastTest??[]).map(r=>`${r.model} · ${r.status}${r.reason?' · '+r.reason:''}`)));
   if(this.message)lines.push(this.message);if(this.busy)lines.push('◐ working');lines.push('Esc back');return lines;
  }
  draw(frame:Frame,theme:Theme):Frame{

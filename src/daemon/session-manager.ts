@@ -75,7 +75,7 @@ import { Mirror, type MirrorSignal } from './mirror.js';
 import { electronNodeNeeded } from '../shared/runtime-paths.js';
 import { buildShellEnv, buildSpawnEnv, buildArgs, buildUsageEnv, buildUsageArgs,buildStatusEnv,buildStatusArgs,buildAgentArgs,buildAgentEnv,buildTestEnv,splitAgentSecrets } from './env.js';
 import { KeyStore, KeyError, type FoundryBinding } from './keys.js';
-import { CLI_KEY_PROVIDERS, isBoundProvider, isLocalEndpoint, testedModels } from '../shared/providers.js';
+import { CLI_KEY_PROVIDERS, isBoundProvider, isLocalEndpoint, isLocalProvider, testedModels } from '../shared/providers.js';
 import { checkEngine } from './engines.js';
 import { UsageService } from './usage-service.js';
 import { ReplyBudget } from './reply-budget.js';
@@ -416,7 +416,7 @@ export class SessionManager extends EventEmitter {
         } else recipe = this.recipe ? {executable:this.recipe.executable,args:[...this.recipe.args],env:{...this.recipe.env}} : process.platform==='win32' ? { executable: windowsShell(process.env, existsSync), args: [], env: buildShellEnv(process.env) } : { executable: process.env.SHELL || '/bin/zsh', args: ['-l'], env: buildShellEnv(process.env) };
         const keyView=agent?.auth.kind==='key'?await this.keys.view(agent.auth.keyId):null;
         const now = new Date().toISOString();
-        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4}:{ kind: 'account',...(profile?{profile}:{}) }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
+        const info: SessionInfo = { id: randomUUID(), title: request.title ?? (agent ? engineTitle(agent.engine) : 'shell'), engine: agent?.engine ?? 'shell', model: agent ? agent.model : 'shell', ...(agent&&!agent.login?{effort:agent.effort??null}:{}), ...(agent?.login?{login:true as const}:{}), ...(conversationId?{conversationId}:{}), auth: keyView?{kind:'key',keyId:keyView.id,provider:keyView.provider,keyLabel:keyView.label,last4:keyView.last4,...(keyView.provider==='custom'&&keyView.endpoint?{host:new URL(keyView.endpoint).hostname}:{})}:{ kind: 'account',...(profile?{profile}:{}) }, cwd: request.cwd, permission: agent?.permission ?? 'ask', ...(authMethod ? {authMethod} : {}), status: 'starting', statusDetail: 'starting', statusSince: now, exitCode: null, createdAt: now, lastOutputAt: null, ctxPercent: null,lastActivity:null };
         if(brain)info.brain={builtAt:brain.builtAt};
         if(continuation?.worktree){info.worktree=continuation.worktree;info.branch=continuation.branch;}
         else if(agent&&!agent.login&&!continuation){
@@ -477,10 +477,11 @@ export class SessionManager extends EventEmitter {
             if(gitRepo)try{gitCommon=await repoCommonDir(gitRepo);}catch{this.log.error('Agent sandbox: the repository\'s git folder is unknown; its hooks are not protected');}
             if(agent?.engine==='ai-term'&&agent.auth.kind==='key'){const spawnAgent=(secret:string|null,binding:FoundryBinding|null)=>{
                 // B12: only the Keychain's bound endpoint and deployments decide where the key goes and which models it may run
-                // (Foundry, Bedrock). Fixed-host providers' hosts are in the agent's code; Ollama's endpoint is local only.
+                // (Foundry, Bedrock, a custom endpoint). Fixed-host providers' hosts are in the agent's code; a local server's
+                // endpoint is local only.
                 const provider=agentKey?.view.provider,bound=provider!==undefined&&isBoundProvider(provider),model=agent.model,models=(agentKey?.models??[]).filter(id=>!bound||binding?.deployments.includes(id));
-                if(bound&&!binding||!model||!models.includes(model)||!transcript||!agentKey)throw new KeyError(provider==='bedrock'?'Bedrock key details changed outside AI Term; add the key again':'Foundry key details changed outside AI Term; add the key again');
-                const endpoint=bound&&binding?binding.endpoint:provider==='ollama'&&isLocalEndpoint(agentKey.view.endpoint)?agentKey.view.endpoint:null;
+                if(bound&&!binding||!model||!models.includes(model)||!transcript||!agentKey)throw new KeyError(provider==='bedrock'?'Bedrock key details changed outside AI Term; add the key again':provider==='custom'?'Custom endpoint details changed outside AI Term; add the key again':'Foundry key details changed outside AI Term; add the key again');
+                const endpoint=bound&&binding?binding.endpoint:provider!==undefined&&isLocalProvider(provider)&&isLocalEndpoint(agentKey.view.endpoint)?agentKey.view.endpoint:null;
                 live.agentModels=models;
                 const command={node:process.execPath,entry:this.cliEntry,...(this.cliEntry.endsWith('.ts')?{loader:createRequire(import.meta.url).resolve('tsx')}:{})};
                 const built=buildAgentArgs({command,provider:agentKey.view.provider,model,models,permission:agent.permission,theme:settings?.theme??'graphite',transcript,lsp:settings?.lspDiagnostics===true,...(brain?{brainFile:brain.file}:{}),...(addon?{addon}:{}),...(agent.firstMessage!==undefined?{firstMessage:agent.firstMessage}:{})});
@@ -492,8 +493,8 @@ export class SessionManager extends EventEmitter {
                 recipe={executable:built.executable,args:built.args,env:{...split.env,...(gitCommon?{AITERM_GIT_COMMON:gitCommon}:{})}};
                 try{live.host=new PtyHost(recipe,info.cwd,this.size.cols,this.size.rows,this.childUmask);}finally{recipe.env={};}
             };
-                // Ollama has no key: nothing is read from the Keychain for it.
-                if(agentKey?.view.provider==='ollama')spawnAgent(null,null);else await this.keys.withSecret(agent.auth.keyId,spawnAgent);
+                // A local server has no key: nothing is read from the Keychain for it.
+                if(agentKey&&isLocalProvider(agentKey.view.provider))spawnAgent(null,null);else await this.keys.withSecret(agent.auth.keyId,spawnAgent);
             }
             else if(agent&&cliEngine&&agent.auth.kind==='key') await this.keys.withSecret(agent.auth.keyId,(secret,binding)=>{
                 // B12: argv was built from settings.json's copy; the secret goes only to the endpoint bound to it in the Keychain.

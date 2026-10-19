@@ -1,12 +1,17 @@
 import type { DeploymentTest, ProviderFailureReason } from '../../shared/protocol.js';
+import { Agent } from 'node:https';
 import { DIRECT_HOSTS, isBedrockEndpoint, type DirectProvider } from '../../shared/providers.js';
+import { isPublicEndpoint, PrivateAddressError, publicLookup } from '../../shared/public-host.js';
 import { isSecret, isValidModelId } from '../../shared/validate.js';
-import { ProviderFailure, providerTransport, type ProviderRequest, type ProviderTransport } from './foundry.js';
+import { ProviderFailure, providerTransport, providerTransportWithAgent, type ProviderRequest, type ProviderTransport } from './foundry.js';
 
 // v0.6.5: before a model of a new provider is offered, one tiny request (16 output tokens) per model checks that this key
 // reaches it. Only the provider's own host (Bedrock: the Keychain-bound region) ever gets the key, in its own header;
 // the transport follows no redirect, and only the HTTP status or a fixed reason comes back, never the provider's text.
-export type TestedProvider = DirectProvider | 'bedrock';
+// Part A: a custom endpoint is tested the same way, on the endpoint bound to its key, through a connection that only opens to
+// public addresses (publicLookup).
+export type TestedProvider = DirectProvider | 'bedrock' | 'custom';
+export const publicTransport: ProviderTransport = providerTransportWithAgent(new Agent({ lookup: publicLookup() }));
 const TIMEOUT_MS = 15000, MAX_MODELS = 40;
 function request(provider: TestedProvider, endpoint: string, model: string, secret: string): ProviderRequest {
   const base = endpoint.replace(/\/+$/, '');
@@ -22,13 +27,13 @@ function request(provider: TestedProvider, endpoint: string, model: string, secr
   return { url, path: url.pathname, model, headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' }, body: { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 16 }, timeout: TIMEOUT_MS };
 }
 function hostAllowed(provider: TestedProvider, endpoint: string): boolean {
-  return provider === 'bedrock' ? isBedrockEndpoint(endpoint) : Object.hasOwn(DIRECT_HOSTS, provider) && DIRECT_HOSTS[provider] === endpoint;
+  return provider === 'bedrock' ? isBedrockEndpoint(endpoint) : provider === 'custom' ? isPublicEndpoint(endpoint) : Object.hasOwn(DIRECT_HOSTS, provider) && DIRECT_HOSTS[provider] === endpoint;
 }
 export function failureReason(error: unknown): ProviderFailureReason {
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
-  return error instanceof ProviderFailure ? error.reason : code === 'ETIMEDOUT' ? 'Provider request timed out' : ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE'].includes(String(code)) ? 'Provider connection failed' : 'Provider request failed';
+  return error instanceof ProviderFailure ? error.reason : error instanceof PrivateAddressError ? 'Provider address is not on the public internet' : code === 'ETIMEDOUT' ? 'Provider request timed out' : ['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE'].includes(String(code)) ? 'Provider connection failed' : 'Provider request failed';
 }
-export async function testDirect(provider: TestedProvider, endpoint: string, models: string[], secret: string, transport: ProviderTransport = providerTransport): Promise<DeploymentTest[]> {
+export async function testDirect(provider: TestedProvider, endpoint: string, models: string[], secret: string, transport: ProviderTransport = provider === 'custom' ? publicTransport : providerTransport): Promise<DeploymentTest[]> {
   if (!hostAllowed(provider, endpoint) || !isSecret(secret) || !models.length || models.length > MAX_MODELS || models.some(m => !isValidModelId(m))) throw new Error('Invalid provider test details');
   const results: DeploymentTest[] = [];
   for (const model of models) {

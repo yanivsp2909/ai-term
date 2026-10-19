@@ -10,7 +10,8 @@ import { SettingsStore } from './settings.js';
 import { isExtensionId } from '../shared/extensions.js';
 import { isMcpHash, isMcpEnv, isMcpHeader } from '../shared/validate.js';
 import { lastFour } from '../shared/text-cut.js';
-import { hasModelList, isBedrockEndpoint, isBoundProvider, isLocalEndpoint } from '../shared/providers.js';
+import { hasModelList, isBedrockEndpoint, isBoundProvider, isLocalEndpoint, isLocalProvider, type LocalProvider } from '../shared/providers.js';
+import { isPublicEndpoint } from '../shared/public-host.js';
 import { ownedByMe } from '../shared/owner.js';
 export class KeyError extends Error {}
 // One clear line when the system's key store can't be used. Linux (v0.8.1) keeps keys only in the Secret Service
@@ -25,14 +26,17 @@ export const KEYCHAIN_ERRORS: readonly string[] = [UNAVAILABLE, NOT_SAVED, NOT_R
 export interface FoundryBinding { endpoint: string; deployments: string[] }
 const FOUNDRY_CHANGED='Foundry key details changed outside AI Term; add the key again',FOUNDRY_UNBOUND='Foundry key must be added again to bind its endpoint';
 // v0.6.5: Bedrock's host is its region, bound the same way. Ollama has no key, so no Keychain entry at all.
-const BEDROCK_CHANGED='Bedrock key details changed outside AI Term; add the key again',OLLAMA_NO_KEY='Ollama has no key';
+// Part A: a custom endpoint is bound the same way, and must still be a public https endpoint when read back; LM Studio and
+// other servers on this machine have no key either.
+const BEDROCK_CHANGED='Bedrock key details changed outside AI Term; add the key again',OLLAMA_NO_KEY='Ollama has no key',LOCAL_NO_KEY='A server on this machine has no key';
+const CUSTOM_CHANGED='Custom endpoint details changed outside AI Term; add the key again',CUSTOM_CONFIRM='Type add to send this key to a custom endpoint';
 function foundryEntry(secret:string,binding:FoundryBinding):string{return JSON.stringify({v:1,secret,endpoint:binding.endpoint,deployments:binding.deployments});}
 // A bare secret (saved before binding existed) or anything malformed is unbound: never trusted on first use.
-function parseFoundryEntry(raw:string,provider:'foundry'|'bedrock'='foundry'):{secret:string;binding:FoundryBinding}|null{
+function parseFoundryEntry(raw:string,provider:'foundry'|'bedrock'|'custom'='foundry'):{secret:string;binding:FoundryBinding}|null{
  let value:unknown;try{value=JSON.parse(raw);}catch{return null;}
  if(!value||typeof value!=='object'||Array.isArray(value))return null;
  const v=value as Record<string,unknown>;
- if(Object.keys(v).length!==4||v.v!==1||!isSecret(v.secret)||typeof v.endpoint!=='string'||!(provider==='bedrock'?isBedrockEndpoint(v.endpoint):isEndpoint(v.endpoint))||!Array.isArray(v.deployments)||!v.deployments.length||v.deployments.length>40||!v.deployments.every(isValidModelId))return null;
+ if(Object.keys(v).length!==4||v.v!==1||!isSecret(v.secret)||typeof v.endpoint!=='string'||!(provider==='bedrock'?isBedrockEndpoint(v.endpoint):provider==='custom'?isPublicEndpoint(v.endpoint):isEndpoint(v.endpoint))||!Array.isArray(v.deployments)||!v.deployments.length||v.deployments.length>40||!v.deployments.every(isValidModelId))return null;
  return {secret:v.secret,binding:{endpoint:v.endpoint,deployments:[...v.deployments]}};
 }
 export interface KeyVault { read(account:string):Promise<string|null>; write(account:string,secret:string):Promise<void>; remove(account:string):Promise<void> }
@@ -97,8 +101,9 @@ export class KeyStore extends EventEmitter {
  }
  private vaultFailed(call:string,error:unknown):void{const code=error instanceof Error&&'code' in error&&typeof error.code==='string'&&/^[A-Za-z_]{1,32}$/.test(error.code)?error.code:error instanceof Error?error.constructor.name.slice(0,32):'unknown';this.log.error(`Keychain ${call} failed (${code})`);}
  private serial<T>(work:()=>Promise<T>):Promise<T>{const next=this.queue.then(work);this.queue=next.then(()=>undefined,()=>undefined);return next;}
- async add(request:{provider:KeyProvider;label:string;secret?:string;endpoint?:string;deployments?:string[]}):Promise<KeyView>{
-  if(request.provider==='ollama')return this.addLocal(request);
+ async add(request:{provider:KeyProvider;label:string;secret?:string;endpoint?:string;deployments?:string[];confirm?:'add'}):Promise<KeyView>{
+  if(isLocalProvider(request.provider))return this.addLocal(request.provider,request);
+  if(request.provider==='custom'&&request.confirm!=='add')throw new KeyError(CUSTOM_CONFIRM);
   const secret=request.secret;
   if(!isSecret(secret))throw new KeyError('Invalid key details');
   if([request.label,request.endpoint,...request.deployments??[]].some(value=>typeof value==='string'&&value.includes(secret)))throw new KeyError('Key details must not contain the secret');
@@ -106,6 +111,7 @@ export class KeyStore extends EventEmitter {
   try{key=validateKeyView({id:randomUUID(),provider:request.provider,label:request.label,last4:lastFour(secret),...(request.endpoint!==undefined?{endpoint:request.endpoint}:{}),...(request.deployments!==undefined?{deployments:request.deployments}: {})});}
   catch{throw new KeyError(request.provider==='foundry'?'Foundry needs an endpoint and deployments':'Invalid key details');}
   if(key.provider==='foundry'&&(!isEndpoint(key.endpoint)||!key.deployments?.length))throw new KeyError('Foundry needs an endpoint and deployments');
+  if(key.provider==='custom'&&!isPublicEndpoint(key.endpoint))throw new KeyError('A custom endpoint must be https on the public internet');
   // A key that carries its own models must name at least one: its test is what offers them (v0.6.5).
   if(hasModelList(key.provider)&&!key.deployments?.length)throw new KeyError('Invalid key details');
   const account=`${key.provider}:${key.id}`;
@@ -120,39 +126,41 @@ export class KeyStore extends EventEmitter {
    return key;
   });
  }
- // Ollama: metadata only. It has no secret, so nothing goes to the Keychain and nothing is read from it later.
- private addLocal(request:{label:string;secret?:string;endpoint?:string;deployments?:string[]}):Promise<KeyView>{
+ // Ollama, LM Studio and other servers on this machine: metadata only. They have no secret, so nothing goes to the Keychain
+ // and nothing is read from it later.
+ private addLocal(provider:LocalProvider,request:{label:string;secret?:string;endpoint?:string;deployments?:string[]}):Promise<KeyView>{
   if(request.secret!==undefined||!isLocalEndpoint(request.endpoint))throw new KeyError('Invalid key details');
   let key:KeyView;
-  try{key=validateKeyView({id:randomUUID(),provider:'ollama',label:request.label,last4:'',endpoint:request.endpoint,...(request.deployments!==undefined?{deployments:request.deployments}: {})});}catch{throw new KeyError('Invalid key details');}
+  try{key=validateKeyView({id:randomUUID(),provider,label:request.label,last4:'',endpoint:request.endpoint,...(request.deployments!==undefined?{deployments:request.deployments}: {})});}catch{throw new KeyError('Invalid key details');}
   return this.serial(async()=>{
    try{await this.settings.update(async settings=>{const keys=Array.isArray(settings.keys)?settings.keys.map(validateKeyView):[];if(keys.length>=100)throw new Error('Too many keys');return {...settings,keys:[...keys,key]};});}
    catch{throw new KeyError('Key metadata could not be saved');}
    return key;
   });
  }
- // Ollama's models come from its own listing; each listed model counts as tested (the listing was the check).
+ // A local server's models come from its own listing; each listed model counts as tested (the listing was the check).
  async saveModels(id:string,models:string[]):Promise<KeyView>{
   return this.serial(async()=>{
-   const key=await this.view(id);if(key.provider!=='ollama')throw new KeyError('Invalid key details');
+   const key=await this.view(id);if(!isLocalProvider(key.provider))throw new KeyError('Invalid key details');
    const updated=validateKeyView({...key,deployments:models,lastTest:models.map(model=>({model,status:'ready'}))});
    await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).map(k=>k.id===id?updated:k)}));
    return updated;
   });
  }
- async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);if(key.provider!=='ollama')try{await this.vault.remove(`${key.provider}:${id}`);}catch(error){this.vaultFailed('remove',error);throw new KeyError(NOT_REMOVED,{cause:new Error('Keychain remove failed')});}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
- async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');if(provider==='ollama')return false;try{return await this.vault.read(`${provider}:${id}`)!==null;}catch(error){this.vaultFailed('read',error);throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}}
+ async remove(id:string):Promise<void>{await this.serial(async()=>{const key=await this.view(id);if(!isLocalProvider(key.provider))try{await this.vault.remove(`${key.provider}:${id}`);}catch(error){this.vaultFailed('remove',error);throw new KeyError(NOT_REMOVED,{cause:new Error('Keychain remove failed')});}try{await this.settings.update(async s=>({...s,keys:(Array.isArray(s.keys)?s.keys.map(validateKeyView):[]).filter(k=>k.id!==id)}));}catch{throw new KeyError('Key removed from keychain; metadata could not be saved');}});}
+ async hasCredential(provider:KeyProvider,id:string):Promise<boolean>{if(!isUUID(id))throw new KeyError('Invalid key id');if(isLocalProvider(provider))return false;try{return await this.vault.read(`${provider}:${id}`)!==null;}catch(error){this.vaultFailed('read',error);throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}}
  // For a Foundry key, use receives the Keychain-bound endpoint and deployments; callers must send the secret only there.
  async withSecret<T>(id:string,use:(secret:string,binding:FoundryBinding|null)=>T|Promise<T>):Promise<T>{
   const key=await this.view(id);let secret:string|null;
-  if(key.provider==='ollama')throw new KeyError(OLLAMA_NO_KEY);
+  if(isLocalProvider(key.provider))throw new KeyError(key.provider==='ollama'?OLLAMA_NO_KEY:LOCAL_NO_KEY);
   try{secret=await this.vault.read(`${key.provider}:${id}`);}catch(error){this.vaultFailed('read',error);throw new KeyError(UNAVAILABLE,{cause:new Error('Keychain read failed')});}
   if(!secret)throw new KeyError('Key is missing from the OS keychain');
   let binding:FoundryBinding|null=null;
   if(isBoundProvider(key.provider)){
    // Bedrock was bound from its first day, so an unbound entry is as changed as a differing copy.
-   const changed=key.provider==='bedrock'?BEDROCK_CHANGED:FOUNDRY_CHANGED;
-   const entry=parseFoundryEntry(secret,key.provider);if(!entry)throw new KeyError(key.provider==='bedrock'?BEDROCK_CHANGED:FOUNDRY_UNBOUND);
+   // So was a custom endpoint (Part A).
+   const changed=key.provider==='bedrock'?BEDROCK_CHANGED:key.provider==='custom'?CUSTOM_CHANGED:FOUNDRY_CHANGED;
+   const entry=parseFoundryEntry(secret,key.provider);if(!entry)throw new KeyError(key.provider==='foundry'?FOUNDRY_UNBOUND:changed);
    if(entry.binding.endpoint!==key.endpoint||entry.binding.deployments.join('\n')!==(key.deployments??[]).join('\n'))throw new KeyError(changed);
    secret=entry.secret;binding=entry.binding;
   }
@@ -189,4 +197,4 @@ export class KeyStore extends EventEmitter {
   }finally{entries.clear();}
  }
 }
-export const FOUNDRY_KEY_ERRORS=[FOUNDRY_CHANGED,FOUNDRY_UNBOUND,BEDROCK_CHANGED,OLLAMA_NO_KEY] as const;
+export const FOUNDRY_KEY_ERRORS=[FOUNDRY_CHANGED,FOUNDRY_UNBOUND,BEDROCK_CHANGED,OLLAMA_NO_KEY,LOCAL_NO_KEY,CUSTOM_CHANGED,CUSTOM_CONFIRM,'A custom endpoint must be https on the public internet'] as const;

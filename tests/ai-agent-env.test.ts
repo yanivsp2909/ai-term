@@ -43,7 +43,7 @@ it('the agent env is an allowlist plus its own key, endpoint and credentials', (
   // Anthropic and OpenAI hosts are fixed in the agent: their env carries no endpoint at all.
   const fixed = buildAgentEnv(inherited, { secret: key, endpoint: null, status, usage, entry: command.entry });
   expect(fixed.AITERM_AGENT_KEY).toBe(key); expect(fixed).not.toHaveProperty('AITERM_AGENT_ENDPOINT');
-  expect(() => buildAgentArgs({ ...base, command, permission: 'ask', provider: 'gemini' as 'openai' })).toThrow();
+  expect(() => buildAgentArgs({ ...base, command, permission: 'ask', provider: 'not-a-provider' as 'openai' })).toThrow();
   expect(() => buildAgentEnv(inherited, { secret: 'has space', endpoint: 'https://r.openai.azure.com/openai/v1', status, usage, entry: command.entry })).toThrow();
 });
 

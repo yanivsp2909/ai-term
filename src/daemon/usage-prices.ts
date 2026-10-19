@@ -1,16 +1,22 @@
 import type {KeyProvider,ModelPrice,Settings} from '../shared/protocol.js';
+import {isLocalProvider} from '../shared/providers.js';
 export interface ModelLimits {context?:number;output?:number}
 // limits (v0.4.2): Models.dev's limit.context and limit.output per model, kept when the catalog is refreshed; absent in a
 // catalog trimmed before then, which leaves context % and output limits unknown rather than guessed.
 // v0.6.5: the new providers' own Models.dev tables, by Models.dev's provider id. Optional, so a catalog trimmed before
 // v0.6.5 still loads (those providers are then unpriced, never priced from another table).
-export type CatalogTable='anthropic'|'openai'|'azure'|'xai'|'moonshotai'|'zai'|'openrouter'|'amazon-bedrock'|'google-vertex';
+// Part A adds the new providers' tables; providers Models.dev doesn't list (BytePlus, Baidu Qianfan, a custom endpoint) stay
+// unpriced until you price a model (B28).
+export type CatalogTable='anthropic'|'openai'|'azure'|'xai'|'moonshotai'|'zai'|'openrouter'|'amazon-bedrock'|'google-vertex'
+ |'moonshotai-cn'|'zhipuai'|'google'|'mistral'|'groq'|'cerebras'|'togetherai'|'fireworks-ai'|'deepinfra'|'huggingface'|'deepseek'|'alibaba'|'alibaba-cn'|'minimax'|'minimax-cn'|'volcengine'|'siliconflow'|'siliconflow-cn'|'tencent-tokenhub'|'stepfun-ai'|'stepfun';
 type NewTable=Exclude<CatalogTable,'anthropic'|'openai'|'azure'>;
-const TABLE_OF:Partial<Record<KeyProvider,NewTable>>={xai:'xai',moonshot:'moonshotai',zai:'zai',openrouter:'openrouter',bedrock:'amazon-bedrock',vertex:'google-vertex'};
+const TABLE_OF:Partial<Record<KeyProvider,NewTable>>={xai:'xai',moonshot:'moonshotai',zai:'zai',openrouter:'openrouter',bedrock:'amazon-bedrock',vertex:'google-vertex',
+ 'moonshot-cn':'moonshotai-cn','zai-cn':'zhipuai',gemini:'google',mistral:'mistral',groq:'groq',cerebras:'cerebras',together:'togetherai',fireworks:'fireworks-ai',deepinfra:'deepinfra',huggingface:'huggingface',
+ deepseek:'deepseek',qwen:'alibaba','qwen-cn':'alibaba-cn',minimax:'minimax','minimax-cn':'minimax-cn',ark:'volcengine',siliconflow:'siliconflow','siliconflow-cn':'siliconflow-cn',hunyuan:'tencent-tokenhub',stepfun:'stepfun-ai','stepfun-cn':'stepfun'};
 export interface PriceSnapshot {fetchedAt:string;providers:Record<'anthropic'|'openai'|'azure',Record<string,ModelPrice>>&Partial<Record<NewTable,Record<string,ModelPrice>>>;limits?:Partial<Record<CatalogTable,Record<string,ModelLimits>>>}
 const object=(v:unknown):Record<string,unknown>=>v&&typeof v==='object'&&!Array.isArray(v)?v as Record<string,unknown>:{};
 export function trimPrices(raw:unknown,fetchedAt:string):PriceSnapshot{
- const providers:Record<CatalogTable,Record<string,ModelPrice>>={anthropic:{},openai:{},azure:{},xai:{},moonshotai:{},zai:{},openrouter:{},'amazon-bedrock':{},'google-vertex':{}};
+ const providers=Object.fromEntries((['anthropic','openai','azure',...new Set(Object.values(TABLE_OF))] as CatalogTable[]).map(table=>[table,{}])) as Record<CatalogTable,Record<string,ModelPrice>>;
  const limits:NonNullable<PriceSnapshot['limits']>={anthropic:{},openai:{},azure:{}};
  const count=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>0&&v<=100_000_000?v:undefined;
  for(const provider of Object.keys(providers)as(keyof typeof providers)[]){const models=object(object(object(raw)[provider]).models);for(const [id,rawModel]of Object.entries(models)){const cost=object(object(rawModel).cost);const input=cost.input,output=cost.output,cacheRead=cost.cache_read;if(typeof input==='number'&&Number.isFinite(input)&&input>=0&&typeof output==='number'&&Number.isFinite(output)&&output>=0)providers[provider][id]={input,output,...(typeof cacheRead==='number'&&Number.isFinite(cacheRead)&&cacheRead>=0?{cacheRead}:{})};
@@ -30,8 +36,9 @@ export function findPrice(snapshot:PriceSnapshot,provider:KeyProvider,model:stri
  const override=own(overrides);
  // An explicit two-rate override applies its input rate to every input token; no cache discount is guessed.
  const overridden=override?{...override,cacheRead:override.cacheRead??override.input}:undefined;
- // Ollama runs on this Mac: free unless you price a model (it can also serve billed cloud models), v0.6.5.
- if(provider==='ollama')return overridden??{input:0,output:0,cacheRead:0};
+ // A server on this Mac (Ollama v0.6.5, LM Studio and others, Part A): free unless you price a model (Ollama can also serve
+ // billed cloud models).
+ if(isLocalProvider(provider))return overridden??{input:0,output:0,cacheRead:0};
  if(provider==='anthropic'||provider==='openai')return own(snapshot.providers[provider]);
  // v0.6.5 providers: an override (/settings p), else their own Models.dev table, else unknown (`price ?`).
  const table=TABLE_OF[provider];
@@ -54,7 +61,7 @@ export function findLimits(snapshot:PriceSnapshot,provider:KeyProvider,model:str
 // the key's own provider's table first. Ollama has no catalog; a one-word catalog id under four letters never matches.
 const idWords = (id: string) => (id.toLowerCase().split('/').at(-1) ?? '').replace(/:.*$/, '').match(/[a-z0-9]+/g) ?? [];
 export function closestCatalogModel(snapshot: PriceSnapshot, provider: KeyProvider, model: string): { model: string; price: ModelPrice } | null {
- if (provider === 'ollama') return null;
+ if (isLocalProvider(provider)) return null;
  const mine = new Set(idWords(model)), first = TABLE_OF[provider];
  const tables: CatalogTable[] = [...(first ? [first] : []), 'azure', 'openai', 'anthropic', ...(Object.values(TABLE_OF) as CatalogTable[]).filter(table => table !== first)];
  let best: { model: string; price: ModelPrice; size: number } | null = null;

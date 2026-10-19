@@ -83,14 +83,14 @@ describe('agent providers', () => {
 
 describe('shared provider rules', () => {
   it('fixed hosts, endpoint shapes and labels', () => {
-    expect(DIRECT_HOSTS).toEqual({ xai: 'https://api.x.ai/v1', moonshot: 'https://api.moonshot.ai/v1', zai: 'https://api.z.ai/api/paas/v4', openrouter: 'https://openrouter.ai/api/v1', vertex: 'https://aiplatform.googleapis.com/v1/publishers/google' });
+    expect(DIRECT_HOSTS).toMatchObject({ xai: 'https://api.x.ai/v1', moonshot: 'https://api.moonshot.ai/v1', zai: 'https://api.z.ai/api/paas/v4', openrouter: 'https://openrouter.ai/api/v1', vertex: 'https://aiplatform.googleapis.com/v1/publishers/google' });
     expect(isLocalEndpoint('http://127.0.0.1:11434')).toBe(true); expect(isLocalEndpoint('http://127.0.0.1:65535')).toBe(true);
     for (const bad of ['http://localhost:11434', 'http://127.0.0.1:11434/', 'http://127.0.0.2:1', 'http://127.0.0.1:65536', 'http://127.0.0.1:011434', 'https://127.0.0.1:1']) expect(isLocalEndpoint(bad)).toBe(false);
     expect(bedrockEndpoint('us-east-1')).toBe('https://bedrock-runtime.us-east-1.amazonaws.com'); expect(bedrockEndpoint('us-gov-west-1')).toBe('https://bedrock-runtime.us-gov-west-1.amazonaws.com');
     for (const bad of ['', 'us east 1', 'evil.example/x', 'US-EAST-1', 'us-east-1.evil']) expect(bedrockEndpoint(bad)).toBeNull();
     expect(isBedrockEndpoint('https://bedrock-runtime.ap-southeast-2.amazonaws.com')).toBe(true); expect(isBedrockEndpoint('https://bedrock-runtime.x.amazonaws.com.evil.example')).toBe(false);
     for (const p of ['xai', 'moonshot', 'zai', 'openrouter', 'bedrock', 'vertex', 'ollama']) expect(isKeyProvider(p)).toBe(true);
-    expect(isKeyProvider('gemini')).toBe(false);
+    expect(isKeyProvider('not-a-provider')).toBe(false);
   });
 
   it('a model is offered only after its test passed', () => {

@@ -1,10 +1,12 @@
 import type { KeyProvider, ModelPrice, Settings } from './protocol.js';
+import { PROVIDER_LABELS, isLocalProvider } from './providers.js';
 
 // B27: your own prices (/settings p, and p at a budget pause) belong to a provider and a model id, so a Foundry deployment
 // and an OpenRouter model with the same id keep two prices. Anthropic and OpenAI keys always use the catalog's prices
 // (D45), so they take none. priceOverrides holds records from before B27, by model id alone: each still applies to every
 // provider with that id, and a provider's own price wins over it.
-export const PRICED_BY_YOU: readonly KeyProvider[] = ['foundry', 'xai', 'moonshot', 'zai', 'openrouter', 'bedrock', 'vertex', 'ollama'];
+// Part A: every provider but Anthropic and OpenAI takes your price.
+export const PRICED_BY_YOU: readonly KeyProvider[] = (Object.keys(PROVIDER_LABELS) as KeyProvider[]).filter(provider => provider !== 'anthropic' && provider !== 'openai');
 export const MAX_PRICES = 100;
 type Prices = Pick<Settings, 'priceOverrides' | 'providerPrices'>;
 const own = <T>(table: Record<string, T> | undefined, id: string): T | undefined => table && Object.hasOwn(table, id) ? table[id] : undefined;
@@ -36,8 +38,8 @@ export function migratePriceOverrides<T extends Settings>(settings: T, inCatalog
   const keep: Record<string, ModelPrice> = {}, moved: Partial<Record<KeyProvider, Record<string, ModelPrice>>> = {};
   let changed = false;
   for (const [model, price] of Object.entries(legacy)) {
-    // Ollama has no catalog: only a key's own model list says it has an id.
-    const providers = PRICED_BY_YOU.filter(provider => provider !== 'ollama' && inCatalog(provider, model) || keys.some(key => key.provider === provider && Array.isArray(key.deployments) && key.deployments.includes(model)));
+    // A local server has no catalog: only a key's own model list says it has an id.
+    const providers = PRICED_BY_YOU.filter(provider => !isLocalProvider(provider) && inCatalog(provider, model) || keys.some(key => key.provider === provider && Array.isArray(key.deployments) && key.deployments.includes(model)));
     const only = providers.length === 1 ? providers[0] : undefined;
     // A price you set for that provider already wins over the old record, so the old one moves only into an empty slot.
     if (!only || own(own(settings.providerPrices, only), model)) { keep[model] = price; continue; }

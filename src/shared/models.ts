@@ -1,5 +1,5 @@
 import { catalogModels } from './model-catalog.js';
-import { CLI_KEY_PROVIDERS, PROVIDER_LABELS, keyAuthLabel, testedModels } from './providers.js';
+import { CLI_KEY_PROVIDERS, PROVIDER_LABELS, isLocalProvider, keyAuthLabel, testedModels } from './providers.js';
 import type { AgentEngine, AuthRef, KeyView, KeyProvider, KeysRunOn, AuthMethod, EnginesStatus, DeploymentTest } from './protocol.js';
 export interface ModelChoice {engine:AgentEngine;model:string|null;label:string;auth?:AuthRef;authLabel?:string;group?:string}
 // Claude aliases come from installed --help; Codex id from the v0.1 CLI spike.
@@ -11,8 +11,9 @@ export const accountModels:ModelChoice[]=[
  {engine:'codex',model:'gpt-6.1-sol',label:'gpt-6.1-sol'},
 ];
 
-// Providers AI Term's own agent can talk to: every key AI Term stores (v0.4.2; v0.6.5 adds the providers in providers.ts).
-export const AGENT_PROVIDERS:readonly KeyProvider[]=['foundry','anthropic','openai','xai','moonshot','zai','openrouter','bedrock','vertex','ollama'];
+// Providers AI Term's own agent can talk to: every key AI Term stores (v0.4.2; v0.6.5 and Part A add the providers in
+// providers.ts).
+export const AGENT_PROVIDERS:readonly KeyProvider[]=Object.keys(PROVIDER_LABELS) as KeyProvider[];
 // How AI Term's agent reaches a tested Foundry deployment, from its last test (D30): null means not usable.
 export function deploymentWire(test:DeploymentTest|undefined):'responses'|'chat'|null{return test?.status==='ready'?'responses':test?.status==='chat'||test?.status==='not a chat model'?'chat':null;}
 // D47: a key runs on AI Term's agent when it supports the key's provider, unless the fallback setting says the CLI.
@@ -37,7 +38,7 @@ export function modelChoices(keys:KeyView[],engines?:EnginesStatus,keysRunOn?:Ke
    for(const model of key.deployments??[]){const wire=deploymentWire(key.lastTest?.find(r=>r.model===model));if(engine==='ai-term'?wire!==null:wire==='responses')choices.push({engine,model,label:model,auth,authLabel,group:`FOUNDRY · ${resource}`});}
   }else if(key.provider!=='anthropic'&&key.provider!=='openai'){
    // v0.6.5: the key's own models, each only after its tiny test request (or Ollama's listing) succeeded.
-   const group=key.provider==='bedrock'&&key.endpoint?`BEDROCK · ${new URL(key.endpoint).hostname.split('.')[1]??''}`:key.provider==='ollama'?'OLLAMA · this Mac':PROVIDER_LABELS[key.provider].toUpperCase();
+   const group=key.provider==='bedrock'&&key.endpoint?`BEDROCK · ${new URL(key.endpoint).hostname.split('.')[1]??''}`:key.provider==='custom'&&key.endpoint?`CUSTOM · ${new URL(key.endpoint).hostname}`:isLocalProvider(key.provider)?`${PROVIDER_LABELS[key.provider].toUpperCase()} · this Mac`:PROVIDER_LABELS[key.provider].toUpperCase();
    for(const model of testedModels(key))choices.push({engine:'ai-term',model,label:model,auth,authLabel,group});
   }else{
    const group=key.provider==='anthropic'?'ANTHROPIC':'OPENAI';

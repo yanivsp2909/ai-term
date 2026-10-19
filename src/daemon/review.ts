@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { KeyProvider, KeyView, Settings } from '../shared/protocol.js';
 import { isChatCatalogId } from '../shared/model-catalog.js';
 import { deploymentWire } from '../shared/models.js';
-import { testedModels } from '../shared/providers.js';
+import { DIRECT_HOSTS, testedModels, type DirectProvider } from '../shared/providers.js';
 import { isFsError } from '../shared/paths.js';
 import { REVIEW_MAX_MODELS, type ReviewModel } from '../shared/review.js';
 import type { KeyedWriter } from './handoff.js';
@@ -15,7 +15,8 @@ import { overridesFor } from '../shared/prices.js';
 // v0.7.4 /review: the models you can pick are your keys' chat models with a known price (so the ask shows a real price
 // range and budgets can hold its worst case), on the providers whose one-shot request needs only the key (and Foundry's
 // Keychain-bound endpoint). Bedrock (a region binding) and Ollama (no key; slow to load a model) aren't offered yet.
-export const REVIEW_PROVIDERS: readonly KeyProvider[] = ['anthropic', 'openai', 'foundry', 'xai', 'moonshot', 'zai', 'openrouter', 'vertex'];
+// Part A: every fixed-host provider (their host is in code, so the one-shot needs only the key).
+export const REVIEW_PROVIDERS: readonly KeyProvider[] = ['anthropic', 'openai', 'foundry', ...Object.keys(DIRECT_HOSTS) as DirectProvider[]];
 export class ReviewError extends Error {}
 export const REVIEW_ERRORS = ['The diff changed since it was shown; run /review again', 'Pick one of the models /review offered', 'No priced model among your keys · add an API key in /settings',
   'No review yet for this agent · /review <agent>', 'The review would pass your daily budget', 'The review would pass your weekly budget', 'The review would pass your monthly budget', 'The review request failed',

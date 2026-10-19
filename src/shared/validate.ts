@@ -4,7 +4,8 @@ import { isHandoffWriter } from './handoff.js';
 import { MCP_MAX_SERVERS, MCP_MAX_TOOLS, mcpTokens, type McpConfig, type McpServer, type McpCatalog, type McpRequest } from './mcp.js';
 import { isExtensionId, EXTENSION_MAX_ITEMS, EXTENSION_FILE_BYTES, EXTENSION_DESCRIPTION_CHARS, catalogTokens, type ExtensionCatalog, type ExtensionFile } from './extensions.js';
 import { isAgentCaps } from './agent-facts.js';
-import { PROVIDER_LABELS, isBedrockEndpoint, isDirectProvider, isLocalEndpoint } from './providers.js';
+import { PROVIDER_LABELS, isBedrockEndpoint, isDirectProvider, isLocalEndpoint, isLocalProvider } from './providers.js';
+import { isPublicEndpoint } from './public-host.js';
 import { isDiffStat, validateAgentDiff } from './diff.js';
 import { validateSessionExport } from './session-export.js';
 import { validateUndoPlan } from './checkpoints.js';
@@ -129,8 +130,10 @@ export async function validateRequest(value: unknown): Promise<Request> {
             fields = validateMcpRequest(v); break;
         case 'keys.list': fields=[]; break;
         case 'keys.add':
-            fields=['provider','label','secret','endpoint','deployments'];
-            if (!isKeyProvider(v.provider) || !isTitle(v.label) || !keyPlaceValid(v.provider, v.provider === 'ollama' ? v.secret === undefined : isSecret(v.secret), v.endpoint, v.deployments, true)) throw new ValidationError('Invalid key details');
+            fields=['provider','label','secret','endpoint','deployments','confirm'];
+            if (!isKeyProvider(v.provider) || !isTitle(v.label) || !keyPlaceValid(v.provider, isLocalProvider(v.provider) ? v.secret === undefined : isSecret(v.secret), v.endpoint, v.deployments, true)) throw new ValidationError('Invalid key details');
+            // Part A: `add` typed for a custom endpoint, and the word means nothing anywhere else.
+            if (v.provider === 'custom' ? v.confirm !== 'add' : v.confirm !== undefined) throw new ValidationError('Invalid key details');
             break;
         case 'keys.remove': case 'keys.test':
             fields=['keyId']; if (!isUUID(v.keyId)) throw new ValidationError('Invalid key id'); break;
@@ -482,8 +485,9 @@ export function isKeyProvider(v:unknown): v is import('./protocol.js').KeyProvid
 function keyPlaceValid(provider:import('./protocol.js').KeyProvider,secretValid:boolean,endpoint:unknown,deployments:unknown,adding:boolean):boolean{
     if(!secretValid||deployments!==undefined&&!isDeployments(deployments))return false;
     const models=isDeployments(deployments)&&deployments.length>0;
-    if(provider==='ollama')return isLocalEndpoint(endpoint);
+    if(isLocalProvider(provider))return isLocalEndpoint(endpoint);
     if(provider==='bedrock')return isBedrockEndpoint(endpoint)&&models;
+    if(provider==='custom')return isPublicEndpoint(endpoint)&&models;
     if(provider==='foundry')return isEndpoint(endpoint)&&models;
     if(isDirectProvider(provider))return endpoint===undefined&&(models||!adding&&deployments===undefined);
     return endpoint===undefined||isEndpoint(endpoint);
@@ -499,10 +503,12 @@ function isAuthView(v:unknown):boolean {
     if(isAccount(v))return true;
     if(!v||typeof v!=='object'||Array.isArray(v))return false;
     const a=v as Record<string,unknown>;
-    return Object.keys(a).length===5&&a.kind==='key'&&isUUID(a.keyId)&&isKeyProvider(a.provider)&&isTitle(a.keyLabel)&&typeof a.last4==='string'&&a.last4.length<=4&&!/[\p{C}]/u.test(a.last4);
+    // host: a custom endpoint's host name (Part A), plain DNS letters only, so it is safe to draw on a card.
+    const host=a.host===undefined||a.provider==='custom'&&typeof a.host==='string'&&/^[a-z0-9.:[\]-]{1,255}$/i.test(a.host);
+    return Object.keys(a).length===(a.host===undefined?5:6)&&host&&a.kind==='key'&&isUUID(a.keyId)&&isKeyProvider(a.provider)&&isTitle(a.keyLabel)&&typeof a.last4==='string'&&a.last4.length<=4&&!/[\p{C}]/u.test(a.last4);
 }
 export function validateDeploymentTests(v:unknown):import('./protocol.js').DeploymentTest[]{
-    if(!Array.isArray(v)||v.length>40||v.some(r=>!r||typeof r!=='object'||Object.keys(r).some(k=>!['model','status','httpStatus','errorCode','reason'].includes(k))||typeof r.model!=='string'||!isValidModelId(r.model)||!['ready','chat','not a chat model','error'].includes(r.status)||r.httpStatus!==undefined&&(!Number.isInteger(r.httpStatus)||r.httpStatus<100||r.httpStatus>599)||r.errorCode!==undefined&&(typeof r.errorCode!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(r.errorCode))||r.reason!==undefined&&!['Provider request timed out','Provider connection failed','Provider reply too large','Provider request failed'].includes(r.reason)))throw new ValidationError('Invalid deployment results');
+    if(!Array.isArray(v)||v.length>40||v.some(r=>!r||typeof r!=='object'||Object.keys(r).some(k=>!['model','status','httpStatus','errorCode','reason'].includes(k))||typeof r.model!=='string'||!isValidModelId(r.model)||!['ready','chat','not a chat model','error'].includes(r.status)||r.httpStatus!==undefined&&(!Number.isInteger(r.httpStatus)||r.httpStatus<100||r.httpStatus>599)||r.errorCode!==undefined&&(typeof r.errorCode!=='string'||!/^[A-Za-z0-9_.-]{1,80}$/.test(r.errorCode))||r.reason!==undefined&&!['Provider request timed out','Provider connection failed','Provider reply too large','Provider request failed','Provider address is not on the public internet'].includes(r.reason)))throw new ValidationError('Invalid deployment results');
     return v as import('./protocol.js').DeploymentTest[];
 }
 export function validateKeyView(v:unknown):import('./protocol.js').KeyView {

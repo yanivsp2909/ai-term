@@ -70,7 +70,8 @@ export const TIER1: readonly Check<Tier1>[] = [
   }),
   step('ollama', 'login: Ollama on this Mac is added through the popup, no key', '"✓ saved · Ollama needs no key" and the stub model ready', async t => {
     await t.home.command('/login'); await t.ai.waitFor('Connect a provider');
-    for (let i = 0; i < 9; i++) { t.ai.write(KEY.down); await sleep(40); }
+    // Down until Ollama is the highlighted row, wherever the list puts it (Part A added providers above it).
+    for (let i = 0; i < 60 && !(await t.ai.text()).includes('› Ollama'); i++) { t.ai.write(KEY.down); await sleep(40); }
     await t.ai.waitFor('› Ollama'); t.ai.write(KEY.enter);
     await t.ai.waitFor('Add Ollama · this Mac, no key'); t.ai.write(KEY.enter);
     await t.ai.waitFor('› endpoint: http://127.0.0.1:11434');
