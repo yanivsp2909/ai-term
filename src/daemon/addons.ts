@@ -96,12 +96,15 @@ function reverseFacts(plan: ReversePlan): string[] {
     "REA runs in a sandbox: no network · no key folders · it writes only its own state and temp files", "● y confirms this target is yours, or that you're allowed to analyze it"];
 }
 export const RUN_FAILED = 'The add-on run failed; the daemon log says why';
+const STOPPING = 'AI Term is stopping; start it again after';
 const exists = async (path: string): Promise<boolean> => { try { await lstat(path); return true; } catch (error) { if (isFsError(error, 'ENOENT') || isFsError(error, 'ENOTDIR')) return false; throw error; } };
 export class AddonService {
   private receipts = new Map<string, { input: Input; ask: AddonAsk; expires: number }>();
   private runs = new Map<string, Run>();
   // Sessions whose finished turns run the project's tests in the sandbox even with auto-test off (/fix, /cover, /refactor).
   private tests = new Set<string>();
+  // Backlog F1 review: once stopAll has begun (the daemon stopping), no /bisect or A/B starts.
+  private stopping = false;
   // log: where a background run's unexpected failure is recorded (its class and code only; S5).
   constructor(private root: string, private definitions: string, private runner: Runner, private price: (target: AddonTarget, input: AddonAsk['inputTokens'], output: AddonAsk['outputTokens']) => Promise<AddonAsk['priceUsd']> = async () => null, private log: (text: string) => void = () => {}) {}
   // A background run keeps its own refusal for the popup; anything else (a system error that may name a path) becomes one
@@ -257,6 +260,7 @@ export class AddonService {
   // Without a sandbox the run needs the capital-Y approval the popup asked for; the runner checks the sandbox again.
   private startBisect(input: Input, plan: BisectAsk, unsandboxed: boolean): string {
     const bisect = this.runner.addonBisect; if (!bisect) throw new AddonError('Bisect is unavailable');
+    if (this.stopping) throw new AddonError(STOPPING);
     if (!plan.sandbox && !unsandboxed) throw new AddonError('No sandbox here · press Y to run the test command with your rights');
     const id = randomUUID(), stop = new AbortController(), run: Run = { input, nonce: '', stop }; this.runs.set(id, run);
     run.done = bisect.call(this.runner, input.cwd, plan, !plan.sandbox && unsandboxed, stop.signal).then(result => { run.result = result; }, (error: unknown) => { run.error = this.runFailure(error); }).finally(() => { delete run.stop; });
@@ -346,9 +350,10 @@ export class AddonService {
     const run = this.runs.get(id), result = run?.result, perfAb = this.runner.addonPerfAb;
     if (!run || result?.kind !== 'perf' || !perfAb) throw new AddonError('No benchmark to compare yet');
     if (run.ab?.state === 'running') return run.ab;
+    if (this.stopping) throw new AddonError(STOPPING);
     run.ab = { state: 'running' };
     const stop = new AbortController(); run.stop = stop;
-    run.done = perfAb.call(this.runner, id, result.benchmark, result.files, unsandboxed, stop.signal).then(view => { run.ab = view; }, (error: unknown) => { run.ab = { state: 'failed', reason: error instanceof Error ? error.message.slice(0, 300) : 'The A/B failed' }; }).finally(() => { if (run.stop === stop) delete run.stop; });
+    run.done = perfAb.call(this.runner, id, result.benchmark, result.files, unsandboxed, stop.signal).then(view => { run.ab = view; }, (error: unknown) => { run.ab = { state: 'failed', reason: this.runFailure(error) }; }).finally(() => { if (run.stop === stop) delete run.stop; });
     return run.ab;
   }
   // Backlog F1: x on a running /bisect or A/B. The run stops its processes and removes its temporary copy itself; the
@@ -360,6 +365,7 @@ export class AddonService {
   }
   // The daemon stopping: every running /bisect and A/B is stopped and has cleaned up (its copy removed) within 15 s.
   async stopAll(): Promise<void> {
+    this.stopping = true;
     const running = [...this.runs.values()].filter(run => run.stop);
     for (const run of running) run.stop?.abort();
     let timer: ReturnType<typeof setTimeout> | undefined;

@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, open, readdir, realpath } from 'node:fs/promises';
+import { chmod, lstat, open, readdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isFsError } from '../shared/paths.js';
@@ -15,7 +15,7 @@ export { OWNER_FILE, ownTempFolder } from './own-temp.js';
 // link) that names a process that no longer runs. Anything else in the temp folder is left as it is. removeTree never
 // follows a link inside a folder it removes.
 const NAME = /^ai-term-(?:clone|test|deps|diff)-[A-Za-z0-9]{6}$/;
-const MARKER_BYTES = 64;
+const MARKER_BYTES = 64, MAX_PID = 2 ** 31 - 1;
 // A process that runs, or one this user can't signal (EPERM: someone else's), counts as alive: its folders stay.
 export function processAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
@@ -30,7 +30,8 @@ async function ownerOf(folder: string, me: number): Promise<number | null> {
     const info = await marker.stat();
     if (!info.isFile() || info.uid !== me || info.size > MARKER_BYTES) return null;
     const pid = Number((await marker.readFile('utf8')).match(OWNER_LINE)?.[1]);
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+    // A pid no process can have (kill() takes 32 bits) marks no run of ours: the folder is left, quietly (review).
+    return Number.isSafeInteger(pid) && pid > 0 && pid <= MAX_PID ? pid : null;
   } finally { await marker.close(); }
 }
 // dir: the system temp folder by default (tests pass their own). Returns how many folders were removed.
@@ -44,7 +45,10 @@ export async function sweepTemp(options: { dir?: string; log: (text: string) => 
     try {
       const info = await lstat(folder);
       if (!info.isDirectory() || info.uid !== me) continue;
-      const pid = await ownerOf(folder, me);
+      // A folder a test locked (chmod 000; it may write its own temp folder) is opened up once: it is yours (lstat above).
+      let pid: number | null;
+      try { pid = await ownerOf(folder, me); }
+      catch (error) { if (!isFsError(error, 'EACCES')) throw error; await chmod(folder, 0o700); pid = await ownerOf(folder, me); }
       if (pid === null || pid === process.pid || alive(pid)) continue;
       await removeTree(folder); removed++;
     } catch (error) {

@@ -16,8 +16,9 @@ const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // An explicit env prevents inherited GIT_DIR/GIT_WORK_TREE, hooks and routing from targeting a different checkout.
 // notRepo: git's own "not a git repository" answer becomes GitError('Not a git repo'), so callers can tell it from a failure.
 // env: extra variables for one call (v0.7.2 checkpoints: GIT_OBJECT_DIRECTORY and a fixed author), on top of the fixed env.
-interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; literal?: boolean; notRepo?: boolean; env?: Record<string, string> }
-function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true, notRepo = false, env: extra = {} }: RunOptions = {}): Promise<string> {
+// signal: a stopped /bisect or A/B stops its copy's clone and checkout too (backlog F1 review).
+interface RunOptions { maxBuffer?: number; timeout?: number; input?: string; literal?: boolean; notRepo?: boolean; env?: Record<string, string>; signal?: AbortSignal }
+function run(cwd: string, args: string[], failure: ConstructorParameters<typeof GitError>[0] = 'Git check failed', { maxBuffer = 1024 * 1024, timeout = 10_000, input, literal = true, notRepo = false, env: extra = {}, signal }: RunOptions = {}): Promise<string> {
     // No git found (Windows without Git for Windows): fail plainly rather than run a bare name.
     const git = GIT;
     if (!isSafeAbsolutePath(cwd) || !git) return Promise.reject(new GitError(failure));
@@ -27,7 +28,7 @@ function run(cwd: string, args: string[], failure: ConstructorParameters<typeof 
             // Optional locks off: a read-only status must not rewrite the agent's index while it is inspected.
             // Literal pathspecs: file names from a repo reach ls-files/check-ignore after --, and ":(...)" magic must stay a name.
             cwd, windowsHide: true, env: { PATH: GIT_PATH, ...GIT_SYSTEM, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', ...(literal ? { GIT_LITERAL_PATHSPECS: '1' } : {}), ...extra },
-            timeout, maxBuffer, encoding: 'utf8',
+            timeout, maxBuffer, encoding: 'utf8', ...(signal ? { signal } : {}),
         // The env has no LANG, so git's messages are its fixed English ones; stderr is matched here and never logged.
         }, (error, stdout, stderr) => error ? reject(new GitError(notRepo && typeof error.code === 'number' && /not a git repository/.test(stderr) ? 'Not a git repo' : error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'Diff too large' : failure)) : resolve(stdout));
         // A failed stdin write (git exited early) surfaces through the exit callback above.

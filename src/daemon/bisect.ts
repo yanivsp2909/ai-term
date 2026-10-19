@@ -131,7 +131,8 @@ const shown = (text: string): string[] => text.replace(/\r/g, '').split('\n').sl
 const SAFE_GIT = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null'];
 export async function runBisect(options: BisectOptions): Promise<Extract<AddonResult, { kind: 'bisect' }>> {
   const { plan, log, repo, signal } = options, run = options.run ?? realRun, env = options.env;
-  const copy = await tempClone(repo, plan.bad);
+  // A stop during the copy's own clone ends it too; tempClone removes what it made.
+  const copy = await tempClone(repo, plan.bad, signal).catch((error: unknown) => { if (signal?.aborted) throw new BisectError(BISECT_STOPPED); throw error; });
   let box: PreparedSandbox | null = null, started = false;
   // After each step: a stop that came meanwhile ends the run here (the step's processes were stopped with it).
   const unlessStopped = () => { if (signal?.aborted) throw new BisectError(BISECT_STOPPED); };

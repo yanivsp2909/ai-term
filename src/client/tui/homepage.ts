@@ -805,6 +805,8 @@ export class Homepage {
     // Backlog F1: /bisect alone opens the last /bisect again (its result, or the run x stops).
     const lastBisect=name==='bisect'&&!args?this.lastFlows.get(this.lastKey('bisect')):undefined;
     if(lastBisect){this.popup=lastBisect.panel;await lastBisect.open();this.draw(true);return;}
+    // One /bisect at a time per folder: a second would leave the first running with no popup to stop it (review).
+    if(name==='bisect'&&this.lastFlows.get(this.lastKey('bisect'))?.running){this.showNote('a /bisect is running here · /bisect opens it, x there stops it');return;}
     let subject=args;
     if(name==='teach'||name==='review-deep'){const session=this.namedOrSelected(args,name==='teach'?'/teach':'/review <agent> deep');if(!session)return;subject=session.id;}
     // /commit <agent>: that agent's work (y commits in its worktree); /commit alone: what is staged in this folder.

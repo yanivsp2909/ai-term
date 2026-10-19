@@ -72,7 +72,7 @@ it('the add-on service stops a running /bisect or A/B on addons.cancel, and refu
 });
 
 it('x stops a running /bisect or A/B from the popup; Esc only closes it', () => {
-  const actions = { start: vi.fn(), build: vi.fn(), approve: vi.fn(), step: vi.fn(), copy: vi.fn(), choose: vi.fn(), cancel: vi.fn(), ab: vi.fn() }, close = vi.fn();
+  const actions = { start: vi.fn(), build: vi.fn(), approve: vi.fn(), step: vi.fn(), copy: vi.fn(), choose: vi.fn(), cancel: vi.fn(() => true), ab: vi.fn() }, close = vi.fn();
   const bisect: AddonAsk = { receipt: randomUUID(), name: 'bisect', summary: 'Bisect', cwd: '/tmp', target: null, brain: 'none', brainNeed: 'none', worktree: false, readOnly: true, files: [], inputTokens: { low: 0, high: 0 }, outputTokens: { low: 0, high: 0 }, priceUsd: { low: 0, high: 0 }, subscription: false,
     bisect: { command: ['npm', 'test'], good: 'a'.repeat(40), bad: 'b'.repeat(40), goodLabel: 'HEAD~32', commits: 3, deps: [], sandbox: true } };
   const p = new AddonPanel(() => {}, close, actions);

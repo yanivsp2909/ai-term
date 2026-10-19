@@ -11,13 +11,13 @@ import { ownTempFolder } from './own-temp.js';
 // worktree list stay exactly as they were, whatever runs in the copy. Removing the copy is one rm of AI Term's own
 // temporary folder; git's worktree commands (and their deletion rules) are never involved.
 export interface TempClone { path: string; dispose(): Promise<void> }
-export async function tempClone(repo: string, commit: string): Promise<TempClone> {
+export async function tempClone(repo: string, commit: string, signal?: AbortSignal): Promise<TempClone> {
   if (!COMMIT_ID.test(commit)) throw new GitError('Git check failed');
   const folder = await ownTempFolder('clone'), path = join(folder, 'repo');
   const dispose = () => removeTree(folder);
   try {
-    await runGit(folder, ['clone', '--quiet', '--shared', '--no-checkout', '--', repo, path], 'Git check failed', { timeout: 60_000 });
-    await runGit(path, ['checkout', '--quiet', '--detach', '--end-of-options', commit], 'Git check failed', { timeout: 120_000 });
+    await runGit(folder, ['clone', '--quiet', '--shared', '--no-checkout', '--', repo, path], 'Git check failed', { timeout: 60_000, ...(signal ? { signal } : {}) });
+    await runGit(path, ['checkout', '--quiet', '--detach', '--end-of-options', commit], 'Git check failed', { timeout: 120_000, ...(signal ? { signal } : {}) });
     return { path, dispose };
   } catch (error) { await dispose(); throw error; }
 }

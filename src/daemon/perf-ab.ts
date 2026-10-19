@@ -6,6 +6,7 @@ import { AB_STOPPED, type AbView } from '../shared/addon-results.js';
 import { isFsError } from '../shared/paths.js';
 import { resolveInside } from '../agent/jail.js';
 import { SECRET_FILE } from '../shared/review.js';
+import { AddonError } from './addon-error.js';
 
 // v1.1 /perf's A/B: the same benchmark on the code before (a temporary copy at the agent's start) and after (its
 // worktree), back to back on this machine. Rounds alternate the order (ABBA…) so warm caches and drift don't favor a side;
@@ -32,20 +33,20 @@ export async function runAb(before: AbSide, after: AbSide, options: { rounds?: n
 // the old code has the file already, each side keeps its own.
 export const AB_FILE_MAX = 1024 * 1024;
 export async function copyBenchFile(from: string, to: string, file: string): Promise<void> {
-  if (!/^bench\//.test(file) || file.split('/').includes('..')) throw new Error('Only new benchmark files under bench/ are copied');
-  if (SECRET_FILE.test(file)) throw new Error('A credential or env file is never copied');
+  if (!/^bench\//.test(file) || file.split('/').includes('..')) throw new AddonError('Only new benchmark files under bench/ are copied');
+  if (SECRET_FILE.test(file)) throw new AddonError('A credential or env file is never copied');
   const target = await resolveInside(to, file);
   try { await lstat(target); return; } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
   // Read through one descriptor opened without following links, so the file checked is the file copied (review).
   const real = await resolveInside(from, file);
-  if (real !== join(await realpath(from), file)) throw new Error('A benchmark file is never copied through a link');
+  if (real !== join(await realpath(from), file)) throw new AddonError('A benchmark file is never copied through a link');
   const source = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const info = await source.stat();
     // One link only: a hard link to a file elsewhere would pass the no-follow checks (follow-up review).
-    if (!info.isFile() || info.nlink !== 1 || info.size > AB_FILE_MAX) throw new Error('A benchmark file must be a regular file of at most 1 MB, with one link');
+    if (!info.isFile() || info.nlink !== 1 || info.size > AB_FILE_MAX) throw new AddonError('A benchmark file must be a regular file of at most 1 MB, with one link');
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-    if (await resolveInside(to, dirname(file)) !== dirname(target)) throw new Error('The benchmark folder changed while it was copied');
+    if (await resolveInside(to, dirname(file)) !== dirname(target)) throw new AddonError('The benchmark folder changed while it was copied');
     const output = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, info.mode & 0o755);
     try { await output.writeFile(await source.readFile()); } finally { await output.close(); }
   } finally { await source.close(); }

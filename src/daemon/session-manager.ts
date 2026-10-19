@@ -852,10 +852,12 @@ export class SessionManager extends EventEmitter {
     // v1.1 /perf's A/B: the benchmark on a temporary copy at the agent's start (before) and in its worktree (after), each in
     // its own test sandbox; without one it runs only after the capital Y the popup asks for.
     async addonPerfAb(id:string,benchmark:string[],files:string[],unsandboxed:boolean,signal?:AbortSignal):Promise<AbView>{
-        if(!isUUID(id))throw new Error('Invalid session UUID');
-        const live=this.sessions.get(id);if(!live)throw new Error('Session not found');
-        if(!isTestCommand(benchmark)||files.length>5||files.some(file=>!file.startsWith('bench/')))throw new Error('Only a benchmark command and new files under bench/ can run in the A/B');
-        const {path,base,repo}=await this.diffTarget(live),before=await tempClone(repo??path,base),boxes:(PreparedSandbox|null)[]=[];
+        if(!isUUID(id))throw new AddonError('Invalid session UUID');
+        const live=this.sessions.get(id);if(!live)throw new AddonError('Session not found');
+        if(!isTestCommand(benchmark)||files.length>5||files.some(file=>!file.startsWith('bench/')))throw new AddonError('Only a benchmark command and new files under bench/ can run in the A/B');
+        const {path,base,repo}=await this.diffTarget(live),boxes:(PreparedSandbox|null)[]=[];
+        let before:Awaited<ReturnType<typeof tempClone>>;
+        try{before=await tempClone(repo??path,base,signal);}catch(error){if(signal?.aborted)return {state:'failed',reason:AB_STOPPED};throw error;}
         try{
             for(const file of files)await copyBenchFile(path,before.path,file);
             const a=await this.sandboxFor(before.path,repo);boxes.push(a);const b=await this.sandboxFor(path,repo);boxes.push(b);
@@ -1908,7 +1910,7 @@ export class SessionManager extends EventEmitter {
 import { AddonService, type AddonRunOptions, type ReversePlan } from './addons.js';
 import { bisectPlan, BisectError, runBisect } from './bisect.js';
 import { AddonError } from './addon-error.js';
-import { AB_RUN_TIMEOUT_MS, copyBenchFile, runAb } from './perf-ab.js';
+import { AB_RUN_TIMEOUT_MS, AB_STOPPED, copyBenchFile, runAb } from './perf-ab.js';
 import { tempClone } from './temp-clone.js';
 import { githubView } from './github.js';
 import { depsQueries } from './deps-query.js';

@@ -21,7 +21,7 @@ interface FlowOptions { request(body: RequestBody): Promise<SuccessResponse>; ch
 export class AddonFlow {
   readonly panel: AddonPanel;
   private ask?: AddonAsk; private session?: string; private timer?: ReturnType<typeof setTimeout>;
-  private ended = false; private resultReady = false; private abRunning = false; private choice = 0;
+  private ended = false; private resultReady = false; private abRunning = false; private choice = 0; private failed = false;
   constructor(private name: string, private args: string, private cwd: string, private targets: AddonTarget[], private options: FlowOptions, private local = false) {
     this.panel = new AddonPanel(options.changed, () => { this.dispose(); options.close(); }, {
       start: unsandboxed => { void this.action(() => this.start(unsandboxed === true)); }, build: () => { void this.action(() => this.build()); },
@@ -37,14 +37,16 @@ export class AddonFlow {
       file: (index, action) => { void this.action(async () => { if (!this.session) return; const saved = (await options.request({ kind: 'addons.file', sessionId: this.session, index, action })).addonSaved; this.panel.setApplied(action === 'open' ? '✓ opened with your default app · Esc closes' : typeof saved === 'string' ? `✓ saved a copy to ${saved} · Esc closes` : '✓ saved · Esc closes'); }); },
       reopen: () => { options.reopen?.(); },
       // Backlog F1: x on a running /bisect or A/B; polling goes on and shows "stopped" once the daemon has cleaned up.
-      cancel: () => { void this.action(async () => { if (!this.session) return; await options.request({ kind: 'addons.cancel', sessionId: this.session }); }); },
+      cancel: () => { const session = this.session; if (!session) return false; void this.action(async () => { await options.request({ kind: 'addons.cancel', sessionId: session }); }); return true; },
       ab: unsandboxed => { void this.action(async () => { if (!this.session) return; this.panel.setAb(validateAbView((await options.request({ kind: 'addons.ab', sessionId: this.session, unsandboxed })).addonAb)); this.abRunning = true; await this.poll(); }); },
     });
   }
   // What this popup was opened with: a /study session's topic (backlog F3: the due list names it).
   get subject(): string { return this.args; }
+  // A run under way here: started, and its result (or its failure) not in yet (review: a second /bisect orphaned the first).
+  get running(): boolean { return !!this.session && !this.resultReady && !this.failed; }
   private async action(work: () => Promise<void>): Promise<void> { try { await work(); } catch (error) { this.panel.fail(error instanceof Error ? error.message : 'Add-on operation failed'); } this.options.changed(); }
-  async open(): Promise<void> { this.ended = false; if (this.session) { if (!this.resultReady || this.abRunning) await this.poll(); } else await this.action(() => this.estimate()); }
+  async open(): Promise<void> { this.ended = false; if (this.session) { this.failed = false; if (!this.resultReady || this.abRunning) await this.poll(); } else await this.action(() => this.estimate()); }
   dispose(): void { this.ended = true; if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
   update(session: SessionInfo): void { if (session.id === this.session) { this.panel.setUsage(session.taskUsage ?? null); this.panel.setTests(session.tests ?? null); } }
   private async estimate(): Promise<void> {
@@ -80,7 +82,7 @@ export class AddonFlow {
       if (response.addonResult && !this.resultReady) { this.panel.setResult(parseAddonResult(JSON.stringify(response.addonResult), this.name, true)); this.resultReady = true; }
       this.options.changed();
       if (this.resultReady && !this.abRunning) return;
-    } catch (error) { this.panel.wait(error instanceof Error ? error.message : 'Add-on result unavailable'); this.options.changed(); return; }
+    } catch (error) { this.failed = true; this.panel.wait(error instanceof Error ? error.message : 'Add-on result unavailable'); this.options.changed(); return; }
     this.timer = setTimeout(() => { void this.poll(); }, 1000); this.timer.unref();
   }
 }

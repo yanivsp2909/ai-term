@@ -7,7 +7,7 @@ import type { TaskUsage } from '../../shared/protocol.js';
 import type { TestResult } from '../../shared/test-run.js';
 import { batchLines, copyText, hasOutputs, teachEnd, type ResultView } from './addon-views.js';
 import { testCommandText } from '../../shared/test-run.js';
-interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; file?(index: number, action: 'open' | 'save'): void; reopen?(): void; cancel?(): void }
+interface Actions { start(unsandboxed?: boolean): void; build(): void; approve(): void; step(index: number): void; copy(text: string): void; choose(kind: 'engine' | 'model'): void; apply?(items: number[]): void; ab?(unsandboxed: boolean): void; commit?(): void; polish?(text: string): void; file?(index: number, action: 'open' | 'save'): void; reopen?(): void; cancel?(): boolean }
 export class AddonPanel {
   private panel: TextPanel; private ask?: AddonAsk; private result?: AddonResult;
   private chunk = 0; private selected = 0; private approved = false; private busy = false;
@@ -75,8 +75,9 @@ export class AddonPanel {
     const key = input === ' ' ? 'space' : input;
     if (key === 'escape') { this.close(); return; }
     // x stops a running /bisect (while the popup waits for it) or A/B; Esc above only closes, as for every add-on.
-    if (key === 'x' && this.stoppable && !this.result) { this.stoppable = false; this.actions.cancel?.(); this.busy = true; this.show(['Stopping · the test processes end, then the temporary copy is removed', 'Esc closes']); return; }
-    if (key === 'x' && this.result?.kind === 'perf' && this.ab?.state === 'running' && !this.stopping) { this.stopping = true; this.actions.cancel?.(); this.refresh(); return; }
+    // cancel says whether it sent the stop: before the run has started there is nothing to stop yet (review).
+    if (key === 'x' && this.stoppable && !this.result) { if (!this.actions.cancel?.()) return; this.stoppable = false; this.busy = true; this.show(['Stopping · the test processes end, then the temporary copy is removed', 'Esc closes']); return; }
+    if (key === 'x' && this.result?.kind === 'perf' && this.ab?.state === 'running' && !this.stopping) { if (!this.actions.cancel?.()) return; this.stopping = true; this.refresh(); return; }
     if (this.busy || key === 'enter') return;
     if (!this.result && this.ask) {
       // Without a sandbox /bisect takes a capital Y, like /dev: one easy key shouldn't run code with your rights.
