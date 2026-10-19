@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { runOnce } from './first-exec.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -91,7 +92,7 @@ describe('finding the CLI', () => {
   afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
   async function bin(files: Record<string, string>): Promise<string> {
     const dir = await mkdtemp(join(tmpdir(), 'ai-partb-bin-')); dirs.push(dir);
-    for (const [name, body] of Object.entries(files)) { await writeFile(join(dir, name), `#!/bin/sh\n${body}\n`); await chmod(join(dir, name), 0o755); }
+    for (const [name, body] of Object.entries(files)) { await writeFile(join(dir, name), `#!/bin/sh\n${body}\n`); await chmod(join(dir, name), 0o755); await runOnce(join(dir, name)); }
     return dir;
   }
   it('version from --version; login status is the CLI\'s own business (never read from its files)', async () => {
