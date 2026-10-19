@@ -48,7 +48,7 @@ function fromEngine(id: SetupToolId, status: EngineStatus, platform: NodeJS.Plat
   const base = { id, name: NAMES[id], install: install(id, platform) };
   if (!status.installed) return { ...base, found: status.error ? "couldn't check" : 'not found', version: null, login: null };
   if (status.error === 'Engine version check failed' || status.error === 'Engine executable check failed') return { ...base, found: "couldn't check", version: null, login: null };
-  return { ...base, found: 'found', version: status.version, login: extra ? 'signs in on its own screen' : status.loggedIn === true ? 'logged in' : status.loggedIn === false ? 'not logged in' : "couldn't check" };
+  return { ...base, found: 'found', version: status.version, login: extra ? 'logs in when it starts' : status.loggedIn === true ? 'logged in' : status.loggedIn === false ? 'not logged in' : "couldn't check" };
 }
 // gh, Tailscale, Ollama and LM Studio: the version, and for gh its own auth status (0 logged in, 1 not).
 async function probe(id: SetupToolId, path: string | null, run: EngineRunner, env: Record<string, string>, limit: number, platform: NodeJS.Platform): Promise<SetupTool> {

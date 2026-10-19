@@ -49,7 +49,7 @@ describe('what setup finds', () => {
     expect(tool('codex')).toMatchObject({ found: 'found', version: '0.160.1', login: 'not logged in' });
     expect(tool('gemini')).toMatchObject({ found: 'not found', version: null, install: 'npm install -g @google/gemini-cli' });
     expect(tool('copilot')).toMatchObject({ found: "couldn't check", version: null });
-    expect(tool('cursor')).toMatchObject({ found: 'found', login: 'signs in on its own screen' });
+    expect(tool('cursor')).toMatchObject({ found: 'found', login: 'logs in when it starts' });
     expect(tool('gh')).toMatchObject({ found: 'found', version: '2.81.0', login: 'not logged in' });
     expect(tool('tailscale')).toMatchObject({ found: 'not found', login: null });
     expect(tool('ollama')).toMatchObject({ found: 'found', version: '0.12.3', login: null });

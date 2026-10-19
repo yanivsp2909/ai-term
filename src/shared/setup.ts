@@ -5,7 +5,7 @@ export type SetupToolId = typeof SETUP_TOOLS[number];
 // found: on PATH and answering its version; "couldn't check": on PATH but its version check failed or took too long.
 // login: what the CLI's own status command said; null where a login doesn't apply (Tailscale, Ollama, LM Studio).
 export const SETUP_FOUND = ['found', 'not found', "couldn't check"] as const;
-export const SETUP_LOGIN = ['logged in', 'not logged in', "couldn't check", 'signs in on its own screen'] as const;
+export const SETUP_LOGIN = ['logged in', 'not logged in', "couldn't check", 'logs in when it starts'] as const;
 export interface SetupTool { id: SetupToolId; name: string; found: typeof SETUP_FOUND[number]; version: string | null; login: typeof SETUP_LOGIN[number] | null; install: string }
 export interface SetupKey { label: string; provider: string; last4: string }
 export interface SetupStatus { tools: SetupTool[]; keys: SetupKey[]; sandbox: 'sandbox-exec' | 'bwrap' | 'none'; sandboxNote: string | null }

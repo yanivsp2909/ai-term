@@ -18,7 +18,7 @@ function toolLine(t: SetupTool): string {
 export function setupLines(status: SetupStatus): Line[] {
   const line = (text: string, tone: Line['tone'] = 'ink-2'): Line => ({ text, tone });
   return [
-    line('Welcome to AI Term. This is what this machine has, and what you can do next.', 'ink'), line(''),
+    line("Welcome to AI Term. Here's what's on this machine, and what to do next.", 'ink'), line(''),
     line("What's installed", 'ink'), ...status.tools.map(t => line(toolLine(t))), line(''),
     line("What's ready", 'ink'),
     line(`  API keys: ${status.keys.length ? status.keys.map(k => `${k.provider} ····${k.last4} (${k.label})`).join(', ') : 'none yet'}`),

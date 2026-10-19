@@ -1146,7 +1146,7 @@ export class Homepage {
   }
   private async saveSetup(how:'done'|'skipped'):Promise<void>{
     try{await this.connection.request({kind:'settings.set',patch:{setup:how}});}
-    catch(error){this.showNote(`Setup couldn't save that it was ${how==='done'?'finished':'skipped'} · it may show again (${error instanceof Error?error.message.slice(0,80):'no answer'})`);}
+    catch(error){this.showNote(`Setup couldn't be saved as ${how==='done'?'finished':'skipped'} · it may show again next time (${error instanceof Error?error.message.slice(0,80):'no answer'})`);}
   }
   private async setupStep(step:SetupStep):Promise<void>{
     if(step==='login')await this.openCredentials('login');
