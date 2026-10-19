@@ -1,7 +1,7 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: the budget-ledger test fix (see Part B commits)
+Last code commit: 9a27f1e test: the budget ledger tests wait for its writes before removing its folder
 Last commit: v1.2 Part B handover (this commit)
 Roadmap step: 2026-10-19 v1.2 run (A guides → B /triage and /migrate → C first-run setup) · A and B done, C not started
 Branch: main, pushed. No version bump or tag (waits for Yaniv's Mac).
