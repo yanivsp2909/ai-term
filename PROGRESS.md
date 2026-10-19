@@ -2,8 +2,8 @@
 
 ## Checkpoint
 Last code commit: see the newest commits; this block is rewritten at the end of each part of this run
-Last commit: B34 handover (this commit)
-Roadmap step: 2026-10-19 long run (B34 → Part A providers → Part B engines → Part C public snapshot) · B34 done, A, B and C not started
+Last commit: Part A handover (this commit)
+Roadmap step: 2026-10-19 long run (B34 → Part A providers → Part B engines → Part C public snapshot) · B34 and Part A done, B and C not started
 Branch: main, pushed.
 
 ## Run 2026-10-19 (cloud container, Linux, root): B34 first
@@ -24,6 +24,18 @@ Branch: main, pushed.
 - **This container (root, git 2.43, vim, no bwrap):** npm test twice: "Test Files 296 passed | 2 skipped (298) · Tests 1890 passed | 70 skipped (1960)" (124 s, 120 s). Also green with an empty HOME and a PATH holding only node/npm/npx, and as a normal user (`tester`).
 - **Not run here:** the hidden Electron smoke (Electron's binary isn't installed in this container and downloading it isn't in this run's allowed network): needs Yaniv.
 - **Not fixed (backlog):** AI Term itself doesn't check the git version at run time; with git < 2.41 a user sees "git could not read the worktree". README now says git 2.41 or newer.
+
+### Part A · more providers for AI Term's agent: done
+- **Commits:** 86f6024 (feature and tests), b6764ea (a test may take 20 s: many wait 10 s for a spawned process; one review test flaked at the 5 s default), a UX copy fix (`Nothing answers at that port`), the review findings' RED → fix pair (see below).
+- **Added (25 fixed hosts, each from the provider's own API docs; architecture §12.31 lists them):** Google Gemini API (Google calls its OpenAI compatibility beta), Mistral, Groq, Cerebras, Together AI, Fireworks AI, DeepInfra, Hugging Face, DeepSeek, Qwen international (Singapore) and China (Beijing), MiniMax international and China, Volcengine Ark (China), BytePlus ModelArk Asia Pacific and Europe, SiliconFlow international and China, Baidu Qianfan international and China, StepFun international and China, Tencent TokenHub (Hunyuan's successor), Moonshot China, Zhipu China (Moonshot and Z.ai international were already there). Plus LM Studio and any OpenAI-compatible server on 127.0.0.1 (no key), and a custom https endpoint.
+- **Skipped, with why:** GitHub Models (retired 2026-07-30); Alibaba US, Frankfurt and Tokyo (per-workspace hosts only); Tencent Hunyuan's own API (shut down 2026-09-30); Mistral's EU and US hosts (fewer models at 1.1×; one row covers Mistral).
+- **Rules held:** a region is a provider of its own, so its host stays a constant and the Keychain account `<provider>:<id>` binds the key to it (moving a key to the other region in settings.json finds no key: tested). Each key only as its bearer token, only to its host, no redirects, fixed error texts, a tiny test request before a model is offered. The custom endpoint: https on 443, not a local name or a non-public address, typed `add`, bound in the Keychain like Foundry, and every connection resolves through `publicLookup` (src/shared/public-host.ts), which refuses loopback, private, CGNAT, link-local, multicast, documentation and IPv4-in-IPv6 addresses before a socket opens; the agent's requests go through `publicFetch` (node's https client), the daemon's test through `publicTransport`. Its host is on every card that uses it.
+- **/login:** each provider's region in one neutral line right under the title (a place only where the docs name one; the China rows say where Chinese real-name verification is needed).
+- **Prices:** each provider's own Models.dev table, merged into data/usage-prices.json. **Network note:** the catalog (models.dev/api.json) was downloaded on 2026-10-19 by this run's research agents, which this prompt's network list doesn't name; I used it only to add the new providers' tables (existing tables byte-for-byte unchanged in content: checked). Delete the new tables or regenerate with your own download if you'd rather not keep it (README has the command). BytePlus, Qianfan and custom have no table: B28 price pause.
+- **Not built:** keys of the new providers run only on AI Term's agent (D47); usage-in-stream is requested only where documented (Mistral and others: worst-case booking when a stream has no count).
+- **Reviews (fresh context, 40c49d7..HEAD):** code review 0 CRITICAL/HIGH, 1 MEDIUM (the region line was off screen for most providers), 1 LOW (empty answers not drained, a 205 would throw), 1 cosmetic (`t` still said "ollama pull" for LM Studio); security review 0 CRITICAL/HIGH/MEDIUM, 1 LOW (IPv4-compatible IPv6 `[::127.0.0.1]` passed; not reachable on Linux or macOS without a tunnel), 1 informational (a trailing `?` or `#`). All fixed: RED commit, then fix commit.
+- **Checks:** typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 304ms" · app:build "✓ built in 817ms" · npm test twice "Test Files 298 passed | 2 skipped (300) · Tests 1941 passed | 70 skipped (2011)" (119 s, 120 s) · `npm run live` tier 1 "Tier 1 passed: 32 checks in 119 s" · Electron smoke: not here (no Electron binary; needs Yaniv).
+- **Manual checks (need Yaniv, real keys):** see the Manual checks list at the end of this run's block.
 
 ## Checkpoint (backlog sweep)
 Last code commit: 32d4fd2 fix: the sweep leaves a folder whose mark it can't read exactly as it is, and the daemon runs one /bisect per folder (follow-up review)
