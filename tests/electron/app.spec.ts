@@ -293,18 +293,29 @@ test('a pasted authenticated control sequence does nothing in the real ai client
 });
 
 // B35 in the app: ai inside draws the same bottom line as in a terminal, so at every window width each field is whole
-// or left out, the engine and its login are never cut, and no field is empty.
+// or left out, the engine and its login are never cut, and no field is empty. Review: each width first waits for ai's
+// column count (the command bar's bottom border spans the screen) to change, so a row left from the last width can't
+// pass; the key hints show exactly when the four first fields and worktree leave room for them.
 test(`${LOGGED_IN}: the bottom line keeps claude code · own login whole at every window width`, async () => {
   const page = await application.firstWindow(), screen = page.locator('.xterm-accessibility-tree');
   await expect(screen).toContainText('What do you want to build?');
-  const hints = '↑↓ agents  ⏎ open  p preview  / commands', whole = ['CLI default', 'claude code', 'own login · sub', 'ask', 'worktree on'];
-  const bottom = () => screen.evaluate(tree => [...tree.children].map(row => (row.textContent ?? '').replace(/\u00a0/g, ' ').trimEnd()).filter(Boolean).at(-1) ?? '');
-  for (const width of [1400, 1000, 760]) {
+  // HOME is the test's own, so ai's folder (this repository, where the app starts it) shows in full.
+  const hints = '↑↓ agents  ⏎ open  p preview  / commands', first = 'CLI default · claude code · own login · sub · ask · worktree on';
+  const whole = ['CLI default', 'claude code', 'own login · sub', 'ask', 'worktree on', resolve('.')];
+  const read = () => screen.evaluate(tree => {
+    const rows = [...tree.children].map(row => (row.textContent ?? '').replace(/\u00a0/g, ' ').trimEnd()), border = rows.findLastIndex(row => row.startsWith('╰'));
+    return { cols: border < 0 ? 0 : [...rows[border] ?? ''].length, line: rows[border + 1] ?? '' };
+  });
+  let cols = (await read()).cols;
+  for (const [width, narrower] of [[760, true], [1400, false]] as const) {
     await application.evaluate(({ BrowserWindow }, w) => { BrowserWindow.getAllWindows()[0]?.setSize(w, 700); }, width);
-    await expect.poll(bottom).toMatch(/· claude code · own login · sub/);
-    const line = await bottom(), fields = line.replace(hints, '').trim().replace('own login · sub', 'own login\u0000sub').split(' · ').map(field => field.replace('\u0000', ' · '));
+    await expect.poll(async () => { const now = (await read()).cols; return narrower ? now < cols : now > cols; }, { message: `${width} px: ai refits` }).toBe(true);
+    cols = (await read()).cols;
+    const withHints = first.length + hints.length + 2 <= cols - 2;
+    await expect.poll(async () => (await read()).line, { message: `${width} px (${cols} columns)` }).toMatch(withHints ? new RegExp(`^ ${first}.*${hints}$`) : new RegExp(`^ ${first}`));
+    const { line } = await read(), fields = line.replace(hints, '').trim().replace('own login · sub', 'own login\u0000sub').split(' · ').map(field => field.replace('\u0000', ' · '));
+    expect(line.includes(hints), `${width} px (${cols} columns): the key hints`).toBe(withHints);
     expect(line, `${width} px`).not.toMatch(/·\s+·|·\s*$/);
-    // The folder is the app's working folder, whatever it is; every other field is one of the whole ones.
-    for (const field of fields.slice(0, -1)) expect(whole, `${width} px: "${field}"`).toContain(field);
+    for (const field of fields) expect(whole, `${width} px: "${field}"`).toContain(field);
   }
 });

@@ -29,7 +29,8 @@ it('finished own-login cards retain a status word alongside explicit auth',()=>{
  const text=plainText(renderHomepage({cols:130,rows:45,sessions:[session],selectedId:session.id,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0},createTheme('graphite')));
  expect(text.split('\n').slice(2,5).join('\n')).toContain('exited');expect(text).toContain('own login · API key');
 });
-it('long custom model IDs are clipped before the required next-agent auth label',()=>{
+// B35: fields are whole or left out, so a model id too long for the line is left out and the auth label stays.
+it('a custom model ID too long for the bottom line is left out whole, never clipped, and the next-agent auth label stays',()=>{
  const text=plainText(renderHomepage({cols:100,rows:30,sessions:[],selectedId:null,input:'',note:'',previewVisible:true,cwd:'/tmp',now:0,engine:'codex',model:'m'.repeat(80),authLabel:'own login · API key'},createTheme('graphite')));
- expect(text.split('\n').at(-1)).toContain('own login · API key');
+ expect(text.split('\n').at(-1)).toContain('codex · own login · API key');expect(text.split('\n').at(-1)).not.toContain('mmm');
 });

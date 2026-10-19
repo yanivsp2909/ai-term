@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderHomepage, type HomepageView } from '../src/client/tui/layout.js';
 import { createTheme } from '../src/client/tui/theme.js';
 import { plainText } from '../src/client/tui/grid.js';
+import { textWidth } from '../src/shared/unicode-width.js';
 
 // B35: on a fresh AI Term folder at 120 columns the bottom line read
 // "CLI default · claude c ·  · own login · sub · CLI default · ask · worktree on ↑↓ agents …": the engine cut mid-word,
@@ -10,7 +11,6 @@ const HINTS = '↑↓ agents  ⏎ open  p preview  / commands';
 const theme = createTheme('graphite');
 const fresh = (cols: number, patch: Partial<HomepageView> = {}): HomepageView => ({ cols, rows: 40, sessions: [], selectedId: null, input: '', note: '', previewVisible: true, cwd: '~/projects/demo', engine: 'claude-code', model: null, authLabel: 'own login · sub', effort: null, permission: 'ask', worktrees: 'on', now: Date.parse('2026-10-19T10:00:00Z'), ...patch });
 const bottom = (view: HomepageView): string => plainText(renderHomepage(view, theme)).split('\n')[view.rows - 1] ?? '';
-const FIELDS = ['CLI default', 'claude code', 'own login · sub', 'ask', 'worktree on', '~/projects/demo'];
 // The fields a line shows, in order; a field cut short or left empty is a field that isn't one of these.
 const shown = (line: string): string[] => line.replace(HINTS, '').trim().replace('own login · sub', 'own login\u0000sub').split(' · ').map(field => field.replace('\u0000', ' · ')).filter(Boolean);
 
@@ -24,15 +24,22 @@ describe('B35 the homepage bottom line', () => {
   it('at 80 columns drops the key hints and the folder', () => {
     expect(bottom(fresh(80)).trimEnd()).toBe(' CLI default · claude code · own login · sub · ask · worktree on');
   });
-  it('never cuts a field or leaves one empty, and drops by priority: engine, auth, model, mode, then the rest', () => {
-    // Highest first; the key hints sit right of the fields, two columns apart.
-    const priority = ['claude code', 'own login · sub', 'CLI default', 'ask', 'worktree on', HINTS, '~/projects/demo'];
-    const cost = (items: readonly string[]): number => { const fields = items.filter(item => item !== HINTS); return fields.join(' · ').length + (items.includes(HINTS) ? HINTS.length + 2 : 0); };
+  // Each case lists its items highest first; the key hints sit right of the fields, two columns apart. Review: the
+  // sweep also runs with Don't ask and a picked effort (rank 5), a wide-character folder and a model too long to fit.
+  const CASES: readonly [string, Partial<HomepageView>, readonly string[]][] = [
+    ['the defaults', {}, ['claude code', 'own login · sub', 'CLI default', 'ask', 'worktree on', HINTS, '~/projects/demo']],
+    ["don't ask and effort high", { permission: 'dontAsk', effort: 'high' }, ['claude code', 'own login · sub', 'CLI default', "! don't ask", 'effort high', 'worktree on', HINTS, '~/projects/demo']],
+    ['a wide-character folder', { cwd: '~/プロジェクト/デモ' }, ['claude code', 'own login · sub', 'CLI default', 'ask', 'worktree on', HINTS, '~/プロジェクト/デモ']],
+    ['a model too long to fit', { model: 'm'.repeat(80) }, ['claude code', 'own login · sub', 'm'.repeat(80), 'ask', 'worktree on', HINTS, '~/projects/demo']],
+  ];
+  it.each(CASES)('never cuts a field or leaves one empty, and drops by priority (engine, auth, model, mode, then the rest): %s', (_, patch, priority) => {
+    const cost = (items: readonly string[]): number => { const fields = items.filter(item => item !== HINTS); return textWidth(fields.join(' · ')) + (items.includes(HINTS) ? textWidth(HINTS) + 2 : 0); };
     // Under 60 columns the homepage only asks for a bigger window.
     for (let cols = 60; cols <= 200; cols++) {
-      const line = bottom(fresh(cols)), fields = shown(line), present = [...fields, ...line.includes(HINTS) ? [HINTS] : []];
+      const line = bottom(fresh(cols, patch)), fields = shown(line), present = [...fields, ...line.includes(HINTS) ? [HINTS] : []];
       expect(line, `${cols} columns`).not.toMatch(/·\s+·|·\s*$|^\s*·/);
-      for (const field of fields) expect(FIELDS, `${cols} columns: "${field}"`).toContain(field);
+      expect(fields.length, `${cols} columns`).toBeGreaterThan(0);
+      for (const field of fields) expect(priority, `${cols} columns: "${field}"`).toContain(field);
       expect(cost(present), `${cols} columns`).toBeLessThanOrEqual(cols - 2);
       // A field is missing only when it wouldn't fit even with everything of lower priority gone.
       priority.forEach((item, rank) => {

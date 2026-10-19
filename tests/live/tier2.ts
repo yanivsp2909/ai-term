@@ -134,7 +134,7 @@ const TIER2: readonly Check<Tier2>[] = [
   step('codex', 'Codex in Ask on your login: one tiny prompt that needs your approval (a write outside its folder), approved with y', 'Codex asking to write outside its worktree (1. Yes … (y)), AI Term\'s card saying it asks, then the file written', async t => {
     const outside = join(t.world.root, 'c.txt');
     await t.home.command('/model'); await t.ai.waitFor('Select model'); await t.ai.type('codex', false); await sleep(300); t.ai.write(KEY.enter);
-    await t.ai.waitFor(/· codex · .*own login/, 10_000, 'codex · own login on the bottom line');
+    await t.ai.waitFor(/· codex · own login/, 10_000, 'codex · own login on the bottom line');
     const asked = await cliTurn(t, 'codex', 'Codex', `Write the single word hi to the file ${outside} with one printf command (it is outside your folder, so ask me first). Nothing else.`, outside, () => fileSays(outside, 'hi'));
     t.out(`  saw: ${asked}`);
   }),
