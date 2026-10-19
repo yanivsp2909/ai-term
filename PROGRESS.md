@@ -1,17 +1,33 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: 77891a4 test: worktrees tests create main explicitly instead of relying on the machine's init.defaultBranch
-Last commit: v0.3.2 re-check handover (this commit)
-Roadmap step: v0.3.2 worktree keep/delete · already done (97f03a1..f0b61eb, handed over in c4e34df); this run only re-verified it
+Last code commit: see the newest commits; this block is rewritten at the end of each part of this run
+Last commit: B34 handover (this commit)
+Roadmap step: 2026-10-19 long run (B34 → Part A providers → Part B engines → Part C public snapshot) · B34 done, A, B and C not started
 Branch: main, pushed.
 
-## Re-check of v0.3.2 (2026-10-19, cloud session)
-- The prompt asked to build v0.3.2 from checkpoint e54e575. That work is already on main: 97f03a1 (loss report), 323f8f6 (ownership checks), bd04d84 (keep/delete question, /worktrees), f3e2fbd (S14), d452a96 → f0b61eb (review fix). No new feature code was written.
-- No open PRs; origin's two other branches (claude/coverage-chore-80-percent-lmfy2c, review/v0.1.5r-checkpoint) are already merged into main. Nothing to merge.
-- Fixed: tests/worktrees.test.ts ran `git init` without `-b main`, so two tests failed on any machine whose git defaults to `master` (77891a4). Every other test file already passes `-b main`.
-- Greps on main: `--force` and `-D` only in git.ts `forceRemoveWorktree`/`forceDeleteBranch`, called only from the loss branch of `deleteWorktree`; no `rm`/`fs.rm` on a worktree path; worktree start rollback uses `rmdir` (empty folders only). `git worktree prune` is deliberately not run (architecture §12.3).
-- Checks in a Linux cloud container running as root: typecheck, lint, build exit 0; worktree tests 63/63. The full suite has 33 failures there, none in worktree code and all present before 77891a4: root ignores chmod-locked folders (state-corrupt, queue, ledger, diff, checkpoints, sweep, gate-silent M1), no bwrap (auto-test, AI Term agent Don't ask), no xdg-open, root's `#` prompt (attach-terminal), PID/lock timing, and the /bisect temp-clone group ("Git check failed", cause not found). They need a non-root Linux run or macOS to judge.
+## Run 2026-10-19 (cloud container, Linux, root): B34 first
+- **Order changed, on purpose.** The prompt says A, B, then C (whose first step is B34). In this container (Ubuntu 24.04, git 2.43, root, no bubblewrap, no xdg-open) 33 tests failed before any change, so no part could end "npm test green". B34 went first; A and B follow on a hermetic suite.
+- **The checkpoint the prompt names was right** (main 8428d7f, v1.0.0 at 99a7661). 8428d7f was the stale v0.3.2 re-run; its section here is replaced by this one (it only fixed two tests in tests/worktrees.test.ts).
+
+### B34 · hermetic tests: done
+- **Commits:**
+  - 31076e4: every test's git reads one temp config (`tests/setup-git.ts`: `init.defaultBranch=main`, a test user, no signing, `GIT_CONFIG_NOSYSTEM=1`).
+  - 9549c30 (fix): **the /bisect "Git check failed" group was a real product bug, not root.** git 2.43 (Ubuntu 24.04) reads `--end-of-options` after `checkout --detach` as a path and refuses (`fatal: git checkout: --detach does not take a path argument`), so every /bisect and /perf A/B failed there. `git switch --quiet --detach --end-of-options <commit>` works on 2.43 and 2.50 (temp-clone.ts, bisect.ts).
+  - 4ad8c6e → 0e54b34 (RED → fix): **a second product bug the hermetic runs found.** `isolatedGitDir` copied the worktree's index with a fresh mtime, which defeats git's racy-clean check: a same-size edit made in the second the index was written was missing from /diff, the card's +N −M, /teach, /review deep and (through the same private git dir) checkpoint snapshots. The copy now keeps the index's times (`tests/racy-index.test.ts`, deterministic: red 3/3 before, green after).
+  - ceb502a, f2572b5 and the follow-up commit: skips with the reason in the title (`tests/platform.ts`: `AS_ROOT`, `NO_LINUX_SANDBOX` (bwrap installed *and* able to start), `NO_VIM`, `PID1_MINE`), terminal tests set the prompt through the temp home's `.profile` (a login `sh` takes `# ` for root from /etc/profile), engine checks mocked where tests leaned on an installed claude or codex (paste-security, client-signals, client-signal-handoff: the "Connect a provider" popup opened at a moment of its own), zombies count as gone (`processRuns`, `groupRuns`: Docker's and this container's PID 1 reap orphans late or never), one drag race in split.test.ts, a 10 s attach wait, and `tests/global-setup.ts`: with git older than 2.41 the run stops at once with one line instead of ~100 failures.
+  - `npm run live` tier 1 now runs on Linux too (`tests/live`): the world's `SHELL` is the first of zsh, bash, sh that exists; without a working bubblewrap the D57 check asserts the refusal and starts the second agent in Ask; off macOS the D56 check checks the /test plan's wording; /dev on Linux is unsandboxed by design, so it presses `Y`; /bisect without a sandbox checks the plan and cancels; `ai doctor`'s sandbox line per platform. The macOS path of every check is unchanged.
+- **Reviews (fresh context, on 8428d7f..HEAD):** code review and security review: 0 CRITICAL, 0 HIGH, 0 MEDIUM. One LOW taken: `global-setup.ts` now runs git with the product's own `GIT_PATH` and `GIT_SYSTEM` env (Windows' git.exe may need SystemRoot; not testable here). Informational, not fixed: `copyIndex` does lstat then copyFile without O_NOFOLLOW (unchanged from before; same-user D35 race).
+- **Docker** (available here: `dockerd` started in the container): node:22 is Debian 12 with **git 2.39, below AI Term's minimum** (`--attr-source` needs 2.40, `%(ahead-behind)` 2.41): the run stops with "AI Term and its tests need git 2.41 or newer; this machine has git version 2.39.5". The check ran on **node:22-trixie** (git 2.47.3, no vim, no bwrap):
+  - as root: "Test Files 294 passed | 4 skipped (298) · Tests 1886 passed | 74 skipped (1960)"
+  - as the image's `node` user: "Test Files 294 passed | 4 skipped (298) · Tests 1898 passed | 62 skipped (1960)"
+- **This container (root, git 2.43, vim, no bwrap):** npm test twice: "Test Files 296 passed | 2 skipped (298) · Tests 1890 passed | 70 skipped (1960)" (124 s, 120 s). Also green with an empty HOME and a PATH holding only node/npm/npx, and as a normal user (`tester`).
+- **Not run here:** the hidden Electron smoke (Electron's binary isn't installed in this container and downloading it isn't in this run's allowed network): needs Yaniv.
+- **Not fixed (backlog):** AI Term itself doesn't check the git version at run time; with git < 2.41 a user sees "git could not read the worktree". README now says git 2.41 or newer.
+
+## Checkpoint (backlog sweep)
+Last code commit: 32d4fd2 fix: the sweep leaves a folder whose mark it can't read exactly as it is, and the daemon runs one /bisect per folder (follow-up review)
+Roadmap step: 2026-10-19 backlog sweep · done (no version bump: 1.0.1 waits for Yaniv's live checks)
 
 ## Final report (this run)
 - **The list:** docs/backlog.md (12b4662), built from all of PROGRESS.md (three readers, one per third; every item checked against the code) and architecture.md's "not fixed" and "explained" lines.
