@@ -118,6 +118,7 @@ export class AddonPanel {
     // v1.2 /triage s: the selected group becomes a /issue or /fix popup with its own estimate and y.
     else if (r?.kind === 'triage' && (key === 'up' || key === 'down')) this.move(key, r.groups.length);
     else if (r?.kind === 'triage' && key === 's') { const g = r.groups[this.selected]; if (g?.next === 'issue' && g.issues[0]) this.actions.followUp?.('issue', `#${g.issues[0]}`); else if (g?.next === 'fix') this.actions.followUp?.('fix', [g.title, ...g.items].join('\n')); }
+    else if (r?.kind === 'migrate' && (key === 'up' || key === 'down')) this.move(key, r.steps.length);
     else if (r?.kind === 'migrate' && key === 'a' && !this.applied) { this.busy = true; this.actions.apply?.(r.steps.map((_, n) => n)); }
     else if (r?.kind === 'perf' && key === 'a' && this.ab?.state !== 'running' && this.ab?.state !== 'done' && !(this.ab?.state === 'failed' && this.ab.reason === AB_NO_SANDBOX)) { this.busy = true; this.actions.ab?.(false); }
     // Y only once AI Term said there is no sandbox for this A/B.

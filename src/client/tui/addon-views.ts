@@ -101,8 +101,13 @@ export function batchLines(r: Batch, view: ResultView): string[] {
         ...chosen ? ['', ...chosen.items] : [], '', `↑↓ group · ${next} · c copies · Esc closes`];
     }
     // v1.2 /migrate: the short plan; a starts all of it in one worktree agent.
-    case 'migrate': return [`${r.from} → ${r.to}`, r.summary, '', ...r.steps.map((s, n) => `${n + 1}. ${s.title}`), ...r.risks.length ? ['', 'Risks:', ...r.risks.map(x => `  ${x}`)] : [], '',
-      view.applied ?? 'a starts the whole plan in a worktree (Ask), step by step with the tests kept green · c copies the plan · Esc closes'];
+    // Every step's prompt is what a sends: ↑↓ shows each one before you start (Part B review).
+    case 'migrate': {
+      const chosen = r.steps[view.selected];
+      return [`${r.from} → ${r.to}`, r.summary, '', ...windowed(r.steps, view.selected, (s, i) => `${i === view.selected ? '›' : ' '} ${i + 1}. ${s.title}`),
+        ...chosen ? ['', `Step ${view.selected + 1}/${r.steps.length}, as the agent will get it:`, ...chosen.prompt.split('\n')] : [], ...r.risks.length ? ['', 'Risks:', ...r.risks.map(x => `  ${x}`)] : [], '',
+        view.applied ?? '↑↓ step · a starts the whole plan in a worktree (Ask), step by step with the tests kept green · c copies the plan · Esc closes'];
+    }
     // Backlog F3: your last /study session in this folder, still open in this homepage, is one key away (no new session).
     case 'study-due': return ['no model · no tokens · from your study schedule', ...r.topics.length ? r.topics.map(t => `${t.topic} · review ${t.step + 1} · due ${t.due}`) : ['Nothing is due today'], '', ...view.reopen ? [`r reopens your last session: ${view.reopen}`] : [], '/study <topic> starts a session · Esc closes'];
     case 'bisect': return [`First bad commit: ${r.commit.slice(0, 12)} ${r.subject}`, `${r.author} · ${r.date} · ${r.steps} step${r.steps === 1 ? '' : 's'} tested`, 'git bisect reset ran and the temporary copy was removed; your checkout was never touched.', '', ...r.diff];
