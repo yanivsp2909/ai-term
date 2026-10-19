@@ -1,9 +1,10 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: bbd6a28 chore: the A/B harnesses for v1.2 (perf-ab marks the first-run setup done; the app latency capture runs hidden)
-Last commit: v1.2.0 run Part B handover (this commit)
-Roadmap step: 2026-10-19 v1.2.0 release run on Yaniv's Mac (A Mac release check → B themes and fonts → C public snapshot and the tag) · A and B done, C next
+Last code commit: 4483ed3 chore: release 1.2.0 (CHANGELOG 1.1.0 and 1.2.0, package version, README status)
+Last commit: v1.2.0 run handover and final report (this commit)
+Tag: v1.2.0 (annotated) on 4483ed3, pushed
+Roadmap step: 2026-10-19 v1.2.0 release run on Yaniv's Mac (A Mac release check → B themes and fonts → C public snapshot and the tag) · done: A, B, C; v1.2.0 tagged
 Branch: main, pushed.
 
 ## Run 2026-10-19 v1.2.0 (Yaniv's Mac: `uname -s` Darwin 25.5.0, Node 26.3.0, npm 11.16.0)
@@ -41,6 +42,45 @@ Branch: main, pushed.
 - **Where the code disagreed with the prompt:** design.md said "Ligatures stay off; … the optional toggle is omitted" and the app's TUI always used auto; both changed on purpose for this part, design.md updated. There were 3 dark palettes and 1 light before, not "dark and light themes": graphite's two columns became one theme, slate and ink got lights.
 - **Choices made (non-blocking):** the theme box sits top right so the homepage shows (design.md was silent); your own theme files must give both variants; no contrast check for them; the chrome strip text is now the 13 px chrome-body token (was 12 px).
 - **Checks:** typecheck 0 · lint 0 (eslint exit 0) · build "ESM ⚡️ Build success in 50ms" · app:build "✓ built in 55ms" · npm test twice "Test Files 312 passed | 1 skipped (313) · Tests 2114 passed | 8 skipped (2122)" (55 s, 54 s) · Electron smoke "12 passed (50.3s)" · `npm run live` tier 1 "Tier 1 passed: 32 checks in 94 s" · verification-loop: ready (no secrets or console.log in the diff).
+
+### Part C · public snapshot and v1.2.0: done
+- **Commits (ai-term):** f66ad8f (a shortcut comment gitleaks' generic rule read as a key), 053ff81 (gate-v06's handoff test waits 10 s for its agent: the same load flake twice on the Mac), the 1.2.0 bump (CHANGELOG 1.1.0 and 1.2.0, package.json, README status) and the annotated tag `v1.2.0`.
+- **Snapshot:** `node scripts/public-snapshot.mjs ~/ai-term-public main` from 053ff81 (37 add-on guides), its Verification section filled in, one commit d8669e1 by `--commit` (noreply author, no remote, not pushed). Rebuilt twice: the first two builds (from bfb4534 and f66ad8f) went to the scratchpad (no remote, nothing deleted) after the gitleaks hit and the flake.
+- **Snapshot checks:** `npm ci` "added 588 packages, and audited 589 packages in 3s" · typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 63ms" · npm test twice "Test Files 310 passed | 1 skipped (311) · Tests 2098 passed | 17 skipped (2115)" (68 s, 56 s).
+- **gitleaks (8.30.1):** the first snapshot had 1 hit, `generic-api-key` on a comment in app/main/index.ts ("Command+key. Linux and Windows: Ctrl+Shift+key"), a false positive, fixed at the source (f66ad8f). After it: `gitleaks dir` "no leaks found", and in the committed snapshot `gitleaks git --redact --config .gitleaks.toml .` "1 commits scanned · no leaks found". (A folder scan of ai-term also flags `.claude/skills/api-design/SKILL.md` "X-API-Key:", an example; `.claude/` is never in the snapshot and wasn't touched.)
+- **Review (TypeScript, fresh context, Part C's two changes):** 0 findings at any level: the comment change leaves the code as it was; the longer poll costs nothing when it passes and still fails with the same assertion; nothing a secret scanner would match.
+- **Checks (ai-term):** typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 100ms" · app:build "✓ built in 61ms" · npm test twice "Test Files 312 passed | 1 skipped (313) · Tests 2114 passed | 8 skipped (2122)" (54 s, 52 s) · Electron smoke "12 passed (50.4s)" · `npm run live` tier 1 "Tier 1 passed: 32 checks in 154 s" · after the 1.2.0 bump: typecheck, build and app:build 0, npm test "Tests 2114 passed | 8 skipped (2122)", tier 1 "Tier 1 passed: 32 checks in 139 s" (its version step reads v1.2.0) · verification-loop: ready.
+- **Choice made:** the prompt orders the snapshot before the bump, so the snapshot is 053ff81 (package.json still says 1.0.0 there). Suggestion: rebuild it from `v1.2.0` before you publish (commands below).
+
+### Manual checks (new in this run, need Yaniv)
+- /theme in a terminal: `cd ~/ai-term && npm run dev`, then `/theme`: ↑↓ repaints the homepage behind in each theme, ←→ dark/light/system, Esc leaves it as it was, ⏎ keeps it (`✓ theme … · …`).
+- A theme file of yours: `cd ~/ai-term && mkdir -p ~/.ai-term/themes && node -e "const t=require('./docs/design/tokens.json'),n=['bg','surface','surface-2','line','ink','ink-2','ink-3','accent','on-accent','status-waiting','status-error','cursor'],s=v=>Object.fromEntries(n.map(k=>[k,t.color.tokens.find(x=>x.name===k).value.dune[v]]));console.log(JSON.stringify({name:'Mine',dark:s('dark'),light:s('light')}))" > ~/.ai-term/themes/mine.json && npm run dev`, then `/theme` lists "Mine · your file".
+- A broken one: `cd ~/ai-term && echo '{}' > ~/.ai-term/themes/broken.json && npm run dev`, then `/theme` shows `✗ broken.json refused · missing dark.bg, …`; remove it after.
+- The app follows: `cd ~/ai-term && npm run app:dev`, then `/theme` → Slate, → light, ⏎: the window, its title strip and the TUI turn slate light; pick a system variant and switch View → Light / Dark.
+- App fonts: `cd ~/ai-term && npm run app:dev`, then `/settings`, `F`, terminal font `Menlo`, size 15, ⏎: the app's terminal changes; your Terminal.app doesn't.
+- Ligatures: `cd ~/ai-term && npm run app:dev`, then `/settings` `F`, ligatures on: without JetBrains Mono installed the title strip says "JetBrains Mono isn't installed, so ligatures can't show"; with it (or Fira Code as the terminal font) `=>` and `!==` join.
+- Snapshot from the tag, then publish when you're ready: `cd ~/ai-term && mv ~/ai-term-public /tmp/ai-term-public-053ff81 && node scripts/public-snapshot.mjs ~/ai-term-public v1.2.0`, then its checks and `--commit` as in its PUBLIC_SNAPSHOT.md, then `gitleaks git --redact --config .gitleaks.toml .` and the publish commands there.
+
+### Concepts introduced (v1.2.0 run)
+- **Theme variants by luminance** (`resolveVariant`, src/client/tui/theme.ts): "system" picks dark or light from how bright the terminal's background is (relative luminance above 0.5 is light). In the app the window's own background wears the saved variant, so macOS's choice comes in as its own message (`appearance dark|light`).
+- **Character joiner** (app/renderer/ligatures.ts): xterm draws each cell alone, so a font can only form a ligature when a run of cells is drawn as one unit; a joiner tells xterm which runs. It costs work on every drawn row, so it exists only while ligatures are on.
+- **Latest wins** (`lookPublisher`, app/main/look.ts): each read gets a generation number; a read that finishes after a newer one started is dropped, so a slow old answer never overwrites a fresh one.
+- **First-run assessment on macOS** (tests/first-exec.ts): macOS checks a brand-new executable the first time it runs, one at a time across the machine. A test that times a fresh stub runs it once first.
+
+### v1.2.0 run · summary
+- **Done:** the Mac release check (no product bug; four macOS-only test problems fixed, plus a broken spike shape and an old harness), themes and fonts (five themes, theme files, /theme, the app following them, app fonts, ligatures), the public snapshot rebuilt with the guides and gitleaks clean, v1.2.0 tagged and pushed.
+- **What failed only on macOS and how it was fixed:** fresh stub CLIs slowed by macOS's first-run assessment (setup tests, partb-engines: run once first); the setup popup covering the Agents title (homepage-terminal: wait for it first); the login popup covering the app's command bar (Electron smoke: close it first); a PTY start passing a 1 s poll under load (gate-v06: 10 s); npm ci not fetching Electron's binary (run its install.js; noted).
+- **Findings by severity (all reviews in this run):** CRITICAL 0 · HIGH 0 · MEDIUM 5 (all fixed, TS review of Part B; one of them was also security LOW-1) · LOW 14 (7 fixed: 1 Part A TS, 2 security, 1 accessibility, 3 TS Part B; 7 kept with reasons above: 2 Part A TS, 5 TS Part B) · impeccable: 2 layout fixes · INFO 2 (kept) · Part C review: 0.
+- **Where the code disagreed with the prompt:** the checkout was 57 commits behind its e56951d (with your two uncommitted /bisect sentences, kept out of every commit); design.md had ligatures "omitted" and the app's TUI always on auto (both changed by Part B on purpose); there were one light and three dark palettes, not "dark and light themes"; the snapshot comes from 053ff81 because the prompt orders it before the bump.
+- **Not pushed or published:** ~/ai-term-public (one commit d8669e1, no remote). Two earlier snapshot builds are in this run's scratchpad, not deleted.
+
+### What's next
+- Publish the snapshot when you're ready (rebuild from v1.2.0 first: Manual checks).
+- The manual checks above, then the open backlog (docs/backlog.md).
+- Suggestions (not done, outside the parts): a contrast warning in /theme for your own theme files under 4.5:1; re-arming the app's watcher after an fs.watch error; perf-ab.py measuring each round in both orders (the second slot runs warmer).
+
+### New dependencies
+- None.
 
 ### Gotchas (v1.2.0 run)
 - **`npm ci` (npm 11.16) left Electron without its binary** (no node_modules/electron/dist): its install script didn't run although package.json allows it. `node node_modules/electron/install.js` downloads it. The smoke fails at launch without it.
