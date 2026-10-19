@@ -109,6 +109,8 @@ it('LOW (silent failures): a new agent that didn\'t start and couldn\'t be stopp
 async function ledger(options: Partial<ConstructorParameters<typeof BudgetLedger>[0]> = {}) {
   const root = await tempDir('ai-gate06-ledger-'), file = join(root, 'budget-reservations.json'), booked: Reservation[] = [], errors: string[] = [], warnings: [string, string | null][] = [];
   const made = new BudgetLedger({ file, book: async r => { booked.push(r); }, log: { error: text => { errors.push(text); } }, warn: (key, text) => { warnings.push([key, text]); }, ...options });
+  // Its writes finish before its folder is removed: a write still landing made rm fail with ENOTEMPTY under load.
+  cleanups.push(() => made.close());
   return { ledger: made, file, root, booked, errors, warnings };
 }
 const daily = (limit: number) => ({ daily: limit, weekly: null, monthly: null }), none = { day: 0, week: 0, month: 0 };
