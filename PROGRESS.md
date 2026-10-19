@@ -1,12 +1,55 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: 9a27f1e test: the budget ledger tests wait for its writes before removing its folder
-Last commit: v1.2 Part B handover (this commit)
-Roadmap step: 2026-10-19 v1.2 run (A guides → B /triage and /migrate → C first-run setup) · A and B done, C not started
-Branch: main, pushed. No version bump or tag (waits for Yaniv's Mac).
+Last code commit: 54abf76 docs: architecture 12.36, the first-run setup
+Last commit: v1.2 Part C handover and run report (this commit)
+Roadmap step: 2026-10-19 v1.2 run (A guides → B /triage and /migrate → C first-run setup) · done: A, B, C
+Branch: main, pushed. No version bump or tag: v1.1.0 (and anything after) waits for Yaniv's Mac.
 
 ## Run 2026-10-19 v1.2 (cloud container: `uname -s` Linux, running as root)
+
+### Part C · first-run setup: done
+- **Commits:** f9821a1 (RED), 15c9ffe (GREEN), 77980dc (the live suite's first step), 1af3b7f (copy pass), ac80f2c → 60422f7 (review findings, RED → fix), 54abf76 (architecture §12.36).
+- **What it is:** the first time `ai` starts on a new AI Term folder, or on `ai setup` or `/setup`, the homepage shows a setup popup instead of an empty list. The daemon marks a folder `setup: pending` at its first start when it has neither settings.json nor state.json.
+  - **What's installed:** Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI, gh, Tailscale, Ollama and LM Studio, each ✓ found with its version, ✗ not found with its install command, or ? couldn't check.
+  - **What's ready:** each CLI's login, as far as its own status command says (Cursor, Gemini CLI and Copilot CLI: "logs in when it starts"); API keys by provider, last 4 and label; the sandbox.
+  - **Next steps:** `l` log in, `k` add a key, `b` budget, `d` default engine, `/remote on` later.
+  - ⏎ finishes, Esc skips; either way it never opens by itself again.
+- **Rules held:** argv only. Each command (`--version`, `claude auth status --json`, `codex login status`, `gh auth status`, `tailscale version`, `lms version`) runs in its own process group, killed after 3 s, with output capped and escapes stripped; only a version number is kept. No config or credential file is read, nothing is installed, and one failing tool never blanks the rest.
+- **Reviews (fresh context):**
+  - security: 0 CRITICAL/HIGH, 1 MEDIUM (one probe error, such as a Windows .cmd shim or an odd PATH entry, failed the whole check), 4 LOW (labels and versions that could blank the panel, gh offline read as not logged in, the timeout killing only the direct child, a failed first-run mark stopping the daemon). All fixed.
+  - TypeScript: 0 CRITICAL/HIGH, 3 MEDIUM (`ai setup` unreachable in the Mac app, so `/setup` was added; the next-step keys below the fold on 80x24, so the key line now comes first; a hung Claude Code shown as ✓ found), 5 LOW (a double key press leaking to the homepage, the failed mark, one probe failing everything, the homepage waiting on the check, the Cursor `--help` probe). Fixed or documented: the `--help` probe is in the README and §12.36. Noted and not changed: each engine still takes two commands (version, then status), so a fully hung engine takes up to 6 s; the panel never blocks while it waits.
+- **Copy:** design:ux-copy pass. It changed the intro, the CLIs' login word and the save-failure note.
+- **Checks:** typecheck 0 · lint 0 · build "ESM ⚡️ Build success in 344ms" · app:build "✓ built in 710ms" · npm test twice "Test Files 304 passed | 2 skipped (306) · Tests 2003 passed | 70 skipped (2073)" (143 s, 146 s) · `npm run live` tier 1 "Tier 1 passed: 32 checks in 149 s" · verification-loop: ready.
+- **Where the code disagreed with the prompt:**
+  - "First time with an empty AI Term folder" needs the daemon. The client can't tell a new folder from an old one with no agents, so the daemon marks it at its first start.
+  - The Mac app starts `ai` with no arguments, so `ai setup` alone couldn't rerun it there; `/setup` was added.
+  - Cursor's `agent` gets a `--help` besides `--version`, as before Part C, to tell it apart from other tools named agent.
+
+### v1.2 run · summary
+- **Machine:** `uname -s` Linux, running as root (uid 0), Node 22.22.0, git 2.43. The Electron smoke and the macOS sandboxes can't run here.
+- **Done:** 37 original guides in addons/guides/: 35 for the existing model add-ons, plus /triage and /migrate. The originality script finds no 12-word overlap with any old copy in any of them. The snapshot script ships them and refuses any guide without AI Term's MIT header or any leftover addons/_shared/. First-run setup works against stub CLIs: installed, missing, logged in, logged out, hanging past the timeout, printing escape codes. Everything is pushed.
+- **Needs Yaniv's Mac:** the Electron smoke; the macOS sandboxes (sandbox-exec for tests, dev servers and Gemini's Don't ask); `ai setup` and `/setup` in the Mac app; the v1.1.0 tag and any version bump; the public snapshot rebuilt from a7c5999 or later on the Mac (its guides are now included); gitleaks before publishing.
+
+### Manual checks of the v1.2 run (new only)
+- Setup in a terminal: `cd ~/ai-term && npm run build && AI_TERM_HOME=$(mktemp -d) node dist/cli/index.js`. The setup opens; check that the CLIs you have show ✓ with their logins, and press Esc.
+- Setup again: `cd ~/ai-term && node dist/cli/index.js setup`. It opens even after Esc; ⏎ finishes it.
+- Setup in the app: `cd ~/ai-term && npm run app:dev`, then type `/setup`. It opens there too.
+- /triage issues: `cd ~/ai-term && npm run dev`, then `/triage` in a repository with open issues. Groups appear; `s` on one opens /issue's own popup.
+- /triage errors: `cd ~/ai-term && npm run dev`, then `/triage errors` in a folder with a `.log`.
+- /migrate: `cd ~/ai-term && npm run dev`, then `/migrate jest vitest` in a jest project. Read each step with ↑↓, then `a` starts it in a worktree.
+- A guide in use: `cd ~/ai-term && npm run dev`, then `/fix <an error>` on Claude Code. Its popup's "uses:" line names guides/fix.md.
+- Electron smoke (hidden): `cd ~/ai-term && npm run build && npm run app:build && npm run app:test`.
+
+### Gotchas (v1.2)
+- A new model add-on needs `guide: <its name>` in addon.md and addons/guides/<name>.md starting with the MIT header line. The tests count 37 guides, so bump those counts too.
+- The live world writes its own settings.json, so its folder isn't "new": it sets `setup: 'pending'` itself.
+- Tests that start a real daemon on a fresh temp folder now meet the setup popup first (tests/homepage-terminal.test.ts presses Esc).
+
+### Concepts introduced (v1.2)
+- **Clean-room writing** (addons/guides/): new text written only from the spec (each addon.md), never from the material it replaces, then checked by someone who reads both. It is how you replace text whose license you don't have.
+- **Process groups** (src/daemon/setup.ts runner): `detached: true` gives a child its own group, and `process.kill(-pid)` stops it and everything it started. Killing only the child can leave a grandchild holding the output pipes open.
+- **Marking state at the source** (`markFreshSetup`, src/daemon/settings.ts): only the daemon sees the folder before anything is written, so it records "new" once. Every client then reads that answer instead of guessing.
 
 ### Part B · /triage and /migrate: done
 - **Commits:** aeadffd (RED), 9bf959e (GREEN), cb14628 (lint note), e662e50 → d196296 (review findings, RED → fix), the architecture note, and the budget-ledger test fix (below).
