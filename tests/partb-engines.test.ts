@@ -7,9 +7,12 @@ import { promisify } from 'node:util';
 import pty from 'node-pty';
 import { EXTRA_ENGINES, EXTRA_ENGINE_FACTS, isExtraEngine } from '../src/shared/cli-engines.js';
 import { buildExtraArgs, buildExtraEnv, CURSOR_AUTH_VARS, GEMINI_AUTH_VARS, COPILOT_AUTH_VARS } from '../src/daemon/env.js';
-import { checkExtraEngine } from '../src/daemon/engines.js';
+import { checkExtraEngine, geminiSandboxRunner } from '../src/daemon/engines.js';
+import { KeyStore } from '../src/daemon/keys.js';
+import { commandRegistry, type CommandContext } from '../src/client/tui/commands.js';
+import { badge } from '../src/client/tui/layout.js';
 import { isAgentEngine, isEffortForEngine, isPermissionForEngine, validateRequest } from '../src/shared/validate.js';
-import { engineLabel, engineTitle, keyEngine, modelChoices } from '../src/shared/models.js';
+import { engineLabel, engineTitle, modelChoices } from '../src/shared/models.js';
 import { getPaths, preparePaths } from '../src/shared/paths.js';
 import { Logger } from '../src/daemon/log.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
@@ -32,10 +35,6 @@ describe('what each CLI is', () => {
     for (const engine of EXTRA_ENGINES) { expect(isPermissionForEngine(engine, 'ask')).toBe(true); expect(isPermissionForEngine(engine, 'auto')).toBe(false); expect(isEffortForEngine(engine, 'high')).toBe(false); expect(isEffortForEngine(engine, null)).toBe(true); }
     expect(isPermissionForEngine('gemini', 'dontAsk')).toBe(true); expect(isPermissionForEngine('cursor', 'dontAsk')).toBe(false); expect(isPermissionForEngine('copilot', 'dontAsk')).toBe(false);
     expect(EXTRA_ENGINE_FACTS.cursor.dontAskNote).toMatch(/don't ask: off/); expect(EXTRA_ENGINE_FACTS.copilot.dontAskNote).toMatch(/don't ask: off/); expect(EXTRA_ENGINE_FACTS.gemini.dontAskNote).toBeNull();
-  });
-
-  it('keys never run on these CLIs: a key always starts AI Term\'s agent (D47)', () => {
-    for (const provider of ['anthropic', 'openai', 'foundry', 'gemini'] as const) expect(['ai-term', 'claude-code', 'codex']).toContain(keyEngine(provider, 'cli'));
   });
 
   it('each CLI shows in /model with its default model, on your own login', () => {
@@ -120,17 +119,20 @@ describe('in the daemon', () => {
     cleanups.push(() => rm(root, { recursive: true, force: true }));
     await writeFile(join(paths.root, 'settings.json'), JSON.stringify({ theme: 'slate', ...settings }), { mode: 0o600 });
     const bin = join(root, 'bin'); await mkdir(bin);
-    for (const name of ['gemini', 'copilot', 'cursor-agent']) { await writeFile(join(bin, name), '#!/bin/sh\necho "1.2.3"\n'); await chmod(join(bin, name), 0o755); }
+    // docker: Gemini CLI's Don't ask needs a sandbox runner off macOS (Part B review); a stub keeps the test the same anywhere.
+    for (const name of ['gemini', 'copilot', 'cursor-agent', 'docker']) { await writeFile(join(bin, name), '#!/bin/sh\necho "1.2.3"\n'); await chmod(join(bin, name), 0o755); }
     const repo = join(root, 'repo'); await mkdir(repo);
     await run('/usr/bin/git', ['init', '-q', '-b', 'main', '--', repo]); await writeFile(join(repo, 'a.txt'), 'a\n');
     await run('/usr/bin/git', ['add', '--', '.'], { cwd: repo }); await run('/usr/bin/git', ['commit', '-qm', 'initial', '--'], { cwd: repo });
     const oldPath = process.env.PATH; process.env.PATH = `${bin}:${oldPath ?? ''}`; cleanups.push(async () => { process.env.PATH = oldPath; });
     for (const name of ['GEMINI_API_KEY', 'GH_TOKEN', 'CURSOR_API_KEY']) { process.env[name] = 'AITERMCANARY-partB-env'; cleanups.push(async () => { delete process.env[name]; }); }
-    const manager = new SessionManager(paths, new Logger(paths.log)); await manager.load();
+    const vault = new Map<string, string>();
+    const keys = new KeyStore(paths.root, { vault: { read: async a => vault.get(a) ?? null, write: async (a, s) => { vault.set(a, s); }, remove: async a => { vault.delete(a); } } });
+    const manager = new SessionManager(paths, new Logger(paths.log), undefined, undefined, undefined, keys, undefined, '/opt/ai-term/dist/cli/index.js'); await manager.load();
     cleanups.push(() => manager.shutdown());
     const spawned: { file: string; args: string[]; env: Record<string, string> }[] = [], real = pty.spawn;
     vi.spyOn(pty, 'spawn').mockImplementation((file, args, options) => { spawned.push({ file, args: Array.isArray(args) ? [...args] : [], env: { ...(options?.env as Record<string, string>) } }); return real('/bin/sh', ['-c', 'printf ready; read done'], { ...options, env: { PATH: '/usr/bin:/bin' } }); });
-    return { root, paths, manager, repo, bin, spawned };
+    return { root, paths, manager, repo, bin, spawned, keys };
   }
 
   it('starts each CLI in its own worktree, Ask by default, with its credential variables gone and status from output', async () => {
@@ -234,5 +236,117 @@ describe('what AI Term won\'t do for them', () => {
     const { sendFailure } = await import('../src/client/tui/send-command.js');
     expect(AGENT_COMMAND_ERRORS).toContain('This CLI reports no status; open it (⏎) and type there');
     expect(sendFailure('Gemini CLI', 'This CLI reports no status; open it (⏎) and type there')).toBe("Gemini CLI reports no status, so /send can't tell what it shows · open it (⏎) and type there");
+  });
+});
+
+describe('Part B review findings', () => {
+  const cleanups: (() => Promise<void>)[] = [];
+  afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+  async function folder() { const dir = await realpath(await mkdtemp(join(tmpdir(), 'ai-partb-r-'))); cleanups.push(() => rm(dir, { recursive: true, force: true })); return dir; }
+
+  it('security MEDIUM: Gemini CLI never inherits the variables that turn its sandbox off or swap its profile', () => {
+    const env = buildExtraEnv('gemini', { PATH: '/usr/bin', HOME: '/home/u', SANDBOX: 'sandbox-exec', GEMINI_SANDBOX: 'false', SEATBELT_PROFILE: 'mine' });
+    for (const name of ['SANDBOX', 'GEMINI_SANDBOX', 'SEATBELT_PROFILE']) { expect(env[name], name).toBeUndefined(); expect(GEMINI_AUTH_VARS, name).toContain(name); }
+  });
+
+  it('security MEDIUM: Gemini CLI\'s Don\'t ask needs its sandbox runner (sandbox-exec on macOS, Docker or Podman elsewhere)', async () => {
+    const empty = await folder(), withPodman = await folder(), withSeatbelt = await folder();
+    for (const [dir, name] of [[withPodman, 'podman'], [withSeatbelt, 'sandbox-exec']] as const) { await writeFile(join(dir, name), '#!/bin/sh\n'); await chmod(join(dir, name), 0o755); }
+    expect(await geminiSandboxRunner(empty, 'linux')).toBeNull();
+    expect(await geminiSandboxRunner(withPodman, 'linux')).toBe(join(withPodman, 'podman'));
+    expect(await geminiSandboxRunner(withSeatbelt, 'linux')).toBeNull();
+    expect(await geminiSandboxRunner(withSeatbelt, 'darwin')).toBe(join(withSeatbelt, 'sandbox-exec'));
+    expect(await geminiSandboxRunner(withPodman, 'darwin')).toBeNull();
+  });
+
+  it('security LOW: a one-word first message for Cursor could run one of its commands (logout, update), so it is refused', () => {
+    for (const word of ['logout', 'update', 'status', 'mcp', 'hello', 'install-shell-integration'])
+      expect(() => buildExtraArgs({ engine: 'cursor', model: null, permission: 'ask', firstMessage: word }), word).toThrow("Cursor would read a one-word first message as a command · add a word, or type it inside Cursor");
+    expect(buildExtraArgs({ engine: 'cursor', model: null, permission: 'ask', firstMessage: 'fix the tests' })).toEqual(['fix the tests']);
+    expect(buildExtraArgs({ engine: 'cursor', model: null, permission: 'ask', firstMessage: 'README.md?' })).toEqual(['README.md?']);
+    // The other two take the message as --flag=<text>, which no word can turn into a command.
+    expect(buildExtraArgs({ engine: 'copilot', model: null, permission: 'ask', firstMessage: 'logout' })).toEqual(['--interactive=logout']);
+  });
+
+  it('security LOW: a named Copilot account gets its own gh folder, so a new profile never falls back to your gh login', () => {
+    const env = buildExtraEnv('copilot', { PATH: '/usr/bin', HOME: '/home/u', GH_CONFIG_DIR: '/home/u/.config/gh' }, { profileDir: '/home/u/.ai-term/profiles/gh' });
+    expect(env.COPILOT_HOME).toBe('/home/u/.ai-term/profiles/gh');
+    expect(env.GH_CONFIG_DIR).toBe(join('/home/u/.ai-term/profiles/gh', 'gh'));
+    // Your own account keeps your gh as it is.
+    expect(buildExtraEnv('copilot', { PATH: '/usr/bin', HOME: '/home/u', GH_CONFIG_DIR: '/home/u/.config/gh' }).GH_CONFIG_DIR).toBe('/home/u/.config/gh');
+  });
+
+  it('code MEDIUM: /model names the engine picked, not claude code', () => {
+    const model = commandRegistry.find(command => command.name === '/model'); if (!model) throw new Error('no /model');
+    const context = (engine: CommandContext['engine'], m: string | null): CommandContext => ({ engine, model: m, cwd: '/tmp', theme: 'slate' });
+    expect(model.current(context('gemini', 'pro'))).toBe('pro · gemini cli');
+    expect(model.current(context('cursor', null))).toBe('CLI default · cursor');
+    expect(model.current(context('codex', null))).toBe('CLI default · codex');
+  });
+
+  it('code LOW: each CLI has its own card badge, not AI Term\'s AT or a model family it may not be', () => {
+    const session = (engine: SessionInfo['engine'], model: string | null) => ({ engine, model }) as SessionInfo;
+    expect(badge(session('cursor', null))).toBe('CU'); expect(badge(session('cursor', 'gpt-5'))).toBe('CU');
+    expect(badge(session('gemini', 'pro'))).toBe('GE'); expect(badge(session('copilot', null))).toBe('CP');
+    expect(badge(session('ai-term', 'kimi-k2'))).toBe('KI'); expect(badge(session('ai-term', null))).toBe('AT');
+  });
+});
+
+describe('Part B review findings in the daemon', () => {
+  const cleanups: (() => Promise<void>)[] = [];
+  afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
+  async function setup(settings: Record<string, unknown> = {}) {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-partb-d-'))), paths = getPaths(join(root, 'home')); await preparePaths(paths);
+    cleanups.push(() => rm(root, { recursive: true, force: true }));
+    await writeFile(join(paths.root, 'settings.json'), JSON.stringify({ theme: 'slate', worktrees: 'off', ...settings }), { mode: 0o600 });
+    const bin = join(root, 'bin'); await mkdir(bin);
+    for (const name of ['gemini', 'copilot', 'cursor-agent', 'docker']) { await writeFile(join(bin, name), '#!/bin/sh\necho "1.2.3"\n'); await chmod(join(bin, name), 0o755); }
+    const work = join(root, 'work'); await mkdir(work);
+    const oldPath = process.env.PATH; process.env.PATH = `${bin}:${oldPath ?? ''}`; cleanups.push(async () => { process.env.PATH = oldPath; });
+    const vault = new Map<string, string>(), log = new Logger(paths.log);
+    const keys = new KeyStore(paths.root, { vault: { read: async a => vault.get(a) ?? null, write: async (a, s) => { vault.set(a, s); }, remove: async a => { vault.delete(a); } } });
+    const make = async () => { const manager = new SessionManager(paths, log, undefined, undefined, undefined, keys, undefined, '/opt/ai-term/dist/cli/index.js'); await manager.load(); return manager; };
+    const manager = await make(); cleanups.push(() => manager.shutdown());
+    const spawned: { file: string; args: string[] }[] = [], real = pty.spawn;
+    vi.spyOn(pty, 'spawn').mockImplementation((file, args, options) => { spawned.push({ file, args: Array.isArray(args) ? [...args] : [] }); return real('/bin/sh', ['-c', 'printf ready; read done'], { ...options, env: { PATH: '/usr/bin:/bin' } }); });
+    return { paths, manager, make, work, spawned, keys };
+  }
+  const finished = async (manager: SessionManager, id: string) => { await manager.stop(id); await vi.waitFor(() => expect(['exited', 'error']).toContain(manager.get(id).status), { timeout: 10_000 }); };
+
+  it('code MEDIUM (tests): a key picked for one of these CLIs starts AI Term\'s agent, never the CLI', async () => {
+    const d = await setup();
+    const key = await d.keys.add({ provider: 'deepseek', label: 'ds', secret: 'AITERMCANARY-partB-key-0123456789', deployments: ['deepseek-chat'] });
+    await d.keys.saveTest(key.id, [{ model: 'deepseek-chat', status: 'ready' }]);
+    for (const engine of EXTRA_ENGINES) {
+      const session = await d.manager.create({ engine, model: 'deepseek-chat', auth: { kind: 'key', keyId: key.id }, cwd: d.work, permission: 'ask' });
+      expect(session).toMatchObject({ engine: 'ai-term', auth: { kind: 'key', provider: 'deepseek' } });
+      expect(d.spawned.at(-1)?.file).toBe(process.execPath);
+    }
+  });
+
+  it('code MEDIUM (tests): /retry starts the same CLI fresh, with no resume and no first message; a restart keeps the record', async () => {
+    const d = await setup();
+    const session = await d.manager.create({ engine: 'gemini', model: 'flash', auth: { kind: 'account' }, cwd: d.work, permission: 'ask', firstMessage: 'hello' });
+    await finished(d.manager, session.id);
+    const next = await d.manager.retry(session.id);
+    expect(next).toMatchObject({ engine: 'gemini', model: 'flash', permission: 'ask' });
+    expect(d.spawned.at(-1)?.args).toEqual(['--approval-mode=default', '--model=flash']);
+    await finished(d.manager, next.id);
+    const again = await d.make(); cleanups.push(() => again.shutdown());
+    expect(again.get(next.id)).toMatchObject({ engine: 'gemini', model: 'flash', auth: { kind: 'account' } });
+  });
+
+  it('code LOW: an add-on never starts on one of these CLIs', async () => {
+    const d = await setup();
+    await expect(d.manager.create({ engine: 'gemini', model: null, auth: { kind: 'account' }, cwd: d.work, permission: 'ask' }, undefined, undefined, { bundle: 'x', readOnly: true })).rejects.toThrow('Engine unavailable for this add-on');
+  });
+
+  it('code LOW: a handoff from one of these CLIs without a key says why, instead of "still working"', async () => {
+    const d = await setup({ handoff: true });
+    const session = await d.manager.create({ engine: 'copilot', model: null, auth: { kind: 'account' }, cwd: d.work, permission: 'ask' });
+    await vi.waitFor(() => expect(d.manager.get(session.id).status).toBe('running'), { timeout: 10_000 });
+    const why = 'This CLI reports no status, so it can\'t write the note · add an API key for the summary';
+    await expect(d.manager.handoffPlan(session.id, 'claude-code')).rejects.toThrow(why);
+    await expect(d.manager.handoff(session.id, 'claude-code')).rejects.toThrow(why);
   });
 });
