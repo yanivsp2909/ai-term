@@ -13,6 +13,7 @@ import { buildShellEnv } from '../src/daemon/env.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
 import { PtyHost } from '../src/daemon/pty-host.js';
 import { ReplyBudget, REPLY_BURST_BYTES, REPLY_BYTES_PER_SECOND } from '../src/daemon/reply-budget.js';
+import { AS_ROOT } from './platform.js';
 const roots: string[] = [];
 async function temp() { const root = await mkdtemp(join(tmpdir(), 'ai-term-core-')); roots.push(root); return root; }
 afterEach(async () => { for (const root of roots.splice(0))
@@ -92,6 +93,10 @@ describe('lock, logger and shell environment', () => {
         expect((await readFile(paths.pid, 'utf8')).trim()).toBe(String(process.pid));
         expect((await lstat(paths.pid)).mtimeMs).toBeGreaterThan(written.getTime());
         release();
+    });
+    it.skipIf(AS_ROOT)('recovers a lock naming PID 1, which belongs to root (skipped as root: PID 1 is then your own process)', async () => {
+        const paths = getPaths(await temp());
+        await preparePaths(paths);
         // PID 1 belongs to root: never this user's daemon, however old the lock.
         await writeFile(paths.pid, '1\n', { mode: 0o600 });
         (await acquireLock(paths.pid))();

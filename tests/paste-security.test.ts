@@ -10,7 +10,13 @@ import { DaemonServer } from '../src/daemon/server.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
 import { Logger } from '../src/daemon/log.js';
 import { getPaths, preparePaths } from '../src/shared/paths.js';
-import * as engines from '../src/daemon/engines.js';
+// B34: an ES module's import can't be replaced by spying on its namespace, so the real check ran and found whatever
+// claude or codex this machine has installed. The engine checks are mocked for the whole file instead.
+const stubEngine = vi.hoisted(() => ({ path: '' }));
+vi.mock('../src/daemon/engines.js', async importOriginal => {
+  const status = () => ({ installed: true, path: stubEngine.path, version: '1.0.0', loggedIn: true, authMethod: 'subscription' as const });
+  return { ...await importOriginal<typeof import('../src/daemon/engines.js')>(), checkEngine: async () => status(), enginesStatus: async () => ({ claudeCode: status(), codex: status() }) };
+});
 
 class TTY extends EventEmitter {
   isTTY = true; isRaw = false; columns = 130; rows = 45; output = '';
@@ -32,7 +38,7 @@ it.each(['claude-code', 'codex'] as const)('%s local stub receives pasted canary
   // The stub contains no canary and reports only a digest, so the test can check argv without echoing the prompt.
   const executable = join(root, 'stub-agent.cjs');
   await writeFile(executable, '#!/usr/bin/env node\nconst {createHash}=require("node:crypto");\nconst args=process.argv.slice(2);\nconst message=args[args.indexOf("--")+1];\nprocess.stdout.write("MESSAGE_DIGEST:"+createHash("sha256").update(message).digest("hex"));\nprocess.stdin.resume();\n', { mode: 0o700 });
-  const status = vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: executable, version: '1.0.0', loggedIn: true, authMethod: 'subscription' });
+  stubEngine.path = executable;
   const manager = new SessionManager(paths, new Logger(paths.log)), server = new DaemonServer(paths, manager, new Logger(paths.log));
   const canary = ['PASTE', 'CANARY', randomUUID()].join(':'), message = 'safe intro\r\n\t' + 'x'.repeat(4500) + '\n' + canary + ' "quoted" \\slash 界🙂';
   const events: unknown[] = [], responses: unknown[] = [], copied: string[] = [], logs: string[] = [], tty = new TTY();
@@ -59,11 +65,11 @@ it.each(['claude-code', 'codex'] as const)('%s local stub receives pasted canary
     expect(tty.output.includes(canary)).toBe(false); expect(logs).toEqual([]);
     expect(JSON.stringify([...responses, ...events]).includes(canary)).toBe(false);
     expect((await fileContents(root)).some(text => text.includes(canary))).toBe(false);
-  } finally { await home?.stop(); client?.close(); await server.close(); await manager.shutdown(); status.mockRestore(); await rm(root, { recursive: true, force: true }); }
+  } finally { await home?.stop(); client?.close(); await server.close(); await manager.shutdown(); await rm(root, { recursive: true, force: true }); }
 });
 it('a PTY failure containing first-message text cannot leak that text through the account-session log', async () => {
   const root = await mkdtemp('/tmp/ai-paste-failure-'), paths = getPaths(root); await preparePaths(paths);
-  const status = vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/stub/claude', version: '1.0.0', loggedIn: true, authMethod: 'subscription' });
+  stubEngine.path = '/stub/claude';
   const canary = ['PASTE', 'CANARY', randomUUID()].join(':'), spawn = vi.spyOn(pty, 'spawn').mockImplementation(() => { throw new Error('spawn argv: ' + canary); });
   const manager = new SessionManager(paths, new Logger(paths.log));
   try {
@@ -72,5 +78,5 @@ it('a PTY failure containing first-message text cannot leak that text through th
     expect(result.status).toBe('error'); expect(JSON.stringify(result).includes(canary)).toBe(false);
     expect((await fileContents(root)).some(text => text.includes(canary))).toBe(false);
     expect(await readFile(paths.log, 'utf8')).toContain('PTY spawn failed');
-  } finally { await manager.shutdown(); status.mockRestore(); spawn.mockRestore(); await rm(root, { recursive: true, force: true }); }
+  } finally { await manager.shutdown(); spawn.mockRestore(); await rm(root, { recursive: true, force: true }); }
 });

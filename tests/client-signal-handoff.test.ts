@@ -7,6 +7,13 @@ import { SessionManager } from '../src/daemon/session-manager.js';
 import { DaemonServer } from '../src/daemon/server.js';
 import { Logger } from '../src/daemon/log.js';
 
+// B34: the homepage opens /login when no engine is logged in and no key is saved, which depends on this machine's claude
+// and codex and lands at a moment of its own. The daemon here says both are logged in, so it never opens.
+vi.mock('../src/daemon/engines.js', async importOriginal => {
+  const status = { installed: true, path: '/bin/sh', version: '1.0.0', loggedIn: true, authMethod: 'subscription' as const };
+  return { ...await importOriginal<typeof import('../src/daemon/engines.js')>(), enginesStatus: async () => ({ claudeCode: status, codex: status }) };
+});
+
 // Leaving a session, attach drops its signal listeners and waits for the daemon's detach reply before the homepage
 // takes the signals back. With no listener at all, Node restores the default action and the signal kills the client.
 it.each([['SIGTERM', 143], ['SIGHUP', 129]] as const)('%s while the homepage waits for a detach reply quits with %i instead of dying', async (signal, code) => {

@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { openSync, closeSync, constants } from 'node:fs';
 import { resolve } from 'node:path';
@@ -8,6 +8,13 @@ import { SessionManager } from '../src/daemon/session-manager.js';
 import { DaemonServer } from '../src/daemon/server.js';
 import { Logger } from '../src/daemon/log.js';
 import { Connection } from '../src/client/connection.js';
+
+// B34: the homepage opens /login when no engine is logged in and no key is saved, which depends on this machine's claude
+// and codex and lands at a moment of its own. The daemon here says both are logged in, so it never opens.
+vi.mock('../src/daemon/engines.js', async importOriginal => {
+  const status = { installed: true, path: '/bin/sh', version: '1.0.0', loggedIn: true, authMethod: 'subscription' as const };
+  return { ...await importOriginal<typeof import('../src/daemon/engines.js')>(), enginesStatus: async () => ({ claudeCode: status, codex: status }) };
+});
 
 it.each(['SIGTERM','SIGHUP'] as const)('spawned client quits on %s from homepage and attach, leaving sessions running',async signal=>{
  const root=await mkdtemp('/tmp/ai-sig-'),paths=getPaths(root);await preparePaths(paths);
@@ -26,7 +33,8 @@ it.each(['SIGTERM','SIGHUP'] as const)('spawned client quits on %s from homepage
     // B10: a spawned client process; under full-suite load it can take over the default 1 s to draw.
     await expect.poll(()=>output,{timeout:10000}).toContain('AI Term'); if(output.includes('Connect a provider')){child.write('\x1b');await new Promise(r=>setTimeout(r,100));}
     // SESSION_READY can come from the homepage preview too; the daemon resizes to the client's 130x45 only once attached.
-    if(attached){child.write('\r');await expect.poll(()=>events).toContainEqual({kind:'session.previewResized',sessionId:session.id,cols:130,rows:45});}
+    // B34: the attach is a spawned client's too, so it gets the same 10 s.
+    if(attached){child.write('\r');await expect.poll(()=>events,{timeout:10000}).toContainEqual({kind:'session.previewResized',sessionId:session.id,cols:130,rows:45});}
     output='';child.kill(signal);expect(await exited).toBe(signal==='SIGTERM'?143:129);
     // node-pty can deliver the last bytes after the exit event.
     await expect.poll(()=>output).toContain('\x1b[?1049l');expect(output).toContain('\x1b[?2004l');

@@ -15,6 +15,7 @@ import { OWNER_FILE, sweepTemp } from '../src/daemon/temp-sweep.js';
 import type { AddonAsk } from '../src/shared/addons.js';
 import type { RequestBody } from '../src/client/connection.js';
 import type { SessionInfo, SuccessResponse } from '../src/shared/protocol.js';
+import { AS_ROOT } from './platform.js';
 
 // The backlog fixes' reviews (TypeScript and security, fresh context): each finding here failed before its fix.
 const exec = promisify(execFile), roots: string[] = [];
@@ -66,7 +67,7 @@ it('TS LOW and security LOW 6: the temporary copy itself stops with the run (git
   expect((await readdir(base)).filter(name => name.startsWith('ai-term-clone-') && !before.has(name))).toEqual([]);
 });
 
-it('TS LOW and security LOW 1: the sweep skips an impossible pid quietly, and never changes a folder it is locked out of', async () => {
+it.skipIf(AS_ROOT)('TS LOW and security LOW 1: the sweep skips an impossible pid quietly, and never changes a folder it is locked out of (skipped as root: file modes do not stop root)', async () => {
   const dir = await temp(), logs: string[] = [];
   const huge = join(dir, 'ai-term-test-aaaaaa'); await mkdir(huge); await writeFile(join(huge, OWNER_FILE), 'ai-term 9999999999\n');
   // Follow-up review: a locked folder's mark can't be read, so it may not be AI Term's at all: it is left exactly as it is.

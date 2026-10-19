@@ -181,7 +181,8 @@ it('cards, results and the /test popup say it plainly; l switches 127.0.0.1 for 
   expect(text({ ...plan, sandbox: false })).not.toContain('l allows');
   const toggled = vi.fn();
   const ask = new TestAsk(plan, () => {}, () => {}, () => {}, toggled);
-  ask.key('l'); expect(toggled).toHaveBeenCalledWith(true);
+  // On Linux 127.0.0.1 is always the run's own, so l has nothing to switch there.
+  ask.key('l'); if (process.platform === 'linux') expect(toggled).not.toHaveBeenCalled(); else expect(toggled).toHaveBeenCalledWith(true);
   const id = '6f1c4f53-3a1e-4bb0-9a49-3f3f3f3f3f3f';
   await expect(validateRequest({ id, kind: 'project.setTestLoopback', cwd: '/tmp', allowed: true })).resolves.toMatchObject({ allowed: true });
   await expect(validateRequest({ id, kind: 'project.setTestLoopback', cwd: '/tmp', allowed: 'yes' })).rejects.toThrow();

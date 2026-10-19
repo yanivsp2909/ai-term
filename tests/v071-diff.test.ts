@@ -17,6 +17,7 @@ import { cardText } from '../src/client/tui/agent-card.js';
 import { validateRequest } from '../src/shared/validate.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
 import { useFakeEngines } from './fixtures/fake-engines.js';
+import { AS_ROOT } from './platform.js';
 useFakeEngines();
 
 // v0.7.1: a read-only diff of an agent's worktree against its base (committed + uncommitted + untracked), from git's own
@@ -162,7 +163,7 @@ it('HIGH (TS review): a file that became a symlink keeps every file\'s diff with
   void base;
 });
 
-it('MEDIUM (TS review): an unreadable untracked file or an unprintable name doesn\'t break the diff', async () => {
+it.skipIf(AS_ROOT)('MEDIUM (TS review): an unreadable untracked file or an unprintable name doesn\'t break the diff (skipped as root: file modes do not stop root)', async () => {
   const { dir, base } = await repo();
   await writeFile(join(dir, 'locked.txt'), 'secret\n', { mode: 0o000 });
   await writeFile(join(dir, '​'), 'zero width name\n');

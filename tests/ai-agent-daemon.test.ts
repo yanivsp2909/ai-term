@@ -15,6 +15,7 @@ import { DaemonServer } from '../src/daemon/server.js';
 import { Connection } from '../src/client/connection.js';
 import type { PriceSnapshot } from '../src/daemon/usage-prices.js';
 import prices from '../data/usage-prices.json' with { type: 'json' };
+import { NO_LINUX_SANDBOX } from './platform.js';
 
 // The daemon side of AI Term's agent: D47 routing, the spawn (argv and env from env.ts, key bound in the Keychain), and
 // status and usage arriving through the shared receiver exactly as the agent's reporter sends them.
@@ -60,8 +61,13 @@ it('a Foundry key starts AI Term\'s agent: Ask by default, tested deployments on
   expect(run.args.join(' ')).not.toContain(SECRET);
   expect(await readFile(d.paths.state, 'utf8')).not.toContain(SECRET); expect(JSON.stringify(d.manager.list())).not.toContain(SECRET);
   expect(await readFile(d.paths.log, 'utf8').catch(() => '')).not.toContain(SECRET);
-  const dontAsk = await d.manager.create({ engine: 'ai-term', model: 'gpt-6-luna', auth: { kind: 'key', keyId: d.foundry.id }, cwd: d.root, permission: 'dontAsk' });
-  expect(dontAsk.permission).toBe('dontAsk'); expect(d.spawned.at(-1)?.args).toContain('--dont-ask'); expect(d.spawned.at(-1)?.args).not.toContain('--ask');
+  const dontAskRequest = { engine: 'ai-term' as const, model: 'gpt-6-luna', auth: { kind: 'key' as const, keyId: d.foundry.id }, cwd: d.root, permission: 'dontAsk' as const };
+  // B34: Linux runs Don't ask only inside bubblewrap; without a working one the start is refused, never run unsandboxed.
+  if (NO_LINUX_SANDBOX) await expect(d.manager.create(dontAskRequest)).rejects.toThrow(/^don't ask needs (bubblewrap|a sandbox)/);
+  else {
+    const dontAsk = await d.manager.create(dontAskRequest);
+    expect(dontAsk.permission).toBe('dontAsk'); expect(d.spawned.at(-1)?.args).toContain('--dont-ask'); expect(d.spawned.at(-1)?.args).not.toContain('--ask');
+  }
   await expect(d.manager.create({ engine: 'ai-term', model: 'broken', auth: { kind: 'key', keyId: d.foundry.id }, cwd: d.root, permission: 'ask' })).rejects.toThrow('must pass its test first');
   await expect(d.manager.resume(session.id)).rejects.toThrow();
 });

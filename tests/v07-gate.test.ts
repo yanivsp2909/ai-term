@@ -11,6 +11,7 @@ import type { SessionInfo } from '../src/shared/protocol.js';
 import { diffForReview } from '../src/shared/review.js';
 import type { AgentDiff, DiffFile } from '../src/shared/diff.js';
 import { useFakeEngines } from './fixtures/fake-engines.js';
+import { AS_ROOT } from './platform.js';
 useFakeEngines();
 
 // v0.7 release gate (Part B): fresh reviewers that hadn't seen the code (security-reviewer ×3, security-bounty-hunter,
@@ -212,7 +213,7 @@ it('MEDIUM (gate, silent failures): after a checkpoint failed, /undo says so ins
   await expect(m.undoPlan(agent.id, 'undo')).rejects.toThrow(message);
 });
 
-it('MEDIUM (gate, silent failures): a file the diff can\'t read says why', async () => {
+it.skipIf(AS_ROOT)('MEDIUM (gate, silent failures): a file the diff can\'t read says why (skipped as root: file modes do not stop root)', async () => {
   const { worktreeDiff } = await import('../src/daemon/diff.js');
   const { repo, tree } = await repoSetup();
   await writeFile(join(tree, 'locked.txt'), 'secret-ish\n'); await run('/bin/chmod', ['000', join(tree, 'locked.txt')]);

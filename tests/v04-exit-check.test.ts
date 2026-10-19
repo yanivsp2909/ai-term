@@ -20,6 +20,7 @@ import { loadInstructions } from '../src/agent/instructions.js';
 import { redactor } from '../src/agent/display.js';
 import { killAllBash } from '../src/agent/bash.js';
 import { createTheme } from '../src/client/tui/theme.js';
+import { groupRuns } from './platform.js';
 
 // The v0.4 exit check, headless: the daemon's real session manager, usage receiver, D48 reader and MCP service (with a
 // real stdio MCP server), and AI Term's agent in-process with a stub model, driven by typed keys. No network, no real
@@ -166,7 +167,7 @@ it('Ctrl+K stops a running bash at once: its whole process group is gone and not
   const pid = Number(await vi.waitFor(async () => { const text = await readFile(join(w.repo, 'bash.pid'), 'utf8'); expect(text).toMatch(/^\d+\n$/); return text; }));
   const started = Date.now();
   a.app.input('\x0b');
-  await vi.waitFor(() => expect(() => process.kill(-pid, 0)).toThrow());
+  await vi.waitFor(() => expect(groupRuns(pid)).toBe(false));
   expect(Date.now() - started).toBeLessThan(2000);
   await vi.waitFor(() => expect(a.app.running).toBe(false));
   expect(a.output).toContain('killed: the request and 1 running command');

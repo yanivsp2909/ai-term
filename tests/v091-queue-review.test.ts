@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { QueueService } from '../src/daemon/queue.js';
 import { limitCaps, overLimit, untilWithin, type QueueItem } from '../src/shared/queue.js';
 import { QueueForm } from '../src/client/tui/queue-panel.js';
+import { AS_ROOT } from './platform.js';
 
 // Part E review (security-reviewer, typescript-reviewer; fresh context): each failed before its fix.
 const roots: string[] = [];
@@ -58,7 +59,7 @@ it('HIGH (security review): a key CLI that AI Term runs on its own agent keeps i
   expect(overLimit({ usd: 2 }, { tokens: 10, costUsd: null, unknownPrice: true })).toBe(true);
 });
 
-it('MEDIUM (both): an item removed while another starts is not started; a failed save says so; one bad item keeps the file aside and the rest load', async () => {
+it.skipIf(AS_ROOT)('MEDIUM (both): an item removed while another starts is not started; a failed save says so; one bad item keeps the file aside and the rest load (skipped as root: file modes do not stop root)', async () => {
   const root = await temp();
   let release: () => void = () => {};
   const gate = new Promise<void>(resolve => { release = resolve; });

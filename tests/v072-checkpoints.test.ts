@@ -17,6 +17,7 @@ import type { RequestBody } from '../src/client/connection.js';
 import type { SessionInfo, SuccessResponse } from '../src/shared/protocol.js';
 import type { UndoPlan } from '../src/shared/checkpoints.js';
 import { useFakeEngines } from './fixtures/fake-engines.js';
+import { AS_ROOT } from './platform.js';
 useFakeEngines();
 
 // v0.7.2 (D55, on): after every agent turn the worktree is snapshotted into refs/ai-term/checkpoints/<slug>/<n> through
@@ -229,7 +230,7 @@ it('MEDIUM (security review): a worktree whose git files point at another reposi
 });
 
 // ---- Part D fix review ----
-it('MEDIUM (fix review): a restore that changes nothing leaves the redo stack and cursor as they were', async () => {
+it.skipIf(AS_ROOT)('MEDIUM (fix review): a restore that changes nothing leaves the redo stack and cursor as they were (skipped as root: file modes do not stop root)', async () => {
   const { tree, ctx } = await fixture();
   await writeFile(join(tree, 'f.txt'), '1\n'); await snapshot(tree, 'fixer', ctx);
   await mkdir(join(tree, 'ro')); await writeFile(join(tree, 'ro', 'x.txt'), 'x\n'); await snapshot(tree, 'fixer', ctx);

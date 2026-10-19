@@ -7,6 +7,7 @@ import { getPaths, preparePaths, type Paths } from '../src/shared/paths.js';
 import { Logger } from '../src/daemon/log.js';
 import { SessionManager } from '../src/daemon/session-manager.js';
 import { moveAside } from '../src/daemon/store.js';
+import { AS_ROOT } from './platform.js';
 
 const roots: string[] = [], managers: SessionManager[] = [];
 afterEach(async () => { for (const m of managers.splice(0)) await m.shutdown(); for (const root of roots.splice(0)) { await chmod(root, 0o700); await rm(root, { recursive: true, force: true }); } });
@@ -39,7 +40,7 @@ it.each([
   expect(log).not.toContain('canary-title-B24'); expect(log).not.toMatch(/SyntaxError|JSON|position/);
 });
 
-it('an unreadable file is moved aside, not overwritten, and logged as the read stage', async () => {
+it.skipIf(AS_ROOT)('an unreadable file is moved aside, not overwritten, and logged as the read stage (skipped as root: file modes do not stop root)', async () => {
   const paths = await home(), text = JSON.stringify({ sessions: [record] });
   await writeFile(paths.state, text, { mode: 0o600 }); await chmod(paths.state, 0o000);
   const m = await load(paths);
@@ -59,7 +60,7 @@ it('a directory in place of state.json is moved aside as well', async () => {
   expect((await lstat(join(paths.root, (await aside(paths))[0] ?? ''))).isDirectory()).toBe(true);
 });
 
-it('when it cannot be moved aside, the daemon stops with a fixed reason and leaves the file exactly as it was', async () => {
+it.skipIf(AS_ROOT)('when it cannot be moved aside, the daemon stops with a fixed reason and leaves the file exactly as it was (skipped as root: file modes do not stop root)', async () => {
   const paths = await home(), text = '{"sessions":[';
   await writeFile(paths.state, text, { mode: 0o600 });
   await chmod(paths.root, 0o500);

@@ -1,5 +1,5 @@
 import { expect,it } from 'vitest';
-import { mkdtemp,lstat,rm } from 'node:fs/promises';
+import { mkdtemp,lstat,rm,writeFile } from 'node:fs/promises';
 import { join,resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -12,6 +12,9 @@ import { RESET_MODES } from '../src/client/terminal-modes.js';
 it.each(['off','on'] as const)('bar %s: real terminal query replies and startup noise stay attached; Ctrl+E detaches from live vim and reattach preserves text',async(bar)=>{
  const root=await mkdtemp(join(tmpdir(),'ai-term-terminal-')),paths=getPaths(root),entry=resolve('src/cli/index.ts');
  const env={PATH:'/usr/bin:/bin',HOME:root,SHELL:'/bin/sh',AI_TERM_HOME:root,TERM:'xterm-256color',TERM_PROGRAM:'Apple_Terminal',COLORTERM:'truecolor'};
+ // B34: the shell starts as a login shell, whose /etc/profile picks `# ` for root and `$ ` for anyone else; the home's
+ // own .profile runs after it and sets one prompt for both.
+ await writeFile(join(root,'.profile'),"PS1='ai-term-prompt> '\n");
  const daemon=spawn(process.execPath,['--import','tsx',entry,'daemon'],{env,stdio:'ignore'}),exited=new Promise<void>(r=>daemon.once('exit',()=>r()));
  let client:Connection|undefined;const terminals:headless.Terminal[]=[],children:{child:pty.IPty;exit:Promise<number>;finished:()=>boolean}[]=[];
  const open=(id:string)=>{
@@ -32,7 +35,7 @@ it.each(['off','on'] as const)('bar %s: real terminal query replies and startup 
   first.child.resize(100,35);first.child.write('\x05');expect(await first.exit).toBe(0);expect(first.output()).toContain('back in your shell (home key)');expect(first.output()).toContain(RESET_MODES+'\x1b[?1049l');expect(first.output()).toContain('\x1b[?2031l');
   const again=open(id);await expect.poll(again.output, { timeout: 10_000 }).toContain('B1_VIM_TEXT');const quitting=again.output().length;again.child.write('\x1b:qa!\r');
   // Typed before vim has quit, exit would go to vim; the shell's prompt drawn again shows it is back.
-  await expect.poll(()=>again.output().slice(quitting), { timeout: 10_000 }).toContain('$');again.child.write('exit\r');expect(await again.exit).toBe(0);expect(again.output()).toContain('[session exited with code 0]');expect(again.output()).toContain('back in your shell (session exited)');
+  await expect.poll(()=>again.output().slice(quitting), { timeout: 10_000 }).toContain('ai-term-prompt>');again.child.write('exit\r');expect(await again.exit).toBe(0);expect(again.output()).toContain('[session exited with code 0]');expect(again.output()).toContain('back in your shell (session exited)');
  }finally{
   for(const child of children){if(!child.finished())child.child.kill();await child.exit;}
   client?.close();if(daemon.exitCode===null&&daemon.signalCode===null)daemon.kill('SIGTERM');await exited;for(const terminal of terminals)terminal.dispose();await rm(root,{recursive:true,force:true});

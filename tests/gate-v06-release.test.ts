@@ -24,6 +24,7 @@ import { accountAuthLabel } from '../src/client/tui/accounts.js';
 import type { PriceSnapshot } from '../src/daemon/usage-prices.js';
 import type { Preset } from '../src/shared/presets.js';
 import { stubFacts } from './fixtures/agent-facts.js';
+import { AS_ROOT } from './platform.js';
 
 // v0.6 release gate (Part B, 2026-10-15): five fresh reviewers (security ×2, bounty hunter, silent failures, code review).
 // Each real finding is a failing test here before its fix.
@@ -156,7 +157,7 @@ it('LOW (budgets review): the grant goes out only once the hold is on disk', asy
   expect(JSON.parse(await readFile(l.file, 'utf8'))).toMatchObject({ reservations: [{ id: 'grant' in answer ? answer.grant.id : '', amountUsd: 0.2 }] });
 });
 
-it('MEDIUM (silent failures): a hold that can\'t be saved warns on the homepage until a save works again', async () => {
+it.skipIf(AS_ROOT)('MEDIUM (silent failures): a hold that can\'t be saved warns on the homepage until a save works again (skipped as root: file modes do not stop root)', async () => {
   const l = await ledger(), session = randomUUID();
   await chmod(l.root, 0o500); cleanups.push(() => chmod(l.root, 0o700));
   l.ledger.reserve(request(session, 0.2), daily(1), none); await l.ledger.flushed();

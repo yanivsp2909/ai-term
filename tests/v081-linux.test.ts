@@ -19,6 +19,7 @@ import { runTests } from '../src/daemon/test-run.js';
 import { buildBashEnv, buildTestEnv } from '../src/daemon/env.js';
 import { validateSuccess as validateResponse } from '../src/shared/validate.js';
 import { appBuilderConfig } from '../scripts/app-config.mjs';
+import { AS_ROOT } from './platform.js';
 
 // v0.8.1 Linux. The pure parts run everywhere; the bubblewrap ones only on Linux with bwrap installed (GitHub Actions'
 // ubuntu-latest in the v0.8 gate), because this Mac has neither.
@@ -198,7 +199,7 @@ import { parsePsTimes, psCpuShares } from '../src/daemon/sysstats.js';
 import { shortcutKey } from '../app/main/menus.js';
 import { testLines } from '../src/client/tui/test-ask.js';
 
-it('HIGH (TS review): in Ask, a bubblewrap that can\'t start, or a home it can\'t read, runs the command plainly after your yes; Don\'t ask refuses', async () => {
+it.skipIf(AS_ROOT)('HIGH (TS review): in Ask, a bubblewrap that can\'t start, or a home it can\'t read, runs the command plainly after your yes; Don\'t ask refuses (skipped as root: file modes do not stop root)', async () => {
   const dir = await temp(), home = join(dir, 'home'), cwd = join(dir, 'w');
   await mkdir(join(home, '.config'), { recursive: true }); await mkdir(cwd);
   const env = buildBashEnv(process.env);

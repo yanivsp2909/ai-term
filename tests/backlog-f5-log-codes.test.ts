@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { QueueService } from '../src/daemon/queue.js';
 import { DevServers } from '../src/daemon/dev-servers.js';
 import type { QueueRequest } from '../src/shared/queue.js';
+import { AS_ROOT } from './platform.js';
 
 // Backlog F5 (v0.9+v1.0 gate LOW): queue and dev-server failures are logged with what kind of error it was, its class and
 // code, never its message (which may name a path), so the log can say why.
@@ -15,7 +16,7 @@ async function temp(): Promise<string> { const dir = await realpath(await mkdtem
 const coded = (code: string) => Object.assign(new Error(`failed at /Users/someone/${code}`), { code });
 const request = (): QueueRequest => ({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: tmpdir(), permission: 'ask', effort: null });
 
-it("the queue logs the kind of error: settings it can't read, an agent that can't start, a save that fails", async () => {
+it.skipIf(AS_ROOT)("the queue logs the kind of error: settings it can't read, an agent that can't start, a save that fails (skipped as root: file modes do not stop root)", async () => {
   const root = await temp(), errors: string[] = [], listeners: ((s: { title: string }, p: { status: string }, n: { status: string }) => void)[] = [];
   let settings: () => Promise<boolean> = async () => true;
   const manager = { create: vi.fn(async () => { throw coded('ENOENT'); }), on: (event: string, listener: never) => { if (event === 'statusChanged') listeners.push(listener); }, list: () => [], setQueueLimit: vi.fn(), stop: vi.fn() };

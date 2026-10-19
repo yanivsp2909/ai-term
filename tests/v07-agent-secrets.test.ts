@@ -14,6 +14,7 @@ import { reporterEnv } from '../src/agent/report.js';
 import { takeSecrets } from '../src/agent/main.js';
 import { runBash } from '../src/agent/bash.js';
 import { buildBashEnv } from '../src/daemon/env.js';
+import { NO_LINUX_SANDBOX } from './platform.js';
 
 // Yaniv, during the v0.7 gate: "in Don't ask mode, a hijacked agent could set its own model's price to $0 and get past
 // your budgets". A command the agent runs could read the agent's status token (and its API key) from the process's
@@ -25,7 +26,7 @@ const MAC = process.platform === 'darwin', cleanups: (() => Promise<void>)[] = [
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const SECRET = 'AITERMCANARY-secrets-0123456789abcdef';
 
-it('the key and the tokens never sit in the agent\'s environment: a 0600 file the agent reads and deletes carries them', async () => {
+it.skipIf(NO_LINUX_SANDBOX)('the key and the tokens never sit in the agent\'s environment: a 0600 file the agent reads and deletes carries them (skipped on Linux without a working bubblewrap: these run only sandboxed)', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-secrets-'))), paths = getPaths(root); await preparePaths(paths);
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   await writeFile(join(root, 'settings.json'), JSON.stringify({ theme: 'graphite', worktrees: 'off' }), { mode: 0o600 });

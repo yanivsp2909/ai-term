@@ -11,6 +11,7 @@ import { prepareWorktree, repoDirectory } from '../src/daemon/worktrees.js';
 import { branchNames, listWorktrees, repoTopLevel } from '../src/daemon/git.js';
 import { codexAuth } from '../src/cli/doctor.js';
 import { openFolder } from '../src/client/tui/open-folder.js';
+import { AS_ROOT } from './platform.js';
 vi.mock('../src/daemon/engines.js', () => ({ checkEngine: async () => ({ installed: true, path: process.execPath, loggedIn: true, authMethod: 'subscription' }) }));
 
 // v0.3 gate, silent-failure findings: each failure must be visible and must never weaken isolation or deletion.
@@ -27,7 +28,7 @@ async function fixture(files: Record<string, string> = { 'README': 'base' }) {
 }
 const manager = async (paths: ReturnType<typeof getPaths>) => { const m = new SessionManager(paths, new Logger(paths.log)); managers.push(m); await m.load(); return m; };
 
-it('M1: a worktree add that fails after git made the branch stops at once, tries to undo it, and logs what it left', async () => {
+it.skipIf(AS_ROOT)('M1: a worktree add that fails after git made the branch stops at once, tries to undo it, and logs what it left (skipped as root: file modes do not stop root)', async () => {
   const { repo, home } = await fixture();
   await chmod(join(repo, '.git'), 0o555); locked.push(join(repo, '.git'));
   const lines: string[] = [];
@@ -101,7 +102,7 @@ it('L2: a codex login check that never ran is "status unavailable", not "logged 
   expect(codexAuth(1, 'Not logged in')).toBe('exit 1; logged in no');
 });
 
-it('L3: a folder /open cannot read is "unavailable", not "gone"', async () => {
+it.skipIf(AS_ROOT)('L3: a folder /open cannot read is "unavailable", not "gone" (skipped as root: file modes do not stop root)', async () => {
   const { temp } = await fixture(), parent = join(temp, 'closed'), child = join(parent, 'inner');
   await mkdir(child, { recursive: true }); await chmod(parent, 0o000); locked.push(parent);
   await expect(openFolder(child, 'finder', async () => {})).rejects.toThrow('folder is unavailable');
