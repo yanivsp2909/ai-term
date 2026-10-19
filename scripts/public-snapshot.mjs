@@ -36,6 +36,7 @@ const LEFT_OUT = [
 ];
 // Shared add-on copies are kept only when their source license allows sharing.
 const PERMISSIVE = /^License: (MIT|Apache[ -]2\.0|BSD)\b/m;
+export function permissive(text) { return PERMISSIVE.test(text); }
 // A tree with any of these in it is refused: real names this repository's history once held. Fake ones in tests are
 // listed as allowed. Built from parts so this file doesn't trip its own check.
 // (The GitHub handle in SECURITY.md and the noreply author are public on purpose; the macOS user name is not.)
@@ -58,7 +59,7 @@ async function walk(dir, base = dir) {
   return out;
 }
 
-async function build(target, ref) {
+export async function build(target, ref) {
   const out = resolve(target);
   if (!(await gone(out)) && (await readdir(out)).length) throw new Error(`${out} is not empty; give a new folder`);
   const commit = (await git(['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`])).trim();
@@ -74,7 +75,7 @@ async function build(target, ref) {
   const shared = join(out, 'addons', '_shared'), leftCopies = [];
   for (const file of (await walk(shared)).sort()) {
     if (!file.endsWith('.md')) continue;
-    if (!PERMISSIVE.test(await readFile(join(shared, file), 'utf8'))) { leftCopies.push(file); await rm(join(shared, file)); }
+    if (!permissive(await readFile(join(shared, file), 'utf8'))) { leftCopies.push(file); await rm(join(shared, file)); }
   }
   for (const dir of await readdir(join(shared, 'skills'))) if (!(await readdir(join(shared, 'skills', dir))).length) await rm(join(shared, 'skills', dir), { recursive: true });
   await writeFile(join(shared, 'LEFT_OUT.txt'), leftCopies.join('\n') + '\n');
@@ -150,7 +151,7 @@ ${sections.join('\n\n')}
 `;
 }
 
-async function markers(out) {
+export async function markers(out) {
   const found = [];
   for (const file of await walk(out)) {
     let text;
@@ -167,13 +168,13 @@ async function markers(out) {
   return found;
 }
 
-async function commit(target) {
+export async function commit(target, base = process.env) {
   const out = resolve(target);
   if (!(await gone(join(out, '.git')))) throw new Error(`${out} already has a git repository`);
   const source = (await readFile(join(out, 'PUBLIC_SNAPSHOT.md'), 'utf8')).match(/commit `([0-9a-f]{40})`/)?.[1];
   if (!source) throw new Error('PUBLIC_SNAPSHOT.md names no source commit');
   // A private git config: no signing key, hooks or template of this machine reach the public commit.
-  const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: AUTHOR.name, GIT_AUTHOR_EMAIL: AUTHOR.email, GIT_COMMITTER_NAME: AUTHOR.name, GIT_COMMITTER_EMAIL: AUTHOR.email };
+  const env = { ...base, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: AUTHOR.name, GIT_AUTHOR_EMAIL: AUTHOR.email, GIT_COMMITTER_NAME: AUTHOR.name, GIT_COMMITTER_EMAIL: AUTHOR.email };
   const g = args => run('git', args, { cwd: out, env, maxBuffer: MAX });
   await g(['init', '-q', '-b', 'main', '--template=', '--', out]);
   await g(['add', '-A', '--', '.']);
@@ -182,7 +183,7 @@ async function commit(target) {
 }
 
 const [first, second, third] = process.argv.slice(2);
-try {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) try {
   if (third) throw new Error('Too many arguments');
   if (first === '--commit' && second) await commit(second);
   else if (first && !first.startsWith('-')) await build(first, second ?? 'main');

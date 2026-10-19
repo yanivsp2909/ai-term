@@ -51,3 +51,10 @@ it('with every copy present nothing is said, and a link in a copy\'s place is st
   await rm(agent); await symlink(join(d.definitions, 'security', 'addon.md'), agent);
   await expect(d.service.plan('security', 'src', d.repo, CODEX)).rejects.toThrow();
 });
+
+it('security LOW (Part C review): a guide folder that is a dangling link is refused, not taken as missing', async () => {
+  const d = await setup();
+  const skill = join(d.definitions, '_shared', 'skills', 'security-bounty-hunter');
+  await rm(skill, { recursive: true, force: true }); await symlink(join(d.definitions, 'nowhere'), skill);
+  await expect(d.service.plan('security', 'src', d.repo, CODEX)).rejects.toThrow();
+});
