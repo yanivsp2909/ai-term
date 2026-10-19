@@ -1,10 +1,17 @@
 # PROGRESS
 
 ## Checkpoint
-Last code commit: 32d4fd2 fix: the sweep leaves a folder whose mark it can't read exactly as it is, and the daemon runs one /bisect per folder (follow-up review)
-Last commit: backlog handover (this commit)
-Roadmap step: 2026-10-19 backlog sweep · done (no version bump: 1.0.1 waits for Yaniv's live checks)
+Last code commit: 77891a4 test: worktrees tests create main explicitly instead of relying on the machine's init.defaultBranch
+Last commit: v0.3.2 re-check handover (this commit)
+Roadmap step: v0.3.2 worktree keep/delete · already done (97f03a1..f0b61eb, handed over in c4e34df); this run only re-verified it
 Branch: main, pushed.
+
+## Re-check of v0.3.2 (2026-10-19, cloud session)
+- The prompt asked to build v0.3.2 from checkpoint e54e575. That work is already on main: 97f03a1 (loss report), 323f8f6 (ownership checks), bd04d84 (keep/delete question, /worktrees), f3e2fbd (S14), d452a96 → f0b61eb (review fix). No new feature code was written.
+- No open PRs; origin's two other branches (claude/coverage-chore-80-percent-lmfy2c, review/v0.1.5r-checkpoint) are already merged into main. Nothing to merge.
+- Fixed: tests/worktrees.test.ts ran `git init` without `-b main`, so two tests failed on any machine whose git defaults to `master` (77891a4). Every other test file already passes `-b main`.
+- Greps on main: `--force` and `-D` only in git.ts `forceRemoveWorktree`/`forceDeleteBranch`, called only from the loss branch of `deleteWorktree`; no `rm`/`fs.rm` on a worktree path; worktree start rollback uses `rmdir` (empty folders only). `git worktree prune` is deliberately not run (architecture §12.3).
+- Checks in a Linux cloud container running as root: typecheck, lint, build exit 0; worktree tests 63/63. The full suite has 33 failures there, none in worktree code and all present before 77891a4: root ignores chmod-locked folders (state-corrupt, queue, ledger, diff, checkpoints, sweep, gate-silent M1), no bwrap (auto-test, AI Term agent Don't ask), no xdg-open, root's `#` prompt (attach-terminal), PID/lock timing, and the /bisect temp-clone group ("Git check failed", cause not found). They need a non-root Linux run or macOS to judge.
 
 ## Final report (this run)
 - **The list:** docs/backlog.md (12b4662), built from all of PROGRESS.md (three readers, one per third; every item checked against the code) and architecture.md's "not fixed" and "explained" lines.
