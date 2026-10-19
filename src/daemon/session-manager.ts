@@ -788,13 +788,17 @@ export class SessionManager extends EventEmitter {
         if(['starting','running'].includes(live.info.status))throw new AddonError('Wait until the agent finishes, then press o or s');
         // A link out of the worktree, a file the result names but the agent never wrote, or a link at the file itself:
         // fixed words, never the system's text (Part C review: its ENOENT carried the worktree's path).
-        const root=await realpath(tree);
+        // Backlog F4: a worktree removed meanwhile, a `..` way out and a folder on the way that is now a file get
+        // fixed words too (their system errors carried paths and showed as "Session operation failed").
+        let root:string;
+        try{root=await realpath(tree);}catch(error){if(isFsError(error,'ENOENT')||isFsError(error,'ENOTDIR'))throw new AddonError("This agent's worktree is gone");throw error;}
+        if(file.split('/').includes('..'))throw new AddonError("A made file is opened only inside the agent's folder");
         let full:string;
         try{full=await resolveInside(root,file);}catch(error){if(error instanceof JailError)throw new AddonError('A made file is never opened through a link');throw error;}
         if(full!==join(root,file))throw new AddonError('A made file is never opened through a link');
         let handle:Awaited<ReturnType<typeof open>>;
         try{handle=await open(full,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);}
-        catch(error){if(isFsError(error,'ENOENT'))throw new AddonError("That file isn't in the agent's folder any more");if(isFsError(error,'ELOOP'))throw new AddonError('A made file is never opened through a link');throw error;}
+        catch(error){if(isFsError(error,'ENOENT')||isFsError(error,'ENOTDIR'))throw new AddonError("That file isn't in the agent's folder any more");if(isFsError(error,'ELOOP'))throw new AddonError('A made file is never opened through a link');throw error;}
         let data:Buffer;
         try{
             const info=await handle.stat();
