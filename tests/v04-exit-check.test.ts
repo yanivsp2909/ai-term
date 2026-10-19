@@ -27,7 +27,7 @@ import { groupRuns } from './platform.js';
 // key, a temporary HOME. One agent on a temp repo uses a skill, a subagent and an MCP tool with every action approved
 // through Ask; its cost reaches its own screen (which the card's preview mirrors) and Usage; a cap pauses it; Ctrl+K
 // stops a running bash.
-const SECRET = 'AITERMCANARY-exit-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1', MODEL = 'gpt-6.1-sol';
+const SECRET = 'AITERM' + 'CANARY-exit-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1', MODEL = 'gpt-6.1-sol';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { killAllBash(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 

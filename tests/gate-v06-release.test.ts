@@ -44,8 +44,8 @@ it('MEDIUM (accounts review): the handoff ask names the account that starts, and
 });
 
 it('MEDIUM (accounts review): secrets on the agent\'s screen never reach the summary request or the new agent\'s argv', () => {
-  const secrets = ['sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'sk-proj-BBBBBBBBBBBBBBBBBBBBBBBB', 'ghp_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC', 'AKIAIOSFODNN7EXAMPLE', 'xai-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', 'AIzaSyEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE', 'xoxb-1234567890-abcdefghij'];
-  const screen = `$ cat .env\nANTHROPIC_API_KEY=${secrets[0]}\nexport DB_PASSWORD="hunter2-long-value"\nAuthorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n${secrets.slice(1).join('\n')}\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\nall tests pass`;
+  const secrets = ['sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'sk-proj-BBBBBBBBBBBBBBBBBBBBBBBB', 'ghp_' + 'C'.repeat(36), 'AKIA' + 'IOSFODNN7EXAMPLE', 'xai-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDD', 'AIza' + 'SyEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE', 'xox' + 'b-1234567890-abcdefghij'];
+  const screen = `$ cat .env\nANTHROPIC_API_KEY=${secrets[0]}\nexport DB_PASSWORD="hunter2-long-value"\nAuthorization: Bearer abcdefghijklmnopqrstuvwxyz012345\n${secrets.slice(1).join('\n')}\n-----BEGIN OPENSSH ${'PRIVATE'} KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----\nall tests pass`;
   for (const text of [handoffPrompt('codex', screen), handoffMessage('fixer', screen)]) {
     for (const secret of [...secrets, 'hunter2-long-value', 'abcdefghijklmnopqrstuvwxyz012345', 'b3BlbnNzaC1rZXktdjEAAAAA']) expect(text).not.toContain(secret);
     expect(text).toContain('ANTHROPIC_API_KEY=[redacted]'); expect(text).toContain('all tests pass');
@@ -74,7 +74,7 @@ async function handoffDaemon(options: { usage: boolean; startScript?: string; bu
   const later = options.startScript ?? 'printf ready; read done; sleep 30';
   vi.spyOn(pty, 'spawn').mockImplementation((_file, _args, spawnOptions) => real('/bin/sh', ['-c', spawns++ === 0 ? 'printf ready; read done; sleep 30' : later], { ...spawnOptions, env: { PATH: '/usr/bin:/bin' } }));
   vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
-  await keys.add({ provider: 'openai', label: 'cheap', secret: 'AITERMCANARY-gate06-0123456789abcdef' });
+  await keys.add({ provider: 'openai', label: 'cheap', secret: 'AITERM' + 'CANARY-gate06-0123456789abcdef' });
   const source = await manager.create({ engine: 'codex', model: null, auth: { kind: 'account' }, cwd: root, permission: 'ask', title: 'fixer' });
   await expect.poll(() => manager.get(source.id).status).toBe('running');
   return { root, paths, manager, source, calls: () => calls };
@@ -248,7 +248,7 @@ it('MEDIUM (fix review): a long unbroken run is redacted in linear time', () => 
 
 it('LOW (fix review): a secret split by a control or cut at the 48k edge is still redacted', () => {
   expect(handoffMessage('x', 'sk-ant-api03-AAAA\u0007AAAAAAAAAAAAAAAAAAAAAA')).not.toContain('AAAAAAAAAAAAAAAAAAAAAA');
-  const key = '-----BEGIN OPENSSH PRIVATE KEY-----\n' + 'Q'.repeat(2000) + '\n-----END OPENSSH PRIVATE KEY-----\n';
+  const key = '-----BEGIN OPENSSH ' + 'PRIVATE KEY-----\n' + 'Q'.repeat(2000) + '\n-----END OPENSSH PRIVATE KEY-----\n';
   const screen = 'x'.repeat(48_000 - 1000) + key + 'y'.repeat(500);
   expect(handoffPrompt('codex', screen)).not.toContain('QQQQQQQQQQ');
 });

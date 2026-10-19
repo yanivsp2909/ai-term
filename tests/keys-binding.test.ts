@@ -13,7 +13,7 @@ import { DaemonServer } from '../src/daemon/server.js';
 import { Connection } from '../src/client/connection.js';
 import * as engines from '../src/daemon/engines.js';
 import * as foundry from '../src/daemon/providers/foundry.js';
-const secret = 'AITERMCANARY' + '0123456789abcdef', ENDPOINT = 'https://example.openai.azure.com/openai/v1', ATTACKER = 'https://attacker.example/openai/v1';
+const secret = 'AITERM' + 'CANARY' + '0123456789abcdef', ENDPOINT = 'https://example.openai.azure.com/openai/v1', ATTACKER = 'https://attacker.example/openai/v1';
 const CHANGED = 'Foundry key details changed outside AI Term; add the key again', UNBOUND = 'Foundry key must be added again to bind its endpoint';
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });

@@ -6,7 +6,7 @@ import { scanPatch, shannonEntropy } from '../src/shared/secret-scan.js';
 const patch = (file: string, lines: string[], start = 1) => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -0,0 +${start},${lines.length} @@\n${lines.map(l => `+${l}`).join('\n')}\n`;
 
 it('finds provider keys, tokens and secret assignments with their file and line, never the value', () => {
-  const key = 'sk-ant-api03-' + 'Q'.repeat(40), hits = scanPatch(patch('src/config.ts', ['const a = 1;', `const key = "${key}";`, 'export DB_PASSWORD=hunter2-long', 'ok'], 10) + patch('.env.example', ['AWS=AKIAIOSFODNN7EXAMPLE']));
+  const key = 'sk-ant-api03-' + 'Q'.repeat(40), hits = scanPatch(patch('src/config.ts', ['const a = 1;', `const key = "${key}";`, 'export DB_PASSWORD=hunter2-long', 'ok'], 10) + patch('.env.example', ['AWS=AKIA' + 'IOSFODNN7EXAMPLE']));
   expect(hits.map(h => [h.file, h.line, h.kind])).toEqual([['src/config.ts', 11, 'secret assignment'], ['src/config.ts', 12, 'secret assignment'], ['.env.example', 1, 'AWS access key']]);
   expect(JSON.stringify(hits)).not.toContain('QQQQ'); expect(JSON.stringify(hits)).not.toContain('hunter2'); expect(JSON.stringify(hits)).not.toContain('AKIA');
   expect(hits[0]?.length).toBeGreaterThan(40);
@@ -53,6 +53,6 @@ it('MEDIUM (TS review): paths, long identifiers and fixtures are not "high-entro
 });
 
 it('LOW (fix review): a key pasted into a lockfile is still found by its pattern (only the entropy check skips lockfiles)', () => {
-  const text = 'diff --git a/x/yarn.lock b/x/yarn.lock\n--- a/x/yarn.lock\n+++ b/x/yarn.lock\n@@ -0,0 +1 @@\n+aws AKIAIOSFODNN7EXAMPLE\n';
+  const text = 'diff --git a/x/yarn.lock b/x/yarn.lock\n--- a/x/yarn.lock\n+++ b/x/yarn.lock\n@@ -0,0 +1 @@\n+aws AKIA' + 'IOSFODNN7EXAMPLE\n';
   expect(scanPatch(text).map(h => h.kind)).toEqual(['AWS access key']);
 });

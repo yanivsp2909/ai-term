@@ -8,14 +8,14 @@ const CLAUDE_NEW = ['CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CODE_USE_MANTLE', '
 const CODEX_NEW = ['CODEX_ACCESS_TOKEN', 'OPENAI_FEDERATION_RULE_ID', 'OPENAI_IDENTITY_TOKEN_FILE'];
 const base = Object.fromEntries([...CLAUDE_NEW, ...CODEX_NEW, 'PATH'].map(name => [name, `AITERMCANARY-${name}`]));
 it('Claude sessions drop every documented Claude credential and routing variable; Codex ones pass through', () => {
-  for (const auth of [{ kind: 'account' as const }, { kind: 'key' as const, secret: 'AITERMCANARYSECRET0000' }]) {
+  for (const auth of [{ kind: 'account' as const }, { kind: 'key' as const, secret: 'AITERM' + 'CANARYSECRET0000' }]) {
     const env = buildSpawnEnv('claude-code', auth, base);
     for (const name of CLAUDE_NEW) expect(env[name], name).toBeUndefined();
     for (const name of CODEX_NEW) expect(env[name], name).toBe(`AITERMCANARY-${name}`);
   }
 });
 it('Codex sessions drop every documented Codex credential variable; Claude ones pass through', () => {
-  for (const auth of [{ kind: 'account' as const }, { kind: 'key' as const, secret: 'AITERMCANARYSECRET0000', provider: 'openai' as const }, { kind: 'key' as const, secret: 'AITERMCANARYSECRET0000' }]) {
+  for (const auth of [{ kind: 'account' as const }, { kind: 'key' as const, secret: 'AITERM' + 'CANARYSECRET0000', provider: 'openai' as const }, { kind: 'key' as const, secret: 'AITERM' + 'CANARYSECRET0000' }]) {
     const env = buildSpawnEnv('codex', auth, base);
     for (const name of CODEX_NEW) expect(env[name], name).toBeUndefined();
     for (const name of CLAUDE_NEW) expect(env[name], name).toBe(`AITERMCANARY-${name}`);

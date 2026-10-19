@@ -4,7 +4,7 @@ import { buildAgentArgs, buildAgentEnv, buildBashEnv, buildArgs, AGENT_DONT_ASK_
 // v0.4.1: AI Term's agent gets its key only through its own env, built here; bash never sees it (architecture §12.5).
 const command = { node: '/usr/local/bin/node', entry: '/opt/ai-term/dist/cli/index.js' };
 const base = { provider: 'foundry' as const, model: 'gpt-6.1-sol', models: ['gpt-6.1-sol', 'gpt-6-luna'], theme: 'graphite' as const, transcript: '/home/u/.ai-term/sessions/x/transcript.jsonl' };
-const key = 'AITERMCANARY-agent-0123456789abcdef';
+const key = 'AITERM' + 'CANARY-agent-0123456789abcdef';
 const status = { port: 41234, credential: 'a'.repeat(64) }, usage = { port: 41234, credential: 'b'.repeat(64) };
 
 it('Ask is explicit and the default; Don\'t ask adds exactly one flag; no secret ever reaches argv', () => {

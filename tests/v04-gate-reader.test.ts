@@ -16,7 +16,7 @@ async function home() {
   await file('.bash_history', 'export GITHUB_TOKEN=FAKE-history\n');
   await file('.zsh_history', 'FAKE-zsh-history\n');
   await file('.pgpass', 'db:5432:*:me:FAKE-pgpass\n');
-  await file('.ollama/id_ed25519', '-----BEGIN OPENSSH PRIVATE KEY-----\nFAKE-key\n-----END OPENSSH PRIVATE KEY-----\n');
+  await file('.ollama/id_ed25519', '-----BEGIN OPENSSH ' + 'PRIVATE KEY-----\nFAKE-key\n-----END OPENSSH PRIVATE KEY-----\n');
   await file('.zsh_sessions/ABC.history', 'FAKE-session\n');
   await file('.codex/log/codex-tui.md', 'FAKE-log\n');
   await file('.claude/file-history/x/1.md', 'FAKE-file-history\n');

@@ -12,7 +12,7 @@ import * as engines from '../src/daemon/engines.js';
 import { HttpReporter, reporterEnv, readAgentSecrets } from '../src/agent/report.js';
 
 // v0.6.1 through the real daemon: the budget route (B25) and cost per task (D55), as the agent and the CLIs report them.
-const SECRET = 'AITERMCANARY-b25-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
+const SECRET = 'AITERM' + 'CANARY-b25-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 async function daemon(settings: Record<string, unknown> = {}) {

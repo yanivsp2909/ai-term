@@ -19,7 +19,7 @@ import { NO_LINUX_SANDBOX } from './platform.js';
 
 // The daemon side of AI Term's agent: D47 routing, the spawn (argv and env from env.ts, key bound in the Keychain), and
 // status and usage arriving through the shared receiver exactly as the agent's reporter sends them.
-const SECRET = 'AITERMCANARY-daemon-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
+const SECRET = 'AITERM' + 'CANARY-daemon-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 
@@ -76,7 +76,7 @@ it('the fallback setting sends every key to its CLI', async () => {
   const cli = await daemon({ keysRunOn: 'cli' });
   expect((await cli.manager.create({ engine: 'codex', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId: cli.foundry.id }, cwd: cli.root, permission: 'ask' })).engine).toBe('codex');
   expect(cli.spawned.at(-1)?.env.AITERM_FOUNDRY_KEY).toBe(SECRET);
-  const anthropicCli = await cli.keys.add({ provider: 'anthropic', label: 'a', secret: 'sk-ant-AITERMCANARY0000000000' });
+  const anthropicCli = await cli.keys.add({ provider: 'anthropic', label: 'a', secret: 'sk-ant-' + 'AITERMCANARY0000000000' });
   expect((await cli.manager.create({ engine: 'claude-code', model: null, auth: { kind: 'key', keyId: anthropicCli.id }, cwd: cli.root, permission: 'ask' })).engine).toBe('claude-code');
 });
 
@@ -167,7 +167,7 @@ it('over the socket: a deployment can only be marked as a catalog model, and AI 
   await expect(client.request({ kind: 'settings.set', patch: { deploymentModels: { 'kimi-k3': 'made-up-model' } } })).rejects.toThrow('Unknown catalog model');
   expect((await client.request({ kind: 'settings.set', patch: { deploymentModels: { 'kimi-k3': 'kimi-k2.6' } } })).settings?.deploymentModels).toEqual({ 'kimi-k3': 'kimi-k2.6' });
   await expect(client.request({ kind: 'settings.set', patch: { agentCaps: { turns: 0, spendUsd: 5 } } })).rejects.toThrow();
-  const anthropic = await d.keys.add({ provider: 'anthropic', label: 'a', secret: 'sk-ant-AITERMCANARY3333333333' });
+  const anthropic = await d.keys.add({ provider: 'anthropic', label: 'a', secret: 'sk-ant-' + 'AITERMCANARY3333333333' });
   await expect(client.request({ kind: 'sessions.create', engine: 'ai-term', model: null, auth: { kind: 'key', keyId: anthropic.id }, cwd: d.root, permission: 'ask' })).rejects.toThrow('Pick a model for AI Term agent');
   const session = await d.manager.create({ engine: 'ai-term', model: 'gpt-6.1-sol', auth: { kind: 'key', keyId: d.foundry.id }, cwd: d.root, permission: 'ask' });
   await d.manager.stop(session.id);

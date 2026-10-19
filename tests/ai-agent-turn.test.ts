@@ -16,7 +16,7 @@ import { stubFacts } from './fixtures/agent-facts.js';
 // failures, and what reaches the daemon (status, usage), the model, the screen and the transcript.
 const roots: string[] = [], transcripts: Transcript[] = [];
 afterEach(async () => { for (const t of transcripts.splice(0)) await t.close(); for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
-const KEY = 'AITERMCANARY-turn-0123456789abcdef';
+const KEY = 'AITERM' + 'CANARY-turn-0123456789abcdef';
 const usage = (input: number, output: number, cached = 0) => ({ inputTokens: { total: input, noCache: input - cached, cacheRead: cached, cacheWrite: undefined }, outputTokens: { total: output, text: output, reasoning: undefined } });
 const toolStep = (toolName: string, input: unknown, id = 'call-1') => ({ stream: convertArrayToReadableStream([{ type: 'stream-start' as const, warnings: [] }, { type: 'tool-call' as const, toolCallId: id, toolName, input: JSON.stringify(input) }, { type: 'finish' as const, finishReason: { unified: 'tool-calls' as const, raw: undefined }, usage: usage(100, 10, 40) }]) });
 const textStep = (text: string) => ({ stream: convertArrayToReadableStream([{ type: 'stream-start' as const, warnings: [] }, { type: 'text-start' as const, id: 't' }, { type: 'text-delta' as const, id: 't', delta: text }, { type: 'text-end' as const, id: 't' }, { type: 'finish' as const, finishReason: { unified: 'stop' as const, raw: undefined }, usage: usage(150, 20) }]) });

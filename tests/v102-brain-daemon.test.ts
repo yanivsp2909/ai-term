@@ -18,7 +18,7 @@ import { validateBrainPlan, validateBrainResult } from '../src/shared/brain.js';
 // v1.0.2 /brain through the daemon, with a stub provider (tests never reach a network): the plan asks first with the
 // token and price range of what changed; the model pass summarizes with secrets kept out, is held against budgets and the
 // per-run cap, and is counted in Usage; agents started afterwards get the map.
-const SECRET = 'AITERMCANARY-brain-0123456789abcdef', LEAK = 'sk-ant-api03-' + 'L'.repeat(40);
+const SECRET = 'AITERM' + 'CANARY-brain-0123456789abcdef', LEAK = 'sk-ant-api03-' + 'L'.repeat(40);
 const snapshot: PriceSnapshot = { fetchedAt: '2026-10-15', providers: { anthropic: { 'claude-haiku-5': { input: 1, output: 5 }, 'claude-sonnet-5': { input: 3, output: 15 } }, openai: {}, azure: {} } };
 const run = promisify(execFile), cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });

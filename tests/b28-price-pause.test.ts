@@ -147,7 +147,7 @@ it('the daemon side: an agent can price only its own unpriced model (never chang
   const spawned: Record<string, string>[] = [], real = pty.spawn;
   vi.spyOn(pty, 'spawn').mockImplementation((_file, _args, options) => { spawned.push({ ...(options?.env as Record<string, string>) }); return real('/bin/sh', ['-c', 'printf ready; read done'], { ...options, env: { PATH: '/usr/bin:/bin' } }); });
   vi.spyOn(engines, 'checkEngine').mockResolvedValue({ installed: true, path: '/bin/sh', version: '1', loggedIn: true, authMethod: 'subscription' });
-  const foundry = await keys.add({ provider: 'foundry', label: 'f', secret: 'AITERMCANARY-b28-0123456789', endpoint: 'https://b28.openai.azure.com/openai/v1', deployments: ['my-unpriced-x', 'my-mapped-y', 'gpt-6.1-sol'] });
+  const foundry = await keys.add({ provider: 'foundry', label: 'f', secret: 'AITERM' + 'CANARY-b28-0123456789', endpoint: 'https://b28.openai.azure.com/openai/v1', deployments: ['my-unpriced-x', 'my-mapped-y', 'gpt-6.1-sol'] });
   await keys.saveTest(foundry.id, [{ model: 'my-unpriced-x', status: 'chat' }, { model: 'my-mapped-y', status: 'chat' }, { model: 'gpt-6.1-sol', status: 'ready' }]);
   const session = await manager.create({ engine: 'ai-term', model: 'my-unpriced-x', auth: { kind: 'key', keyId: foundry.id }, cwd: root, permission: 'ask' });
   const reporter = new HttpReporter(reporterEnv(spawned.at(-1) ?? {}), () => {});

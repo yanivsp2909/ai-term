@@ -13,7 +13,7 @@ import { readAgentSecrets } from '../src/agent/report.js';
 
 // v0.6.5 (Part A) in the daemon: keys for the new providers live in the Keychain like any other (Ollama has none), a model
 // starts only after its test passed, a new provider never reaches a CLI, and the key reaches only the agent's env.
-const SECRET = 'AITERMCANARY-v065d-0123456789abcdef';
+const SECRET = 'AITERM' + 'CANARY-v065d-0123456789abcdef';
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 

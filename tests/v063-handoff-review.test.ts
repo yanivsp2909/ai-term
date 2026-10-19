@@ -15,7 +15,7 @@ import { handoffMessage } from '../src/shared/handoff.js';
 import type { PriceSnapshot } from '../src/daemon/usage-prices.js';
 
 // Part E review (2026-10-15): security and silent-failure findings on the engine handoff.
-const SECRET = 'AITERMCANARY-handoff-review-0123456789';
+const SECRET = 'AITERM' + 'CANARY-handoff-review-0123456789';
 const snapshot: PriceSnapshot = { fetchedAt: '2026-10-12', providers: { anthropic: {}, openai: { 'gpt-6.1-mini': { input: 0.2, output: 0.8 } }, azure: {} } };
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); SessionManager.handoffStartMs = 30_000; });

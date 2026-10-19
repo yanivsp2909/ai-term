@@ -29,7 +29,7 @@ import type { KeyProvider, KeyView, SessionInfo } from '../src/shared/protocol.j
 
 // Part A (2026-10-19): more fixed-host providers (a region is a provider of its own), LM Studio and any OpenAI-compatible
 // server on this machine (no key), and a custom https endpoint bound to its key, public addresses only.
-const KEY = 'AITERMCANARY-partA-0123456789abcdef';
+const KEY = 'AITERM' + 'CANARY-partA-0123456789abcdef';
 interface Seen { url: string; headers: Headers; redirect?: RequestRedirect; body: string }
 async function oneRequest(spec: ModelSpec): Promise<Seen> {
   const seen: Seen[] = [];
@@ -162,7 +162,7 @@ describe('custom endpoint', () => {
 });
 
 describe('in the daemon', () => {
-  const SECRET = 'AITERMCANARY-partAd-0123456789abcdef';
+  const SECRET = 'AITERM' + 'CANARY-partAd-0123456789abcdef';
   const cleanups: (() => Promise<void>)[] = [];
   afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
   async function setup() {

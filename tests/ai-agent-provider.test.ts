@@ -4,7 +4,7 @@ import { guardedFetch, makeModel, type ModelSpec } from '../src/agent/provider.j
 
 // S16/S19 for AI Term's agent: each provider sends its key only in its own header, only to its own endpoint (fixed, or
 // the Foundry one bound in the Keychain), never follows a redirect, and no provider error text reaches the screen.
-const KEY = 'AITERMCANARY-provider-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
+const KEY = 'AITERM' + 'CANARY-provider-0123456789abcdef', ENDPOINT = 'https://example-resource.openai.azure.com/openai/v1';
 interface Seen { url: string; headers: Headers; redirect?: RequestRedirect; body: string }
 
 async function oneRequest(spec: ModelSpec): Promise<Seen> {

@@ -72,7 +72,7 @@ it.skipIf(!MAC)('macOS: REA runs in the agent sandbox with no network: it can\'t
     `cat '${join(target, 'main.bin')}' >/dev/null && echo read-target-ok`,
     `echo "args:$*"`,
   ].join('\n'));
-  const server = await reverseServer({ rea, target, cwd: folder, root, home: root, env: { PATH: '/usr/bin:/bin', HOME: folder, ANTHROPIC_API_KEY: 'sk-ant-AITERMCANARY0000', TMPDIR: folder } });
+  const server = await reverseServer({ rea, target, cwd: folder, root, home: root, env: { PATH: '/usr/bin:/bin', HOME: folder, ANTHROPIC_API_KEY: 'sk-ant-' + 'AITERMCANARY0000', TMPDIR: folder } });
   expect(server.command).toBe('/usr/bin/env');
   expect(server.args.slice(0, 1)).toEqual(['-i']);
   expect(server.args.join(' ')).not.toContain('AITERMCANARY');

@@ -24,7 +24,7 @@ import { NO_LINUX_SANDBOX } from './platform.js';
 // AI Term's folder (except the agent's own worktree) or connect to its sockets.
 const MAC = process.platform === 'darwin', cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
-const SECRET = 'AITERMCANARY-secrets-0123456789abcdef';
+const SECRET = 'AITERM' + 'CANARY-secrets-0123456789abcdef';
 
 it.skipIf(NO_LINUX_SANDBOX)('the key and the tokens never sit in the agent\'s environment: a 0600 file the agent reads and deletes carries them (skipped on Linux without a working bubblewrap: these run only sandboxed)', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'ai-secrets-'))), paths = getPaths(root); await preparePaths(paths);

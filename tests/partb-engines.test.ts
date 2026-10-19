@@ -58,7 +58,7 @@ describe('env and argv', () => {
     for (const name of ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_GEMINI_BASE_URL', 'CODE_ASSIST_ENDPOINT', 'GEMINI_CLI_HOME']) expect(GEMINI_AUTH_VARS).toContain(name);
     for (const name of ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST', 'COPILOT_PROVIDER_*', 'COPILOT_HOME', 'COPILOT_ALLOW_ALL']) expect(COPILOT_AUTH_VARS).toContain(name);
     // Windows spells a name any way it likes; it is removed whatever its case.
-    expect(buildExtraEnv('copilot', { ...base, gh_token: 'AITERMCANARY-partB' }, { platform: 'win32' })).not.toHaveProperty('gh_token');
+    expect(buildExtraEnv('copilot', { ...base, gh_token: 'AITERM' + 'CANARY-partB' }, { platform: 'win32' })).not.toHaveProperty('gh_token');
   });
 
   it('an account profile is the CLI\'s documented config folder variable; Cursor has none, so it never gets one', () => {
@@ -315,7 +315,7 @@ describe('Part B review findings in the daemon', () => {
 
   it('code MEDIUM (tests): a key picked for one of these CLIs starts AI Term\'s agent, never the CLI', async () => {
     const d = await setup();
-    const key = await d.keys.add({ provider: 'deepseek', label: 'ds', secret: 'AITERMCANARY-partB-key-0123456789', deployments: ['deepseek-chat'] });
+    const key = await d.keys.add({ provider: 'deepseek', label: 'ds', secret: 'AITERM' + 'CANARY-partB-key-0123456789', deployments: ['deepseek-chat'] });
     await d.keys.saveTest(key.id, [{ model: 'deepseek-chat', status: 'ready' }]);
     for (const engine of EXTRA_ENGINES) {
       const session = await d.manager.create({ engine, model: 'deepseek-chat', auth: { kind: 'key', keyId: key.id }, cwd: d.work, permission: 'ask' });

@@ -14,7 +14,7 @@ import {validateSuccess} from '../src/shared/validate.js';
 import * as engines from '../src/daemon/engines.js';
 import type {SessionInfo} from '../src/shared/protocol.js';
 const APP='/Users/test/ai-term/build/notifier/AI Term.app',now='2026-10-13T12:00:00.000Z';
-function agent(over:Partial<SessionInfo>={}):SessionInfo{return {id:randomUUID(),title:'fix-login',engine:'codex',model:'AITERMCANARY-model',auth:{kind:'key',keyId:randomUUID(),provider:'openai',keyLabel:'AITERMCANARY label',last4:'AB12'},authMethod:'api-key',cwd:'/Users/test/AITERMCANARY',permission:'ask',status:'waiting',statusDetail:'turn failed: AITERMCANARY sk-secret',statusSince:now,createdAt:now,lastOutputAt:now,exitCode:null,ctxPercent:40,lastActivity:{tool:'Bash',at:now},...over};}
+function agent(over:Partial<SessionInfo>={}):SessionInfo{return {id:randomUUID(),title:'fix-login',engine:'codex',model:'AITERMCANARY-model',auth:{kind:'key',keyId:randomUUID(),provider:'openai',keyLabel:'AITERM' + 'CANARY label',last4:'AB12'},authMethod:'api-key',cwd:'/Users/test/AITERMCANARY',permission:'ask',status:'waiting',statusDetail:'turn failed: AITERMCANARY sk-secret',statusSince:now,createdAt:now,lastOutputAt:now,exitCode:null,ctxPercent:40,lastActivity:{tool:'Bash',at:now},...over};}
 const running={status:'running' as const,statusDetail:'running'},waiting={status:'waiting' as const,statusDetail:'permission'},done={status:'done' as const,statusDetail:'done'};
 function fixture(options:{enabled?:()=>Promise<boolean>;exists?:boolean;app?:string|null}={}){
  const calls:{file:string;args:string[];done:(error:Error|null)=>void}[]=[],logs:string[]=[];

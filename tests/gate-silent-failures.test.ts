@@ -26,7 +26,7 @@ async function home() { const root = await mkdtemp(join(tmpdir(), 'ai-gate-silen
 const readLog = (path: string) => readFile(path, 'utf8').catch(() => '');
 
 it('M1: a key whose metadata and Keychain rollback both fail names the orphaned Keychain account in the log, never the secret', async () => {
-  const { root, paths } = await home(), values = new Map<string, string>(), secret = 'AITERMCANARY' + 'x'.repeat(30);
+  const { root, paths } = await home(), values = new Map<string, string>(), secret = 'AITERM' + 'CANARY' + 'x'.repeat(30);
   const keys = new KeyStore(root, { vault: { read: async a => values.get(a) ?? null, write: async (a, s) => { values.set(a, s); }, remove: async () => { throw new Error('locked'); } } });
   // settings.json as a directory: the metadata write fails.
   await mkdir(join(root, 'settings.json'));

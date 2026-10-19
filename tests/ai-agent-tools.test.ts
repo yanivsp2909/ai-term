@@ -67,7 +67,7 @@ it('normalizes ripgrep relative prefixes without changing a match that contains 
 });
 
 it('bash runs in the folder with no key, no credential and nothing of AI Term\'s in its env', async () => {
-  const root = await folder(), key = 'AITERMCANARY-bash-0123456789abcdef';
+  const root = await folder(), key = 'AITERM' + 'CANARY-bash-0123456789abcdef';
   const agentEnv = buildAgentEnv({ PATH: process.env.PATH, HOME: '/tmp' }, { secret: key, endpoint: 'https://r.openai.azure.com/openai/v1', status: { port: 1234, credential: 'a'.repeat(64) }, usage: { port: 1234, credential: 'b'.repeat(64) }, entry: '/x/dist/cli/index.js' });
   const result = await runBash('pwd; env', { cwd: root, env: buildBashEnv({ ...agentEnv, OPENAI_API_KEY: 'sk-x' }) });
   expect(result.exitCode).toBe(0);

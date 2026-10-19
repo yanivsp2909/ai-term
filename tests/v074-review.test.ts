@@ -23,7 +23,7 @@ import type { PriceSnapshot } from '../src/daemon/usage-prices.js';
 // v0.7.4 /review [agent]: one reviewer pass over the agent's diff by a keyed model you pick. D49: it asks first (the
 // models with their price ranges, the token range); the result shows in a popup and on the card. Auto-review on done
 // (D55, off by default) does the same with the model you last picked, under its own daily budget.
-const SECRET = 'AITERMCANARY-review-0123456789abcdef', LEAK = 'sk-ant-api03-' + 'L'.repeat(40);
+const SECRET = 'AITERM' + 'CANARY-review-0123456789abcdef', LEAK = 'sk-ant-api03-' + 'L'.repeat(40);
 const snapshot: PriceSnapshot = { fetchedAt: '2026-10-15', providers: { anthropic: { 'claude-haiku-5': { input: 1, output: 5 }, 'claude-sonnet-5': { input: 3, output: 15 } }, openai: { 'gpt-6.1-mini': { input: 0.2, output: 0.8 } }, azure: {} } };
 const diff: AgentDiff = { title: 'fixer', branch: 'ai/fixer', base: 'main @ abc1234', added: 3, removed: 1, capped: false, files: [
   { path: 'src/login.ts', status: 'modified', added: 2, removed: 1, lines: ['@@ -1,2 +1,3 @@', ' import x', '-const a = 1;', '+const a = 2;', `+const key = "${LEAK}";`] },

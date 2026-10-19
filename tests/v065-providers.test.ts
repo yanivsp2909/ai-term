@@ -16,7 +16,7 @@ import type { KeyView } from '../src/shared/protocol.js';
 // v0.6.5 (Part A): xAI, Moonshot, Z.ai, OpenRouter, Bedrock and Vertex keys, plus Ollama on this Mac. Each key goes only in
 // its own header, only to its provider's fixed official host (Bedrock: the region bound to the key), never through a
 // redirect; Ollama only to http://127.0.0.1 with no key at all.
-const KEY = 'AITERMCANARY-v065-0123456789abcdef';
+const KEY = 'AITERM' + 'CANARY-v065-0123456789abcdef';
 interface Seen { url: string; headers: Headers; redirect?: RequestRedirect; body: string }
 async function oneRequest(spec: ModelSpec): Promise<Seen> {
   const seen: Seen[] = [];

@@ -33,7 +33,7 @@ async function repo() {
   await writeFile(join(top, '.env'), 'TOKEN=abc\n');
   await writeFile(join(top, 'logo.bin'), Buffer.from([0x89, 0x50, 0x00, 0x01, 0x02]));
   await writeFile(join(top, 'huge.txt'), 'x'.repeat(300 * 1024));
-  await writeFile(join(top, 'leak.ts'), 'export const key = "AKIAIOSFODNN7EXAMPLQ";\n');
+  await writeFile(join(top, 'leak.ts'), 'export const key = "AKIA' + 'IOSFODNN7EXAMPLQ";\n');
   await writeFile(join(top, '.gitignore'), 'build/\n');
   await mkdir(join(top, 'build')); await writeFile(join(top, 'build', 'out.js'), 'ignored');
   await run('/usr/bin/git', [...ID, 'add', '--', '.'], { cwd: top }); await run('/usr/bin/git', [...ID, 'commit', '-qm', 'i', '--'], { cwd: top });

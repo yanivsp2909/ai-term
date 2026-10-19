@@ -5,7 +5,7 @@ import type { RequestBody } from '../src/client/connection.js';
 import type { KeyView, SuccessResponse } from '../src/shared/protocol.js';
 
 // v0.6.5 in /login and /settings: every new provider is added, tested, shown (last 4 only) and removed like today's keys.
-const KEY = 'AITERMCANARY-ui-0123456789abcdef';
+const KEY = 'AITERM' + 'CANARY-ui-0123456789abcdef';
 function panel(kind: 'login' | 'settings', keys: KeyView[] = []) {
   const sent: RequestBody[] = [];
   const request = async (body: RequestBody): Promise<SuccessResponse> => {

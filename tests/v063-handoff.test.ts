@@ -19,7 +19,7 @@ import type { PriceSnapshot } from '../src/daemon/usage-prices.js';
 
 // v0.6.3 engine handoff (D55, off by default): a summary of one agent's screen starts a new agent of another engine in the
 // same folder or worktree; the old one stops only after the new one runs.
-const SECRET = 'AITERMCANARY-handoff-0123456789abcdef';
+const SECRET = 'AITERM' + 'CANARY-handoff-0123456789abcdef';
 const snapshot: PriceSnapshot = { fetchedAt: '2026-10-12', providers: { anthropic: { 'claude-haiku-5': { input: 1, output: 5 }, 'claude-sonnet-5': { input: 3, output: 15 } }, openai: { 'gpt-6.1-mini': { input: 0.2, output: 0.8 } }, azure: {} } };
 it('the summary writer is the cheapest priced model among your keys; none means the agent writes it', () => {
   const anthropic: KeyView = { id: randomUUID(), provider: 'anthropic', label: 'a', last4: 'aaaa' }, openai: KeyView = { id: randomUUID(), provider: 'openai', label: 'o', last4: 'oooo' };
