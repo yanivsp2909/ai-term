@@ -101,8 +101,10 @@ const STOPPING = 'AI Term is stopping; start it again after';
 // or a folder) also reads as ENOENT, and is refused like any other link (Part C review).
 async function absent(base: string, path: string): Promise<boolean> {
   const root = resolve(base);
-  for (let at = join(root, path); at !== root && at.startsWith(root); at = dirname(at)) {
+  // The definitions folder itself counts too: a build with no guides folder at all falls back the same way (v1.2 review).
+  for (let at = join(root, path); at.startsWith(root); at = dirname(at)) {
     try { const stat = await lstat(at); return stat.isDirectory(); } catch (error) { if (!isFsError(error, 'ENOENT')) throw error; }
+    if (at === root) break;
   }
   return false;
 }
